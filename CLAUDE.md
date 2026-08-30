@@ -346,21 +346,29 @@ confident sentence in the UI. (The report itself, `CONSUMER-GROUPS-AUDIT.md`, wa
 tree in d643f23; its conclusions are the paragraphs in this file, not a separate document.)
 
 `PROCESS-MINING-LLM-SCOPE.md` reviews the half of Process Mining that **uses** the model, the
-ingestion half having been audited several times over and the prompt never. It implements nothing:
-every item is sized and ranked, and one dominates. The analysis prompt samples messages *per topic,
-independently* (`LlmAnalysisService.appendCommonSections`), while four of the five audit prompts ask
-questions about a **case** — ordering, orphans, latency, duplicates are all "per correlation id" —
-so the model is asked to correlate records it was never shown together, and what it can still do is
-infer a pipeline from the topic names. The budget narrows it further: `sample` is forty scalars of
-up to 160 characters *per message*, inlined verbatim, and it is by definition the values the mapping
-did **not** name — so roughly 2 % of a snapshot's records reach the model, a ratio the coverage
-panel has been displaying all along (`messagesDetailed` against `messagesRead`) without anyone
-drawing the conclusion. The recommendation is to compute the event log in Java — `digest.fields()`
-already carries case id, timestamp and status per record — and send the directly-follows graph,
-the variants and the per-edge latencies, leaving the model the interpretation. The pattern already
-exists one file over: `FieldProfilingService` aggregates per path instead of inlining per record,
-which is why profiling behaves on small models and the analysis does not. Read it before touching
-`LlmAnalysisService`, `LlmSchemas` or `AuditPromptCatalog`.
+ingestion half having been audited several times over and the prompt never. It implemented nothing:
+every item was sized and ranked, and one dominated — **and that one has since shipped**, so the
+document is now a record of why this code looks as it does rather than a plan. The prompt used to
+sample messages *per topic, independently*, while four of the five audit prompts ask questions about
+a **case** — ordering, orphans, latency, duplicates are all "per correlation id" — so the model was
+asked to correlate records it had never been shown together, and what it could still do was infer a
+pipeline from the topic names. The budget narrowed it further: roughly 2 % of a snapshot's records
+reached the model, a ratio the coverage panel had been displaying all along (`messagesDetailed`
+against `messagesRead`) without anyone drawing the conclusion.
+
+What answers now is `ProcessModel`, built by `ProcessModelBuilder` from the digests: every field is
+a count, a sort or a set difference over what `PayloadDigest.fields()` already carried, so it cannot
+be wrong and it is reproducible between two runs on the same window. The model is handed the
+directly-follows graph, the variants and the per-edge latencies, plus whole **case traces** — one
+per variant, labelled as worked examples rather than as a representative sample, since the
+proportions are stated separately and computed over everything. Left to it is the half it cannot be
+replaced on: what the numbers mean, and drawing the Mermaid from an edge list rather than from a
+guess. Per-topic sampling survives as the **fallback for when no event log can be built** — without
+a validated field mapping there is no case id, reported as `available = false` with a reason and
+never as a process with zero cases. The pattern came from one file over: `FieldProfilingService`
+aggregates per path instead of inlining per record, which is why profiling behaved on small models
+when the analysis did not. Read the document before touching `LlmAnalysisService`, `LlmSchemas` or
+`AuditPromptCatalog`.
 
 `PROCESS-MINING-LLM-CALLS-AUDIT.md` is its sibling on the other axis: the same feature, but the
 **calls** rather than the prompt, and every provider **except OpenRouter** — `ANTHROPIC`,
