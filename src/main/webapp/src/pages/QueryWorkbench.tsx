@@ -31,9 +31,10 @@ import {
   type PlannedStatement, type StatementRun,
   readSqlParam, buildQueryLink,
   sidebarSqlFor, sidebarActionLabel,
-  describeChangelog, exportColumns, exportRows,
+  describeChangelog, exportColumns, exportRows, explainPlan,
 } from './queryWorkbenchLogic';
 import { ResultsGrid } from '../components/query/ResultsGrid';
+import { ExplainPlanPanel } from '../components/query/ExplainPlanPanel';
 import { WindowAssistant } from '../components/query/WindowAssistant';
 import { SchemaBrowser, type SchemaInfo, type SavedQuery } from '../components/query/SchemaBrowser';
 import { DdlPreviewModal } from '../components/query/DdlPreviewModal';
@@ -660,6 +661,12 @@ const QueryWorkbench: React.FC = () => {
   const changelog = useMemo(
     () => describeChangelog(results && !results.error ? results.changelog : null),
     [results],
+  );
+
+  /** Le plan d'un EXPLAIN, à rendre comme du texte plutôt que comme une cellule de grille. */
+  const plan = useMemo(
+    () => explainPlan(ranSql, results && !results.error ? results : null),
+    [ranSql, results],
   );
 
   /** L'instruction du lot en cours d'exécution, ou -1. Dérivé : deux sources se contrediraient. */
@@ -2114,6 +2121,9 @@ const QueryWorkbench: React.FC = () => {
                     </Button>
                   </div>
                 </div>
+              ) : plan ? (
+                <ExplainPlanPanel plan={plan} onCopy={() => void copyText(plan).then(ok =>
+                  toast(ok ? 'Plan copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))} />
               ) : results?.columns.length ? (
                 <ResultsGrid
                   columns={results.columns}

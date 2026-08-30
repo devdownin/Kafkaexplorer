@@ -298,6 +298,39 @@ class FlinkSqlServiceStatementKindsTest {
         assertFalse(FlinkSqlService.isCreateTableAsSelect("SELECT * FROM T"));
     }
 
+    /**
+     * Un {@code CREATE TABLE} dont un identifiant contient « as select » n'est pas un CTAS.
+     *
+     * <p>Le test lexical neutralise les littéraux simple-quote et pas les accents graves, donc il
+     * refusait ces deux formes — avec un message expliquant comment scinder en {@code CREATE TABLE}
+     * puis {@code INSERT INTO}, à propos d'un {@code CREATE TABLE} qui n'avait rien à scinder. Le
+     * parseur de Flink ne s'y trompe pas ; ces deux cas sont ce qu'il rattrape, et ils échouent
+     * contre la version qui n'interrogeait que la regex.
+     */
+    @Test
+    void aBacktickedIdentifierIsNotACtas() {
+        for (String sql : List.of(
+                "CREATE TABLE `weird as select` (id STRING) WITH ('connector'='blackhole')",
+                "CREATE TABLE k_quoted_col (`col as select` STRING) WITH ('connector'='blackhole')")) {
+            QueryResult result = run(sql);
+            assertNull(result.error(), sql + " → " + result.error());
+        }
+        // Le test lexical, lui, se trompe bien sur ces deux formes : c'est pourquoi le parseur
+        // passe en premier, et pourquoi la regex reste derrière plutôt que devant.
+        assertTrue(FlinkSqlService.isCreateTableAsSelect(
+                "CREATE TABLE `WEIRD AS SELECT` (ID STRING) WITH ('CONNECTOR'='BLACKHOLE')"));
+    }
+
+    /** Et un vrai CTAS reste refusé, parseur ou regex. */
+    @Test
+    void arealCtasIsStillRefused() {
+        QueryResult refused = run("CREATE TABLE k_ctas_target AS SELECT order_id FROM k_orders");
+        assertNotNull(refused.error());
+        assertTrue(refused.error().contains("AS SELECT starts a job"), refused.error());
+        assertFalse(service.listTables().contains("k_ctas_target"),
+                "un CTAS refusé ne doit rien avoir créé");
+    }
+
     // ── Ce que la whitelist refuse, famille par famille ───────────────────────────────
 
     /**
@@ -435,6 +468,51 @@ class FlinkSqlServiceStatementKindsTest {
         assertTrue(cut.changelog().capReached());
         assertTrue(cut.warnings().stream().anyMatch(w -> w.contains("cut off before the query settled")),
                 String.valueOf(cut.warnings()));
+    }
+
+    /**
+     * Un mode de lecture nommé ne change pas la <em>sémantique</em> de la requête.
+     *
+     * <p>Mesuré avant correction : {@code isSingleTableRead} répondait <b>true</b> sur
+     * {@code TABLE(HOP(…))}, donc le sélecteur « Latest » de l'éditeur — qui nomme un mode de
+     * lecture — envoyait la requête au lecteur direct <em>sans qu'aucun planner n'ait échoué</em>.
+     * Le même HOP repartait alors en fenêtres jointives approximées en TUMBLE, quand « Earliest »
+     * passait par Flink et rendait les fenêtres chevauchantes réelles : un sélecteur censé ne
+     * choisir que le bout du topic à lire changeait ce que la requête voulait dire, et rendait une
+     * réponse plausible et fausse plutôt qu'un refus.
+     *
+     * <p>Le mode ne peut pas être honoré ici — un scan Kafka borné à {@code latest-offset} ne lit
+     * rien — donc la bonne réponse est celle du planner <strong>plus la phrase qui dit que le mode
+     * n'a pas été appliqué</strong>, et c'est ce que ce cas exige.
+     */
+    @Test
+    void aNamedReadModeDoesNotChangeWhatAWindowedQueryMeans() {
+        String hop = "SELECT window_start, COUNT(*) AS n FROM TABLE("
+                + "HOP(TABLE k_events, DESCRIPTOR(ts), INTERVAL '30' SECOND, INTERVAL '1' MINUTE)) "
+                + "GROUP BY window_start, window_end";
+
+        QueryResult latest = service.executeSql(QueryRequest.sql(hop, 20, 15_000L, "latest-offset"));
+
+        assertNull(latest.error(), String.valueOf(latest.error()));
+        assertEquals("FLINK", latest.engine(),
+                "une fenêtre doit rester au planner, quel que soit le mode de lecture demandé");
+        assertTrue(latest.warnings().stream().anyMatch(w -> w.contains("was not applied")),
+                "le mode non honoré doit être dit : " + latest.warnings());
+        // Et surtout : aucune approximation, puisque c'est Flink qui a calculé la fenêtre.
+        assertTrue(latest.warnings().stream().noneMatch(w -> w.toLowerCase(Locale.ROOT).contains("approximat")),
+                "le planner n'approxime rien : " + latest.warnings());
+    }
+
+    /** Le prédicat de routage lui-même, sur les quatre fonctions plutôt que sur une. */
+    @Test
+    void aWindowIsNotAShapeTheDirectReaderCanAnswerHonestly() {
+        for (String fn : List.of("TUMBLE", "HOP", "CUMULATE", "SESSION")) {
+            assertFalse(MetricService.isSingleTableRead(
+                    "SELECT window_start FROM TABLE(" + fn
+                        + "(TABLE k_events, DESCRIPTOR(ts), INTERVAL '1' MINUTE)) GROUP BY window_start"), fn);
+        }
+        // Une lecture ordinaire d'une seule table reste ce que ce lecteur sait servir.
+        assertTrue(MetricService.isSingleTableRead("SELECT COUNT(*) AS metric_value FROM k_orders"));
     }
 
     // ── Outils ────────────────────────────────────────────────────────────────────────

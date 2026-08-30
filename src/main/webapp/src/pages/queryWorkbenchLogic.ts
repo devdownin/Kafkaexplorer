@@ -928,6 +928,36 @@ export function sortRows<T extends Record<string, unknown>>(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// EXPLAIN : un plan n'est pas une cellule
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Le plan d'un `EXPLAIN`, quand le résultat en est un — sinon `null`.
+ *
+ * Flink rend un plan comme **une ligne d'une colonne** dont le contenu fait vingt lignes de texte
+ * indenté. Passé à la grille, il devient une cellule géante : tronquée sur une ligne dès que la
+ * grille est virtualisée, lisible seulement en ouvrant le panneau de détail. C'est la même faute
+ * que le `title=""` que ce dépôt a remplacé partout — le contenu existe, et il faut un geste
+ * supplémentaire pour l'atteindre — sur la seule requête dont le résultat *est* du texte.
+ *
+ * Deux conditions plutôt qu'une, et c'est ce qui la rend sûre : l'instruction exécutée doit être
+ * un `EXPLAIN`, **et** le résultat doit avoir la forme d'un plan (une ligne, une colonne, du
+ * texte). Si Flink rendait un jour autre chose, la grille reprend la main au lieu de recevoir un
+ * rendu qui ne lui convient pas. Le SQL consulté est celui qui a *tourné*, jamais le contenu
+ * courant de l'onglet.
+ */
+export function explainPlan(
+  ranSql: string | null | undefined,
+  result: { columns: string[]; rows: Record<string, unknown>[] } | null | undefined,
+): string | null {
+  if (!ranSql || !result) return null;
+  if (detectStatementType(ranSql) !== 'EXPLAIN') return null;
+  if (result.columns.length !== 1 || result.rows.length !== 1) return null;
+  const value = result.rows[0][result.columns[0]];
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Changelog : ce que chaque ligne est
 // ─────────────────────────────────────────────────────────────────────────────
 
