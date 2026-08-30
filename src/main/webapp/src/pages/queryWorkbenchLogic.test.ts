@@ -12,7 +12,7 @@ import {
   starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, offsetAt, resolveOrigin,
   detailValue, withoutLeadingCte,
-  planRun, previewStatement, detectStatementType, isJobModeStatement, insertTargetAndSource,
+  planRun, previewStatement, detectStatementType, isJobModeStatement,
   forgetOldestResults, summariseBatch, describeStatementRun, MAX_RETAINED_BATCH_ROWS,
   buildCompletionEntries, SQL_KEYWORD_SUGGESTIONS,
   type StatementRun,
@@ -299,32 +299,6 @@ describe('isJobModeStatement', () => {
   });
 });
 
-describe('insertTargetAndSource', () => {
-  it('reads the target and the source of an INSERT', () => {
-    expect(insertTargetAndSource('INSERT INTO orders_out SELECT id FROM orders'))
-      .toEqual({ target: 'orders_out', source: 'orders' });
-    expect(insertTargetAndSource('INSERT INTO `a.b` (id) SELECT id FROM "c.d"'))
-      .toEqual({ target: 'a.b', source: 'c.d' });
-    expect(insertTargetAndSource('insert overwrite sink select id from src'))
-      .toEqual({ target: 'sink', source: 'src' });
-  });
-
-  /** Une cible sans source ne peut pas être dérivée d'un schéma : il n'y en a pas. */
-  it('has no source to derive the target from on a VALUES insert', () => {
-    expect(insertTargetAndSource("INSERT INTO sink VALUES ('a')")?.source).toBeNull();
-  });
-
-  /** Le mot-clé d'un appel de fenêtre n'est pas un nom de table — même piège que côté serveur. */
-  it('does not mistake the TABLE keyword of a window call for a source', () => {
-    expect(insertTargetAndSource(
-      'INSERT INTO sink SELECT * FROM TABLE(TUMBLE(TABLE orders, DESCRIPTOR(ts), INTERVAL \'5\' MINUTE))')
-      ?.source).toBeNull();
-  });
-
-  it('reads nothing out of a statement that is not an INSERT', () => {
-    expect(insertTargetAndSource('SELECT * FROM orders')).toBeNull();
-  });
-});
 
 describe('buildCompletionEntries', () => {
   const catalogue = { tables: ['orders'], topics: ['demo.orders.1.received', 'orders'] };

@@ -288,7 +288,6 @@ public class ExplorerConfig {
     private int consumerPoolSize = 0;
 
     private int inferenceSampleSize = 10;
-    private long inferencePollTimeoutMs = 2000;
     private boolean allowCrossJoin = false;
     private boolean allowSystemTableAccess = false;
     /**
@@ -628,14 +627,6 @@ public class ExplorerConfig {
 
     public void setInferenceSampleSize(int inferenceSampleSize) {
         this.inferenceSampleSize = inferenceSampleSize;
-    }
-
-    public long getInferencePollTimeoutMs() {
-        return inferencePollTimeoutMs;
-    }
-
-    public void setInferencePollTimeoutMs(long inferencePollTimeoutMs) {
-        this.inferencePollTimeoutMs = inferencePollTimeoutMs;
     }
 
     public boolean isAllowCrossJoin() {
