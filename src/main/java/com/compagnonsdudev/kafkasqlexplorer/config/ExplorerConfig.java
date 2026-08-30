@@ -218,6 +218,20 @@ public class ExplorerConfig {
      * offset order, so an uncompacted topic costs a longer startup read rather than a wrong answer.
      */
     private String fieldMappingTopic = "internal.field.mappings";
+    /**
+     * Combien de jobs Flink continus ce déploiement tient à la fois ; 0 retire le plafond.
+     *
+     * <p>Mesuré sur ce runtime : l'exécution locale ne partage pas de cluster, donc chaque
+     * soumission démarre <strong>son propre MiniCluster</strong> — environ 80 threads et 6 Mo de
+     * tas par job, dans le processus qui sert aussi l'interface (six jobs tenus : 482 threads).
+     * Ce n'est pas une famine de slots, vérifiée absente : une lecture pendant un INSERT continu
+     * répond toujours par le planner. C'est un coût qui s'accumule en silence sur un geste répété.
+     *
+     * <p>Dix parce qu'un opérateur qui construit un pipeline en soumet quelques-uns et ne doit pas
+     * être arrêté, et parce qu'au-delà le compte de threads cesse d'être anodin. Le refus nomme le
+     * compte et ce réglage, plutôt que d'être un plafond muet.
+     */
+    private int maxConcurrentJobs = 10;
     private int defaultMaxRows = 50;
     private long defaultQueryTimeoutMs = 10000;
     private long auditQueryTimeoutMs = 5000;
@@ -534,6 +548,14 @@ public class ExplorerConfig {
 
     public void setFieldMappingTopic(String fieldMappingTopic) {
         this.fieldMappingTopic = fieldMappingTopic;
+    }
+
+    public int getMaxConcurrentJobs() {
+        return maxConcurrentJobs;
+    }
+
+    public void setMaxConcurrentJobs(int maxConcurrentJobs) {
+        this.maxConcurrentJobs = maxConcurrentJobs;
     }
 
     public int getDefaultMaxRows() {

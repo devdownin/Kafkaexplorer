@@ -155,6 +155,19 @@ public class FlinkSqlService {
     /** First table named after FROM — backticked, quoted or bare. */
     private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\s+[`\"]?([\\w.\\-]+)[`\"]?");
 
+    /** Every table a statement reads: after FROM, and after each JOIN. */
+    private static final Pattern SOURCE_TABLE = Pattern.compile(
+        "(?i)\\b(?:FROM|JOIN)\\s+[`\"]?([\\w.\\-]+)[`\"]?");
+
+    /**
+     * Names the pattern above can match that are keywords rather than tables.
+     *
+     * <p>{@code FROM TABLE(TUMBLE(TABLE orders, …))} yields {@code TABLE}, and {@code FROM
+     * LATERAL TABLE(…)} / {@code FROM UNNEST(…)} the same way. The window call carries the real
+     * name and is read separately, exactly as {@link #extractPrimaryTable} does.
+     */
+    private static final Set<String> NOT_A_TABLE_NAME = Set.of("TABLE", "LATERAL", "UNNEST");
+
     /** One INTERVAL argument of a window call. Flink accepts both MINUTE and MINUTES. */
     private static final Pattern WINDOW_INTERVAL = Pattern.compile(
         "(?i)INTERVAL\\s+'(\\d+)'\\s+(MINUTE|HOUR|SECOND|DAY)S?");
@@ -376,6 +389,40 @@ public class FlinkSqlService {
     }
 
     /**
+     * Every table a statement reads, the primary one first.
+     *
+     * <p>Auto-registration used to consult {@link #extractPrimaryTable} alone, so a statement
+     * reading two topics registered the first and let the planner answer "Object not found" about
+     * the second — a name that is perfectly correct, on the shape a JOIN <em>is</em>. It cost most
+     * in Flink Job mode, which has no direct reader to catch the query, and it was invisible in
+     * read mode for the same reason it was invisible everywhere: the fallback returned rows, from
+     * a reader that ignores the join entirely.
+     *
+     * <p>The primary table stays first because it is the one the direct reader will read if the
+     * query falls back — {@code deferToDirect} is decided on it and on nothing else.
+     *
+     * <p>An INSERT's <strong>target</strong> is excluded by construction: the pattern matches
+     * {@code FROM} and {@code JOIN}, never {@code INSERT INTO}. That is deliberate — deriving a
+     * sink schema from an empty target topic yields {@code raw_value STRING} and an arity failure,
+     * which is a worse answer than "unknown table".
+     */
+    List<String> extractSourceTables(String sql) {
+        Set<String> names = new LinkedHashSet<>();
+        String primary = extractPrimaryTable(sql);
+        if (primary != null && !NOT_A_TABLE_NAME.contains(primary.toUpperCase(Locale.ROOT))) {
+            names.add(primary);
+        }
+        Matcher window = WINDOW_CALL.matcher(sql);
+        while (window.find()) names.add(window.group(2));
+        Matcher source = SOURCE_TABLE.matcher(sql);
+        while (source.find()) {
+            String name = source.group(1);
+            if (!NOT_A_TABLE_NAME.contains(name.toUpperCase(Locale.ROOT))) names.add(name);
+        }
+        return List.copyOf(names);
+    }
+
+    /**
      * Before executing a SELECT, checks if the referenced table is already registered in Flink.
      * If not, looks for a Kafka topic whose sanitized name (dots/hyphens → underscores) matches,
      * infers its schema, generates the DDL and registers it automatically.
@@ -385,18 +432,47 @@ public class FlinkSqlService {
         // its body reads was never registered and the planner answered "Object not found" — which
         // is how supporting CTEs at the guard alone would have produced a different dead end.
         //
-        // `INSERT INTO … SELECT` était admis ici aussi, pour le mode Job du SQL editor : `submitJob`
-        // ne passait par aucun enregistrement, donc un INSERT depuis la table d'un topic répondait
-        // « Object not found » tant qu'un SELECT n'était pas venu enregistrer la source. Ce mode a
-        // été retiré et son endpoint avec — plus aucun INSERT n'atteint ce point (`executeSync` le
-        // refuse, la whitelist d'`executeSql` aussi), donc la branche est retirée plutôt que laissée
-        // à garder un cas qui ne peut plus se produire.
+        // `INSERT INTO … SELECT` entre ici pour la même raison, et c'est le mode Job qui en avait
+        // besoin : `submitJob` ne passait par aucun enregistrement, donc le raccourci que la barre
+        // latérale propose elle-même — un INSERT depuis la table d'un topic — répondait « Object
+        // not found » tant qu'un SELECT n'était pas venu enregistrer la source d'abord. Seule la
+        // *source* est concernée : `extractPrimaryTable` lit le FROM, donc la cible de l'INSERT
+        // est exclue par construction, et c'est voulu — dériver un schéma d'un topic cible vide
+        // rendrait `raw_value STRING` et un échec d'arité, pire qu'un « table inconnue ».
+        //
+        // « INSERT » et non « INSERT INTO » : le garde du mode Job classe l'instruction sur son
+        // premier mot, donc `INSERT OVERWRITE` le franchit — et il arrivait ici pour se voir
+        // refuser l'enregistrement, si bien que sa source répondait « Object not found » sur un
+        // nom de topic parfaitement correct. C'est exactement le défaut corrigé au paragraphe
+        // ci-dessus pour `INSERT INTO`, resté debout à un mot-clé près : ce que le mode Job
+        // accepte de soumettre, cette méthode doit accepter de servir.
         String body = SqlStatements.classifiableBody(sql);
-        if (!body.startsWith("SELECT")) return AutoRegResult.skip();
+        if (!body.startsWith("SELECT") && !body.startsWith("INSERT") && !body.startsWith("EXECUTE STATEMENT SET")
+                && !body.startsWith("STATEMENT SET")) {
+            return AutoRegResult.skip();
+        }
         // The first FROM is inside the CTE body, which is exactly the source table to register.
-        String rawTableRef = extractPrimaryTable(sql);
-        if (rawTableRef == null) return AutoRegResult.skip();
+        List<String> sources = extractSourceTables(sql);
+        if (sources.isEmpty()) return AutoRegResult.skip();
 
+        // Chaque source est enregistrée, pas seulement la première : une jointure entre deux
+        // topics non enregistrés répondait « Object not found » sur le second. Le repli sur le
+        // lecteur direct, lui, ne se décide que sur la source *primaire* — c'est la seule que ce
+        // lecteur lira, donc c'est la seule dont l'absence de schéma le concerne.
+        boolean registeredAny = false;
+        boolean primaryDeferred = false;
+        for (String rawTableRef : sources) {
+            AutoRegResult one = registerSourceTable(rawTableRef);
+            if (one.error() != null) return one;
+            if (one.registered()) registeredAny = true;
+            if (one.deferredToDirectReader() && rawTableRef.equals(sources.get(0))) primaryDeferred = true;
+        }
+        if (primaryDeferred) return AutoRegResult.deferToDirect();
+        return registeredAny ? AutoRegResult.tableCreated() : AutoRegResult.skip();
+    }
+
+    /** One source table: already registered, matched to a topic and registered, or left to Flink. */
+    private AutoRegResult registerSourceTable(String rawTableRef) {
         String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
 
         if (listTables().contains(flinkTableName)) return AutoRegResult.skip();
@@ -520,11 +596,54 @@ public class FlinkSqlService {
         return open + 2 < sql.length() && sql.charAt(open + 2) == '+';
     }
 
+    /** {@code AS SELECT} / {@code AS WITH} au niveau du statement, littéraux mis à part. */
+    private static final Pattern CTAS_TAIL = Pattern.compile("(?i)\\bAS\\s+(?:SELECT|WITH)\\b");
+
+    /**
+     * Un {@code CREATE TABLE … AS SELECT}, et non un {@code CREATE TABLE} ordinaire.
+     *
+     * <p>Les littéraux sont neutralisés avant le test : une option peut parfaitement contenir le
+     * texte {@code 'as select'} ({@code WITH ('note' = 'as select …')}), et refuser un CREATE
+     * TABLE à cause du contenu d'une chaîne serait un faux positif sur la seule DDL que cette
+     * application accepte. Les commentaires, eux, ont déjà été retirés par l'appelant.
+     */
+    static boolean isCreateTableAsSelect(String upperSql) {
+        if (upperSql == null || !upperSql.startsWith("CREATE TABLE")) return false;
+        return CTAS_TAIL.matcher(withoutStringLiterals(upperSql)).find();
+    }
+
+    /** Le texte avec le contenu de chaque littéral simple-quote remplacé par des espaces. */
+    private static String withoutStringLiterals(String sql) {
+        StringBuilder out = new StringBuilder(sql.length());
+        boolean inLiteral = false;
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (c == '\'') {
+                // Une quote doublée à l'intérieur d'un littéral l'échappe et ne le ferme pas.
+                if (inLiteral && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+                    out.append("  ");
+                    i++;
+                    continue;
+                }
+                inLiteral = !inLiteral;
+                out.append('\'');
+                continue;
+            }
+            out.append(inLiteral ? ' ' : c);
+        }
+        return out.toString();
+    }
+
     private String extractStatementType(String sql) {
         if (sql == null || sql.isBlank()) return "UNKNOWN";
         // Classified past a leading CTE chain, so `WITH … INSERT INTO` and `WITH … SELECT` are
         // routed like the statements they actually are.
         String upper = SqlStatements.classifiableBody(stripSqlComments(sql));
+        // Un STATEMENT SET est la façon dont Flink écrit un fan-out : plusieurs INSERT depuis une
+        // même source dans **un seul** job, donc une seule lecture du topic. Il est classé avant
+        // l'INSERT parce qu'il en contient, et nommé à part parce que le mode Job doit pouvoir le
+        // reconnaître sans confondre « plusieurs instructions » et « une instruction composée ».
+        if (upper.startsWith("EXECUTE STATEMENT SET") || upper.startsWith("STATEMENT SET")) return "STATEMENT_SET";
         if (upper.startsWith("INSERT INTO")) return "INSERT";
         if (upper.startsWith("CREATE TABLE")) return "CREATE_TABLE";
         if (upper.startsWith("SELECT")) return "SELECT";
@@ -637,6 +756,19 @@ public class FlinkSqlService {
         }
     }
 
+    /**
+     * Les instructions que le mode Job soumet : un INSERT continu, ou un STATEMENT SET qui en
+     * réunit plusieurs en un job.
+     *
+     * <p>Écrite une fois plutôt que deux : {@code executeSync} refuse exactement ce que
+     * {@code submitJob} accepte, et deux listes qui divergent laissent une instruction refusée
+     * des deux côtés — avec, en mode lecture, le message « Only SELECT, EXPLAIN and CREATE TABLE »
+     * qui se lit comme une restriction de sécurité plutôt que comme « à envoyer ailleurs ».
+     */
+    static boolean isJobModeStatement(String statementType) {
+        return "INSERT".equals(statementType) || "STATEMENT_SET".equals(statementType);
+    }
+
     private String prepareSql(String sql) {
         return stripSqlComments(normalizeIdentifierQuotes(sql.trim()));
     }
@@ -653,16 +785,164 @@ public class FlinkSqlService {
      */
     public QueryResult executeSync(QueryRequest request) {
         String strippedSql = prepareSql(request.sql());
-        if ("INSERT".equals(extractStatementType(strippedSql))) {
+        if (isJobModeStatement(extractStatementType(strippedSql))) {
             return new QueryResult(
                 Collections.emptyList(),
                 Collections.emptyList(),
                 0,
-                "INSERT INTO is not run by this application: it submits no continuous Flink job. "
-              + "Run the pipeline as a job of your own; this engine reads what it produces."
+                "INSERT and STATEMENT SET statements must be submitted via /api/query/jobs in Flink Job mode."
             );
         }
         return executeSql(request);
+    }
+
+    public FlinkJobSummary submitJob(QueryRequest request) {
+        long startedAt = System.currentTimeMillis();
+        // L'identifiant de l'appelant quand il en fournit un, comme en lecture — `submitJob` en
+        // fabriquait un et ne le rendait que dans sa réponse. Si celle-ci se perd (délai réseau,
+        // onglet fermé), le job tourne et personne n'a son id : il n'est plus annulable qu'en le
+        // reconnaissant à son SQL dans le tableau de bord. `resolveQueryId` refuse ce qui ne peut
+        // pas servir de clé de magasin ni de ligne de journal et en fabrique un à la place.
+        String queryId = resolveQueryId(request.queryId());
+        String strippedSql = prepareSql(request.sql());
+        String statementType = extractStatementType(strippedSql);
+
+        if (!isJobModeStatement(statementType)) {
+            flinkJobStore.create(
+                queryId,
+                null,
+                statementType,
+                "ASYNC_JOB",
+                "FAILED",
+                "Rejected before execution",
+                strippedSql,
+                startedAt,
+                JOB_MODE_REFUSAL
+            );
+            throw new IllegalArgumentException(JOB_MODE_REFUSAL);
+        }
+
+        refuseIfTooManyJobsAreHeld();
+
+        try {
+            sqlQueryValidator.validate(strippedSql);
+
+            /*
+             * Enregistrer la table source, comme le fait une lecture.
+             *
+             * Ce chemin ne le faisait pas, si bien que le raccourci proposé par la barre latérale
+             * elle-même — un `INSERT INTO … SELECT … FROM <table d'un topic>` — échouait sur
+             * « Object not found » tant qu'un SELECT n'était pas venu enregistrer la source dans
+             * ce processus. Le mode Job devenait donc dépendant d'un geste fait ailleurs, ce que
+             * rien n'indiquait.
+             *
+             * Un échec est rapporté ici plutôt que laissé remonter en erreur de planner : c'est la
+             * même règle qu'en lecture, à une exception près qui compte. `deferToDirect` n'a aucun
+             * sens en mode Job — il n'y a pas de lecteur direct pour rattraper la requête — donc
+             * l'absence de schéma devient un refus qui nomme sa cause, au lieu d'un « table
+             * inconnue » sur un nom parfaitement correct.
+             */
+            AutoRegResult autoReg = autoRegisterTableIfNeeded(strippedSql);
+            if (autoReg.error() != null) {
+                throw new IllegalStateException(autoReg.error());
+            }
+            if (autoReg.deferredToDirectReader()) {
+                throw new IllegalArgumentException(
+                    "No schema could be inferred for the topic this statement reads, so no Flink "
+                  + "table could be registered for it — the topic may be empty, or its messages "
+                  + "unreadable. A streaming job needs a typed source: create the table yourself "
+                  + "with CREATE TABLE, then submit the INSERT.");
+            }
+
+            TableResult result = executeMutationSql("submit-job", strippedSql);
+            JobClient client = result.getJobClient()
+                .orElseThrow(() -> new IllegalStateException("Flink did not return a JobClient for the submitted job."));
+
+            JobInfo info = new JobInfo(queryId, strippedSql, statementType, "ASYNC_JOB", client, startedAt);
+            heldJobs.put(queryId, info);
+            FlinkJobSummary summary = buildJobSummary(info);
+            flinkJobStore.create(
+                queryId,
+                info.flinkJobId(),
+                statementType,
+                info.executionMode(),
+                summary.status(),
+                "Submitted via Flink Job mode",
+                strippedSql,
+                startedAt,
+                null
+            );
+            return summary;
+        } catch (RuntimeException e) {
+            RuntimeException reported = explainMultiStatementRefusal(e);
+            // explain(), et non getMessage() : c'est nul sur une NullPointerException, et ce champ
+            // est la seule trace de la raison — `FlinkJobCard` l'affiche sous la carte rouge, et
+            // rien d'autre ne la garde. Flink emballe par ailleurs le texte utile (la ligne et la
+            // colonne de Calcite, la clé d'option refusée par le connecteur) dans une exception
+            // externe générique, que explain() aplatit.
+            flinkJobStore.create(
+                queryId,
+                null,
+                statementType,
+                "ASYNC_JOB",
+                "FAILED",
+                "Submission failed before a Flink JobClient was available",
+                strippedSql,
+                startedAt,
+                SqlErrorClassifier.explain(reported)
+            );
+            throw reported;
+        }
+    }
+
+    /** Ce que le mode Job n'exécute pas, dit une fois — le magasin et l'exception le partagent. */
+    static final String JOB_MODE_REFUSAL =
+        "Only INSERT and STATEMENT SET statements are allowed in Flink Job mode.";
+
+    /**
+     * Un job continu tenu de plus n'est pas gratuit, et rien ne le disait.
+     *
+     * <p>Mesuré sur ce runtime : chaque soumission démarre <strong>son propre MiniCluster</strong>
+     * — l'exécution locale n'en partage pas — soit environ <strong>80 threads et 6 Mo de tas par
+     * job</strong>, dans le processus qui sert aussi l'interface (six jobs tenus : 482 threads).
+     * Ce n'est pas une famine de slots : une lecture pendant un INSERT continu répond toujours par
+     * le planner, ce qui a été vérifié avant d'écrire ce garde-fou. C'est un coût qui s'accumule
+     * en silence, sur un geste qu'on répète sans y penser depuis l'éditeur.
+     *
+     * <p>Le refus <strong>nomme le compte et le réglage</strong> plutôt que d'être un plafond muet,
+     * et {@code 0} le retire — un opérateur qui sait ce qu'il fait n'a pas à être arrêté ici. Seuls
+     * les jobs asynchrones comptent : une lecture synchrone tient aussi son job, mais le temps de
+     * sa requête HTTP.
+     */
+    private void refuseIfTooManyJobsAreHeld() {
+        int max = explorerConfig.getMaxConcurrentJobs();
+        if (max <= 0) return;
+        // getHeldJobs() réconcilie avant de répondre, donc un job terminé ne compte pas.
+        long held = getHeldJobs().values().stream()
+            .filter(info -> "ASYNC_JOB".equals(info.executionMode()))
+            .count();
+        if (held < max) return;
+        throw new IllegalArgumentException(String.format(
+            "This deployment already holds %d streaming job(s), which is the maximum "
+                + "(explorer.max-concurrent-jobs = %d). Each one runs its own embedded Flink "
+                + "cluster — about 80 threads — inside the process that serves this UI. Stop one "
+                + "from the dashboard, or raise the setting.", held, max));
+    }
+
+    /**
+     * « only single statement supported » est la phrase de Flink, et elle ne dit pas quoi faire.
+     *
+     * <p>Deux instructions collées dans une soumission sont un geste courant, et il y a deux
+     * réponses : les lancer l'une après l'autre (`Run all`, que l'éditeur fait déjà) ou en faire
+     * un seul job (`STATEMENT SET`, que le mode Job accepte désormais). Le refus les nomme.
+     */
+    private static RuntimeException explainMultiStatementRefusal(RuntimeException e) {
+        String message = SqlErrorClassifier.explain(e);
+        if (!message.toLowerCase(Locale.ROOT).contains("only single statement supported")) return e;
+        return new IllegalArgumentException(
+            "A submission carries one statement, and this one holds several. Run them one after "
+                + "another with Run all, or submit them as a single job: "
+                + "EXECUTE STATEMENT SET BEGIN <insert>; <insert>; END.", e);
     }
 
     public QueryResult executeSql(QueryRequest request) {
@@ -682,6 +962,27 @@ public class FlinkSqlService {
         // Security: Prevent execution of dangerous or unsupported DDL/DML.
         if (!sql.startsWith("SELECT") && !sql.startsWith("EXPLAIN") && !sql.startsWith("CREATE TABLE")) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, "Only SELECT, EXPLAIN and CREATE TABLE statements are allowed.");
+        }
+        /*
+         * `CREATE TABLE … AS SELECT` est un INSERT déguisé, et la whitelist le laissait passer
+         * parce qu'elle classe sur le premier mot — le même défaut que `INSERT OVERWRITE` un cran
+         * plus loin, ici avec des conséquences plus lourdes. Ce chemin-ci est celui de la
+         * *lecture* : un CTAS y crée la table **et démarre le job qui l'alimente**, sans passer
+         * par `submitJob`. Le job n'entre donc dans aucun registre — il est invisible au tableau
+         * de bord, ne compte pas contre `explorer.max-concurrent-jobs`, et
+         * `POST /api/query/cancel/{queryId}` n'a aucun identifiant pour l'atteindre. Sur une
+         * source Kafka, cela veut dire un job continu que rien ne peut ni voir ni arrêter, lancé
+         * par le point d'entrée que `executeSync` refuse justement aux INSERT.
+         *
+         * Le refus nomme la marche à suivre — le `CREATE TABLE` puis l'`INSERT INTO`, que
+         * l'éditeur sait enchaîner avec « Run all » — plutôt que de s'arrêter sur une interdiction.
+         */
+        if (isCreateTableAsSelect(sql)) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0,
+                "CREATE TABLE … AS SELECT starts a job that writes rows, so it is not run here: "
+                    + "the job would be invisible to the dashboard and could not be cancelled. "
+                    + "Declare the table with CREATE TABLE, then submit the INSERT INTO in Flink "
+                    + "Job mode (Run all does both in order).");
         }
 
         try {

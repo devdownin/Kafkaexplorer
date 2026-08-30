@@ -302,6 +302,7 @@ allocates; a cluster audit over thousands of topics is the workload that wants m
 | `EXPLORER_CLUSTER_NAME` | `Kafka cluster` | Label for this environment in the header — `Staging`, `Orders prod`. A display name only; the bootstrap address the app is really using is shown beside it on hover. |
 | `EXPLORER_DEFAULT_MAX_ROWS` | `50` | Rows a query returns by default. |
 | `EXPLORER_DEFAULT_QUERY_TIMEOUT_MS` | `10000` | Per-query wall clock. |
+| `EXPLORER_MAX_CONCURRENT_JOBS` | `10` | Continuous Flink jobs (`INSERT INTO` in Job mode) held at once; `0` removes the cap. Each submission starts its own embedded Flink cluster inside the app's process — measured at about 80 threads and 6 MB of heap per job — so this bounds a gesture that is easy to repeat from the editor. A refused submission names the count and this variable; running jobs are stopped from the dashboard. |
 | `EXPLORER_AUDIT_MAX_DURATION_MS` | `1800000` | Budget for one full cluster audit; `0` disables it. |
 | `EXPLORER_SEARCH_MAX_SCAN` | `20000` | Records one topic-search pass may read. |
 | `EXPLORER_ACTIVITY_MAX_TOPICS` | `100` | Topics one activity read may measure — the sparkline column of the dashboard asks only for the rows it displays. |

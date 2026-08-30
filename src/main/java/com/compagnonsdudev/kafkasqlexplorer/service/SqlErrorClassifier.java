@@ -71,6 +71,28 @@ public final class SqlErrorClassifier {
             + "|expression '[^']*' is not being grouped"
             + "|non-query expression encountered"
             + "|incompatible types"
+            // Une projection qui ne rentre pas dans le sink. Flink le dit de deux façons —
+            // « Different number of columns » et « Incompatible types for sink column » — et
+            // seule la seconde était reconnue, alors que c'est une seule et même faute : la
+            // requête ne correspond pas à la table cible. La première est même la plus courante,
+            // `INSERT INTO sink SELECT * FROM source` sur une table auto-générée ramenant la
+            // colonne calculée `proc_time` qu'aucun sink n'accepte — et elle répondait 500,
+            // c'est-à-dire « panne du serveur », là où l'INSERT est le seul geste de l'éditeur
+            // qui n'a aucun repli pour rattraper l'erreur.
+            + "|column types of query result and sink"
+            // Un sink qui n'implémente pas SupportsOverwrite : c'est l'instruction qui demande à
+            // cette table ce qu'elle ne sait pas faire, pas le moteur qui tombe.
+            + "|insert overwrite requires"
+            // Un hint d'options posé sur une vue plutôt que sur une table.
+            + "|cannot be enriched with new options"
+            // Ce que le planner *streaming* refuse de construire : la requête est valide en SQL et
+            // n'a pas de sens sur un flux. Non reconnues, ces deux-là étaient des pannes moteur,
+            // donc la requête se repliait sur le lecteur direct — qui ne connaît que des topics
+            // Kafka et répondait « Table 'x' not found » sur une table qui existe, en reléguant la
+            // vraie raison dans les warnings. C'est la substitution que ce classifieur existe pour
+            // empêcher : l'avis d'un autre moteur sur une requête qu'il n'a jamais su exécuter.
+            + "|sort on a non-time-attribute field is not supported"
+            + "|unexpected correlate variable"
             + "|cannot be cast to"
             + "|argument type mismatch"
             + "|not allowed in this environment"

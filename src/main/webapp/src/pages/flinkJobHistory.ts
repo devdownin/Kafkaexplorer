@@ -76,6 +76,19 @@ export function formatDuration(ms: number | null): string {
 }
 
 /**
+ * Un statut dont il n'y a plus rien à attendre.
+ *
+ * Miroir de `FlinkJobStore.isTerminal`, y compris sur ce qu'il **n'**inclut **pas** : `UNAVAILABLE`
+ * n'est pas un état terminal, c'est l'aveu qu'on n'a pas su lire le statut — le confondre avec une
+ * fin est exactement le défaut pour lequel ce sous-système a été corrigé.
+ */
+export function isJobTerminal(status: string | null | undefined): boolean {
+  const upper = (status ?? '').toUpperCase();
+  return upper === 'FINISHED' || upper === 'FAILED' || upper === 'CANCELED'
+    || upper === 'CANCELLED' || upper === 'UNKNOWN';
+}
+
+/**
  * La phrase que la carte pose au-dessus de l'historique.
  *
  * Elle dit ce que la pastille ne dit pas — depuis quand, et pendant combien de temps — et elle

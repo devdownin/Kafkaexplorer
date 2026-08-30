@@ -19,6 +19,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -292,7 +293,25 @@ class QueryControllerTest {
      * que {@code MetricControllerTest.theUncalledSqlPreviewEndpointIsGone}.
      */
     @Test
-    void theJobSubmissionEndpointIsGone() throws Exception {
+    void aRefusedJobSubmissionCarriesItsReason() throws Exception {
+        when(flinkJobService.submit(any()))
+            .thenThrow(new IllegalArgumentException(
+                "Only INSERT and STATEMENT SET statements are allowed in Flink Job mode."));
+
+        mockMvc.perform(post("/api/query/jobs")
+                .contentType("application/json")
+                .content("{\"sql\":\"SELECT 1\"}"))
+            .andExpect(status().isBadRequest())
+            .andExpect(jsonPath("$.error").value(
+                org.hamcrest.Matchers.containsString("Only INSERT and STATEMENT SET statements are allowed")));
+    }
+
+    @Test
+    void aTypoInTheSinkNameIsTheCallersFaultAndSaysSo() throws Exception {
+        when(flinkJobService.submit(any())).thenThrow(new IllegalStateException(
+            "Cannot find table '`default_catalog`.`default_database`.`no_such_sink`' in any of "
+                + "the catalogs [default_catalog], nor as a temporary table."));
+
         mockMvc.perform(post("/api/query/jobs")
                 .contentType("application/json")
                 .content("{\"sql\":\"INSERT INTO sink SELECT id FROM orders\"}"))
@@ -306,5 +325,66 @@ class QueryControllerTest {
 
         mockMvc.perform(get("/api/query/jobs"))
             .andExpect(status().isOk());
+    }
+
+    /**
+     * Le DDL d'une cible d'INSERT, dérivé des colonnes de la source.
+     *
+     * <p>En mode Job la cible doit exister, et rien n'aidait à la créer : il fallait repasser en
+     * mode lecture et écrire le DDL à la main. Ce point d'entrée le rend — il ne crée rien, ce qui
+     * écrit sur le cluster reste un geste délibéré — et il laisse dehors les colonnes calculées,
+     * qui sont précisément celles qu'un sink refuse.
+     */
+    @Test
+    void theSinkDdlIsDerivedFromTheSourceColumns() throws Exception {
+        java.util.Map<String, String> schema = new java.util.LinkedHashMap<>();
+        schema.put("order_id", "STRING NOT NULL");
+        schema.put("proc_time", "TIMESTAMP_LTZ(3) NOT NULL *PROCTIME*");
+        when(flinkSqlService.getTableSchema("demo_orders")).thenReturn(schema);
+        when(ddlGeneratorService.generateDdl(anyString(), any(), any()))
+            .thenReturn("CREATE TABLE demo_orders_out (order_id STRING) WITH ('connector'='kafka')");
+
+        mockMvc.perform(get("/api/query/sink-ddl")
+                .param("source", "demo_orders").param("topic", "demo.orders.out"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ddl").value(org.hamcrest.Matchers.containsString("CREATE TABLE")));
+
+        org.mockito.ArgumentCaptor<java.util.Map<String, String>> columns =
+            org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        Mockito.verify(ddlGeneratorService).generateDdl(
+            org.mockito.ArgumentMatchers.eq("demo.orders.out"), columns.capture(), any());
+        assertEquals(java.util.List.of("order_id"), java.util.List.copyOf(columns.getValue().keySet()));
+    }
+
+    /**
+     * Un nom que Kafka ne pourrait pas porter est refusé avant qu'aucun DDL ne soit bâti.
+     *
+     * <p>Ce point d'entrée est le seul qui génère le DDL d'un topic qui n'existe pas encore, donc
+     * le seul où un nom arbitraire d'une requête se retrouve recopié dans une chaîne SQL puis
+     * repassé par le masquage des identifiants — dont le motif est quadratique sur une entrée
+     * choisie. Le refus est de toute façon la bonne réponse sur le fond.
+     */
+    @Test
+    void aNameKafkaCouldNotCarryIsRefusedBeforeAnyDdlIsBuilt() throws Exception {
+        mockMvc.perform(get("/api/query/sink-ddl")
+                .param("source", "demo_orders").param("topic", "not a topic name'"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ddl").doesNotExist())
+            .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("Kafka")));
+
+        Mockito.verify(ddlGeneratorService, Mockito.never()).generateDdl(anyString(), any(), any());
+        Mockito.verify(flinkSqlService, Mockito.never()).getTableSchema(anyString());
+    }
+
+    /** Une source que Flink ne connaît pas ne rend pas un DDL vide : elle dit quoi faire. */
+    @Test
+    void anUnknownSourceIsReportedRatherThanTurnedIntoAnEmptyTable() throws Exception {
+        when(flinkSqlService.getTableSchema(anyString())).thenReturn(new java.util.LinkedHashMap<>());
+
+        mockMvc.perform(get("/api/query/sink-ddl")
+                .param("source", "nope").param("topic", "nope.out"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ddl").doesNotExist())
+            .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("nope")));
     }
 }

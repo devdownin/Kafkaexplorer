@@ -619,11 +619,49 @@ export function detectStatementType(sql: string): string {
   const stripped = withoutLeadingCte(
     (sql ?? '').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, '').trim(),
   ).toUpperCase();
+  // Un STATEMENT SET est la façon dont Flink écrit un fan-out : plusieurs INSERT depuis une même
+  // source dans un seul job. Classé avant l'INSERT, puisqu'il en contient — et reconnu ici parce
+  // que le garde du mode d'exécution refuse côté navigateur ce qu'il ne sait pas nommer, donc sans
+  // ce cas la forme partait à l'erreur avant même d'atteindre le serveur qui l'accepte.
+  if (stripped.startsWith('EXECUTE STATEMENT SET') || stripped.startsWith('STATEMENT SET')) {
+    return 'STATEMENT_SET';
+  }
   if (stripped.startsWith('INSERT INTO')) return 'INSERT';
   if (stripped.startsWith('CREATE TABLE')) return 'CREATE_TABLE';
   if (stripped.startsWith('SELECT')) return 'SELECT';
   if (stripped.startsWith('EXPLAIN')) return 'EXPLAIN';
   return stripped.split(/\s+/, 1)[0] || 'UNKNOWN';
+}
+
+/**
+ * Ce que le mode Job soumet : un INSERT continu, ou un STATEMENT SET qui en réunit plusieurs.
+ *
+ * Miroir de `FlinkSqlService.isJobModeStatement`, et il doit le rester : ce garde-ci refuse avant
+ * d'appeler le serveur, donc une forme qu'il ignore n'atteint jamais celui qui l'accepte.
+ */
+export function isJobModeStatement(type: string): boolean {
+  return type === 'INSERT' || type === 'STATEMENT_SET';
+}
+
+/**
+ * La cible et la source d'un `INSERT INTO <cible> … FROM <source>`.
+ *
+ * En mode Job la cible doit exister — un nom inventé ne peut qu'échouer — et rien n'aidait à la
+ * créer : sans table déclarée il fallait repasser en mode lecture et écrire le `CREATE TABLE` à la
+ * main. Ce couple est ce dont `/api/query/sink-ddl` a besoin pour le générer à partir des colonnes
+ * de la source.
+ *
+ * Volontairement lexical et volontairement étroit : une forme qui n'est pas reconnue rend `null`,
+ * et le bouton ne s'affiche pas — proposer de créer une table dont on a mal lu le nom serait pire
+ * que de ne rien proposer.
+ */
+export function insertTargetAndSource(sql: string): { target: string; source: string | null } | null {
+  const stripped = (sql ?? '').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
+  const target = /\bINSERT\s+(?:INTO|OVERWRITE)\s+[`"]?([\w.-]+)[`"]?/i.exec(stripped);
+  if (!target) return null;
+  const source = /\bFROM\s+[`"]?([\w.-]+)[`"]?/i.exec(stripped);
+  const sourceName = source && source[1].toUpperCase() !== 'TABLE' ? source[1] : null;
+  return { target: target[1], source: sourceName };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

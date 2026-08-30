@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -26,6 +27,58 @@ public class DdlGeneratorService {
     public DdlGeneratorService(KafkaConfig kafkaConfig, NamingConventionService namingConventionService) {
         this.kafkaConfig = kafkaConfig;
         this.namingConventionService = namingConventionService;
+    }
+
+    /**
+     * Ce que Kafka accepte dans un nom de topic, et jusqu'où.
+     *
+     * <p>La borne de longueur n'est pas décorative : un nom qui arrive d'une requête est recopié
+     * dans le DDL généré, et ce DDL repasse ensuite par {@link #maskSensitiveProperties}, dont le
+     * motif encadre une alternance de deux {@code [^']*} — quadratique sur une entrée choisie.
+     * Tant que le nom venait d'un topic qui existe, la question ne se posait pas ; le point
+     * d'entrée qui génère le DDL d'une cible <em>à créer</em> l'a rendue réelle, et CodeQL l'a
+     * signalée à ce titre. Refuser ici est de toute façon la bonne réponse : un nom que Kafka ne
+     * pourrait pas porter ne décrit aucun topic, et un DDL bâti dessus ne servirait à rien.
+     *
+     * <p>{@code ExplorerConfig} valide le même alphabet sur un <em>préfixe</em> ; c'est une autre
+     * question (un fragment, pas un nom entier), donc les deux règles restent distinctes plutôt
+     * que fondues en une qui répondrait mal aux deux.
+     */
+    private static final Pattern TOPIC_NAME = Pattern.compile("[a-zA-Z0-9._-]+");
+
+    /** La limite de Kafka elle-même. */
+    private static final int MAX_TOPIC_NAME_LENGTH = 249;
+
+    /** Whether Kafka could carry this as a topic name at all. */
+    public static boolean isValidTopicName(String topic) {
+        return topic != null
+            && !topic.isBlank()
+            && topic.length() <= MAX_TOPIC_NAME_LENGTH
+            && !topic.equals(".")
+            && !topic.equals("..")
+            && TOPIC_NAME.matcher(topic).matches();
+    }
+
+    /**
+     * Les colonnes d'une table existante qu'un sink peut accepter, dans leur ordre.
+     *
+     * <p>{@code FlinkSqlService.getTableSchema} rend le type résolu tel que Flink l'imprime, ce qui
+     * n'est pas un type qu'on peut réécrire dans un DDL : une colonne calculée porte
+     * {@code *PROCTIME*} ou {@code *ROWTIME*} — et c'est précisément celle qu'aucun sink n'accepte,
+     * la cause de l'échec d'arité que la barre latérale évite déjà en nommant les colonnes — et une
+     * colonne non nulle porte {@code NOT NULL}, contrainte qu'il serait faux de recopier sur une
+     * cible alimentée par une projection.
+     */
+    public static Map<String, String> sinkColumns(Map<String, String> schema) {
+        Map<String, String> columns = new LinkedHashMap<>();
+        if (schema == null) return columns;
+        schema.forEach((name, type) -> {
+            if (type == null) return;
+            String upper = type.toUpperCase(Locale.ROOT);
+            if (upper.contains("*PROCTIME*") || upper.contains("*ROWTIME*")) return;
+            columns.put(name, type.replaceAll("(?i)\\s+NOT\\s+NULL$", "").trim());
+        });
+        return columns;
     }
 
     public String generateDdl(String topicName, Map<String, String> schema, MessageFormat format) {

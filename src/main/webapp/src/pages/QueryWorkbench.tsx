@@ -13,7 +13,7 @@ import {
   useVirtualRows,
 } from '../components/ui';
 import {
-  describeQueryError, describeApiError, offsetLocation,
+  describeQueryError, describeApiError, extractApiErrorMessage, offsetLocation,
   type QueryErrorInfo, type QueryErrorLocation,
 } from './queryError';
 import { resolveScope, resolveScopeAsTables, toTableName } from './sqlScope';
@@ -25,13 +25,15 @@ import {
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
   starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
   splitStatements, statementIndexAt, offsetAt, resolveOrigin,
-  planRun, detectStatementType, previewStatement,
+  planRun, detectStatementType, previewStatement, isJobModeStatement, insertTargetAndSource,
   forgetOldestResults, summariseBatch, describeStatementRun, MAX_RETAINED_BATCH_ROWS,
   buildCompletionEntries, type CompletionEntry,
   type PlannedStatement, type StatementRun,
   readSqlParam, buildQueryLink,
   sidebarSqlFor, sidebarActionLabel,
 } from './queryWorkbenchLogic';
+import { isJobTerminal } from './flinkJobHistory';
+import { SubmittedJobPanel } from '../components/query/SubmittedJobPanel';
 import { ResultsGrid } from '../components/query/ResultsGrid';
 import { WindowAssistant } from '../components/query/WindowAssistant';
 import { SchemaBrowser, type SchemaInfo, type SavedQuery } from '../components/query/SchemaBrowser';
@@ -43,6 +45,8 @@ import { copyText } from '../clipboard';
 import { useCatalog } from '../catalogStore';
 import type {
   QueryResult,
+  FlinkJobSummary,
+  FlinkManagedJobDetails,
   DdlPreviewResponse,
   SqlValidationResponse,
   QueryCancelResponse,
@@ -146,6 +150,17 @@ const VIRTUALIZE_THRESHOLD = 200;
  * jamais se termine en disant pourquoi.
  */
 const REQUEST_TIMEOUT_MS = 120_000;
+/*
+ * Cadence de relecture du job soumis, et sa borne.
+ *
+ * Trois secondes parce que ce qu'on guette est une mort précoce — elle arrive dans les premières
+ * secondes — et non le déroulé d'un job continu, qui se suit au tableau de bord. Vingt tours, soit
+ * une minute : au-delà, un job qui tient est un job qui tourne, et cette page n'est pas un
+ * moniteur.
+ */
+const JOB_POLL_INTERVAL_MS = 3_000;
+const JOB_POLL_MAX_ATTEMPTS = 20;
+const JOB_POLL_TIMEOUT_MS = 10_000;
 // Hauteur d'une ligne virtualisée (px-4 py-2.5 text-[12px], forcée sur une
 // seule ligne) — mesurée sur la première ligne montée, cette valeur sert de
 // point de départ.
@@ -527,6 +542,14 @@ const QueryWorkbench: React.FC = () => {
 
   // ── Query state ───────────────────────────────────────────────────────────────
   const [results, setResults] = useState<QueryResult | null>(null);
+  const [submittedJob, setSubmittedJob] = useState<FlinkJobSubmission | null>(null);
+  /* Ce que le job est devenu, relu après la soumission — voir `SubmittedJobPanel`. Le panneau
+     affichait le statut lu ~150 ms après le départ et plus rien ensuite, si bien qu'un job mort à
+     sa première ligne restait vert pour toujours. */
+  const [jobDetails, setJobDetails] = useState<FlinkManagedJobDetails | null>(null);
+  const [jobDetailsError, setJobDetailsError] = useState<string | null>(null);
+  const [jobPollExhausted, setJobPollExhausted] = useState(false);
+  const [stoppingJob, setStoppingJob] = useState(false);
   const [executing, setExecuting] = useState(false);
   // Miroir synchrone de `executing` : un état React n'est pas encore à jour quand deux ⌘↵ se
   // suivent dans le même tick, et c'est précisément ce qu'il faut refuser.
@@ -614,6 +637,82 @@ const QueryWorkbench: React.FC = () => {
     setErrorSource(panelError ?? results);
     setShowErrorDetails(false);
   }
+
+  /*
+   * Ce qu'est devenu le job soumis.
+   *
+   * `POST /api/query/jobs` répond dès que Flink a rendu un JobClient, donc son statut est celui
+   * d'il y a 150 ms — un job qui meurt à sa première ligne (broker injoignable, sérialisation)
+   * laissait le panneau vert pour toujours, et le tableau de bord était le seul endroit où
+   * l'apprendre. On redemande, à cadence lente et pour un temps borné : ce qui arrive après
+   * quelques minutes appartient au tableau de bord, qui suit les jobs sur toute leur vie.
+   *
+   * Un échec de relecture ne remet pas le panneau au vert : il est dit tel quel, « nous n'avons
+   * pas su redemander » n'étant pas « le job va bien ».
+   */
+  useEffect(() => {
+    const queryId = submittedJob?.queryId;
+    if (!queryId) return;
+    let cancelled = false;
+    let attempts = 0;
+    const tick = async () => {
+      attempts += 1;
+      try {
+        const res = await axios.get<FlinkManagedJobDetails>(`/api/query/jobs/${queryId}`,
+          { timeout: JOB_POLL_TIMEOUT_MS });
+        if (cancelled) return;
+        setJobDetails(res.data);
+        setJobDetailsError(null);
+        if (isJobTerminal(res.data.status)) return;
+      } catch (e) {
+        if (cancelled) return;
+        setJobDetailsError(extractApiErrorMessage(e, 'the server did not answer'));
+      }
+      if (attempts >= JOB_POLL_MAX_ATTEMPTS) { setJobPollExhausted(true); return; }
+      if (!cancelled) timer = window.setTimeout(() => void tick(), JOB_POLL_INTERVAL_MS);
+    };
+    let timer = window.setTimeout(() => void tick(), JOB_POLL_INTERVAL_MS);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [submittedJob?.queryId]);
+
+  /*
+   * « On redemande encore » se déduit, il ne se range pas : poser l'état depuis le corps de
+   * l'effet est ce que la règle du compilateur React refuse, et elle a raison — ce booléen est une
+   * fonction de ce qui est déjà à l'écran. Seul l'épuisement du budget de tours est un fait
+   * nouveau, et il est posé depuis la boucle, jamais synchrone.
+   */
+  const jobPolling = !!submittedJob && !jobPollExhausted
+    && !isJobTerminal(jobDetails?.status ?? submittedJob.status);
+
+  /** Arrête le job suivi. Le tableau de bord fait la même chose ; ici c'est sous la main. */
+  const stopSubmittedJob = async () => {
+    const queryId = submittedJob?.queryId;
+    if (!queryId) return;
+    setStoppingJob(true);
+    try {
+      await axios.post(`/api/query/cancel/${queryId}`, null, { timeout: JOB_POLL_TIMEOUT_MS });
+      toast('Cancellation requested', 'success');
+    } catch (e) {
+      toast(extractApiErrorMessage(e, 'Could not cancel the job'), 'error');
+    } finally {
+      setStoppingJob(false);
+    }
+  };
+
+  /**
+   * La cible d'un INSERT que le catalogue ne connaît pas — donc celle qu'il faut créer.
+   *
+   * `null` dès que la cible résout : proposer de créer une table qui existe n'apprend rien, et le
+   * bouton disparaît. Le nom est lu dans le SQL qui a été *exécuté*, jamais dans l'onglet courant :
+   * c'est du job affiché qu'on parle.
+   */
+  const missingSinkTarget = useMemo(() => {
+    if (!submittedJob) return null;
+    const parsed = insertTargetAndSource(submittedJob.sql);
+    if (!parsed || !parsed.source) return null;
+    if ((schema?.tables ?? []).includes(parsed.target)) return null;
+    return parsed;
+  }, [submittedJob, schema]);
 
   const sortedRows = useMemo(
     () => (results?.rows ? sortRows(results.rows, sortCol, sortDir) : []),
@@ -1051,19 +1150,18 @@ const QueryWorkbench: React.FC = () => {
       return { status: 'failed', ms: 0, result: null, error };
     };
 
-    /*
-     * L'éditeur lit : il rend des lignes. Le mode « Flink job », qui soumettait un INSERT continu
-     * à `POST /api/query/jobs`, a été retiré parce qu'il ne fonctionnait pas — donc un INSERT n'a
-     * plus de destination ici, et le refus le dit plutôt que de renvoyer vers un mode absent. Le
-     * backend le refuserait de toute façon (`executeSql` n'accepte que SELECT, EXPLAIN et
-     * CREATE TABLE) ; le dire avant l'aller-retour, c'est nommer la cause au lieu d'une règle qui
-     * se lit comme une restriction de sécurité.
-     */
-    if (statementType === 'INSERT') {
+    if (executionMode === 'SYNC_READ' && isJobModeStatement(statementType)) {
       return refuse({
-        title: 'INSERT INTO is not run by the SQL editor',
-        hint: 'The editor executes reads — SELECT, EXPLAIN and CREATE TABLE. Continuous INSERT jobs are not submitted from here.',
-        raw: 'INSERT INTO is not accepted by the query editor.',
+        title: 'This statement cannot run in Read mode',
+        hint: 'Switch the execution mode to Flink Job — Read mode returns rows, so it only accepts SELECT, EXPLAIN and CREATE TABLE.',
+        raw: 'INSERT and STATEMENT SET must be submitted in Flink Job mode.',
+      });
+    }
+    if (executionMode === 'ASYNC_JOB' && !isJobModeStatement(statementType)) {
+      return refuse({
+        title: 'Flink Job mode only accepts INSERT and STATEMENT SET',
+        hint: `This statement is ${statementType || 'not an INSERT'}. Switch back to Read mode to run it and see the rows.`,
+        raw: 'Flink Job mode only accepts INSERT and STATEMENT SET statements.',
       });
     }
 
@@ -1099,7 +1197,8 @@ const QueryWorkbench: React.FC = () => {
     runningQueryIdRef.current = queryId;
     abortRef.current = controller;
     executingRef.current = true;
-    setExecuting(true); setResults(null); setSortCol(null); setDetailIndex(null);
+    setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null); setDetailIndex(null);
+    setJobDetails(null); setJobDetailsError(null); setJobPollExhausted(false);
     // Ce qui a réellement été exécuté — c'est lui, et non le contenu courant de l'onglet, qui dit
     // si les lignes affichées répondent encore au texte sous les yeux.
     setRanSql(sqlToRun);
@@ -1440,9 +1539,53 @@ const QueryWorkbench: React.FC = () => {
     return 'new' as const;
   }, [activeTab.sql, activeTabId, addTab, updateSql]);
 
-  /** Le raccourci de la barre latérale, sans écraser l'onglet en cours. */
-  const openSelectFor = useCallback((table: string) => {
-    const where = openSql(sidebarSqlFor(table, maxRows), table);
+  /** Rend le `CREATE TABLE` de la cible et l'ouvre — il n'exécute rien, comme partout ici. */
+  const openTargetTableDdl = async () => {
+    if (!missingSinkTarget?.source) return;
+    try {
+      const res = await axios.get<DdlPreviewResponse>('/api/query/sink-ddl',
+        { params: { source: missingSinkTarget.source, topic: missingSinkTarget.target } });
+      if (!res.data.ddl) {
+        toast(res.data.error ?? 'The target DDL could not be generated', 'error');
+        return;
+      }
+      openSql(res.data.ddl);
+      toast('Target table DDL opened — run it in Read mode to create the table', 'success');
+    } catch (e) {
+      toast(extractApiErrorMessage(e, 'The target DDL could not be generated'), 'error');
+    }
+  };
+
+
+  /**
+   * Le raccourci de la barre latérale, sans écraser l'onglet en cours.
+   *
+   * Le SQL posé suit le mode d'exécution (`sidebarSqlFor`) : en mode Job, un `SELECT` était refusé
+   * par la garde de mode, donc cliquer un topic n'y menait qu'à un panneau d'erreur.
+   *
+   * En mode Job le schéma est chargé au besoin — le même appel que déclenche le dépliage d'une
+   * table dans la barre latérale — parce que c'est lui qui permet de lister les colonnes plutôt
+   * que d'écrire `SELECT *`, lequel emporte `proc_time` et fait échouer l'INSERT sur l'arité. Une
+   * table que Flink ne connaît pas encore rend un schéma vide : on retombe alors sur `SELECT *`,
+   * en le disant dans le SQL généré.
+   */
+  const openSelectFor = useCallback(async (table: string) => {
+    let schema = tableSchemasRef.current[table];
+    if (executionMode === 'ASYNC_JOB' && !schema) {
+      try {
+        const r = await axios.get<Record<string, string>>(`/api/query/schema/${encodeURIComponent(table)}`);
+        schema = r.data;
+        if (schema && Object.keys(schema).length > 0) setTableSchemas(prev => ({ ...prev, [table]: r.data }));
+      } catch { /* pas encore enregistrée côté Flink — le SQL généré le dit et reste utilisable */ }
+    }
+    // Une cible prise dans le catalogue résout, là où `<source>_out` ne peut qu'échouer.
+    const sink = executionMode === 'ASYNC_JOB'
+      ? pickSinkTable(table, schemaRef.current?.tables, internalPrefixRef.current) : null;
+    const sqlText = sidebarSqlFor(table, executionMode, maxRows, schema, sink);
+    const where = openSql(sqlText, table);
+    // La sélection ne peut être posée qu'une fois le nouveau texte rendu : l'effet ci-dessous s'en
+    // charge, sur le `sql` qui vient d'être écrit.
+    pendingSinkSelectionRef.current = sinkNameRange(sqlText);
     if (where === 'new') toast(`Opened ${table} in a new tab`, 'success');
   }, [openSql, maxRows, toast]);
 
@@ -2052,6 +2195,18 @@ const QueryWorkbench: React.FC = () => {
                     </button>
                   </div>
                 </div>
+              ) : submittedJob ? (
+                <SubmittedJobPanel
+                  submission={submittedJob}
+                  details={jobDetails}
+                  detailsError={jobDetailsError}
+                  polling={jobPolling}
+                  stopping={stoppingJob}
+                  onStop={() => void stopSubmittedJob()}
+                  onCreateTarget={missingSinkTarget ? () => void openTargetTableDdl() : undefined}
+                  createTargetLabel={missingSinkTarget
+                    ? `Create ${missingSinkTarget.target}` : undefined}
+                />
               ) : shownRun?.forgotten ? (
                 /* Les lignes de cette instruction ont été libérées pour borner ce que le lot
                    retient. Une grille vide se lirait « aucune ligne » : ce panneau dit ce qui a

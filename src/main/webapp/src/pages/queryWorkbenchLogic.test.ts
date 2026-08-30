@@ -12,7 +12,7 @@ import {
   starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, offsetAt, resolveOrigin,
   detailValue, withoutLeadingCte,
-  planRun, previewStatement, detectStatementType,
+  planRun, previewStatement, detectStatementType, isJobModeStatement, insertTargetAndSource,
   forgetOldestResults, summariseBatch, describeStatementRun, MAX_RETAINED_BATCH_ROWS,
   buildCompletionEntries, SQL_KEYWORD_SUGGESTIONS,
   type StatementRun,
@@ -275,6 +275,53 @@ describe('detectStatementType', () => {
   it('names an unknown statement by its first word', () => {
     expect(detectStatementType('DROP TABLE t')).toBe('DROP');
     expect(detectStatementType('   ')).toBe('UNKNOWN');
+  });
+});
+
+describe('isJobModeStatement', () => {
+  /*
+   * Miroir de `FlinkSqlService.isJobModeStatement`. Ce garde-ci refuse *avant* d'appeler le
+   * serveur, donc une forme qu'il ignore n'atteint jamais celui qui l'accepte : un STATEMENT SET
+   * partait à l'erreur côté navigateur alors que le mode Job le soumet en un seul job.
+   */
+  it('covers what Flink Job mode submits, and nothing else', () => {
+    expect(isJobModeStatement(detectStatementType('INSERT INTO t SELECT * FROM s'))).toBe(true);
+    expect(isJobModeStatement(detectStatementType(
+      'EXECUTE STATEMENT SET BEGIN INSERT INTO a SELECT * FROM s; END'))).toBe(true);
+    expect(isJobModeStatement(detectStatementType('SELECT * FROM s'))).toBe(false);
+    expect(isJobModeStatement(detectStatementType('CREATE TABLE t (x INT)'))).toBe(false);
+  });
+
+  it('recognises a statement set past comments and case', () => {
+    expect(detectStatementType('-- fan-out\nexecute statement set begin INSERT INTO a SELECT 1; END'))
+      .toBe('STATEMENT_SET');
+  });
+});
+
+describe('insertTargetAndSource', () => {
+  it('reads the target and the source of an INSERT', () => {
+    expect(insertTargetAndSource('INSERT INTO orders_out SELECT id FROM orders'))
+      .toEqual({ target: 'orders_out', source: 'orders' });
+    expect(insertTargetAndSource('INSERT INTO `a.b` (id) SELECT id FROM "c.d"'))
+      .toEqual({ target: 'a.b', source: 'c.d' });
+    expect(insertTargetAndSource('insert overwrite sink select id from src'))
+      .toEqual({ target: 'sink', source: 'src' });
+  });
+
+  /** Une cible sans source ne peut pas être dérivée d'un schéma : il n'y en a pas. */
+  it('has no source to derive the target from on a VALUES insert', () => {
+    expect(insertTargetAndSource("INSERT INTO sink VALUES ('a')")?.source).toBeNull();
+  });
+
+  /** Le mot-clé d'un appel de fenêtre n'est pas un nom de table — même piège que côté serveur. */
+  it('does not mistake the TABLE keyword of a window call for a source', () => {
+    expect(insertTargetAndSource(
+      'INSERT INTO sink SELECT * FROM TABLE(TUMBLE(TABLE orders, DESCRIPTOR(ts), INTERVAL \'5\' MINUTE))')
+      ?.source).toBeNull();
+  });
+
+  it('reads nothing out of a statement that is not an INSERT', () => {
+    expect(insertTargetAndSource('SELECT * FROM orders')).toBeNull();
   });
 });
 

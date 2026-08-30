@@ -180,6 +180,11 @@ explorer:
   # gauge that reads a record — one per lagging partition, per group, per refresh — where the
   # others read metadata. A group caught up on every partition costs nothing and reports 0.
   lag-metrics-time: false
+  # How many continuous Flink jobs this deployment holds at once; 0 removes the cap. Each
+  # submission starts its own embedded MiniCluster — measured at ~80 threads and ~6 MB of heap
+  # per job, in the process that also serves the UI — so the cap bounds a gesture that is easy
+  # to repeat from the editor. The refusal names the count and this setting.
+  max-concurrent-jobs: 10
   flink-job-store-path: data/flink-jobs.json
   flink-job-retention-hours: 24
   # Keep what the Settings page is used to change — the bootstrap address, the connection mode and

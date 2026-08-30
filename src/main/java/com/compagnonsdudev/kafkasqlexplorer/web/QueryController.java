@@ -219,6 +219,47 @@ public class QueryController {
         }
     }
 
+    /**
+     * Le {@code CREATE TABLE} d'une cible d'INSERT, dérivé des colonnes de la source.
+     *
+     * <p>En mode Job la cible doit exister — un nom inventé ne peut qu'échouer — et rien n'aidait à
+     * la créer : sans table déclarée, l'opérateur devait repasser en mode lecture et écrire le DDL
+     * à la main, alors que ce service sait le générer et que le schéma de la source est déjà
+     * enregistré. Ce point d'entrée <strong>ne crée rien</strong> : il rend le DDL, que l'éditeur
+     * ouvre dans un onglet pour être lu puis exécuté — la même règle que partout ici, ce qui écrit
+     * sur le cluster de l'utilisateur reste un geste délibéré.
+     *
+     * <p>Les colonnes viennent de {@link DdlGeneratorService#sinkColumns}, donc sans les colonnes
+     * calculées : ce sont elles qu'aucun sink n'accepte, et l'échec d'arité qu'elles produisent est
+     * exactement ce que cette page cherche à éviter. Le format est JSON — le sink est écrit par
+     * Flink, et rien dans le schéma d'une source ne dit ce que la cible devra porter.
+     */
+    @GetMapping("/sink-ddl")
+    public DdlPreviewResponse sinkDdl(@RequestParam("source") String source,
+                                      @RequestParam("topic") String topic) {
+        // Un nom que Kafka ne pourrait pas porter ne décrit aucun topic, et il n'a rien à faire
+        // recopié dans un DDL — voir DdlGeneratorService.isValidTopicName pour ce que ce refus
+        // protège en plus.
+        if (!DdlGeneratorService.isValidTopicName(topic)) {
+            return DdlPreviewResponse.failed(
+                "That is not a name Kafka could give a topic: letters, digits, dot, dash and "
+                    + "underscore only, up to 249 characters.");
+        }
+        try {
+            Map<String, String> columns = DdlGeneratorService.sinkColumns(
+                flinkSqlService.getTableSchema(source));
+            if (columns.isEmpty()) {
+                return DdlPreviewResponse.failed(
+                    "No column could be read from '" + source + "'. Flink knows no such table yet — "
+                        + "run a SELECT on it first, or write the target's CREATE TABLE by hand.");
+            }
+            return DdlPreviewResponse.of(DdlGeneratorService.maskSensitiveProperties(
+                ddlGeneratorService.generateDdl(topic, columns, MessageFormat.JSON)));
+        } catch (Exception e) {
+            return DdlPreviewResponse.failed(SqlErrorClassifier.explain(e));
+        }
+    }
+
     @PostMapping("/validate")
     public SqlValidationResponse validate(@RequestBody QueryRequest request) {
         try {
