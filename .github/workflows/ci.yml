@@ -1053,6 +1053,17 @@ jobs:
       #                     dependency-version claims match the Dockerfiles and the pom. The page
       #                     advertised a JRE two majors behind the image for a long while, and
       #                     that was found by reading it rather than by CI.
+      #   check-config-yaml every explorer.* key SHIPPED in application.yml has something that
+      #                     reads it — the other half of check-config-table, asked from the YAML
+      #                     rather than from the prose. That one resolves the settings the docs
+      #                     name, so it cannot see a setting nobody wrote down, and that is where
+      #                     one rots: explorer.inference-poll-timeout-ms shipped with a value,
+      #                     carried a getter and a setter, was read by nothing, and appeared in no
+      #                     table. It counts a FIELD read, not only a getter call — the two prefix
+      #                     settings are applied from ExplorerConfig's own @PostConstruct and would
+      #                     otherwise both be reported dead. It does not do reachability: a reader
+      #                     no HTTP path can enter still counts, because a grep that pretended
+      #                     otherwise would be worse than one that says what it covers.
       #   check-api-types   every @java-marked interface in api/types.ts against the record it
       #                     mirrors, both ways. The frontend asserted its response types by hand,
       #                     which TypeScript believes without checking: when an endpoint started
