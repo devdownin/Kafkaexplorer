@@ -97,7 +97,9 @@ public final class SqlErrorClassifier {
             + "|argument type mismatch"
             + "|not allowed in this environment"
             + "|access to system tables is restricted"
-            + "|only select, explain and create table",
+            // La liste des instructions admises s'est allongée (SHOW, DESCRIBE) : le motif
+            // lit les deux bouts de la phrase plutôt que son énumération, qui bougera encore.
+            + "|only select, explain[^.]{0,60}create table",
         Pattern.CASE_INSENSITIVE);
 
     /**

@@ -3,6 +3,7 @@
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.ChangelogInfo;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -310,8 +311,6 @@ class FlinkSqlServiceStatementKindsTest {
     @Test
     void everyOtherStatementKindIsRefusedByTheWhitelist() {
         for (String sql : List.of(
-                "SHOW TABLES",
-                "DESCRIBE k_orders",
                 "USE CATALOG default_catalog",
                 "SET 'table.exec.resource.default-parallelism' = '1'",
                 "RESET 'table.exec.resource.default-parallelism'",
@@ -323,12 +322,119 @@ class FlinkSqlServiceStatementKindsTest {
                 "   ")) {
             QueryResult refused = run(sql);
             assertNotNull(refused.error(), sql);
-            assertTrue(refused.error().contains("Only SELECT, EXPLAIN and CREATE TABLE"),
+            assertTrue(refused.error().contains("statements are allowed"),
                     sql + " → " + refused.error());
             assertTrue(refused.rows().isEmpty(), sql);
         }
         assertFalse(service.listTables().contains("k_kinds_tmp"),
                 "une DDL refusée ne doit rien avoir créé");
+    }
+
+    /**
+     * {@code SHOW} et {@code DESCRIBE} : des lectures pures, refusées comme si elles étaient
+     * dangereuses.
+     *
+     * <p>C'est ce qu'on tape en premier en arrivant d'un client SQL, et le message générique se
+     * lisait comme une restriction de sécurité sur deux instructions qui ne peuvent rien écrire —
+     * alors que l'application détenait déjà la réponse par une autre porte
+     * ({@code /api/query/init}, {@code /api/query/schema/…}).
+     */
+    @Test
+    void pureIntrospectionIsAnsweredRatherThanRefused() {
+        answered("SHOW TABLES");
+        answered("DESCRIBE k_orders");
+        answered("DESC k_orders");
+        answered("SHOW CREATE TABLE k_sink");
+        answered("SHOW FUNCTIONS");
+        answered("SHOW CATALOGS");
+    }
+
+    /**
+     * La liste des {@code SHOW} est close, et c'est le fond du garde-fou : la whitelist classe sur
+     * le premier mot, donc « tout ce qui commence par SHOW » admettrait aussi ce que la prochaine
+     * version de Flink mettra derrière ce mot-clé.
+     */
+    @Test
+    void theIntrospectionAllowListIsClosed() {
+        assertTrue(FlinkSqlService.isIntrospectionStatement("SHOW TABLES"));
+        assertTrue(FlinkSqlService.isIntrospectionStatement("DESCRIBE K_ORDERS"));
+        assertTrue(FlinkSqlService.isIntrospectionStatement("DESC K_ORDERS"));
+        assertFalse(FlinkSqlService.isIntrospectionStatement("SHOW WHATEVER FLINK ADDS NEXT"));
+        assertFalse(FlinkSqlService.isIntrospectionStatement("USE CATALOG DEFAULT_CATALOG"));
+        // « DESCRIPTOR » ne commence pas par le mot « DESC », et il ouvre chaque appel de fenêtre.
+        assertFalse(FlinkSqlService.isIntrospectionStatement(
+                "DESCRIPTOR(TS) SOMETHING"));
+        assertFalse(FlinkSqlService.isIntrospectionStatement("SHOWDOWN"));
+    }
+
+    // ── Ce qu'une requête « mise à jour » rend vraiment ───────────────────────────────
+
+    /**
+     * Une agrégation ne rend pas des lignes : elle rend une suite de corrections.
+     *
+     * <p>Sur les trois lignes de {@code k_orders}, {@code SELECT COUNT(*)} en émet cinq — +I(1),
+     * -U(1), +U(2), -U(2), +U(3). Le {@code RowKind} était lu (journalisé en DEBUG pour la
+     * première ligne) puis jeté, si bien que la grille présentait les corrections comme des
+     * résultats et qu'il fallait deviner que seule la dernière comptait.
+     */
+    @Test
+    void anUpdatingQueryReturnsAChangelogAndSaysSo() {
+        QueryResult count = run("SELECT COUNT(*) AS n FROM k_orders");
+        assertNull(count.error(), String.valueOf(count.error()));
+        assertEquals("FLINK", count.engine());
+        assertNotNull(count.changelog(), "un COUNT(*) sur un flux est un changelog : "
+                + count.rows());
+        assertEquals(count.rows().size(), count.changelog().rowsReturned());
+        assertTrue(count.changelog().corrections() > 0);
+        assertTrue(count.changelog().retractions() > 0,
+                "un retrait précède chaque remplacement : " + count.rows());
+        assertFalse(count.changelog().capReached(), "cinq lignes tiennent dans le plafond de 20");
+
+        // Chaque ligne dit ce qu'elle est, sous un nom réservé — jamais dans `columns`, que la
+        // grille, le tri et l'export lisent comme des valeurs du résultat.
+        assertFalse(count.columns().contains(ChangelogInfo.ROW_KIND_KEY));
+        long marked = count.rows().stream()
+                .filter(r -> r.containsKey(ChangelogInfo.ROW_KIND_KEY)).count();
+        assertEquals(count.changelog().corrections(), marked);
+        assertTrue(count.rows().stream()
+                        .anyMatch(r -> "-U".equals(r.get(ChangelogInfo.ROW_KIND_KEY))),
+                "un retrait doit être nommé : " + count.rows());
+
+        // Et il le dit en toutes lettres : la grille n'est pas le seul lecteur — un export, une
+        // capture d'écran ou un appel direct à l'API n'ont que le texte.
+        assertTrue(count.warnings().stream().anyMatch(w -> w.contains("updates its answer")),
+                String.valueOf(count.warnings()));
+    }
+
+    /** Une projection ordinaire n'est pas un changelog, et ne porte donc ni marqueur ni réserve. */
+    @Test
+    void aPlainProjectionCarriesNoChangelog() {
+        QueryResult plain = run("SELECT order_id FROM k_orders");
+        assertNull(plain.error(), String.valueOf(plain.error()));
+        assertNull(plain.changelog());
+        assertTrue(plain.rows().stream().noneMatch(r -> r.containsKey(ChangelogInfo.ROW_KIND_KEY)));
+        assertTrue(plain.warnings().stream().noneMatch(w -> w.contains("updates its answer")),
+                String.valueOf(plain.warnings()));
+    }
+
+    /**
+     * Le plafond compte les corrections comme des lignes.
+     *
+     * <p>C'est la conséquence la plus lourde du premier défaut : un changelog peut remplir le
+     * plafond d'états intermédiaires et être coupé <em>juste avant</em> la seule ligne qui
+     * comptait. Le plafond n'est pas relâché — le desserrer rendrait plus de lignes que
+     * l'appelant n'en a demandé, et choisir pour lui celle qui compte est exactement ce que le
+     * marqueur évite — donc la seule réparation honnête est de le dire.
+     */
+    @Test
+    void aChangelogCutByTheRowCapSaysTheLastRowIsNotTheAnswer() {
+        QueryResult cut = service.executeSql(QueryRequest.sql("SELECT COUNT(*) AS n FROM k_orders", 2, 15_000L, null));
+        assertNull(cut.error(), String.valueOf(cut.error()));
+        assertEquals(2, cut.rows().size());
+        assertNotNull(cut.changelog());
+        assertTrue(cut.changelog().capReached());
+        assertTrue(cut.warnings().stream().anyMatch(w -> w.contains("cut off before the query settled")),
+                String.valueOf(cut.warnings()));
     }
 
     // ── Outils ────────────────────────────────────────────────────────────────────────

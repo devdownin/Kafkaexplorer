@@ -140,6 +140,76 @@ describe('describeQueryError', () => {
     expect(info.title).toBe('Query failed');
     expect(info.raw).toBe('');
   });
+
+  /**
+   * Les refus que le moteur rend désormais à l'appelant au lieu de se replier sur le lecteur
+   * direct. Ils arrivaient tous en titre brut, sans piste : la machinerie qui rend un message
+   * correct actionnable existe, et ces familles-là n'y étaient pas.
+   */
+  describe('what the streaming planner refuses to build', () => {
+    it('reads an unbounded ORDER BY as a bound to add, not as an engine fault', () => {
+      const info = describeQueryError(
+        'Sort on a non-time-attribute field is not supported.');
+      expect(info.title).toMatch(/ORDER BY/);
+      expect(info.hint).toMatch(/LIMIT/);
+    });
+
+    it('names the rewrite for a correlated subquery', () => {
+      const info = describeQueryError(
+        'org.apache.calcite.plan.RelOptPlanner$CannotPlanException: unexpected correlate variable $cor0');
+      expect(info.title).toMatch(/Correlated subquery/);
+      expect(info.hint).toMatch(/JOIN/);
+    });
+  });
+
+  describe('a projection that does not fit its target table', () => {
+    /**
+     * Flink formule cette faute unique de plusieurs façons. La plus courante — « Different number
+     * of columns » — tombait avant dans le repli générique, et « Incompatible types for sink
+     * column » dans la famille « types incompatibles », qui disait de caster une colonne alors que
+     * le problème est la liste des colonnes.
+     */
+    it('gives the same reading whichever wording Flink used', () => {
+      for (const raw of [
+        'Column types of query result and sink for \'default_catalog.default_database.k_sink\' do not match.',
+        'Different number of columns.',
+        'Incompatible types for sink column \'order_id\' at position 0.',
+      ]) {
+        const info = describeQueryError(raw);
+        expect(info.title).toMatch(/does not fit the target table/);
+        expect(info.hint).toMatch(/proc_time/);
+      }
+    });
+
+    it('separates a sink that cannot be overwritten from one that does not match', () => {
+      const info = describeQueryError(
+        'INSERT OVERWRITE requires that the underlying DynamicTableSink of table \'k_sink\' implements the SupportsOverwrite interface.');
+      expect(info.title).toMatch(/cannot be overwritten/);
+    });
+
+    it('points an options hint at the table rather than the view', () => {
+      const info = describeQueryError(
+        'View \'k_view\' cannot be enriched with new options.');
+      expect(info.title).toMatch(/Options hint/);
+    });
+  });
+
+  it('explains the CTAS refusal instead of quoting it back', () => {
+    const info = describeQueryError(
+      'CREATE TABLE … AS SELECT starts a job that writes rows, so it is not run here: the job '
+      + 'would be invisible to the dashboard and could not be cancelled.');
+    expect(info.title).toMatch(/AS SELECT is not run here/);
+    expect(info.hint).toMatch(/INSERT INTO/);
+  });
+
+  it('names what the editor does run when the whitelist refuses a statement', () => {
+    const info = describeQueryError(
+      'Only SELECT, EXPLAIN, SHOW, DESCRIBE and CREATE TABLE statements are allowed.');
+    expect(info.title).toBe('Statement not permitted');
+    // SHOW et DESCRIBE sont désormais servis : la piste ne doit plus dire le contraire.
+    expect(info.hint).toMatch(/SHOW/);
+    expect(info.hint).toMatch(/DESCRIBE/);
+  });
 });
 
 describe('extractApiErrorMessage', () => {

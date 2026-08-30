@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
+import com.compagnonsdudev.kafkasqlexplorer.domain.ChangelogInfo;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkManagedJobDetails;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkJobSummary;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
@@ -19,6 +20,7 @@ import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.types.Row;
+import org.apache.flink.types.RowKind;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import jakarta.annotation.PreDestroy;
@@ -309,7 +311,11 @@ public class FlinkSqlService {
      *               planner, and only then starting to count, is not what the timeout promises.
      */
     private TableResult executeManagedSql(String operationName, String statementType, String sql, long waitMs) {
-        if ("EXPLAIN".equals(statementType)) {
+        // EXPLAIN, SHOW et DESCRIBE ne touchent pas au catalogue : ils prennent le verrou partagé,
+        // pas celui de mutation. Prendre le verrou d'écriture pour lister des tables sérialiserait
+        // le geste le plus banal de l'éditeur derrière la requête en cours.
+        if ("EXPLAIN".equals(statementType) || "SHOW".equals(statementType) || "DESCRIBE".equals(statementType)
+                || "DESC".equals(statementType)) {
             return runtimeCoordinator.runRead(operationName, () -> tableEnv.executeSql(sql), waitMs);
         }
         return runtimeCoordinator.runMutation(operationName, () -> tableEnv.executeSql(sql), waitMs);
@@ -447,6 +453,17 @@ public class FlinkSqlService {
         // ci-dessus pour `INSERT INTO`, resté debout à un mot-clé près : ce que le mode Job
         // accepte de soumettre, cette méthode doit accepter de servir.
         String body = SqlStatements.classifiableBody(sql);
+        // `DESCRIBE <topic>` est la première chose qu'on tape en arrivant d'un client SQL, et sans
+        // cette branche elle répondait « table inconnue » sur un topic parfaitement présent — il
+        // fallait aller faire un SELECT ailleurs pour enregistrer la table, puis revenir. Un objet
+        // que ce n'est pas (`DESCRIBE CATALOG …`, `DESCRIBE JOB …`) ne correspond à aucun topic,
+        // donc `registerSourceTable` n'y trouve rien à faire et Flink répond comme avant.
+        String described = describedObject(sql);
+        if (described != null) {
+            AutoRegResult one = registerSourceTable(described);
+            if (one.error() != null) return one;
+            return one.registered() ? AutoRegResult.tableCreated() : AutoRegResult.skip();
+        }
         if (!body.startsWith("SELECT") && !body.startsWith("INSERT") && !body.startsWith("EXECUTE STATEMENT SET")
                 && !body.startsWith("STATEMENT SET")) {
             return AutoRegResult.skip();
@@ -469,6 +486,24 @@ public class FlinkSqlService {
         }
         if (primaryDeferred) return AutoRegResult.deferToDirect();
         return registeredAny ? AutoRegResult.tableCreated() : AutoRegResult.skip();
+    }
+
+    /** Ce que `DESCRIBE`/`DESC` décrit, quand c'est un nom de table. Sinon {@code null}. */
+    private static final Pattern DESCRIBE_TARGET = Pattern.compile(
+        "(?i)^DESC(?:RIBE)?\\s+(?!CATALOG\\b|JOB\\b|FUNCTION\\b|MODEL\\b|SYSTEM\\b)"
+            + "[`\"]?([\\w.$-]+)[`\"]?\\s*;?\\s*$");
+
+    /**
+     * Le nom qu'un {@code DESCRIBE} désigne, ou {@code null} si l'instruction n'en est pas un.
+     *
+     * <p>Les formes qui ne décrivent pas une table ({@code DESCRIBE CATALOG}, {@code DESCRIBE JOB})
+     * sont exclues nommément : rien ne leur correspondrait de toute façon, mais s'en remettre à
+     * cela ferait chercher un topic nommé « CATALOG » à chaque appel.
+     */
+    private static String describedObject(String sql) {
+        if (sql == null) return null;
+        Matcher m = DESCRIBE_TARGET.matcher(SqlStatements.withoutLeadingCte(sql).trim());
+        return m.matches() ? m.group(1) : null;
     }
 
     /** One source table: already registered, matched to a topic and registered, or left to Flink. */
@@ -945,6 +980,81 @@ public class FlinkSqlService {
                 + "EXECUTE STATEMENT SET BEGIN <insert>; <insert>; END.", e);
     }
 
+    /**
+     * Le résultat avec chaque cellule textuelle passée par le masquage des identifiants.
+     *
+     * <p>Cellule par cellule plutôt que sur la seule colonne attendue : le nom de la colonne que
+     * Flink donne à {@code SHOW CREATE TABLE} n'est pas un contrat, et une réserve écrite sur un
+     * nom est une réserve qui saute à la version suivante.
+     */
+    private static QueryResult maskDdlCells(QueryResult result) {
+        List<Map<String, Object>> masked = new ArrayList<>(result.rows().size());
+        for (Map<String, Object> row : result.rows()) {
+            Map<String, Object> copy = new LinkedHashMap<>(row);
+            copy.replaceAll((key, value) -> value instanceof String text
+                ? DdlGeneratorService.maskSensitiveProperties(text) : value);
+            masked.add(copy);
+        }
+        return new QueryResult(result.columns(), masked, result.durationMs(), result.error(),
+            result.tableRegistered(), result.engine(), result.warnings(), result.changelog());
+    }
+
+    static final String STATEMENT_NOT_ALLOWED =
+        "Only SELECT, EXPLAIN, SHOW, DESCRIBE and CREATE TABLE statements are allowed.";
+
+    /**
+     * Les formes de {@code SHOW} que ce moteur sert. Liste close, et c'est le fond du garde-fou :
+     * la whitelist classe sur le premier mot, donc admettre « tout ce qui commence par SHOW »
+     * admettrait aussi ce que la prochaine version de Flink mettra derrière ce mot-clé.
+     */
+    private static final Set<String> SHOW_FORMS = Set.of(
+        "CATALOGS", "CURRENT CATALOG", "DATABASES", "CURRENT DATABASE", "TABLES", "VIEWS",
+        "COLUMNS", "CREATE TABLE", "CREATE VIEW", "CREATE CATALOG", "FUNCTIONS",
+        "USER FUNCTIONS", "MODULES", "FULL MODULES", "JARS", "PARTITIONS", "PROCEDURES", "JOBS");
+
+    /**
+     * {@code SHOW …} et {@code DESCRIBE …} : des lectures pures, refusées comme si elles étaient
+     * dangereuses.
+     *
+     * <p>C'est ce qu'on tape en premier en arrivant d'un client SQL, et le refus générique
+     * — « Only SELECT, EXPLAIN and CREATE TABLE statements are allowed » — se lisait comme une
+     * restriction de sécurité sur deux instructions qui ne peuvent rien écrire. L'application
+     * détient déjà la réponse ailleurs ({@code /api/query/init} liste les tables,
+     * {@code /api/query/schema/{table}} rend les colonnes), ce qui rendait le refus d'autant moins
+     * justifiable : ce n'était pas une donnée protégée, c'était la même donnée par une autre porte.
+     *
+     * <p>La liste des {@code SHOW} est close et le reste est refusé — {@code USE}, {@code SET},
+     * {@code LOAD MODULE} changent l'état de la session, {@code ALTER} et {@code DROP} écrivent.
+     * {@code DESCRIBE} n'a pas besoin de liste : toutes ses formes décrivent un objet.
+     */
+    static boolean isIntrospectionStatement(String upperBody) {
+        if (upperBody == null) return false;
+        if (startsWithWord(upperBody, "DESCRIBE") || startsWithWord(upperBody, "DESC")) return true;
+        if (!startsWithWord(upperBody, "SHOW")) return false;
+        String rest = upperBody.substring(4).trim();
+        return SHOW_FORMS.stream().anyMatch(form -> startsWithWord(rest, form));
+    }
+
+    /** {@code word} en tête, comme mot entier — « DESCRIPTOR » ne commence pas par « DESC ». */
+    private static boolean startsWithWord(String text, String word) {
+        if (!text.startsWith(word)) return false;
+        int after = word.length();
+        if (after == text.length()) return true;
+        char next = text.charAt(after);
+        return !Character.isLetterOrDigit(next) && next != '_' && next != '$';
+    }
+
+    /**
+     * Vrai pour un {@code SHOW CREATE …}, dont la réponse est un DDL — donc des propriétés client
+     * Kafka, donc les mots de passe SSL et le secret {@code sasl.jaas.config}. C'est la règle que
+     * ce dépôt applique partout ailleurs (le point de terminaison topic, l'aperçu de DDL, la
+     * lignée) et que ce chemin-ci n'avait jamais eue, faute d'y donner accès.
+     */
+    private static boolean isShowCreate(String upperBody) {
+        if (upperBody == null || !startsWithWord(upperBody, "SHOW")) return false;
+        return startsWithWord(upperBody.substring(4).trim(), "CREATE");
+    }
+
     public QueryResult executeSql(QueryRequest request) {
         long startTime = System.currentTimeMillis();
         String queryId = resolveQueryId(request.queryId());
@@ -960,8 +1070,9 @@ public class FlinkSqlService {
         String sql = SqlStatements.classifiableBody(strippedSql);
 
         // Security: Prevent execution of dangerous or unsupported DDL/DML.
-        if (!sql.startsWith("SELECT") && !sql.startsWith("EXPLAIN") && !sql.startsWith("CREATE TABLE")) {
-            return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, "Only SELECT, EXPLAIN and CREATE TABLE statements are allowed.");
+        if (!sql.startsWith("SELECT") && !sql.startsWith("EXPLAIN") && !sql.startsWith("CREATE TABLE")
+                && !isIntrospectionStatement(sql)) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, STATEMENT_NOT_ALLOWED);
         }
         /*
          * `CREATE TABLE … AS SELECT` est un INSERT déguisé, et la whitelist le laissait passer
@@ -1173,9 +1284,15 @@ public class FlinkSqlService {
                 return autoReg.registered() ? withRegisteredFlag(qr) : qr;
             }
 
-            // CREATE TABLE / EXPLAIN go through the Flink planner directly.
+            // CREATE TABLE / EXPLAIN / SHOW / DESCRIBE go through the Flink planner directly.
             String statementType = extractStatementType(sqlToExecute);
             QueryResult result = executeViaFlinkPlanner(queryId, sqlToExecute, statementType, limit, timeout, startTime);
+            if (isShowCreate(sql) && result.error() == null) {
+                // Ce que rend `SHOW CREATE TABLE`, c'est du DDL : les propriétés client Kafka, donc
+                // les mots de passe SSL et le secret `sasl.jaas.config`. Même règle que partout
+                // ailleurs — la lignée le faisait déjà pour la même instruction.
+                result = maskDdlCells(result);
+            }
             if ("CREATE_TABLE".equals(statementType) && result.error() == null) {
                 // Kept only once it has actually worked, and only for a statement that came
                 // through the API: auto-registration writes its DDL through executeMutationSql and
@@ -1447,7 +1564,11 @@ public class FlinkSqlService {
     }
 
     private QueryResult withRegisteredFlag(QueryResult qr) {
-        return new QueryResult(qr.columns(), qr.rows(), qr.durationMs(), qr.error(), true, qr.engine());
+        // Sur le record, pas via un constructeur plus court : celui à six arguments remet les
+        // warnings à vide, donc une requête qui enregistrait son topic *et* avait une réserve à
+        // formuler sur la façon dont il a été lu — la forme la plus courante d'un premier SELECT
+        // sur un topic — perdait la réserve en sortant.
+        return qr.withRegisteredFlag(true);
     }
 
     private void recordFlinkSelectFailure(String reason) {
@@ -1461,6 +1582,42 @@ public class FlinkSqlService {
         } else {
             log.warn("Flink SELECT failed ({}) — falling back to direct Kafka read", reason);
         }
+    }
+
+    /**
+     * Dit ce qu'un résultat de changelog contient, quand il en est un.
+     *
+     * <p>Une agrégation, une jointure externe ou une sous-requête scalaire ne rend pas des lignes :
+     * elle rend une suite de corrections. Le fait est porté par {@link ChangelogInfo} — que la
+     * grille lit pour marquer chaque ligne — et <strong>dit</strong> dans les warnings, parce que
+     * la grille n'est pas le seul lecteur : l'export CSV, une capture d'écran collée dans un
+     * ticket, un appel direct à l'API n'ont que le texte.
+     *
+     * <p>Le plafond de lignes s'énonce à part, et c'est la conséquence la plus lourde : il compte
+     * les corrections comme des lignes, donc un changelog peut le remplir d'états intermédiaires
+     * et être coupé <em>juste avant</em> la seule ligne qui comptait. Le plafond n'est pas modifié
+     * — le desserrer sur les corrections rendrait plus de lignes que l'appelant n'en a demandé,
+     * et le décider pour lui est exactement ce que le marqueur évite — mais un résultat tronqué
+     * ne se lit plus du tout de la même façon, alors il le dit.
+     */
+    private static QueryResult describeChangelog(QueryResult result, int corrections, int retractions, int limit) {
+        if (corrections <= 0) return result;
+        int rows = result.rows().size();
+        boolean capReached = rows >= limit;
+        List<String> warnings = new ArrayList<>(result.warnings());
+        warnings.add(String.format(
+            "This query updates its answer as it runs: %d of the %d rows returned are corrections "
+                + "of an earlier row (%d of them withdraw one), not new records. For a given key "
+                + "the answer is the last row carrying it; each row says which it is.",
+            corrections, rows, retractions));
+        if (capReached) {
+            warnings.add(String.format(
+                "The %d-row cap counted those corrections, so this changelog is cut off before the "
+                    + "query settled — the last row is not necessarily the final answer. Raise "
+                    + "\"Rows\" to see it through.", limit));
+        }
+        return result.withWarnings(warnings)
+            .withChangelog(new ChangelogInfo(rows, corrections, retractions, capReached));
     }
 
     /**
@@ -1518,6 +1675,13 @@ public class FlinkSqlService {
             log.debug("[FlinkSQL] queryId={} sql='{}' resolvedColumns={} resolvedSchema={}",
                     LogSafe.name(queryId), LogSafe.text(finalSql), columns, result.getResolvedSchema());
             List<Map<String, Object>> rows;
+            // Combien des lignes collectées sont des *corrections* et non des enregistrements.
+            // Écrites depuis la tâche de collecte, lues ici une fois `future.get()` rendu : la
+            // barrière happens-before de la complétion du future les publie.
+            final java.util.concurrent.atomic.AtomicInteger corrections =
+                new java.util.concurrent.atomic.AtomicInteger();
+            final java.util.concurrent.atomic.AtomicInteger retractions =
+                new java.util.concurrent.atomic.AtomicInteger();
 
             // We use a CompletableFuture to implement the timeout logic.
             // Streaming queries might not produce data immediately, so we don't want to block indefinitely.
@@ -1553,6 +1717,32 @@ public class FlinkSqlService {
                                 Object field = row.getField(i);
                                 // Convert non-serializable Flink internal types to String to avoid JSON issues
                                 mapRow.put(columns.get(i), field == null ? null : toSerializable(field));
+                            }
+                            /*
+                             * Le RowKind voyage avec la ligne, au lieu d'être journalisé une fois
+                             * puis jeté.
+                             *
+                             * Une requête « mise à jour » ne rend pas des lignes mais une suite de
+                             * corrections : sur trois lignes en entrée, `SELECT COUNT(*)` en émet
+                             * cinq — +I(1), -U(1), +U(2), -U(2), +U(3). Sans marqueur, la grille
+                             * présentait les corrections comme des résultats, et il fallait
+                             * deviner que seule la dernière comptait.
+                             *
+                             * Sous un nom réservé plutôt que comme une colonne : `columns` vient
+                             * du schéma résolu, c'est ce que la grille, le tri et l'export lisent,
+                             * et y ajouter une entrée ferait passer une propriété de la ligne pour
+                             * une valeur du résultat. Écrit seulement quand il y a quelque chose à
+                             * dire — un `+I` est l'ordinaire, et l'écrire sur chaque ligne d'un
+                             * SELECT ordinaire coûterait une entrée de map par ligne pour la
+                             * valeur par défaut.
+                             */
+                            RowKind kind = row.getKind();
+                            if (kind != RowKind.INSERT) {
+                                mapRow.put(ChangelogInfo.ROW_KIND_KEY, kind.shortString());
+                                corrections.incrementAndGet();
+                                if (kind == RowKind.DELETE || kind == RowKind.UPDATE_BEFORE) {
+                                    retractions.incrementAndGet();
+                                }
                             }
                             resultRows.add(mapRow);
                             count++;
@@ -1595,7 +1785,8 @@ public class FlinkSqlService {
             }
 
             long duration = System.currentTimeMillis() - startTime;
-            return new QueryResult(columns, rows, duration, null, false, "FLINK");
+            QueryResult answered = new QueryResult(columns, rows, duration, null, false, "FLINK");
+            return describeChangelog(answered, corrections.get(), retractions.get(), limit);
         } catch (Exception e) {
             log.error("Flink SQL execution error — query='{}' error='{}'",
                 LogSafe.text(finalSql), LogSafe.text(e.getMessage()), e);

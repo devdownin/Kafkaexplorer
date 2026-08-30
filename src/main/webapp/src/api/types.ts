@@ -133,6 +133,24 @@ export interface FlinkManagedJobDetails {
 }
 
 /**
+ * Ce qu'un résultat de *changelog* contient, quand il en est un.
+ *
+ * Une requête « mise à jour » — agrégation, jointure externe, sous-requête scalaire — ne rend pas
+ * des lignes mais une suite de corrections : sur trois lignes en entrée, `SELECT COUNT(*)` en rend
+ * cinq. Le `RowKind` était journalisé puis jeté, donc la grille présentait les corrections comme
+ * des résultats. `null` veut dire que chaque ligne est un enregistrement, ce qui est l'ordinaire.
+ *
+ * @java ChangelogInfo
+ */
+export interface ChangelogInfo {
+  rowsReturned: number;
+  corrections: number;
+  retractions: number;
+  /** Le plafond a été atteint : la suite des corrections est coupée, la dernière ligne n'est pas forcément l'état final. */
+  capReached: boolean;
+}
+
+/**
  * `POST /api/query/run-sync`.
  *
  * @java QueryResult
@@ -152,6 +170,8 @@ export interface QueryResult {
    * un résultat filtré.
    */
   warnings: string[];
+  /** Non nul quand le moteur a répondu par un changelog — voir `ChangelogInfo`. */
+  changelog: ChangelogInfo | null;
 }
 
 /**

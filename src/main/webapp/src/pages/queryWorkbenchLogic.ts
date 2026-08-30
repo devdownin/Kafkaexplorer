@@ -928,6 +928,94 @@ export function sortRows<T extends Record<string, unknown>>(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Changelog : ce que chaque ligne est
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * La clé réservée sous laquelle le serveur porte le `RowKind` d'une ligne.
+ *
+ * Réservée et **hors de `columns`** : la grille, le tri et l'export lisent `columns`, qui vient du
+ * schéma résolu par le moteur. Y ajouter une entrée ferait passer une propriété de la ligne pour
+ * une valeur du résultat — la même règle que les colonnes `__` de `MetricService`.
+ */
+export const ROW_KIND_KEY = '__row_kind';
+
+export type RowKind = '+I' | '-U' | '+U' | '-D';
+
+export interface RowKindLabel {
+  kind: RowKind;
+  /** Court, pour la colonne marqueur. */
+  symbol: string;
+  /** Ce que la ligne est, en toutes lettres. */
+  label: string;
+  /** `insert` compte, `retract` retire, `update` remplace. */
+  tone: 'insert' | 'retract' | 'update';
+}
+
+const ROW_KINDS: Record<RowKind, RowKindLabel> = {
+  '+I': { kind: '+I', symbol: '+', label: 'New row', tone: 'insert' },
+  '+U': { kind: '+U', symbol: '↻', label: 'Replaces the previous row for this key', tone: 'update' },
+  '-U': { kind: '-U', symbol: '−', label: 'Withdraws the previous row for this key', tone: 'retract' },
+  '-D': { kind: '-D', symbol: '−', label: 'Deletes the previous row for this key', tone: 'retract' },
+};
+
+/**
+ * Le genre d'une ligne. Une ligne sans marqueur est un `+I` — le serveur n'écrit la clé que
+ * lorsqu'il y a quelque chose à dire, l'insertion étant l'ordinaire.
+ */
+export function rowKindOf(row: Record<string, unknown> | null | undefined): RowKindLabel {
+  const raw = row?.[ROW_KIND_KEY];
+  if (typeof raw === 'string' && raw in ROW_KINDS) return ROW_KINDS[raw as RowKind];
+  return ROW_KINDS['+I'];
+}
+
+/**
+ * Les colonnes d'un export, marqueur compris quand le résultat est un changelog.
+ *
+ * L'export CSV ne sérialisait que `columns`, donc un fichier collé dans un ticket présentait les
+ * corrections comme des lignes — exactement le mensonge que le marqueur retire de l'écran. Le JSON
+ * emportait déjà la clé réservée pour les lignes qui en portent une ; elle est ici écrite sur
+ * *toutes*, un `+I` implicite dans un fichier n'étant pas lisible.
+ */
+export function exportColumns(columns: readonly string[], withRowKind: boolean): string[] {
+  return withRowKind ? [ROW_KIND_KEY, ...columns] : [...columns];
+}
+
+export function exportRows(
+  rows: readonly Record<string, unknown>[], withRowKind: boolean,
+): Record<string, unknown>[] {
+  if (!withRowKind) return [...rows];
+  return rows.map(row => ({ [ROW_KIND_KEY]: rowKindOf(row).kind, ...row }));
+}
+
+/**
+ * Ce qu'il faut dire au-dessus de la grille d'un changelog, ou `null` quand il n'y en a pas.
+ *
+ * Deux phrases plutôt qu'une : « ces lignes se corrigent » et « la correction est coupée avant la
+ * fin » sont deux faits différents, et le second change complètement la lecture du dernier résultat
+ * affiché. Le plafond n'est pas relâché côté serveur — rendre plus de lignes que l'appelant n'en a
+ * demandé, ou choisir pour lui celle qui compte, sont exactement ce que le marqueur évite — donc
+ * la seule réparation honnête est de le dire.
+ */
+export function describeChangelog(
+  info: { rowsReturned: number; corrections: number; retractions: number; capReached: boolean } | null | undefined,
+): { title: string; detail: string; truncated: string | null } | null {
+  if (!info || info.corrections <= 0) return null;
+  const plural = info.corrections === 1 ? '' : 's';
+  return {
+    title: 'This query updates its answer as it runs',
+    detail: `${info.corrections.toLocaleString()} of the ${info.rowsReturned.toLocaleString()} rows `
+      + `below ${info.corrections === 1 ? 'is a correction' : 'are corrections'} of an earlier one`
+      + `${info.retractions > 0 ? ` (${info.retractions.toLocaleString()} of them withdraw${info.retractions === 1 ? 's' : ''} a row)` : ''}`
+      + `, not new record${plural}. For a given key the answer is the last row carrying it.`,
+    truncated: info.capReached
+      ? 'The row cap counted those corrections, so this changelog stops before the query settled — '
+        + 'the last row is not necessarily the final answer. Raise “Rows” to see it through.'
+      : null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Rendu d'une cellule
 // ─────────────────────────────────────────────────────────────────────────────
 

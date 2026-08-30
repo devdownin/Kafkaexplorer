@@ -11,7 +11,7 @@
 
 import React from 'react';
 import { cn } from '../ui';
-import { cellText } from '../../pages/queryWorkbenchLogic';
+import { cellText, rowKindOf } from '../../pages/queryWorkbenchLogic';
 
 /**
  * Grille de résultats, mémoïsée et définie **hors** de la page.
@@ -34,15 +34,39 @@ export interface ResultsGridProps {
   onOpenRow: (index: number, column: string) => void;
   selectedIndex: number | null;
   measureRow: (tr: HTMLTableRowElement | null) => void;
+  /**
+   * Marque chaque ligne de son `RowKind`, quand le résultat est un changelog.
+   *
+   * Une colonne en tête plutôt qu'une entrée dans `columns` : ce n'est pas une valeur du
+   * résultat mais une propriété de la ligne, et l'ajouter aux colonnes la ferait trier, exporter
+   * et décrire comme une donnée du moteur. Absente quand il n'y a rien à marquer — une colonne
+   * qui dirait « + » sur chaque ligne d'un SELECT ordinaire coûterait de la largeur pour rien.
+   */
+  showRowKind?: boolean;
 }
+
+const KIND_TONE: Record<'insert' | 'retract' | 'update', string> = {
+  insert: 'text-outline',
+  retract: 'text-error',
+  update: 'text-warning',
+};
 
 export const ResultsGrid = React.memo(function ResultsGrid({
   columns, rows, virtualized, window: vwin, sortCol, sortDir, onSort, onOpenRow, selectedIndex, measureRow,
+  showRowKind = false,
 }: ResultsGridProps) {
+  const span = columns.length + (showRowKind ? 1 : 0);
   return (
     <table className={cn('w-full text-left border-collapse', virtualized && 'table-fixed')}>
       <thead className="sticky top-0 bg-surface-container-high/90 backdrop-blur-sm z-10">
         <tr>
+          {showRowKind && (
+            <th scope="col" style={{ width: '2.5rem' }}
+              className="px-2 py-2.5 border-b border-outline-variant/60 text-[11px] font-medium font-mono text-on-surface-variant">
+              <span className="sr-only">Row kind</span>
+              <span aria-hidden="true">±</span>
+            </th>
+          )}
           {columns.map(col => (
             // `aria-sort` sur l'en-tête et un vrai `<button>` dedans : l'en-tête était un `<th>`
             // cliquable, donc un tri inatteignable au clavier et un ordre jamais annoncé.
@@ -68,7 +92,7 @@ export const ResultsGrid = React.memo(function ResultsGrid({
       <tbody className="divide-y divide-outline-variant/40">
         {/* Cale supérieure : préserve la hauteur des lignes non montées. */}
         {virtualized && vwin.padTop > 0 && (
-          <tr aria-hidden="true" className="border-t-0"><td colSpan={columns.length} style={{ height: vwin.padTop, padding: 0 }} /></tr>
+          <tr aria-hidden="true" className="border-t-0"><td colSpan={span} style={{ height: vwin.padTop, padding: 0 }} /></tr>
         )}
         {rows.map((row, i) => {
           const absIndex = virtualized ? vwin.start + i : i;
@@ -77,6 +101,19 @@ export const ResultsGrid = React.memo(function ResultsGrid({
             <tr key={absIndex} ref={virtualized && i === 0 ? measureRow : undefined}
               aria-selected={selected}
               className={cn('transition-colors', selected ? 'bg-primary/10' : 'hover:bg-surface-container-high/40')}>
+              {showRowKind && (() => {
+                const kind = rowKindOf(row);
+                return (
+                  // Le libellé complet est dans le titre *et* dans le texte lu par un lecteur
+                  // d'écran : un symbole seul ne dit rien, et c'est précisément la ligne dont il
+                  // faut savoir si elle compte.
+                  <td title={`${kind.kind} — ${kind.label}`}
+                    className={cn('px-2 py-2.5 text-[12px] font-mono select-none', KIND_TONE[kind.tone])}>
+                    <span aria-hidden="true">{kind.symbol}</span>
+                    <span className="sr-only">{kind.label}</span>
+                  </td>
+                );
+              })()}
               {columns.map(col => {
                 const { text, isNull } = cellText(row[col]);
                 return (
@@ -104,7 +141,7 @@ export const ResultsGrid = React.memo(function ResultsGrid({
         })}
         {/* Cale inférieure. */}
         {virtualized && vwin.padBottom > 0 && (
-          <tr aria-hidden="true" className="border-t-0"><td colSpan={columns.length} style={{ height: vwin.padBottom, padding: 0 }} /></tr>
+          <tr aria-hidden="true" className="border-t-0"><td colSpan={span} style={{ height: vwin.padBottom, padding: 0 }} /></tr>
         )}
       </tbody>
     </table>

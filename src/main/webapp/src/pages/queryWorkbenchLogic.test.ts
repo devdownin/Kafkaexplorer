@@ -17,6 +17,7 @@ import {
   buildCompletionEntries, SQL_KEYWORD_SUGGESTIONS,
   type StatementRun,
   sidebarSqlFor, sidebarActionLabel,
+  rowKindOf, describeChangelog, exportColumns, exportRows, ROW_KIND_KEY,
   type HistoryEntry,
 } from './queryWorkbenchLogic';
 
@@ -382,7 +383,7 @@ describe('the batch', () => {
     result: {
       columns: ['a'],
       rows: Array.from({ length: rows }, () => ({ a: 1 })),
-      durationMs: 1, error: null, tableRegistered: false, engine: 'KAFKA_DIRECT', warnings: [],
+      durationMs: 1, error: null, tableRegistered: false, engine: 'KAFKA_DIRECT', warnings: [], changelog: null,
     },
     ...over,
   });
@@ -557,6 +558,73 @@ describe('sortRows', () => {
 
   it('copies without sorting when no column is chosen', () => {
     expect(sortRows(rows, null, 'asc').map(r => r.n)).toEqual(['10', '9', '100']);
+  });
+});
+
+describe('the changelog marker', () => {
+  it('reads a row that carries no marker as an insert — the server only writes the exception', () => {
+    expect(rowKindOf({ a: 1 }).kind).toBe('+I');
+    expect(rowKindOf({}).kind).toBe('+I');
+    expect(rowKindOf(null).kind).toBe('+I');
+  });
+
+  it('names what each correction does to the row before it', () => {
+    expect(rowKindOf({ [ROW_KIND_KEY]: '-U' }).tone).toBe('retract');
+    expect(rowKindOf({ [ROW_KIND_KEY]: '+U' }).tone).toBe('update');
+    expect(rowKindOf({ [ROW_KIND_KEY]: '-D' }).tone).toBe('retract');
+    // Chaque genre porte un libellé en toutes lettres : le symbole seul ne dit rien, et c'est
+    // exactement la ligne dont il faut savoir si elle compte.
+    expect(rowKindOf({ [ROW_KIND_KEY]: '+U' }).label).toMatch(/replaces/i);
+  });
+
+  it('ignores a value it does not recognise rather than inventing a kind', () => {
+    expect(rowKindOf({ [ROW_KIND_KEY]: 'whatever' }).kind).toBe('+I');
+    expect(rowKindOf({ [ROW_KIND_KEY]: 7 }).kind).toBe('+I');
+  });
+
+  it('says nothing at all when no row was corrected', () => {
+    expect(describeChangelog(null)).toBeNull();
+    expect(describeChangelog({ rowsReturned: 3, corrections: 0, retractions: 0, capReached: false })).toBeNull();
+  });
+
+  it('counts the corrections and says the answer is the last row for a key', () => {
+    const said = describeChangelog({ rowsReturned: 5, corrections: 4, retractions: 2, capReached: false });
+    expect(said?.detail).toContain('4 of the 5');
+    expect(said?.detail).toMatch(/2 of them withdraw/);
+    expect(said?.detail).toMatch(/last row carrying it/);
+    // Pas tronqué : rien ne doit laisser croire que la requête a été coupée.
+    expect(said?.truncated).toBeNull();
+  });
+
+  /**
+   * Le plafond compte les corrections, donc un changelog peut le remplir d'états intermédiaires et
+   * être coupé juste avant la seule ligne qui comptait. Ce n'est plus la même lecture du dernier
+   * résultat affiché, et c'est une phrase séparée pour cette raison.
+   */
+  it('states separately that the cap cut the changelog before it settled', () => {
+    const said = describeChangelog({ rowsReturned: 50, corrections: 49, retractions: 24, capReached: true });
+    expect(said?.truncated).toMatch(/not necessarily the final answer/);
+  });
+});
+
+describe('exporting a changelog', () => {
+  it('leaves an ordinary result exactly as it is', () => {
+    const rows = [{ a: 1 }];
+    expect(exportColumns(['a'], false)).toEqual(['a']);
+    expect(exportRows(rows, false)).toEqual(rows);
+  });
+
+  /**
+   * Un fichier ne peut pas être interrogé : celui qui ne dit pas lesquelles de ses lignes sont des
+   * corrections les présente comme des résultats — le mensonge même que le marqueur retire de
+   * l'écran. Toutes les lignes portent leur genre, un `+I` implicite n'étant pas lisible.
+   */
+  it('puts the kind first and writes it on every row', () => {
+    expect(exportColumns(['a', 'b'], true)).toEqual([ROW_KIND_KEY, 'a', 'b']);
+    const out = exportRows([{ a: 1 }, { a: 2, [ROW_KIND_KEY]: '-U' }], true);
+    expect(out[0][ROW_KIND_KEY]).toBe('+I');
+    expect(out[1][ROW_KIND_KEY]).toBe('-U');
+    expect(out[1].a).toBe(2);
   });
 });
 
