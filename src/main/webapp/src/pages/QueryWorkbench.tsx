@@ -13,7 +13,7 @@ import {
   useVirtualRows,
 } from '../components/ui';
 import {
-  describeQueryError, describeApiError, offsetLocation,
+  describeQueryError, describeApiError, extractApiErrorMessage, offsetLocation,
   type QueryErrorInfo, type QueryErrorLocation,
 } from './queryError';
 import { resolveScope, resolveScopeAsTables, toTableName } from './sqlScope';
@@ -25,13 +25,15 @@ import {
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
   starterQueries, starterJobQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
   splitStatements, statementIndexAt, offsetAt, resolveOrigin,
-  planRun, detectStatementType, previewStatement,
+  planRun, detectStatementType, previewStatement, isJobModeStatement, insertTargetAndSource,
   forgetOldestResults, summariseBatch, describeStatementRun, MAX_RETAINED_BATCH_ROWS,
   buildCompletionEntries, type CompletionEntry,
   type PlannedStatement, type StatementRun,
   readSqlParam, buildQueryLink,
   sidebarSqlFor, sidebarActionLabel, sinkNameRange, pickSinkTable, type ExecutionMode,
 } from './queryWorkbenchLogic';
+import { isJobTerminal } from './flinkJobHistory';
+import { SubmittedJobPanel } from '../components/query/SubmittedJobPanel';
 import { ResultsGrid } from '../components/query/ResultsGrid';
 import { WindowAssistant } from '../components/query/WindowAssistant';
 import { SchemaBrowser, type SchemaInfo, type SavedQuery } from '../components/query/SchemaBrowser';
@@ -44,6 +46,7 @@ import { useCatalog } from '../catalogStore';
 import type {
   QueryResult,
   FlinkJobSummary,
+  FlinkManagedJobDetails,
   DdlPreviewResponse,
   SqlValidationResponse,
   QueryCancelResponse,
@@ -158,6 +161,17 @@ const VIRTUALIZE_THRESHOLD = 200;
  * jamais se termine en disant pourquoi.
  */
 const REQUEST_TIMEOUT_MS = 120_000;
+/*
+ * Cadence de relecture du job soumis, et sa borne.
+ *
+ * Trois secondes parce que ce qu'on guette est une mort précoce — elle arrive dans les premières
+ * secondes — et non le déroulé d'un job continu, qui se suit au tableau de bord. Vingt tours, soit
+ * une minute : au-delà, un job qui tient est un job qui tourne, et cette page n'est pas un
+ * moniteur.
+ */
+const JOB_POLL_INTERVAL_MS = 3_000;
+const JOB_POLL_MAX_ATTEMPTS = 20;
+const JOB_POLL_TIMEOUT_MS = 10_000;
 // Hauteur d'une ligne virtualisée (px-4 py-2.5 text-[12px], forcée sur une
 // seule ligne) — mesurée sur la première ligne montée, cette valeur sert de
 // point de départ.
@@ -542,6 +556,13 @@ const QueryWorkbench: React.FC = () => {
   // ── Query state ───────────────────────────────────────────────────────────────
   const [results, setResults] = useState<QueryResult | null>(null);
   const [submittedJob, setSubmittedJob] = useState<FlinkJobSubmission | null>(null);
+  /* Ce que le job est devenu, relu après la soumission — voir `SubmittedJobPanel`. Le panneau
+     affichait le statut lu ~150 ms après le départ et plus rien ensuite, si bien qu'un job mort à
+     sa première ligne restait vert pour toujours. */
+  const [jobDetails, setJobDetails] = useState<FlinkManagedJobDetails | null>(null);
+  const [jobDetailsError, setJobDetailsError] = useState<string | null>(null);
+  const [jobPollExhausted, setJobPollExhausted] = useState(false);
+  const [stoppingJob, setStoppingJob] = useState(false);
   const [executing, setExecuting] = useState(false);
   // Miroir synchrone de `executing` : un état React n'est pas encore à jour quand deux ⌘↵ se
   // suivent dans le même tick, et c'est précisément ce qu'il faut refuser.
@@ -630,6 +651,82 @@ const QueryWorkbench: React.FC = () => {
     setErrorSource(panelError ?? results);
     setShowErrorDetails(false);
   }
+
+  /*
+   * Ce qu'est devenu le job soumis.
+   *
+   * `POST /api/query/jobs` répond dès que Flink a rendu un JobClient, donc son statut est celui
+   * d'il y a 150 ms — un job qui meurt à sa première ligne (broker injoignable, sérialisation)
+   * laissait le panneau vert pour toujours, et le tableau de bord était le seul endroit où
+   * l'apprendre. On redemande, à cadence lente et pour un temps borné : ce qui arrive après
+   * quelques minutes appartient au tableau de bord, qui suit les jobs sur toute leur vie.
+   *
+   * Un échec de relecture ne remet pas le panneau au vert : il est dit tel quel, « nous n'avons
+   * pas su redemander » n'étant pas « le job va bien ».
+   */
+  useEffect(() => {
+    const queryId = submittedJob?.queryId;
+    if (!queryId) return;
+    let cancelled = false;
+    let attempts = 0;
+    const tick = async () => {
+      attempts += 1;
+      try {
+        const res = await axios.get<FlinkManagedJobDetails>(`/api/query/jobs/${queryId}`,
+          { timeout: JOB_POLL_TIMEOUT_MS });
+        if (cancelled) return;
+        setJobDetails(res.data);
+        setJobDetailsError(null);
+        if (isJobTerminal(res.data.status)) return;
+      } catch (e) {
+        if (cancelled) return;
+        setJobDetailsError(extractApiErrorMessage(e, 'the server did not answer'));
+      }
+      if (attempts >= JOB_POLL_MAX_ATTEMPTS) { setJobPollExhausted(true); return; }
+      if (!cancelled) timer = window.setTimeout(() => void tick(), JOB_POLL_INTERVAL_MS);
+    };
+    let timer = window.setTimeout(() => void tick(), JOB_POLL_INTERVAL_MS);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [submittedJob?.queryId]);
+
+  /*
+   * « On redemande encore » se déduit, il ne se range pas : poser l'état depuis le corps de
+   * l'effet est ce que la règle du compilateur React refuse, et elle a raison — ce booléen est une
+   * fonction de ce qui est déjà à l'écran. Seul l'épuisement du budget de tours est un fait
+   * nouveau, et il est posé depuis la boucle, jamais synchrone.
+   */
+  const jobPolling = !!submittedJob && !jobPollExhausted
+    && !isJobTerminal(jobDetails?.status ?? submittedJob.status);
+
+  /** Arrête le job suivi. Le tableau de bord fait la même chose ; ici c'est sous la main. */
+  const stopSubmittedJob = async () => {
+    const queryId = submittedJob?.queryId;
+    if (!queryId) return;
+    setStoppingJob(true);
+    try {
+      await axios.post(`/api/query/cancel/${queryId}`, null, { timeout: JOB_POLL_TIMEOUT_MS });
+      toast('Cancellation requested', 'success');
+    } catch (e) {
+      toast(extractApiErrorMessage(e, 'Could not cancel the job'), 'error');
+    } finally {
+      setStoppingJob(false);
+    }
+  };
+
+  /**
+   * La cible d'un INSERT que le catalogue ne connaît pas — donc celle qu'il faut créer.
+   *
+   * `null` dès que la cible résout : proposer de créer une table qui existe n'apprend rien, et le
+   * bouton disparaît. Le nom est lu dans le SQL qui a été *exécuté*, jamais dans l'onglet courant :
+   * c'est du job affiché qu'on parle.
+   */
+  const missingSinkTarget = useMemo(() => {
+    if (!submittedJob) return null;
+    const parsed = insertTargetAndSource(submittedJob.sql);
+    if (!parsed || !parsed.source) return null;
+    if ((schema?.tables ?? []).includes(parsed.target)) return null;
+    return parsed;
+  }, [submittedJob, schema]);
 
   const sortedRows = useMemo(
     () => (results?.rows ? sortRows(results.rows, sortCol, sortDir) : []),
@@ -1069,18 +1166,18 @@ const QueryWorkbench: React.FC = () => {
       return { status: 'failed', ms: 0, result: null, job: null, error };
     };
 
-    if (executionMode === 'SYNC_READ' && statementType === 'INSERT') {
+    if (executionMode === 'SYNC_READ' && isJobModeStatement(statementType)) {
       return refuse({
-        title: 'INSERT INTO cannot run in Read mode',
+        title: 'This statement cannot run in Read mode',
         hint: 'Switch the execution mode to Flink Job — Read mode returns rows, so it only accepts SELECT, EXPLAIN and CREATE TABLE.',
-        raw: 'INSERT INTO must be submitted in Flink Job mode.',
+        raw: 'INSERT and STATEMENT SET must be submitted in Flink Job mode.',
       });
     }
-    if (executionMode === 'ASYNC_JOB' && statementType !== 'INSERT') {
+    if (executionMode === 'ASYNC_JOB' && !isJobModeStatement(statementType)) {
       return refuse({
-        title: 'Flink Job mode only accepts INSERT INTO',
+        title: 'Flink Job mode only accepts INSERT and STATEMENT SET',
         hint: `This statement is ${statementType || 'not an INSERT'}. Switch back to Read mode to run it and see the rows.`,
-        raw: 'Flink Job mode only accepts INSERT INTO statements.',
+        raw: 'Flink Job mode only accepts INSERT and STATEMENT SET statements.',
       });
     }
 
@@ -1117,6 +1214,7 @@ const QueryWorkbench: React.FC = () => {
     abortRef.current = controller;
     executingRef.current = true;
     setExecuting(true); setResults(null); setSubmittedJob(null); setSortCol(null); setDetailIndex(null);
+    setJobDetails(null); setJobDetailsError(null); setJobPollExhausted(false);
     // Ce qui a réellement été exécuté — c'est lui, et non le contenu courant de l'onglet, qui dit
     // si les lignes affichées répondent encore au texte sous les yeux.
     setRanSql(sqlToRun);
@@ -1472,6 +1570,24 @@ const QueryWorkbench: React.FC = () => {
     addTab(sqlText, name);
     return 'new' as const;
   }, [activeTab.sql, activeTabId, addTab, updateSql]);
+
+  /** Rend le `CREATE TABLE` de la cible et l'ouvre — il n'exécute rien, comme partout ici. */
+  const openTargetTableDdl = async () => {
+    if (!missingSinkTarget?.source) return;
+    try {
+      const res = await axios.get<DdlPreviewResponse>('/api/query/sink-ddl',
+        { params: { source: missingSinkTarget.source, topic: missingSinkTarget.target } });
+      if (!res.data.ddl) {
+        toast(res.data.error ?? 'The target DDL could not be generated', 'error');
+        return;
+      }
+      openSql(res.data.ddl);
+      toast('Target table DDL opened — run it in Read mode to create the table', 'success');
+    } catch (e) {
+      toast(extractApiErrorMessage(e, 'The target DDL could not be generated'), 'error');
+    }
+  };
+
 
   /**
    * Le raccourci de la barre latérale, sans écraser l'onglet en cours.
@@ -2158,36 +2274,17 @@ const QueryWorkbench: React.FC = () => {
                   </div>
                 </div>
               ) : submittedJob ? (
-                <div className="p-4">
-                  <div className="flex items-start gap-3 p-4 rounded-lg border border-success/30 bg-success/10">
-                    <span className="material-symbols-outlined text-success text-base mt-0.5 shrink-0">rocket_launch</span>
-                    <div className="flex-1 min-w-0 space-y-2">
-                      <div>
-                        <p className="text-success font-semibold text-sm">Flink job submitted</p>
-                        <p className="text-xs text-on-surface-variant">The SQL was accepted in asynchronous job mode and is now tracked by the dashboard.</p>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono text-on-surface">
-                        <div>
-                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Status</p>
-                          <p>{submittedJob.status}</p>
-                        </div>
-                        <div>
-                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Type</p>
-                          <p>{submittedJob.statementType.replace('_', ' ')}</p>
-                        </div>
-                        <div>
-                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Query ID</p>
-                          <p className="break-all">{submittedJob.queryId}</p>
-                        </div>
-                        <div>
-                          <p className="text-on-surface-variant uppercase tracking-wider text-[10px]">Flink Job ID</p>
-                          <p className="break-all">{submittedJob.flinkJobId}</p>
-                        </div>
-                      </div>
-                      <pre className="text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-success/20 pt-2">{submittedJob.sql}</pre>
-                    </div>
-                  </div>
-                </div>
+                <SubmittedJobPanel
+                  submission={submittedJob}
+                  details={jobDetails}
+                  detailsError={jobDetailsError}
+                  polling={jobPolling}
+                  stopping={stoppingJob}
+                  onStop={() => void stopSubmittedJob()}
+                  onCreateTarget={missingSinkTarget ? () => void openTargetTableDdl() : undefined}
+                  createTargetLabel={missingSinkTarget
+                    ? `Create ${missingSinkTarget.target}` : undefined}
+                />
               ) : shownRun?.forgotten ? (
                 /* Les lignes de cette instruction ont été libérées pour borner ce que le lot
                    retient. Une grille vide se lirait « aucune ligne » : ce panneau dit ce qui a

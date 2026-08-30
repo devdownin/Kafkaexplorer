@@ -155,6 +155,19 @@ public class FlinkSqlService {
     /** First table named after FROM — backticked, quoted or bare. */
     private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\s+[`\"]?([\\w.\\-]+)[`\"]?");
 
+    /** Every table a statement reads: after FROM, and after each JOIN. */
+    private static final Pattern SOURCE_TABLE = Pattern.compile(
+        "(?i)\\b(?:FROM|JOIN)\\s+[`\"]?([\\w.\\-]+)[`\"]?");
+
+    /**
+     * Names the pattern above can match that are keywords rather than tables.
+     *
+     * <p>{@code FROM TABLE(TUMBLE(TABLE orders, …))} yields {@code TABLE}, and {@code FROM
+     * LATERAL TABLE(…)} / {@code FROM UNNEST(…)} the same way. The window call carries the real
+     * name and is read separately, exactly as {@link #extractPrimaryTable} does.
+     */
+    private static final Set<String> NOT_A_TABLE_NAME = Set.of("TABLE", "LATERAL", "UNNEST");
+
     /** One INTERVAL argument of a window call. Flink accepts both MINUTE and MINUTES. */
     private static final Pattern WINDOW_INTERVAL = Pattern.compile(
         "(?i)INTERVAL\\s+'(\\d+)'\\s+(MINUTE|HOUR|SECOND|DAY)S?");
@@ -376,6 +389,40 @@ public class FlinkSqlService {
     }
 
     /**
+     * Every table a statement reads, the primary one first.
+     *
+     * <p>Auto-registration used to consult {@link #extractPrimaryTable} alone, so a statement
+     * reading two topics registered the first and let the planner answer "Object not found" about
+     * the second — a name that is perfectly correct, on the shape a JOIN <em>is</em>. It cost most
+     * in Flink Job mode, which has no direct reader to catch the query, and it was invisible in
+     * read mode for the same reason it was invisible everywhere: the fallback returned rows, from
+     * a reader that ignores the join entirely.
+     *
+     * <p>The primary table stays first because it is the one the direct reader will read if the
+     * query falls back — {@code deferToDirect} is decided on it and on nothing else.
+     *
+     * <p>An INSERT's <strong>target</strong> is excluded by construction: the pattern matches
+     * {@code FROM} and {@code JOIN}, never {@code INSERT INTO}. That is deliberate — deriving a
+     * sink schema from an empty target topic yields {@code raw_value STRING} and an arity failure,
+     * which is a worse answer than "unknown table".
+     */
+    List<String> extractSourceTables(String sql) {
+        Set<String> names = new LinkedHashSet<>();
+        String primary = extractPrimaryTable(sql);
+        if (primary != null && !NOT_A_TABLE_NAME.contains(primary.toUpperCase(Locale.ROOT))) {
+            names.add(primary);
+        }
+        Matcher window = WINDOW_CALL.matcher(sql);
+        while (window.find()) names.add(window.group(2));
+        Matcher source = SOURCE_TABLE.matcher(sql);
+        while (source.find()) {
+            String name = source.group(1);
+            if (!NOT_A_TABLE_NAME.contains(name.toUpperCase(Locale.ROOT))) names.add(name);
+        }
+        return List.copyOf(names);
+    }
+
+    /**
      * Before executing a SELECT, checks if the referenced table is already registered in Flink.
      * If not, looks for a Kafka topic whose sanitized name (dots/hyphens → underscores) matches,
      * infers its schema, generates the DDL and registers it automatically.
@@ -400,11 +447,32 @@ public class FlinkSqlService {
         // ci-dessus pour `INSERT INTO`, resté debout à un mot-clé près : ce que le mode Job
         // accepte de soumettre, cette méthode doit accepter de servir.
         String body = SqlStatements.classifiableBody(sql);
-        if (!body.startsWith("SELECT") && !body.startsWith("INSERT")) return AutoRegResult.skip();
+        if (!body.startsWith("SELECT") && !body.startsWith("INSERT") && !body.startsWith("EXECUTE STATEMENT SET")
+                && !body.startsWith("STATEMENT SET")) {
+            return AutoRegResult.skip();
+        }
         // The first FROM is inside the CTE body, which is exactly the source table to register.
-        String rawTableRef = extractPrimaryTable(sql);
-        if (rawTableRef == null) return AutoRegResult.skip();
+        List<String> sources = extractSourceTables(sql);
+        if (sources.isEmpty()) return AutoRegResult.skip();
 
+        // Chaque source est enregistrée, pas seulement la première : une jointure entre deux
+        // topics non enregistrés répondait « Object not found » sur le second. Le repli sur le
+        // lecteur direct, lui, ne se décide que sur la source *primaire* — c'est la seule que ce
+        // lecteur lira, donc c'est la seule dont l'absence de schéma le concerne.
+        boolean registeredAny = false;
+        boolean primaryDeferred = false;
+        for (String rawTableRef : sources) {
+            AutoRegResult one = registerSourceTable(rawTableRef);
+            if (one.error() != null) return one;
+            if (one.registered()) registeredAny = true;
+            if (one.deferredToDirectReader() && rawTableRef.equals(sources.get(0))) primaryDeferred = true;
+        }
+        if (primaryDeferred) return AutoRegResult.deferToDirect();
+        return registeredAny ? AutoRegResult.tableCreated() : AutoRegResult.skip();
+    }
+
+    /** One source table: already registered, matched to a topic and registered, or left to Flink. */
+    private AutoRegResult registerSourceTable(String rawTableRef) {
         String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
 
         if (listTables().contains(flinkTableName)) return AutoRegResult.skip();
@@ -533,6 +601,11 @@ public class FlinkSqlService {
         // Classified past a leading CTE chain, so `WITH … INSERT INTO` and `WITH … SELECT` are
         // routed like the statements they actually are.
         String upper = SqlStatements.classifiableBody(stripSqlComments(sql));
+        // Un STATEMENT SET est la façon dont Flink écrit un fan-out : plusieurs INSERT depuis une
+        // même source dans **un seul** job, donc une seule lecture du topic. Il est classé avant
+        // l'INSERT parce qu'il en contient, et nommé à part parce que le mode Job doit pouvoir le
+        // reconnaître sans confondre « plusieurs instructions » et « une instruction composée ».
+        if (upper.startsWith("EXECUTE STATEMENT SET") || upper.startsWith("STATEMENT SET")) return "STATEMENT_SET";
         if (upper.startsWith("INSERT INTO")) return "INSERT";
         if (upper.startsWith("CREATE TABLE")) return "CREATE_TABLE";
         if (upper.startsWith("SELECT")) return "SELECT";
@@ -645,18 +718,31 @@ public class FlinkSqlService {
         }
     }
 
+    /**
+     * Les instructions que le mode Job soumet : un INSERT continu, ou un STATEMENT SET qui en
+     * réunit plusieurs en un job.
+     *
+     * <p>Écrite une fois plutôt que deux : {@code executeSync} refuse exactement ce que
+     * {@code submitJob} accepte, et deux listes qui divergent laissent une instruction refusée
+     * des deux côtés — avec, en mode lecture, le message « Only SELECT, EXPLAIN and CREATE TABLE »
+     * qui se lit comme une restriction de sécurité plutôt que comme « à envoyer ailleurs ».
+     */
+    static boolean isJobModeStatement(String statementType) {
+        return "INSERT".equals(statementType) || "STATEMENT_SET".equals(statementType);
+    }
+
     private String prepareSql(String sql) {
         return stripSqlComments(normalizeIdentifierQuotes(sql.trim()));
     }
 
     public QueryResult executeSync(QueryRequest request) {
         String strippedSql = prepareSql(request.sql());
-        if ("INSERT".equals(extractStatementType(strippedSql))) {
+        if (isJobModeStatement(extractStatementType(strippedSql))) {
             return new QueryResult(
                 Collections.emptyList(),
                 Collections.emptyList(),
                 0,
-                "INSERT INTO statements must be submitted via /api/query/jobs in Flink Job mode."
+                "INSERT and STATEMENT SET statements must be submitted via /api/query/jobs in Flink Job mode."
             );
         }
         return executeSql(request);
@@ -664,11 +750,16 @@ public class FlinkSqlService {
 
     public FlinkJobSummary submitJob(QueryRequest request) {
         long startedAt = System.currentTimeMillis();
-        String queryId = UUID.randomUUID().toString();
+        // L'identifiant de l'appelant quand il en fournit un, comme en lecture — `submitJob` en
+        // fabriquait un et ne le rendait que dans sa réponse. Si celle-ci se perd (délai réseau,
+        // onglet fermé), le job tourne et personne n'a son id : il n'est plus annulable qu'en le
+        // reconnaissant à son SQL dans le tableau de bord. `resolveQueryId` refuse ce qui ne peut
+        // pas servir de clé de magasin ni de ligne de journal et en fabrique un à la place.
+        String queryId = resolveQueryId(request.queryId());
         String strippedSql = prepareSql(request.sql());
         String statementType = extractStatementType(strippedSql);
 
-        if (!"INSERT".equals(statementType)) {
+        if (!isJobModeStatement(statementType)) {
             flinkJobStore.create(
                 queryId,
                 null,
@@ -678,10 +769,12 @@ public class FlinkSqlService {
                 "Rejected before execution",
                 strippedSql,
                 startedAt,
-                "Only INSERT INTO statements are allowed in Flink Job mode."
+                JOB_MODE_REFUSAL
             );
-            throw new IllegalArgumentException("Only INSERT INTO statements are allowed in Flink Job mode.");
+            throw new IllegalArgumentException(JOB_MODE_REFUSAL);
         }
+
+        refuseIfTooManyJobsAreHeld();
 
         try {
             sqlQueryValidator.validate(strippedSql);
@@ -733,6 +826,7 @@ public class FlinkSqlService {
             );
             return summary;
         } catch (RuntimeException e) {
+            RuntimeException reported = explainMultiStatementRefusal(e);
             // explain(), et non getMessage() : c'est nul sur une NullPointerException, et ce champ
             // est la seule trace de la raison — `FlinkJobCard` l'affiche sous la carte rouge, et
             // rien d'autre ne la garde. Flink emballe par ailleurs le texte utile (la ligne et la
@@ -747,10 +841,60 @@ public class FlinkSqlService {
                 "Submission failed before a Flink JobClient was available",
                 strippedSql,
                 startedAt,
-                SqlErrorClassifier.explain(e)
+                SqlErrorClassifier.explain(reported)
             );
-            throw e;
+            throw reported;
         }
+    }
+
+    /** Ce que le mode Job n'exécute pas, dit une fois — le magasin et l'exception le partagent. */
+    static final String JOB_MODE_REFUSAL =
+        "Only INSERT and STATEMENT SET statements are allowed in Flink Job mode.";
+
+    /**
+     * Un job continu tenu de plus n'est pas gratuit, et rien ne le disait.
+     *
+     * <p>Mesuré sur ce runtime : chaque soumission démarre <strong>son propre MiniCluster</strong>
+     * — l'exécution locale n'en partage pas — soit environ <strong>80 threads et 6 Mo de tas par
+     * job</strong>, dans le processus qui sert aussi l'interface (six jobs tenus : 482 threads).
+     * Ce n'est pas une famine de slots : une lecture pendant un INSERT continu répond toujours par
+     * le planner, ce qui a été vérifié avant d'écrire ce garde-fou. C'est un coût qui s'accumule
+     * en silence, sur un geste qu'on répète sans y penser depuis l'éditeur.
+     *
+     * <p>Le refus <strong>nomme le compte et le réglage</strong> plutôt que d'être un plafond muet,
+     * et {@code 0} le retire — un opérateur qui sait ce qu'il fait n'a pas à être arrêté ici. Seuls
+     * les jobs asynchrones comptent : une lecture synchrone tient aussi son job, mais le temps de
+     * sa requête HTTP.
+     */
+    private void refuseIfTooManyJobsAreHeld() {
+        int max = explorerConfig.getMaxConcurrentJobs();
+        if (max <= 0) return;
+        // getHeldJobs() réconcilie avant de répondre, donc un job terminé ne compte pas.
+        long held = getHeldJobs().values().stream()
+            .filter(info -> "ASYNC_JOB".equals(info.executionMode()))
+            .count();
+        if (held < max) return;
+        throw new IllegalArgumentException(String.format(
+            "This deployment already holds %d streaming job(s), which is the maximum "
+                + "(explorer.max-concurrent-jobs = %d). Each one runs its own embedded Flink "
+                + "cluster — about 80 threads — inside the process that serves this UI. Stop one "
+                + "from the dashboard, or raise the setting.", held, max));
+    }
+
+    /**
+     * « only single statement supported » est la phrase de Flink, et elle ne dit pas quoi faire.
+     *
+     * <p>Deux instructions collées dans une soumission sont un geste courant, et il y a deux
+     * réponses : les lancer l'une après l'autre (`Run all`, que l'éditeur fait déjà) ou en faire
+     * un seul job (`STATEMENT SET`, que le mode Job accepte désormais). Le refus les nomme.
+     */
+    private static RuntimeException explainMultiStatementRefusal(RuntimeException e) {
+        String message = SqlErrorClassifier.explain(e);
+        if (!message.toLowerCase(Locale.ROOT).contains("only single statement supported")) return e;
+        return new IllegalArgumentException(
+            "A submission carries one statement, and this one holds several. Run them one after "
+                + "another with Run all, or submit them as a single job: "
+                + "EXECUTE STATEMENT SET BEGIN <insert>; <insert>; END.", e);
     }
 
     public QueryResult executeSql(QueryRequest request) {

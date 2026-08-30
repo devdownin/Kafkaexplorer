@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -26,6 +27,28 @@ public class DdlGeneratorService {
     public DdlGeneratorService(KafkaConfig kafkaConfig, NamingConventionService namingConventionService) {
         this.kafkaConfig = kafkaConfig;
         this.namingConventionService = namingConventionService;
+    }
+
+    /**
+     * Les colonnes d'une table existante qu'un sink peut accepter, dans leur ordre.
+     *
+     * <p>{@code FlinkSqlService.getTableSchema} rend le type résolu tel que Flink l'imprime, ce qui
+     * n'est pas un type qu'on peut réécrire dans un DDL : une colonne calculée porte
+     * {@code *PROCTIME*} ou {@code *ROWTIME*} — et c'est précisément celle qu'aucun sink n'accepte,
+     * la cause de l'échec d'arité que la barre latérale évite déjà en nommant les colonnes — et une
+     * colonne non nulle porte {@code NOT NULL}, contrainte qu'il serait faux de recopier sur une
+     * cible alimentée par une projection.
+     */
+    public static Map<String, String> sinkColumns(Map<String, String> schema) {
+        Map<String, String> columns = new LinkedHashMap<>();
+        if (schema == null) return columns;
+        schema.forEach((name, type) -> {
+            if (type == null) return;
+            String upper = type.toUpperCase(Locale.ROOT);
+            if (upper.contains("*PROCTIME*") || upper.contains("*ROWTIME*")) return;
+            columns.put(name, type.replaceAll("(?i)\\s+NOT\\s+NULL$", "").trim());
+        });
+        return columns;
     }
 
     public String generateDdl(String topicName, Map<String, String> schema, MessageFormat format) {

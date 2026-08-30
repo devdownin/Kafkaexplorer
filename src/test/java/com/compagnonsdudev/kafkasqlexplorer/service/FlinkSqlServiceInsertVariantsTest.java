@@ -65,6 +65,7 @@ class FlinkSqlServiceInsertVariantsTest {
     private StreamTableEnvironment tableEnv;
     private FlinkSqlService service;
     private FlinkJobStore jobStore;
+    private ExplorerConfig config;
     private KafkaAdminService kafkaAdminService;
     private SchemaInferenceService schemaInferenceService;
     private DdlGeneratorService ddlGeneratorService;
@@ -80,7 +81,7 @@ class FlinkSqlServiceInsertVariantsTest {
         tableEnv = StreamTableEnvironment.create(env,
                 EnvironmentSettings.newInstance().inStreamingMode().build());
 
-        ExplorerConfig config = new ExplorerConfig();
+        config = new ExplorerConfig();
         config.setDefaultMaxRows(50);
         config.setDefaultQueryTimeoutMs(10_000);
         config.setFlinkJobStorePath(Files.createTempFile("insert-variants-jobs-", ".json").toString());
@@ -124,6 +125,10 @@ class FlinkSqlServiceInsertVariantsTest {
                 + "(order_id STRING, amount DOUBLE) WITH ('connector'='blackhole')");
         tableEnv.executeSql("CREATE TABLE IF NOT EXISTS ins_counts "
                 + "(state STRING, n BIGINT) WITH ('connector'='blackhole')");
+        // Sans fin, comme un topic Kafka : le job du cas sur le plafond doit être encore tenu
+        // quand la soumission suivante arrive.
+        tableEnv.executeSql("CREATE TABLE IF NOT EXISTS ins_infinite "
+                + "(order_id STRING, amount DOUBLE) WITH ('connector'='datagen','rows-per-second'='2')");
         tableEnv.executeSql("CREATE TABLE IF NOT EXISTS ins_partitioned "
                 + "(order_id STRING, dt STRING) PARTITIONED BY (dt) WITH ('connector'='blackhole')");
     }
@@ -358,8 +363,10 @@ class FlinkSqlServiceInsertVariantsTest {
                         "INSERT INTO ins_sink VALUES ('A', 1.0); INSERT INTO ins_sink VALUES ('B', 2.0)",
                         50, 10_000L, null)));
 
-        assertTrue(refused.getMessage().toLowerCase(Locale.ROOT).contains("single statement"),
-                refused.getMessage());
+        assertTrue(refused.getMessage().contains("Run all"), refused.getMessage());
+        assertTrue(refused.getMessage().contains("STATEMENT SET"),
+                "le refus doit nommer la forme qui réunit plusieurs INSERT en un job : "
+                        + refused.getMessage());
     }
 
     /**
@@ -373,11 +380,11 @@ class FlinkSqlServiceInsertVariantsTest {
     void whatJobModeDoesNotRunIsRefusedAndRecorded() {
         for (String sql : List.of(
                 "SELECT order_id FROM ins_orders",
-                "EXECUTE STATEMENT SET BEGIN INSERT INTO ins_sink VALUES ('E', 5.0); END",
-                "CREATE TABLE ins_nope (id STRING) WITH ('connector'='blackhole')")) {
+                "CREATE TABLE ins_nope (id STRING) WITH ('connector'='blackhole')",
+                "DROP TABLE ins_sink")) {
             IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
                     () -> service.submitJob(QueryRequest.sql(sql, 50, 10_000L, null)), sql);
-            assertTrue(refused.getMessage().contains("Only INSERT INTO statements are allowed"),
+            assertTrue(refused.getMessage().contains("Only INSERT and STATEMENT SET statements are allowed"),
                     refused.getMessage());
 
             FlinkManagedJobDetails recorded = jobStore.listAll().stream()
@@ -385,7 +392,7 @@ class FlinkSqlServiceInsertVariantsTest {
                     .findFirst()
                     .orElseThrow(() -> new AssertionError("aucune trace du refus pour : " + sql));
             assertEquals("FAILED", recorded.status());
-            assertTrue(recorded.errorMessage().contains("Only INSERT INTO statements are allowed"),
+            assertTrue(recorded.errorMessage().contains("Only INSERT and STATEMENT SET statements are allowed"),
                     recorded.errorMessage());
         }
     }
@@ -427,6 +434,135 @@ class FlinkSqlServiceInsertVariantsTest {
                     "le refus doit dire où soumettre l'instruction : " + result.error() + " — " + sql);
             assertTrue(result.rows().isEmpty(), sql);
         }
+    }
+
+    // ── Ce que la soumission fait avant d'exécuter ────────────────────────────────────
+
+    /**
+     * Un STATEMENT SET est un job, pas plusieurs.
+     *
+     * <p>C'est la forme Flink du fan-out : plusieurs INSERT depuis une même source dans un seul
+     * job, donc <em>une seule</em> lecture du topic. Elle était refusée par le garde du mode Job,
+     * et l'équivalent — N soumissions — coûte N lectures de la même source et N clusters Flink
+     * embarqués. Les sources de chacun des INSERT sont enregistrées comme celles d'un INSERT seul.
+     */
+    @Test
+    void aStatementSetIsSubmittedAsOneJob() {
+        FlinkJobSummary summary = service.submitJob(QueryRequest.sql(
+                "EXECUTE STATEMENT SET BEGIN "
+                        + "INSERT INTO ins_sink SELECT order_id, amount FROM ins_orders; "
+                        + "INSERT INTO ins_counts SELECT state, COUNT(*) FROM ins_orders GROUP BY state; "
+                        + "END", 50, 10_000L, null));
+
+        assertEquals("STATEMENT_SET", summary.statementType());
+        assertFalse(summary.flinkJobId().isBlank(), "les deux INSERT partagent un seul job Flink");
+
+        service.cancelJob(summary.queryId());
+    }
+
+    /**
+     * Toutes les sources sont enregistrées, pas seulement la première.
+     *
+     * <p>Une jointure entre deux topics non enregistrés répondait « Object not found » sur le
+     * second — un nom parfaitement correct — et le mode Job n'a aucun repli pour rattraper ça.
+     */
+    @Test
+    void everySourceOfTheStatementIsRegisteredNotOnlyTheFirst() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("ins.left.src", "ins.right.src"));
+        when(schemaInferenceService.detectFormat(anyString())).thenReturn(MessageFormat.JSON);
+        Map<String, String> schema = new LinkedHashMap<>();
+        schema.put("order_id", "STRING");
+        schema.put("amount", "DOUBLE");
+        when(schemaInferenceService.inferSchema(anyString(), any(MessageFormat.class))).thenReturn(schema);
+        when(ddlGeneratorService.generateDdl(anyString(), any(), any())).thenAnswer(call ->
+                "CREATE TABLE " + DdlGeneratorService.toTableName(call.getArgument(0))
+                        + " (order_id STRING, amount DOUBLE) "
+                        + "WITH ('connector'='datagen','number-of-rows'='1')");
+
+        assertFalse(service.listTables().contains("ins_left_src"));
+        assertFalse(service.listTables().contains("ins_right_src"));
+
+        FlinkJobSummary summary = service.submitJob(QueryRequest.sql(
+                "INSERT INTO ins_sink SELECT l.order_id, l.amount FROM ins_left_src l "
+                        + "JOIN ins_right_src r ON l.order_id = r.order_id", 50, 10_000L, null));
+
+        assertTrue(service.listTables().contains("ins_left_src"));
+        assertTrue(service.listTables().contains("ins_right_src"),
+                "la table du JOIN doit être enregistrée elle aussi, sinon son nom correct "
+                        + "répond « Object not found »");
+        service.cancelJob(summary.queryId());
+        when(kafkaAdminService.listTopics()).thenReturn(List.of());
+    }
+
+    /**
+     * L'identifiant de l'appelant est repris, comme en lecture.
+     *
+     * <p>Sans lui, l'id n'existe que dans la réponse : si elle se perd (délai réseau, onglet
+     * fermé), le job tourne et rien ne peut plus l'annuler par son nom.
+     */
+    @Test
+    void aSubmissionKeepsTheQueryIdItsCallerChose() {
+        QueryRequest request = QueryRequest.sql(
+                "INSERT INTO ins_sink SELECT order_id, amount FROM ins_orders", 50, 10_000L, null);
+        FlinkJobSummary summary = service.submitJob(new QueryRequest(
+                request.sql(), request.topic(), request.maxRows(), request.timeout(),
+                request.readMode(), "insert-variants-42", request.directRead()));
+
+        assertEquals("insert-variants-42", summary.queryId());
+        assertEquals(FlinkSqlService.CancelOutcome.CANCELLED, service.cancelJob("insert-variants-42"));
+    }
+
+    /**
+     * Un job continu de plus n'est pas gratuit, et le refus le dit.
+     *
+     * <p>Mesuré : chaque soumission démarre son propre MiniCluster — l'exécution locale n'en
+     * partage pas — soit ~80 threads par job dans le processus qui sert aussi l'interface. Ce
+     * n'est pas une famine de slots (une lecture pendant un INSERT continu répond toujours par le
+     * planner, ce qui a été vérifié) : c'est un coût qui s'accumule sans que rien ne le dise.
+     */
+    @Test
+    void pastTheCapASubmissionIsRefusedWithItsCount() {
+        config.setMaxConcurrentJobs(1);
+        try {
+            FlinkJobSummary first = service.submitJob(QueryRequest.sql(
+                    "INSERT INTO ins_sink SELECT order_id, amount FROM ins_infinite", 50, 10_000L, null));
+
+            IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                    () -> service.submitJob(QueryRequest.sql(
+                            "INSERT INTO ins_sink SELECT order_id, amount FROM ins_infinite",
+                            50, 10_000L, null)));
+
+            assertTrue(refused.getMessage().contains("explorer.max-concurrent-jobs"),
+                    "le refus doit nommer le réglage : " + refused.getMessage());
+            assertTrue(refused.getMessage().contains("1"), refused.getMessage());
+
+            service.cancelJob(first.queryId());
+        } finally {
+            config.setMaxConcurrentJobs(10);
+        }
+    }
+
+    /**
+     * Le pré-vol attrape une faute de syntaxe dans un INSERT, sans rien soumettre.
+     *
+     * <p>`SqlQueryValidator` sortait avant l'EXPLAIN pour tout ce qui n'est pas SELECT/EXPLAIN,
+     * si bien que l'éditeur — qui appelle `/api/query/validate` avant chaque Run, mode Job compris
+     * — ne vérifiait rien du tout sur un INSERT : la faute n'était trouvée qu'en soumettant, ce
+     * qui laisse un enregistrement FAILED dans le magasin. Une table non résolue, elle, doit
+     * rester avalée : ce contrôle passe avant l'auto-enregistrement des sources.
+     */
+    @Test
+    void thePreflightRejectsAnInsertSyntaxErrorAndTolerantsAnUnresolvedTable() {
+        SqlQueryValidator validator = new SqlQueryValidator(
+                config, tableEnv, new FlinkRuntimeCoordinator(tableEnv));
+
+        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                () -> validator.validate("INSERT INTO ins_sink SELEKT order_id FROM ins_orders"));
+        assertTrue(refused.getMessage().contains("SQL parse failed"), refused.getMessage());
+
+        assertDoesNotThrow(
+                () -> validator.validate("INSERT INTO ins_sink SELECT order_id, amount FROM not_registered_yet"),
+                "une table non résolue est attendue à ce stade — la source n'est pas encore enregistrée");
     }
 
     // ── Outils ────────────────────────────────────────────────────────────────────────

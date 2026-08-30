@@ -38,10 +38,27 @@ public class SqlQueryValidator {
             return;
         }
 
-        // EXPLAIN only supports SELECT/EXPLAIN — DDL (CREATE TABLE, ALTER, DROP) is not supported
-        // and will throw "Unsupported operation: CreateTableOperation". Skip for DDL.
-        String upperTrimmed = sql.trim().toUpperCase();
-        if (!upperTrimmed.startsWith("SELECT") && !upperTrimmed.startsWith("EXPLAIN")) {
+        /*
+         * EXPLAIN ne s'applique pas à du DDL (CREATE TABLE, ALTER, DROP) : Flink répond
+         * « Unsupported operation: CreateTableOperation ». Il s'applique en revanche à un INSERT,
+         * et c'est ce que ce pré-vol ne faisait pas.
+         *
+         * L'éditeur appelle `/api/query/validate` avant *chaque* Run, mode Job compris — mais
+         * cette méthode sortait ici pour tout ce qui n'est pas SELECT/EXPLAIN, si bien qu'un
+         * INSERT n'était vérifié par rien : sa faute de frappe n'était trouvée qu'en le
+         * soumettant, ce qui écrit un enregistrement FAILED dans le magasin de jobs et consomme
+         * un des emplacements retenus. Mesuré sur ce runtime, `explainSql` sur un INSERT
+         * distingue exactement ce qu'il faut : une faute de syntaxe remonte en erreur de parseur
+         * (rejetée ci-dessous avec sa ligne et sa colonne), tandis qu'une table non résolue reste
+         * une erreur de résolution — avalée, comme pour un SELECT, puisque ce contrôle passe
+         * *avant* l'auto-enregistrement des sources.
+         *
+         * La classification lit au-delà d'une chaîne CTE de tête, comme partout ailleurs : sans
+         * cela un `WITH … SELECT` n'était pas validé non plus.
+         */
+        String upperTrimmed = SqlStatements.classifiableBody(sql.trim());
+        if (!upperTrimmed.startsWith("SELECT") && !upperTrimmed.startsWith("EXPLAIN")
+                && !upperTrimmed.startsWith("INSERT")) {
             return;
         }
 

@@ -321,7 +321,7 @@ without being a phone — turns out to be painful in practice. What is load-bear
   **parameter**, which is the only thing that differed between the screens: Data Model passes its
   endpoint's 30, Process Mining passes none because what bounds a profiling run is the prompt
   budget applied server-side over all topics, not a number of topics. The two primitives stay in
-  `pages/streamFlow.ts` where they are defined and tested.
+  `pages/streamFlowLogic.ts` where they are defined and tested.
 - **The threshold itself lives in `breakpoints.ts`** (`DESKTOP_QUERY`, plus `useIsDesktop` for a
   screen whose *structure* changes rather than its ornament). `Layout` already carried the rule that
   the `lg:` classes describe one threshold and must move together; a second page hardcoding

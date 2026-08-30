@@ -1005,3 +1005,53 @@ describe('QueryWorkbench — history', () => {
     });
   });
 });
+
+/*
+ * Le mode Job est le seul geste de cette page sans repli, et son panneau affichait le statut lu
+ * ~150 ms après le départ, puis plus rien : un job mort à sa première ligne restait vert, et le
+ * tableau de bord était le seul endroit où l'apprendre.
+ */
+describe('QueryWorkbench — a submitted job is followed, not only announced', () => {
+  const selectJobMode = () => userEvent.click(screen.getByRole('button', { name: 'Flink job' }));
+
+  const submission = {
+    queryId: 'q-7', flinkJobId: 'f-7', statementType: 'INSERT', executionMode: 'ASYNC_JOB',
+    status: 'RUNNING', sql: 'INSERT INTO sink SELECT id FROM demo_orders_1_received',
+    startedAt: 1_700_000_000_000, endedAt: null, cancelRequested: false,
+  };
+
+  const submit = async (sql: string) => {
+    post.mockImplementation((url: string) => (url === '/api/query/jobs'
+      ? Promise.resolve({ data: submission })
+      : Promise.resolve({ data: { valid: true } })));
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await selectJobMode();
+    await userEvent.clear(editor());
+    await userEvent.type(editor(), sql);
+    await userEvent.click(screen.getByRole('button', { name: /Submit job/i }));
+  };
+
+  it('shows the job with a way to stop it, and stopping asks the server', async () => {
+    await submit('INSERT INTO sink SELECT id FROM demo_orders_1_received');
+
+    const stop = await screen.findByRole('button', { name: 'Stop' });
+    await userEvent.click(stop);
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      '/api/query/cancel/q-7', null, expect.anything()));
+  });
+
+  /*
+   * Un STATEMENT SET réunit plusieurs INSERT en **un** job — donc une seule lecture de la source.
+   * Le garde du navigateur le refusait avant même d'appeler le serveur, qui l'accepte.
+   */
+  it('submits a STATEMENT SET instead of refusing it before the server sees it', async () => {
+    await submit('EXECUTE STATEMENT SET BEGIN INSERT INTO sink SELECT id FROM demo_orders_1_received; END');
+
+    await waitFor(() => expect(post).toHaveBeenCalledWith(
+      '/api/query/jobs', expect.objectContaining({ sql: expect.stringContaining('STATEMENT SET') }),
+      expect.anything()));
+    expect(screen.queryByText(/only accepts INSERT/)).not.toBeInTheDocument();
+  });
+});
