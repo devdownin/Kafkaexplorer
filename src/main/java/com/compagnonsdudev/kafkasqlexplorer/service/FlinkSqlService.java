@@ -392,8 +392,15 @@ public class FlinkSqlService {
         // *source* est concernée : `extractPrimaryTable` lit le FROM, donc la cible de l'INSERT
         // est exclue par construction, et c'est voulu — dériver un schéma d'un topic cible vide
         // rendrait `raw_value STRING` et un échec d'arité, pire qu'un « table inconnue ».
+        //
+        // « INSERT » et non « INSERT INTO » : le garde du mode Job classe l'instruction sur son
+        // premier mot, donc `INSERT OVERWRITE` le franchit — et il arrivait ici pour se voir
+        // refuser l'enregistrement, si bien que sa source répondait « Object not found » sur un
+        // nom de topic parfaitement correct. C'est exactement le défaut corrigé au paragraphe
+        // ci-dessus pour `INSERT INTO`, resté debout à un mot-clé près : ce que le mode Job
+        // accepte de soumettre, cette méthode doit accepter de servir.
         String body = SqlStatements.classifiableBody(sql);
-        if (!body.startsWith("SELECT") && !body.startsWith("INSERT INTO")) return AutoRegResult.skip();
+        if (!body.startsWith("SELECT") && !body.startsWith("INSERT")) return AutoRegResult.skip();
         // The first FROM is inside the CTE body, which is exactly the source table to register.
         String rawTableRef = extractPrimaryTable(sql);
         if (rawTableRef == null) return AutoRegResult.skip();

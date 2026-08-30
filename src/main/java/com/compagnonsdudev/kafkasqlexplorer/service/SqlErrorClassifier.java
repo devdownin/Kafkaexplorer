@@ -71,6 +71,20 @@ public final class SqlErrorClassifier {
             + "|expression '[^']*' is not being grouped"
             + "|non-query expression encountered"
             + "|incompatible types"
+            // Une projection qui ne rentre pas dans le sink. Flink le dit de deux façons —
+            // « Different number of columns » et « Incompatible types for sink column » — et
+            // seule la seconde était reconnue, alors que c'est une seule et même faute : la
+            // requête ne correspond pas à la table cible. La première est même la plus courante,
+            // `INSERT INTO sink SELECT * FROM source` sur une table auto-générée ramenant la
+            // colonne calculée `proc_time` qu'aucun sink n'accepte — et elle répondait 500,
+            // c'est-à-dire « panne du serveur », là où l'INSERT est le seul geste de l'éditeur
+            // qui n'a aucun repli pour rattraper l'erreur.
+            + "|column types of query result and sink"
+            // Un sink qui n'implémente pas SupportsOverwrite : c'est l'instruction qui demande à
+            // cette table ce qu'elle ne sait pas faire, pas le moteur qui tombe.
+            + "|insert overwrite requires"
+            // Un hint d'options posé sur une vue plutôt que sur une table.
+            + "|cannot be enriched with new options"
             + "|cannot be cast to"
             + "|argument type mismatch"
             + "|not allowed in this environment"

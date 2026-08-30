@@ -43,6 +43,37 @@ class SqlErrorClassifierTest {
             .isUserError());
     }
 
+    /**
+     * Une projection qui ne rentre pas dans le sink, dans les deux formulations de Flink.
+     *
+     * <p>Seule la seconde était reconnue : la même faute — la requête ne correspond pas à la table
+     * cible — répondait 400 par le type et 500 par le nombre de colonnes. C'est le cas mal classé
+     * qui est le plus courant, {@code INSERT INTO <sink> SELECT * FROM <source>} sur une table
+     * auto-générée ramenant la colonne calculée {@code proc_time}, et l'INSERT est le seul geste
+     * de l'éditeur qui n'a aucun repli pour rattraper l'erreur.
+     */
+    @Test
+    void aSinkThatTheProjectionDoesNotFitIsAUserError() {
+        assertTrue(SqlErrorClassifier.classify(
+            "Column types of query result and sink for 'default_catalog.default_database.sink' do not "
+                + "match. Cause: Different number of columns.").isUserError());
+        assertTrue(SqlErrorClassifier.classify(
+            "Column types of query result and sink for 'default_catalog.default_database.sink' do not "
+                + "match. Cause: Incompatible types for sink column 'order_id' at position 1.").isUserError());
+    }
+
+    /** Un sink qui ne sait pas écraser, et un hint posé sur une vue : l'instruction, pas le moteur. */
+    @Test
+    void aSinkThatCannotHonourTheStatementIsAUserError() {
+        assertTrue(SqlErrorClassifier.classify(
+            "INSERT OVERWRITE requires that the underlying DynamicTableSink of table "
+                + "'default_catalog.default_database.sink' implements the SupportsOverwrite interface.")
+            .isUserError());
+        assertTrue(SqlErrorClassifier.classify(
+            "View '`default_catalog`.`default_database`.`orders`' cannot be enriched with new options. "
+                + "Hints can only be applied to tables.").isUserError());
+    }
+
     @Test
     void aRestrictedStatementIsAUserError() {
         assertTrue(SqlErrorClassifier.classify("Cross joins are not allowed in this environment.").isUserError());
