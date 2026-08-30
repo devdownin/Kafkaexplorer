@@ -1078,6 +1078,18 @@ jobs:
       #                     into every session's context and the notes are not, which is the whole
       #                     point of the split, so the duplication was paid on every session. One
       #                     direction only: a note may hold more than the map, never the reverse.
+      #                     Three passes, because byte-identical has a blind spot at exactly the
+      #                     moment duplication does its damage: once the two copies DRIFT, the
+      #                     comparison stops pairing them. #325 deleted GET /api/query/sink-ddl,
+      #                     updated the note and left the map still promising the endpoint was
+      #                     "left standing" — reported by nothing. So the check also catches
+      #                     near-identical against a note, and near-identical against the map
+      #                     ITSELF: two conflict resolutions an hour apart left the
+      #                     explorer.max-concurrent-jobs bullet in CLAUDE.md twice over, at 868
+      #                     and 1505 chars, the shorter missing the clause that says the cap
+      #                     cannot bind. The 0.60 threshold is MEASURED, not guessed: on this
+      #                     tree, deliberately-written map-level summaries score 0.21-0.24 and
+      #                     drifted copies 0.74-0.93, with nothing in between.
       #   check-doc-paths   every repository path the maintainer docs name in PROSE rather than
       #                     in a link — check-links.py never saw those, and three pointed at
       #                     documents and a directory deleted months earlier. docs/notes/ is
