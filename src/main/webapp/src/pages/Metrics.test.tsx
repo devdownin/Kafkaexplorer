@@ -504,3 +504,45 @@ describe('les deux côtés dans le temps', () => {
     expect(screen.getAllByText('left')).toHaveLength(1);
   });
 });
+
+/*
+ * Le calque d'accueil de « Neural Float » (React Bits Pro).
+ *
+ * Le composant lui-même n'est pas installé — le registre `pro.reactbits.dev` est injoignable
+ * depuis cet environnement — mais sa *condition* d'affichage l'est, et c'est elle qui se
+ * réglerait silencieusement de travers. Ces cas la pinnent au niveau de la page, là où
+ * `metricsHealth.test.ts` la pinne au niveau de la règle.
+ */
+describe('Neural Float backdrop', () => {
+  const running = templateMetric;
+  const pending = { ...templateMetric, id: 'm-2', name: 'never_ran', lastValue: null, lastUpdateTime: null };
+  const failing = { ...templateMetric, id: 'm-3', name: 'broken', errorMessage: 'Table not found' };
+
+  it('is absent while no metric is configured', async () => {
+    stubApi([]);
+    await renderPage();
+    await screen.findByText('No metrics yet');
+    expect(screen.queryByTestId('neural-float-backdrop')).toBeNull();
+  });
+
+  it('is absent when the only metrics are pending or failing', async () => {
+    stubApi([pending, failing]);
+    await renderPage();
+    await waitFor(() => expect(screen.getByText('broken')).toBeInTheDocument());
+    expect(screen.queryByTestId('neural-float-backdrop')).toBeNull();
+  });
+
+  it('mounts once at least one metric is running', async () => {
+    stubApi([running]);
+    await renderPage();
+    await waitFor(() => expect(screen.getByTestId('neural-float-backdrop')).toBeInTheDocument());
+  });
+
+  it('stays out of the reading order and takes no pointer', async () => {
+    stubApi([running]);
+    await renderPage();
+    const layer = await screen.findByTestId('neural-float-backdrop');
+    expect(layer).toHaveAttribute('aria-hidden', 'true');
+    expect(layer.className).toContain('pointer-events-none');
+  });
+});

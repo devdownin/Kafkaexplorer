@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  summarizeMetrics, describeAge, describeHealth, healthTone, type MetricStatusInput,
+  summarizeMetrics, describeAge, describeHealth, healthTone, hasRunningMetric, type MetricStatusInput,
 } from './metricsHealth';
 
 const metric = (over: Partial<MetricStatusInput> = {}): MetricStatusInput => ({
@@ -93,5 +93,37 @@ describe('describeHealth / healthTone', () => {
     expect(describeHealth(health)).toBe('2 of 2 reporting');
     expect(describeHealth(health)).not.toMatch(/%/);
     expect(healthTone(health)).toBe('success');
+  });
+});
+
+describe('hasRunningMetric', () => {
+  it('is false when nothing is configured', () => {
+    expect(hasRunningMetric([])).toBe(false);
+  });
+
+  it('is true as soon as one metric reported a value', () => {
+    expect(hasRunningMetric([metric()])).toBe(true);
+  });
+
+  it('counts a zero reading as running — zero is a measurement', () => {
+    expect(hasRunningMetric([metric({ lastValue: 0 })])).toBe(true);
+  });
+
+  it('does not count a metric that has never produced a value', () => {
+    expect(hasRunningMetric([metric({ lastValue: null })])).toBe(false);
+  });
+
+  it('does not count a failing metric, even though it still carries the previous value', () => {
+    // C'est le cas qui distingue cette règle d'un simple `lastValue !== null` : la métrique
+    // expose encore 42, et elle ne mesure plus rien.
+    expect(hasRunningMetric([metric({ lastValue: 42, errorMessage: 'boom' })])).toBe(false);
+  });
+
+  it('needs only one runner among failures and pending ones', () => {
+    expect(hasRunningMetric([
+      metric({ errorMessage: 'boom' }),
+      metric({ lastValue: null }),
+      metric(),
+    ])).toBe(true);
   });
 });
