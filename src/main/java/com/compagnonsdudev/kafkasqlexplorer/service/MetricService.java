@@ -656,6 +656,23 @@ public class MetricService {
         if (sql == null || sql.isBlank()) return false;
         String body = sql.trim();
         if (!body.toUpperCase(Locale.ROOT).startsWith("SELECT")) return false;
+        /*
+         * Un calcul de fenêtre n'est pas une forme que ce lecteur sait honorer, et c'est mesuré
+         * plutôt que supposé : `TABLE(HOP(…))` passait ce prédicat, donc le sélecteur « Latest »
+         * de l'éditeur — qui nomme un mode de lecture — envoyait la requête au lecteur direct sans
+         * qu'aucun planner n'ait échoué. Le même HOP rendait alors des fenêtres *jointives*
+         * approximées en TUMBLE, là où « Earliest » passait par Flink et rendait les fenêtres
+         * chevauchantes réelles. Un sélecteur censé ne choisir que le bout du topic à lire
+         * changeait la sémantique de la requête, et rendait une réponse plausible et fausse — la
+         * pire des deux directions.
+         *
+         * Ce prédicat répond « ce lecteur peut-il répondre honnêtement à cette forme ? ». Une
+         * fenêtre dont il approxime HOP, CUMULATE et SESSION en TUMBLE n'en est pas une : le
+         * refuser ici est une correction du contrat de la méthode, pas un changement de politique.
+         * L'appelant repart alors vers le planner et *dit* que le mode n'a pas été appliqué —
+         * la branche `unhonouredReadMode` existait déjà pour exactement ce cas.
+         */
+        if (SqlStatements.hasWindowTableCall(body)) return false;
         if (JOIN_KEYWORD.matcher(body).find()) return false;
         if (body.replaceAll("\\s+", "").toUpperCase(Locale.ROOT).contains("(SELECT")) return false;
         Matcher m = FROM_TABLE.matcher(body);

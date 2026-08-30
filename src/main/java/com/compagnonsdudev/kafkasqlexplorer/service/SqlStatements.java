@@ -80,6 +80,29 @@ public final class SqlStatements {
         return isWordAt(trimmed, 0, "WITH") && !withoutLeadingCte(trimmed).equals(trimmed);
     }
 
+    /**
+     * Le calcul de fenêtre au-dessus d'une table : {@code TABLE(TUMBLE(TABLE t, …))} et ses trois
+     * voisins.
+     *
+     * <p>Une définition, deux lecteurs, et c'est la raison d'être de cette méthode : la règle était
+     * écrite deux fois dans {@code FlinkSqlService}, sous deux formes qui <strong>ne nommaient pas
+     * les mêmes fonctions</strong> — celle qui extrait la table source connaît {@code CUMULATE},
+     * celle qui décidait d'aiguiller vers le calcul de fenêtre ne la connaissait pas. Un
+     * {@code CUMULATE} arrivé au lecteur direct n'était donc pas approximé mais traité comme une
+     * agrégation ordinaire : <em>la fenêtre disparaissait sans un mot</em>, là où ses trois voisins
+     * repartaient au moins avec l'avertissement disant qu'elles avaient été approximées.
+     *
+     * <p>Lexical et non parsé, délibérément : les appelants s'en servent pour <em>choisir un
+     * moteur</em>, avant qu'aucun catalogue ne soit consulté, et une instruction que le parseur
+     * refuserait doit pouvoir être aiguillée quand même.
+     */
+    public static boolean hasWindowTableCall(String sql) {
+        return sql != null && WINDOW_TABLE_CALL.matcher(sql).find();
+    }
+
+    private static final java.util.regex.Pattern WINDOW_TABLE_CALL =
+        java.util.regex.Pattern.compile("(?i)\\bTABLE\\s*\\(\\s*(TUMBLE|HOP|CUMULATE|SESSION)\\s*\\(");
+
     /** True when `word` sits at `from` as a whole word, case-insensitively. */
     private static boolean isWordAt(String s, int from, String word) {
         if (from < 0 || from + word.length() > s.length()) return false;
