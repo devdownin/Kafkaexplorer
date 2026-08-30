@@ -4,6 +4,7 @@ package com.compagnonsdudev.kafkasqlexplorer.config;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.compagnonsdudev.kafkasqlexplorer.ExplorerContextTest;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -26,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * distinction the rest of this codebase keeps making: a default that is written down is not the
  * same claim as a default that was observed.
  */
-@SpringBootTest
+@ExplorerContextTest
 class ShippedKafkaDefaultsTest {
 
     @DynamicPropertySource

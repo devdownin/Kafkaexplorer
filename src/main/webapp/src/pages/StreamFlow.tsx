@@ -27,7 +27,7 @@ import {
   validateSearchPath, writeEvidencePct, writePanelOpen,
   type FlowHit, type FormErrors, type HitSortKey, type ParsedFlow, type TraceContinuation,
   type TraceHistoryEntry, type TraceParams, type TraceProgress,
-} from './streamFlow';
+} from './streamFlowLogic';
 import { recordTracedChain } from './flowChains';
 import { copyText } from '../clipboard';
 

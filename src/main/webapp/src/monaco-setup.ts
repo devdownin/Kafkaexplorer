@@ -22,7 +22,7 @@
  */
 import * as monaco from 'monaco-editor';
 import { loader } from '@monaco-editor/react';
-import { formatSql } from './pages/queryWorkbench';
+import { formatSql } from './pages/queryWorkbenchLogic';
 // `monaco-editor/editor/…`, et non `monaco-editor/esm/vs/editor/…` : la 0.56 déclare un champ
 // `exports` (`"./*": "./esm/vs/*.js"`) qui enracine les sous-chemins sur `esm/vs`. L'ancien chemin
 // s'y résout en `esm/vs/esm/vs/…`, qui n'existe pas — Rollup ne trouvait plus le worker et la

@@ -31,7 +31,7 @@ import {
   type PlannedStatement, type StatementRun,
   readSqlParam, buildQueryLink,
   sidebarSqlFor, sidebarActionLabel, sinkNameRange, pickSinkTable, type ExecutionMode,
-} from './queryWorkbench';
+} from './queryWorkbenchLogic';
 import { ResultsGrid } from '../components/query/ResultsGrid';
 import { WindowAssistant } from '../components/query/WindowAssistant';
 import { SchemaBrowser, type SchemaInfo, type SavedQuery } from '../components/query/SchemaBrowser';

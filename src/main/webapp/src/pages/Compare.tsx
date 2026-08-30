@@ -9,7 +9,7 @@ import { usePersistentState } from '../draftStore';
 import {
   tryParse, diffFields, pairSamples, visiblePairs, countDiffs, countCompared,
   messageText, coordinates, type TopicMessage, type ComparePair,
-} from './compare';
+} from './compareMessages';
 import type { TopicDetailResponse } from '../api/types';
 
 const MessageCard: React.FC<{

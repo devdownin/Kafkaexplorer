@@ -9,7 +9,7 @@ import '../monaco-setup';
 import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
 import { Button, Badge, Stat, EmptyState, ErrorPanel, StatGridSkeleton, TableSkeleton, Table, useVirtualRows } from '../components/ui';
-import { buildTraceLinkForKey } from './streamFlow';
+import { buildTraceLinkForKey } from './streamFlowLogic';
 import { isDeadLetterTopic } from './topicKinds';
 import TopicSearchPanel, { FIELD_IDS } from '../components/topic/TopicSearchPanel';
 import TopicActivityPanel from '../components/topic/TopicActivityPanel';

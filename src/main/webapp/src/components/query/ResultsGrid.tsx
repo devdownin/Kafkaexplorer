@@ -11,7 +11,7 @@
 
 import React from 'react';
 import { cn } from '../ui';
-import { cellText } from '../../pages/queryWorkbench';
+import { cellText } from '../../pages/queryWorkbenchLogic';
 
 /**
  * Grille de résultats, mémoïsée et définie **hors** de la page.

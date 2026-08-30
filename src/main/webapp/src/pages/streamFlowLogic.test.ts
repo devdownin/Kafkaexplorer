@@ -15,7 +15,7 @@ import {
   validateSearchPath, writePanelOpen,
   zoomAt, DEFAULT_TRACE_PARAMS, isBlankTraceParams, readTraceParamsDraft, saveTraceParamsDraft,
   type FlowHit, type FlowStats, type TraceParams,
-} from './streamFlow';
+} from './streamFlowLogic';
 import { toCsv } from './resultExport';
 
 describe('validateSearchPath', () => {

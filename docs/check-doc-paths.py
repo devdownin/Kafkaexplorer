@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Resolve every repository path named in prose in CLAUDE.md and CONTRIBUTING.md.
+"""Resolve every repository path named in prose in the maintainer and public docs.
 
-`check-links.py` resolves markdown *links*. These two files barely use any: they refer to
+`check-links.py` resolves markdown *links*. These files barely use any: they refer to
 the codebase in backticks, in running prose — `pages/streamFlow.ts`, `compose/ci.yml`,
 `AUDIT.md` — and nothing ever checked that those still exist. They did not. CLAUDE.md
 described `AUDIT.md` and `CONSUMER-GROUPS-AUDIT.md` as documents to read before refactoring,
@@ -45,7 +45,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # docs/DOCKERHUB.md is the strongest case of the three: it is rendered OUTSIDE the
 # repository, as the Docker Hub overview, so a wrong path there is invisible to anyone
 # reading the repo and is the first thing a newcomer sees.
-DOCS = ['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md', 'docs/DOCKERHUB.md']
+# docs/notes/ is globbed rather than listed, and that is the point: those files hold the prose
+# CLAUDE.md used to carry, and a note added without being checked is exactly the hole this
+# check exists to close. The rest is enumerated — they are the five documents a human reads.
+DOCS = (['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md', 'docs/DOCKERHUB.md']
+        + sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'docs/notes').glob('*.md')))
 
 # Where a path named in prose may be rooted. Ordered widest first for no reason but reading.
 BASES = [

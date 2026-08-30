@@ -17,7 +17,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   NARROW_ALTERNATIVES, WIDE_WINDOW_MIN_PX, dismissNarrowNotice, readNarrowNoticeDismissed,
-} from '../../pages/queryWorkbench';
+} from '../../pages/queryWorkbenchLogic';
 
 export const NarrowWindowNotice: React.FC = () => {
   const [dismissed, setDismissed] = useState(() => readNarrowNoticeDismissed());

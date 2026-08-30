@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FC } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NAV_ITEMS, CONFIG_ITEM, HELP_ITEM } from '../navigation';
-import { buildTraceLinkForKey } from '../pages/streamFlow';
+import { buildTraceLinkForKey } from '../pages/streamFlowLogic';
 
 interface CommandPaletteProps {
   onClose: () => void;

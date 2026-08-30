@@ -33,8 +33,8 @@ import {
   requestTimeoutMs, describeBuildBudget,
   readSavedModels, saveModel, deleteSavedModel, buildMultiJoinSql,
   CONFIDENCE_STYLE, describeModel,
-} from './dataModel';
-import type { DensityChoice, NodeSizing, OrphanKey, SavedModel } from './dataModel';
+} from './dataModelGraph';
+import type { DensityChoice, NodeSizing, OrphanKey, SavedModel } from './dataModelGraph';
 import type { DataModelRelation, RelationConfidence } from '../api/types';
 
 /**

@@ -59,6 +59,11 @@ public final class SqlErrorClassifier {
             + "|was expecting"
             + "|(?:object|table|column|view|function) '[^']*' not found"
             + "|(?:object|table|column|view|function) \"[^\"]*\" not found"
+            // La formulation de Flink pour la *cible* d'un INSERT qui n'existe pas — une
+            // faute de frappe dans un nom de table, donc l'utilisateur, là où la source
+            // d'un SELECT donne « Object 'x' not found » déjà couvert au-dessus. Sans
+            // elle, le mode Job répondait 500 à une faute de frappe.
+            + "|cannot find table '[^']*' in any of the catalogs"
             + "|no match found for function signature"
             + "|unknown identifier"
             + "|cannot apply '"

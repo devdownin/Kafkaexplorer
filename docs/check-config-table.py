@@ -82,8 +82,11 @@ POM = ROOT / 'pom.xml'
 # docs/index.html is here for the reason this whole pass exists: it is the landing page, it
 # is rendered outside the repository by GitHub Pages, and its hero read "Powered by Flink 2.2"
 # for two minor versions of the embedded runtime. Nothing else in the tree looks at it.
-VERSION_DOCS = ['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md',
-                'docs/DOCKERHUB.md', 'docs/architecture.md', 'docs/index.html']
+# docs/notes/ is globbed for the reason check-doc-paths.py globs it: it holds the prose
+# CLAUDE.md used to carry, version claims included, and a note nothing reads drifts silently.
+VERSION_DOCS = (['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md',
+                 'docs/DOCKERHUB.md', 'docs/architecture.md', 'docs/index.html']
+                + sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'docs/notes').glob('*.md')))
 
 # How a documented version relates to the pom's.
 EXACT = 'exact'    # the claim names a precise artifact version
@@ -130,15 +133,16 @@ BADGES = [
 HISTORICAL = {
     # The Calcite metadataHandlerProvider NPE reproduced on Flink 1.18/1.20/2.0, and still
     # reproduces on 2.3 — the workaround in FlinkRuntimeCoordinator is load-bearing.
-    ('CLAUDE.md', 'Flink', '1.18'),
-    # CLAUDE.md's own paragraph about this check cites the two stale claims that motivated it.
-    # Prose *about* drift names the wrong value on purpose; the alternative was to describe
-    # them without the numbers, which would make the paragraph less useful to the next reader.
-    # The cost is worth stating: an exemption keyed on the value cannot tell a citation from a
-    # genuine regression back to that same value in that same file. It is narrow — one file,
-    # one artifact, one version each — and the sentences around them explain why they are here.
-    ('CLAUDE.md', 'flink-connector-kafka', '4.0.1-2.0'),
-    ('CLAUDE.md', 'anthropic-java', '2.16.1'),
+    ('docs/notes/backend-services.md', 'Flink', '1.18'),
+    # And in the paragraph about this check, which quotes that same sentence as its example.
+    ('docs/notes/ci-and-checks.md', 'Flink', '1.18'),
+    # The paragraph *about this check* cites the two stale claims that motivated it. Prose about
+    # drift names the wrong value on purpose; describing them without the numbers would make the
+    # paragraph less useful to the next reader. The cost is worth stating: an exemption keyed on
+    # the value cannot tell a citation from a genuine regression back to that same value in that
+    # same file. It is narrow — one file, one artifact, one version each.
+    ('docs/notes/ci-and-checks.md', 'flink-connector-kafka', '4.0.1-2.0'),
+    ('docs/notes/ci-and-checks.md', 'anthropic-java', '2.16.1'),
 }
 
 # Variables that are neither Spring properties nor set by the Dockerfiles: they are read

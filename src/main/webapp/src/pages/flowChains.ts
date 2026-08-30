@@ -23,7 +23,7 @@
  */
 
 import type { FlowChainEvidence, FlowChainHop } from '../api/types';
-import type { FlowHit } from './streamFlow';
+import type { FlowHit } from './streamFlowLogic';
 
 export const FLOW_CHAINS_KEY = 'kse:flow-chains';
 /** Au-delà, la page Métriques proposerait plus de cartes que personne n'en lit. */

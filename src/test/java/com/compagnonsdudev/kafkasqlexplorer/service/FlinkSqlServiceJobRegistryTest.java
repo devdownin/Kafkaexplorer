@@ -42,6 +42,11 @@ class FlinkSqlServiceJobRegistryTest {
     @SuppressWarnings("unchecked")
     void setUp() throws Exception {
         tableEnv = mock(TableEnvironment.class);
+        // Une soumission enregistre désormais sa table source comme le fait une lecture, donc
+        // elle demande le catalogue. Non bouchonné, le mock rend `null` et `listTables()` part
+        // en NPE avant d'avoir rien soumis — ce qui ne dirait rien du registre de jobs, seul
+        // objet de cette classe. Vide : ces cas n'ont aucun topic derrière eux.
+        when(tableEnv.listTables()).thenReturn(new String[0]);
 
         ExplorerConfig config = new ExplorerConfig();
         config.setAllowCrossJoin(true);
