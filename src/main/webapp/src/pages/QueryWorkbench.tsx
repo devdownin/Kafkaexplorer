@@ -31,6 +31,7 @@ import {
   type PlannedStatement, type StatementRun,
   readSqlParam, buildQueryLink,
   sidebarSqlFor, sidebarActionLabel,
+  describeChangelog, exportColumns, exportRows,
 } from './queryWorkbenchLogic';
 import { isJobTerminal } from './flinkJobHistory';
 import { SubmittedJobPanel } from '../components/query/SubmittedJobPanel';
@@ -738,6 +739,19 @@ const QueryWorkbench: React.FC = () => {
 
   // Le résultat bute sur son propre plafond → il est probablement incomplet.
   const truncated = !!results && !results.error && results.rows.length >= resultLimit;
+
+  /**
+   * Le résultat est-il un changelog, et que faut-il en dire.
+   *
+   * Ce que le serveur en dit voyage déjà dans `warnings`, qui sont rendus au-dessus de la grille
+   * — c'est la seule forme qu'un export, une capture d'écran ou un appel direct à l'API emporte.
+   * Ce qui s'ajoute ici est ce que seule l'interface peut faire : marquer chaque ligne, et changer
+   * ce que « limit reached » veut dire.
+   */
+  const changelog = useMemo(
+    () => describeChangelog(results && !results.error ? results.changelog : null),
+    [results],
+  );
 
   /** L'instruction du lot en cours d'exécution, ou -1. Dérivé : deux sources se contrediraient. */
   const runningStatement = useMemo(
@@ -1507,9 +1521,14 @@ const QueryWorkbench: React.FC = () => {
    */
   const exportResults = (format: 'csv' | 'json') => {
     if (!results?.rows.length) return;
+    // Le marqueur de changelog part avec les lignes : un fichier ne peut pas être interrogé, donc
+    // celui qui ne dit pas lesquelles de ses lignes sont des corrections les présente comme des
+    // résultats — le défaut même que le marqueur retire de l'écran.
+    const cols = exportColumns(results.columns, !!changelog);
+    const outRows = exportRows(sortedRows, !!changelog);
     const [content, mime, ext] = format === 'json'
-      ? [toJson(sortedRows), 'application/json', 'json']
-      : [toCsv(results.columns, sortedRows), 'text/csv', 'csv'];
+      ? [toJson(outRows), 'application/json', 'json']
+      : [toCsv(cols, outRows), 'text/csv', 'csv'];
     const blob = new Blob([content], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2030,7 +2049,8 @@ const QueryWorkbench: React.FC = () => {
                       {shownRun?.forgotten ? (shownRun.rows ?? 0) : (results?.rows.length ?? 0)}
                     </span>
                     {truncated && (
-                      <Tooltip content={`The scan stopped at the ${resultLimit.toLocaleString()}-row limit, so this result is probably incomplete — raise "Rows" to fetch more.`}>
+                      <Tooltip content={changelog?.truncated
+                        ?? `The scan stopped at the ${resultLimit.toLocaleString()}-row limit, so this result is probably incomplete — raise "Rows" to fetch more.`}>
                         <span tabIndex={0} className="ml-1.5 text-[10px] text-warning font-medium rounded">limit reached</span>
                       </Tooltip>
                     )}
@@ -2047,6 +2067,13 @@ const QueryWorkbench: React.FC = () => {
                       {results?.engine ?? 'Kafka Direct'}
                     </Badge>
                   </span>
+                  </Tooltip>
+                )}
+                {changelog && (
+                  <Tooltip content={`${changelog.detail}${changelog.truncated ? ` ${changelog.truncated}` : ''}`}>
+                    <span tabIndex={0} className="rounded">
+                      <Badge tone="warning">changelog</Badge>
+                    </span>
                   </Tooltip>
                 )}
               </div>
@@ -2236,6 +2263,7 @@ const QueryWorkbench: React.FC = () => {
                   onOpenRow={openRowDetail}
                   selectedIndex={detailIndex}
                   measureRow={measureRow}
+                  showRowKind={!!changelog}
                 />
               ) : (
                 <div className="p-4">

@@ -491,9 +491,14 @@ export const ERROR_GUIDE: ErrorGuideEntry[] = [
     fix: 'Lower the row limit, tighten the WHERE clause, or switch the read mode to Latest to stop replaying history.',
   },
   {
-    message: 'Only SELECT, EXPLAIN and CREATE TABLE statements are allowed.',
+    message: 'Only SELECT, EXPLAIN, SHOW, DESCRIBE and CREATE TABLE statements are allowed.',
     meaning: 'The statement whitelist. UPDATE, DELETE, DROP and ALTER have no path through this app.',
     fix: 'There is no way round it — by design. An INSERT INTO pipeline belongs in a Flink job of your own.',
+  },
+  {
+    message: 'Sort on a non-time-attribute field is not supported',
+    meaning: 'An unbounded ORDER BY. A stream has no last row, so it cannot be sorted whole.',
+    fix: 'Add a LIMIT — the same query then runs — or sort on the time attribute the table declares.',
   },
   {
     message: 'INSERT INTO is not run by the SQL editor',

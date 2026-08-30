@@ -105,7 +105,64 @@ export function describeQueryError(rawInput: string | null | undefined): QueryEr
   if (/cross joins are not allowed|access to system tables is restricted|not allowed in this environment|only (?:select|the following)/i.test(unwrapped)) {
     return {
       title: 'Statement not permitted',
-      hint: 'Only SELECT, EXPLAIN and CREATE TABLE statements are allowed here.',
+      hint: 'This editor runs SELECT, EXPLAIN, SHOW, DESCRIBE and CREATE TABLE. Anything that writes — INSERT, UPDATE, DROP, ALTER — is refused here.',
+      location, raw,
+    };
+  }
+
+  // ── CREATE TABLE … AS SELECT ────────────────────────────────────────────
+  // Refus propre à cette application : le CTAS crée la table *et* démarre le job qui l'alimente,
+  // hors de tout registre. Le message du serveur nomme déjà la marche à suivre ; sans famille il
+  // arrivait en titre brut de deux lignes, sans piste.
+  if (/as select starts a job/i.test(unwrapped)) {
+    return {
+      title: 'CREATE TABLE … AS SELECT is not run here',
+      hint: 'It would start a writing job that the dashboard cannot see and Stop cannot reach. Declare the table with CREATE TABLE, then run the INSERT INTO separately.',
+      location, raw,
+    };
+  }
+
+  // ── Ce que le planner *streaming* ne sait pas construire ────────────────
+  // Du SQL valide qui n'a pas de sens sur un flux. Ces deux-là remontent désormais à l'appelant
+  // au lieu de se replier sur le lecteur direct — et arrivaient donc en titre brut.
+  if (/sort on a non-time-attribute field is not supported/i.test(unwrapped)) {
+    return {
+      title: 'ORDER BY needs a bound on a stream',
+      hint: 'A stream has no last row, so it cannot be sorted whole. Add a LIMIT, or sort on the time attribute the table declares.',
+      location, raw,
+    };
+  }
+  if (/unexpected correlate variable|correlate variable \$cor/i.test(unwrapped)) {
+    return {
+      title: 'Correlated subquery not supported',
+      hint: 'A subquery that refers to the outer row (EXISTS, IN with a correlated predicate) cannot be planned on a stream. Rewrite it as a JOIN on the correlating column.',
+      location, raw,
+    };
+  }
+
+  // ── Projection qui ne rentre pas dans la table cible ────────────────────
+  // Une seule et même faute, que Flink formule de plusieurs façons — dont « Different number of
+  // columns », la plus courante : `INSERT INTO sink SELECT * FROM source` ramène la colonne
+  // calculée `proc_time` qu'aucun sink n'accepte. Placée avant la famille « types incompatibles »,
+  // qui l'attraperait et dirait de caster une colonne.
+  if (/different number of columns|column types of query result and sink|incompatible types for sink column/i.test(unwrapped)) {
+    return {
+      title: 'The query does not fit the target table',
+      hint: 'List the sink’s columns explicitly instead of SELECT * — a generated table carries a computed proc_time column that no sink accepts.',
+      location, raw,
+    };
+  }
+  if (/insert overwrite requires/i.test(unwrapped)) {
+    return {
+      title: 'This table cannot be overwritten',
+      hint: 'The connector behind it does not support INSERT OVERWRITE. Use a plain INSERT INTO, or write to a table whose connector does.',
+      location, raw,
+    };
+  }
+  if (/cannot be enriched with new options/i.test(unwrapped)) {
+    return {
+      title: 'Options hint applied to a view',
+      hint: 'An /*+ OPTIONS(...) */ hint only applies to a table. Put it on the table the view reads, or query that table directly.',
       location, raw,
     };
   }
