@@ -836,51 +836,29 @@ describe('QueryWorkbench — history', () => {
 });
 
 /*
- * Le mode Job est le seul geste de cette page sans repli, et son panneau affichait le statut lu
- * ~150 ms après le départ, puis plus rien : un job mort à sa première ligne restait vert, et le
- * tableau de bord était le seul endroit où l'apprendre.
+ * Le mode Job du SQL editor a été retiré : il ne fonctionnait pas, et un geste dont la seule issue
+ * possible est un échec vaut moins que pas de geste. Les deux cas qui vivaient ici décrivaient ce
+ * mode — un bouton « Flink job », un `POST /api/query/jobs` — et ils sont partis avec lui.
+ *
+ * Ce qui les remplace est la règle qui leur survit : l'éditeur lit, donc il refuse un INSERT, et
+ * le refus **nomme sa cause**. Sans ce garde, l'instruction partirait au moteur pour se voir
+ * répondre par la whitelist, qui se lit comme une restriction de sécurité plutôt que comme la
+ * forme de cet écran.
  */
-describe('QueryWorkbench — a submitted job is followed, not only announced', () => {
-  const selectJobMode = () => userEvent.click(screen.getByRole('button', { name: 'Flink job' }));
-
-  const submission = {
-    queryId: 'q-7', flinkJobId: 'f-7', statementType: 'INSERT', executionMode: 'ASYNC_JOB',
-    status: 'RUNNING', sql: 'INSERT INTO sink SELECT id FROM demo_orders_1_received',
-    startedAt: 1_700_000_000_000, endedAt: null, cancelRequested: false,
-  };
-
-  const submit = async (sql: string) => {
-    post.mockImplementation((url: string) => (url === '/api/query/jobs'
-      ? Promise.resolve({ data: submission })
-      : Promise.resolve({ data: { valid: true } })));
+describe('QueryWorkbench — an INSERT is refused with its cause', () => {
+  it('names why the editor does not run it, and sends nothing to the engine', async () => {
+    post.mockImplementation((url: string) => (url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: { columns: [], rows: [] } })));
     renderPage();
     await screen.findByText('demo.orders.1.received');
-    await selectJobMode();
     await userEvent.clear(editor());
-    await userEvent.type(editor(), sql);
-    await userEvent.click(screen.getByRole('button', { name: /Submit job/i }));
-  };
+    await userEvent.type(editor(), 'INSERT INTO sink SELECT id FROM demo_orders_1_received');
+    await userEvent.click(screen.getByRole('button', { name: /Run query|Run statement/ }));
 
-  it('shows the job with a way to stop it, and stopping asks the server', async () => {
-    await submit('INSERT INTO sink SELECT id FROM demo_orders_1_received');
-
-    const stop = await screen.findByRole('button', { name: 'Stop' });
-    await userEvent.click(stop);
-
-    await waitFor(() => expect(post).toHaveBeenCalledWith(
-      '/api/query/cancel/q-7', null, expect.anything()));
-  });
-
-  /*
-   * Un STATEMENT SET réunit plusieurs INSERT en **un** job — donc une seule lecture de la source.
-   * Le garde du navigateur le refusait avant même d'appeler le serveur, qui l'accepte.
-   */
-  it('submits a STATEMENT SET instead of refusing it before the server sees it', async () => {
-    await submit('EXECUTE STATEMENT SET BEGIN INSERT INTO sink SELECT id FROM demo_orders_1_received; END');
-
-    await waitFor(() => expect(post).toHaveBeenCalledWith(
-      '/api/query/jobs', expect.objectContaining({ sql: expect.stringContaining('STATEMENT SET') }),
-      expect.anything()));
-    expect(screen.queryByText(/only accepts INSERT/)).not.toBeInTheDocument();
+    expect(await screen.findByText('INSERT INTO is not run by the SQL editor')).toBeInTheDocument();
+    // Le refus est côté navigateur : rien n'a été soumis, pas même la pré-validation.
+    expect(post).not.toHaveBeenCalledWith(
+      '/api/query/run-sync', expect.anything(), expect.anything());
   });
 });

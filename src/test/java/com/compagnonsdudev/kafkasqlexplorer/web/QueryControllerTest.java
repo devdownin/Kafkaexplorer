@@ -293,28 +293,24 @@ class QueryControllerTest {
      * que {@code MetricControllerTest.theUncalledSqlPreviewEndpointIsGone}.
      */
     @Test
-    void aRefusedJobSubmissionCarriesItsReason() throws Exception {
-        when(flinkJobService.submit(any()))
-            .thenThrow(new IllegalArgumentException(
-                "Only INSERT and STATEMENT SET statements are allowed in Flink Job mode."));
-
-        mockMvc.perform(post("/api/query/jobs")
-                .contentType("application/json")
-                .content("{\"sql\":\"SELECT 1\"}"))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.error").value(
-                org.hamcrest.Matchers.containsString("Only INSERT and STATEMENT SET statements are allowed")));
-    }
-
-    @Test
-    void aTypoInTheSinkNameIsTheCallersFaultAndSaysSo() throws Exception {
-        when(flinkJobService.submit(any())).thenThrow(new IllegalStateException(
-            "Cannot find table '`default_catalog`.`default_database`.`no_such_sink`' in any of "
-                + "the catalogs [default_catalog], nor as a temporary table."));
-
+    void thereIsNoJobSubmissionEndpoint() throws Exception {
         mockMvc.perform(post("/api/query/jobs")
                 .contentType("application/json")
                 .content("{\"sql\":\"INSERT INTO sink SELECT id FROM orders\"}"))
+            .andExpect(status().isMethodNotAllowed());
+    }
+
+    /**
+     * Et ce n'est pas non plus une question de charge utile : quel que soit le corps, la méthode
+     * n'est pas servie sur ce chemin. Les deux cas qui vivaient ici décrivaient la *façon* dont ce
+     * point d'entrée nommait ses refus ; ils n'ont plus d'objet, et ce qui les remplace est
+     * l'absence elle-même — vérifiée sur les deux corps qu'ils envoyaient.
+     */
+    @Test
+    void andNotForAStatementItWouldHaveRefusedEither() throws Exception {
+        mockMvc.perform(post("/api/query/jobs")
+                .contentType("application/json")
+                .content("{\"sql\":\"SELECT 1\"}"))
             .andExpect(status().isMethodNotAllowed());
     }
 

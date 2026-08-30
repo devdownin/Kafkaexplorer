@@ -411,16 +411,23 @@ class FlinkSqlServiceInsertVariantsTest {
     // ── Le mode lecture, en face ──────────────────────────────────────────────────────
 
     /**
-     * En mode lecture, toutes ces formes reçoivent la même réponse : celle qui dit où aller.
+     * En mode lecture, toutes ces formes reçoivent la même réponse : celle qui nomme la cause.
      *
-     * <p>{@code executeSync} classe l'instruction comme le fait le mode Job, donc une minuscule,
-     * un commentaire de tête ou un {@code INSERT OVERWRITE} ne peuvent pas glisser à travers la
-     * whitelist et se faire refuser avec « Only SELECT, EXPLAIN and CREATE TABLE » — un message
-     * qui se lit comme une restriction de sécurité alors que la requête est simplement à envoyer
-     * ailleurs.
+     * <p>{@code executeSync} classe l'instruction sur la même règle que la soumission, donc une
+     * minuscule, un commentaire de tête, un corps en CTE ou un {@code INSERT OVERWRITE} ne peuvent
+     * pas glisser à travers la whitelist et se faire refuser avec « Only SELECT, EXPLAIN, SHOW,
+     * DESCRIBE and CREATE TABLE » — un message qui se lit comme une restriction de sécurité alors
+     * que ce qui est en jeu est la forme de cet écran.
+     *
+     * <p>Ce cas exigeait auparavant que le refus <em>dise où aller</em>, en nommant
+     * {@code /api/query/jobs}. Ce point d'entrée a été retiré avec le mode Job, donc l'exigence
+     * s'est inversée : le refus doit nommer la cause et surtout <strong>ne plus nommer</strong> une
+     * porte qui n'existe plus. C'est la même correction que
+     * {@code FlinkSqlServiceJobRegistryTest.executeSyncRefusesAnInsertWithoutPointingAtARemovedEndpoint},
+     * qui la pinçait sur une seule forme là où celui-ci l'exige sur les cinq.
      */
     @Test
-    void everyInsertShapeIsRefusedInReadModeWithTheJobModeMessage() {
+    void everyInsertShapeIsRefusedInReadModeWithoutPointingAtARemovedEndpoint() {
         for (String sql : List.of(
                 "INSERT INTO ins_sink SELECT order_id, amount FROM ins_orders",
                 "insert into ins_sink values ('A', 1.0)",
@@ -430,8 +437,10 @@ class FlinkSqlServiceInsertVariantsTest {
             QueryResult result = service.executeSync(QueryRequest.sql(sql, 50, 10_000L, null));
 
             assertNotNull(result.error(), sql);
-            assertTrue(result.error().contains("/api/query/jobs"),
-                    "le refus doit dire où soumettre l'instruction : " + result.error() + " — " + sql);
+            assertTrue(result.error().contains("INSERT INTO is not run by this application"),
+                    "le refus doit nommer la cause : " + result.error() + " — " + sql);
+            assertFalse(result.error().contains("/api/query/jobs"),
+                    "et ne pas nommer une porte retirée : " + result.error() + " — " + sql);
             assertTrue(result.rows().isEmpty(), sql);
         }
     }
