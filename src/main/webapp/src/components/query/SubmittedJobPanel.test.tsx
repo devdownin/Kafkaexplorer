@@ -18,7 +18,6 @@ const submission: FlinkJobSummary = {
   queryId: 'q-1',
   flinkJobId: 'f-1',
   statementType: 'INSERT',
-  executionMode: 'ASYNC_JOB',
   status: 'RUNNING',
   sql: 'INSERT INTO sink SELECT id FROM src',
   startedAt: 1_700_000_000_000,

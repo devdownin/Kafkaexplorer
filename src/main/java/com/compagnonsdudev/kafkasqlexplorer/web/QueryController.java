@@ -266,6 +266,14 @@ public class QueryController {
     @GetMapping("/sink-ddl")
     public DdlPreviewResponse sinkDdl(@RequestParam("source") String source,
                                       @RequestParam("topic") String topic) {
+        // Un nom que Kafka ne pourrait pas porter ne décrit aucun topic, et il n'a rien à faire
+        // recopié dans un DDL — voir DdlGeneratorService.isValidTopicName pour ce que ce refus
+        // protège en plus.
+        if (!DdlGeneratorService.isValidTopicName(topic)) {
+            return DdlPreviewResponse.failed(
+                "That is not a name Kafka could give a topic: letters, digits, dot, dash and "
+                    + "underscore only, up to 249 characters.");
+        }
         try {
             Map<String, String> columns = DdlGeneratorService.sinkColumns(
                 flinkSqlService.getTableSchema(source));

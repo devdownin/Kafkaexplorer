@@ -30,6 +30,36 @@ public class DdlGeneratorService {
     }
 
     /**
+     * Ce que Kafka accepte dans un nom de topic, et jusqu'où.
+     *
+     * <p>La borne de longueur n'est pas décorative : un nom qui arrive d'une requête est recopié
+     * dans le DDL généré, et ce DDL repasse ensuite par {@link #maskSensitiveProperties}, dont le
+     * motif encadre une alternance de deux {@code [^']*} — quadratique sur une entrée choisie.
+     * Tant que le nom venait d'un topic qui existe, la question ne se posait pas ; le point
+     * d'entrée qui génère le DDL d'une cible <em>à créer</em> l'a rendue réelle, et CodeQL l'a
+     * signalée à ce titre. Refuser ici est de toute façon la bonne réponse : un nom que Kafka ne
+     * pourrait pas porter ne décrit aucun topic, et un DDL bâti dessus ne servirait à rien.
+     *
+     * <p>{@code ExplorerConfig} valide le même alphabet sur un <em>préfixe</em> ; c'est une autre
+     * question (un fragment, pas un nom entier), donc les deux règles restent distinctes plutôt
+     * que fondues en une qui répondrait mal aux deux.
+     */
+    private static final Pattern TOPIC_NAME = Pattern.compile("[a-zA-Z0-9._-]+");
+
+    /** La limite de Kafka elle-même. */
+    private static final int MAX_TOPIC_NAME_LENGTH = 249;
+
+    /** Whether Kafka could carry this as a topic name at all. */
+    public static boolean isValidTopicName(String topic) {
+        return topic != null
+            && !topic.isBlank()
+            && topic.length() <= MAX_TOPIC_NAME_LENGTH
+            && !topic.equals(".")
+            && !topic.equals("..")
+            && TOPIC_NAME.matcher(topic).matches();
+    }
+
+    /**
      * Les colonnes d'une table existante qu'un sink peut accepter, dans leur ordre.
      *
      * <p>{@code FlinkSqlService.getTableSchema} rend le type résolu tel que Flink l'imprime, ce qui

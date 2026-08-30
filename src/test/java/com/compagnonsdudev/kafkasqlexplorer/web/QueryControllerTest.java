@@ -371,6 +371,26 @@ class QueryControllerTest {
         assertEquals(java.util.List.of("order_id"), java.util.List.copyOf(columns.getValue().keySet()));
     }
 
+    /**
+     * Un nom que Kafka ne pourrait pas porter est refusé avant qu'aucun DDL ne soit bâti.
+     *
+     * <p>Ce point d'entrée est le seul qui génère le DDL d'un topic qui n'existe pas encore, donc
+     * le seul où un nom arbitraire d'une requête se retrouve recopié dans une chaîne SQL puis
+     * repassé par le masquage des identifiants — dont le motif est quadratique sur une entrée
+     * choisie. Le refus est de toute façon la bonne réponse sur le fond.
+     */
+    @Test
+    void aNameKafkaCouldNotCarryIsRefusedBeforeAnyDdlIsBuilt() throws Exception {
+        mockMvc.perform(get("/api/query/sink-ddl")
+                .param("source", "demo_orders").param("topic", "not a topic name'"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.ddl").doesNotExist())
+            .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("Kafka")));
+
+        Mockito.verify(ddlGeneratorService, Mockito.never()).generateDdl(anyString(), any(), any());
+        Mockito.verify(flinkSqlService, Mockito.never()).getTableSchema(anyString());
+    }
+
     /** Une source que Flink ne connaît pas ne rend pas un DDL vide : elle dit quoi faire. */
     @Test
     void anUnknownSourceIsReportedRatherThanTurnedIntoAnEmptyTable() throws Exception {
