@@ -816,7 +816,9 @@ public class FlinkSqlService {
      * reads as a security restriction, where the truth is narrower — this application submits no
      * continuous job. It used to point at {@code POST /api/query/jobs}, which was the Flink Job
      * mode of the SQL editor; that mode did not work and has been removed, endpoint included, so a
-     * message naming it would send an operator to a door that is no longer there.
+     * message naming it would send an operator to a door that is no longer there — which is what
+     * this one did for a while after the removal, the javadoc having been corrected and the string
+     * beneath it left alone.
      */
     public QueryResult executeSync(QueryRequest request) {
         String strippedSql = prepareSql(request.sql());
@@ -825,7 +827,9 @@ public class FlinkSqlService {
                 Collections.emptyList(),
                 Collections.emptyList(),
                 0,
-                "INSERT and STATEMENT SET statements must be submitted via /api/query/jobs in Flink Job mode."
+                "INSERT INTO is not run by this application: it reads, and returns rows. "
+                    + "Submitting a continuous job was removed because it did not work — run the "
+                    + "pipeline as a Flink job of your own, and read what it produces here."
             );
         }
         return executeSql(request);
