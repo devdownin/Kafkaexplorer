@@ -324,63 +324,24 @@ class QueryControllerTest {
     }
 
     /**
-     * Le DDL d'une cible d'INSERT, dérivé des colonnes de la source.
+     * Il n'y a plus de {@code GET /api/query/sink-ddl}.
      *
-     * <p>En mode Job la cible doit exister, et rien n'aidait à la créer : il fallait repasser en
-     * mode lecture et écrire le DDL à la main. Ce point d'entrée le rend — il ne crée rien, ce qui
-     * écrit sur le cluster reste un geste délibéré — et il laisse dehors les colonnes calculées,
-     * qui sont précisément celles qu'un sink refuse.
+     * <p>Il rendait le {@code CREATE TABLE} d'une cible d'INSERT, dérivé des colonnes de la source,
+     * et son seul appelant était le bouton « créer la cible » du panneau de job soumis — parti avec
+     * le mode Job. Un point d'entrée que personne n'appelle est un point d'entrée que personne ne
+     * garde, et celui-ci prenait deux paramètres de requête pour aller lire un schéma : c'est la
+     * règle que ce dépôt applique déjà à {@code POST /api/metrics/preview} et à l'ancien
+     * {@code TableController}. Trois cas décrivaient ici la façon dont il refusait ; ce qui les
+     * remplace est l'absence elle-même.
+     *
+     * <p>404 et non 405 : aucune autre méthode n'est servie sur ce chemin, contrairement à
+     * {@code /jobs} dont le GET existe toujours.
      */
     @Test
-    void theSinkDdlIsDerivedFromTheSourceColumns() throws Exception {
-        java.util.Map<String, String> schema = new java.util.LinkedHashMap<>();
-        schema.put("order_id", "STRING NOT NULL");
-        schema.put("proc_time", "TIMESTAMP_LTZ(3) NOT NULL *PROCTIME*");
-        when(flinkSqlService.getTableSchema("demo_orders")).thenReturn(schema);
-        when(ddlGeneratorService.generateDdl(anyString(), any(), any()))
-            .thenReturn("CREATE TABLE demo_orders_out (order_id STRING) WITH ('connector'='kafka')");
-
+    void thereIsNoSinkDdlEndpoint() throws Exception {
         mockMvc.perform(get("/api/query/sink-ddl")
-                .param("source", "demo_orders").param("topic", "demo.orders.out"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.ddl").value(org.hamcrest.Matchers.containsString("CREATE TABLE")));
-
-        org.mockito.ArgumentCaptor<java.util.Map<String, String>> columns =
-            org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
-        Mockito.verify(ddlGeneratorService).generateDdl(
-            org.mockito.ArgumentMatchers.eq("demo.orders.out"), columns.capture(), any());
-        assertEquals(java.util.List.of("order_id"), java.util.List.copyOf(columns.getValue().keySet()));
-    }
-
-    /**
-     * Un nom que Kafka ne pourrait pas porter est refusé avant qu'aucun DDL ne soit bâti.
-     *
-     * <p>Ce point d'entrée est le seul qui génère le DDL d'un topic qui n'existe pas encore, donc
-     * le seul où un nom arbitraire d'une requête se retrouve recopié dans une chaîne SQL puis
-     * repassé par le masquage des identifiants — dont le motif est quadratique sur une entrée
-     * choisie. Le refus est de toute façon la bonne réponse sur le fond.
-     */
-    @Test
-    void aNameKafkaCouldNotCarryIsRefusedBeforeAnyDdlIsBuilt() throws Exception {
-        mockMvc.perform(get("/api/query/sink-ddl")
-                .param("source", "demo_orders").param("topic", "not a topic name'"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.ddl").doesNotExist())
-            .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("Kafka")));
-
-        Mockito.verify(ddlGeneratorService, Mockito.never()).generateDdl(anyString(), any(), any());
-        Mockito.verify(flinkSqlService, Mockito.never()).getTableSchema(anyString());
-    }
-
-    /** Une source que Flink ne connaît pas ne rend pas un DDL vide : elle dit quoi faire. */
-    @Test
-    void anUnknownSourceIsReportedRatherThanTurnedIntoAnEmptyTable() throws Exception {
-        when(flinkSqlService.getTableSchema(anyString())).thenReturn(new java.util.LinkedHashMap<>());
-
-        mockMvc.perform(get("/api/query/sink-ddl")
-                .param("source", "nope").param("topic", "nope.out"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.ddl").doesNotExist())
-            .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("nope")));
+                .param("source", "demo_orders")
+                .param("topic", "demo.orders.out"))
+            .andExpect(status().isNotFound());
     }
 }

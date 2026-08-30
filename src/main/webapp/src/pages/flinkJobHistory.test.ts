@@ -14,7 +14,6 @@
 import { describe, it, expect } from 'vitest';
 import type { FlinkManagedJobDetails } from '../api/types';
 import {
-  isJobTerminal,
   describeJobOutcome, formatDuration, historyCount, historyLines, jobDurationMs,
 } from './flinkJobHistory';
 
@@ -40,23 +39,6 @@ function details(over: Partial<FlinkManagedJobDetails> = {}): FlinkManagedJobDet
   };
 }
 
-describe('isJobTerminal', () => {
-  /*
-   * `UNAVAILABLE` n'est pas une fin : c'est l'aveu qu'on n'a pas su lire le statut. Les confondre
-   * est le défaut pour lequel ce sous-système a été corrigé côté serveur, et cette lecture-ci
-   * décide si l'éditeur cesse de redemander — donc si un job vivant est déclaré fini.
-   */
-  it('separates an ending from a status that could not be read', () => {
-    expect(isJobTerminal('FINISHED')).toBe(true);
-    expect(isJobTerminal('failed')).toBe(true);
-    expect(isJobTerminal('CANCELED')).toBe(true);
-    expect(isJobTerminal('CANCELLED')).toBe(true);
-    expect(isJobTerminal('UNKNOWN')).toBe(true);
-    expect(isJobTerminal('RUNNING')).toBe(false);
-    expect(isJobTerminal('UNAVAILABLE')).toBe(false);
-    expect(isJobTerminal(null)).toBe(false);
-  });
-});
 
 describe('historyLines', () => {
   it('orders the transitions and says how long each state lasted', () => {
