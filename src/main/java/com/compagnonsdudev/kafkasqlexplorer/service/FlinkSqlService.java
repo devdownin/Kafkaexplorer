@@ -964,7 +964,7 @@ public class FlinkSqlService {
             "This deployment already holds %d streaming job(s), which is the maximum "
                 + "(explorer.max-concurrent-jobs = %d). Each one runs its own embedded Flink "
                 + "cluster — about 80 threads — inside the process that serves this UI. Stop one "
-                + "from the dashboard, or raise the setting.", held, max));
+                + "with POST /api/query/cancel/{queryId}, or raise the setting.", held, max));
     }
 
     /**

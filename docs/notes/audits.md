@@ -413,3 +413,17 @@ without being a phone — turns out to be painful in practice. What is load-bear
 
 An earlier full bug & optimisation audit covered the whole codebase: all critical (C1–C4), major (M1–M8), minor and optimisation findings have been fixed here. Its report, `AUDIT.md`, was deleted from the tree in 31767bd — so the corrective decisions survive only as the behaviour of the code and the notes in this file, which is worth knowing before refactoring `AuditService`, `KafkaLiveConsumer`, `MetricService` or the direct SELECT engine: what looks like an odd choice in those four is usually a fix, and `git show 31767bd^:AUDIT.md` is where the reasoning is.
 
+`INSERT-SCOPE.md` sizes the one thing this application refuses to do: run an `INSERT`. It exists
+because the premise was nearly lost. Flink Job mode was removed with the sentence "it did not
+work" — true of the build it was written against, and that build was **55 minutes old**:
+`735b900` had just fixed the three defects behind the `Internal Server Error` an INSERT answered
+with, two of which were silently degrading every SELECT as well and were surfaced by the INSERT
+only because it is the one statement with no fallback. The judgment was never re-taken against the
+fixed build, and the next morning `submitJob` came back and was enumerated against a real
+MiniCluster (`FlinkSqlServiceInsertVariantsTest`, 21 cases). So what is missing is a door and a
+window, not an engine: I1–I6 total **4 days** for a minimum honest feature, 6.5 complete, 1.5 for
+an API-only version. The document also states the ceiling the feature cannot exceed, which is what
+the decision should turn on — a submitted job lives in an embedded MiniCluster (~80 threads and
+~6 MB of heap apiece) and dies with the process, so no store can make it survive a deploy. And it
+names the real decision as a product one rather than a technical one: `POST /api/query/jobs`
+widens an unauthenticated surface from reads to writes on the user's cluster.
