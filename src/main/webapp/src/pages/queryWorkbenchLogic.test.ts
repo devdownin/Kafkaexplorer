@@ -17,7 +17,7 @@ import {
   buildCompletionEntries, SQL_KEYWORD_SUGGESTIONS,
   type StatementRun,
   sidebarSqlFor, sidebarActionLabel,
-  rowKindOf, describeChangelog, exportColumns, exportRows, ROW_KIND_KEY,
+  rowKindOf, describeChangelog, exportColumns, exportRows, ROW_KIND_KEY, explainPlan,
   type HistoryEntry,
 } from './queryWorkbenchLogic';
 
@@ -558,6 +558,42 @@ describe('sortRows', () => {
 
   it('copies without sorting when no column is chosen', () => {
     expect(sortRows(rows, null, 'asc').map(r => r.n)).toEqual(['10', '9', '100']);
+  });
+});
+
+describe('explainPlan', () => {
+  const planned = { columns: ['result'], rows: [{ result: '== Optimized Physical Plan ==\nCalc(select=[id])\n+- TableSourceScan' }] };
+
+  it('reads the plan out of an EXPLAIN result', () => {
+    expect(explainPlan('EXPLAIN SELECT * FROM orders', planned))
+      .toContain('Optimized Physical Plan');
+    // Les trois formes que Flink accepte.
+    expect(explainPlan('EXPLAIN PLAN FOR SELECT * FROM orders', planned)).not.toBeNull();
+    expect(explainPlan('EXPLAIN CHANGELOG_MODE SELECT * FROM orders', planned)).not.toBeNull();
+    // Un commentaire de tête ne change pas la classification, ici comme partout ailleurs.
+    expect(explainPlan('-- le plan\nEXPLAIN SELECT * FROM orders', planned)).not.toBeNull();
+  });
+
+  it('leaves an ordinary result to the grid', () => {
+    expect(explainPlan('SELECT * FROM orders', { columns: ['id'], rows: [{ id: 1 }] })).toBeNull();
+    expect(explainPlan(null, planned)).toBeNull();
+    expect(explainPlan('EXPLAIN SELECT * FROM orders', null)).toBeNull();
+  });
+
+  /**
+   * Deux conditions, pas une : si Flink rendait un jour autre chose qu'une ligne d'une colonne
+   * pour un EXPLAIN, la grille doit reprendre la main plutôt que de recevoir un rendu qui ne lui
+   * convient pas.
+   */
+  it('refuses a shape that is not a plan, even on an EXPLAIN', () => {
+    expect(explainPlan('EXPLAIN SELECT * FROM orders',
+      { columns: ['a', 'b'], rows: [{ a: 'x', b: 'y' }] })).toBeNull();
+    expect(explainPlan('EXPLAIN SELECT * FROM orders',
+      { columns: ['result'], rows: [{ result: 'x' }, { result: 'y' }] })).toBeNull();
+    expect(explainPlan('EXPLAIN SELECT * FROM orders',
+      { columns: ['result'], rows: [{ result: 42 }] })).toBeNull();
+    expect(explainPlan('EXPLAIN SELECT * FROM orders',
+      { columns: ['result'], rows: [{ result: '   ' }] })).toBeNull();
   });
 });
 

@@ -19,6 +19,9 @@ import org.slf4j.LoggerFactory;
 import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.TableResult;
+import org.apache.flink.table.api.internal.TableEnvironmentImpl;
+import org.apache.flink.table.operations.CreateTableASOperation;
+import org.apache.flink.table.operations.Operation;
 import org.apache.flink.types.Row;
 import org.apache.flink.types.RowKind;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -209,9 +212,6 @@ public class FlinkSqlService {
         Pattern.compile("(?i)\\b(COUNT|SUM|AVG|MAX|MIN)\\s*\\(");
 
     /** A windowed read: {@code TABLE(TUMBLE(...))} and its siblings. */
-    private static final Pattern WINDOW_TABLE_CALL =
-        Pattern.compile("(?i)\\bTABLE\\s*\\(\\s*(TUMBLE|HOP|SESSION)\\s*\\(");
-
     /** The row cap written in the statement itself. */
     private static final Pattern LIMIT_CLAUSE = Pattern.compile("(?i)\\bLIMIT\\s+(\\d+)");
 
@@ -645,6 +645,48 @@ public class FlinkSqlService {
     static boolean isCreateTableAsSelect(String upperSql) {
         if (upperSql == null || !upperSql.startsWith("CREATE TABLE")) return false;
         return CTAS_TAIL.matcher(withoutStringLiterals(upperSql)).find();
+    }
+
+    /**
+     * Un CTAS, demandé au parseur de Flink plutôt qu'à une expression régulière.
+     *
+     * <p>Le test lexical ci-dessus neutralise les littéraux simple-quote et <strong>pas les
+     * identifiants entre accents graves</strong>, si bien qu'il refusait du DDL parfaitement
+     * ordinaire : mesuré, {@code CREATE TABLE `weird as select` (id STRING) WITH (…)} et
+     * {@code CREATE TABLE t (`col as select` STRING) …} étaient tous deux classés CTAS, donc
+     * refusés — avec un message expliquant comment scinder en {@code CREATE TABLE} puis
+     * {@code INSERT INTO}, à propos d'un {@code CREATE TABLE} qui n'avait rien à scinder. C'est le
+     * faux positif qui compte, sur la seule DDL que cette application accepte.
+     *
+     * <p>{@code CreateTableASOperation} ne s'y trompe pas, et ce dépôt remplace régulièrement le
+     * lexical par le parseur pour cette raison — {@code LineageService.parseWithFlink} est le
+     * précédent, garde-fous compris. Ils sont repris ici : le parseur n'est consulté que s'il
+     * existe (un {@link TableEnvironment} nu, comme dans certains tests, n'en expose pas), l'accès
+     * passe par le verrou de lecture du runtime comme tout autre accès à l'environnement, et
+     * <strong>l'échec retombe sur le test lexical</strong>, qui échoue fermé. Un CTAS dont la
+     * source n'existe pas ne parse pas : la regex le rattrape et le refus tient.
+     *
+     * @return {@code null} quand la question n'a pas pu être posée — jamais un verdict inventé
+     */
+    private Boolean parserSaysCreateTableAsSelect(String sql) {
+        if (!(tableEnv instanceof TableEnvironmentImpl impl)) return null;
+        try {
+            List<Operation> operations =
+                runtimeCoordinator.runRead("classify-ctas", () -> impl.getParser().parse(sql));
+            if (operations == null || operations.isEmpty()) return null;
+            return operations.stream().anyMatch(op -> op instanceof CreateTableASOperation);
+        } catch (Exception e) {
+            log.debug("Flink could not parse a CREATE TABLE for classification, using the lexical test: {}",
+                e.getMessage());
+            return null;
+        }
+    }
+
+    /** Le parseur d'abord, le test lexical quand il n'a pas pu répondre. */
+    private boolean isCreateTableAsSelect(String sql, String upperBody) {
+        if (upperBody == null || !upperBody.startsWith("CREATE TABLE")) return false;
+        Boolean parsed = parserSaysCreateTableAsSelect(sql);
+        return parsed != null ? parsed : isCreateTableAsSelect(upperBody);
     }
 
     /** Le texte avec le contenu de chaque littéral simple-quote remplacé par des espaces. */
@@ -1092,12 +1134,12 @@ public class FlinkSqlService {
          * Le refus nomme la marche à suivre — le `CREATE TABLE` puis l'`INSERT INTO`, que
          * l'éditeur sait enchaîner avec « Run all » — plutôt que de s'arrêter sur une interdiction.
          */
-        if (isCreateTableAsSelect(sql)) {
+        if (isCreateTableAsSelect(strippedSql, sql)) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0,
                 "CREATE TABLE … AS SELECT starts a job that writes rows, so it is not run here: "
                     + "the job would be invisible to the dashboard and could not be cancelled. "
-                    + "Declare the table with CREATE TABLE, then submit the INSERT INTO in Flink "
-                    + "Job mode (Run all does both in order).");
+                    + "Declare the table with CREATE TABLE, then run the INSERT INTO that fills "
+                    + "it as a Flink job of your own.");
         }
 
         try {
@@ -2065,8 +2107,11 @@ public class FlinkSqlService {
         String rawTableRef = fromMatcher.group(1);
         String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
 
-        // Detect TUMBLE / HOP / SESSION window functions — route to dedicated handler
-        if (WINDOW_TABLE_CALL.matcher(sql).find()) {
+        // Detect TUMBLE / HOP / CUMULATE / SESSION window functions — route to dedicated handler.
+        // La règle est partagée avec `isSingleTableRead` : la copie locale omettait CUMULATE, si
+        // bien qu'une fenêtre cumulative arrivée ici n'était pas approximée mais traitée comme une
+        // agrégation ordinaire — la fenêtre disparaissait sans un mot.
+        if (SqlStatements.hasWindowTableCall(sql)) {
             return kafkaWindowSelect(sql, readMode, limit, startTime);
         }
 
