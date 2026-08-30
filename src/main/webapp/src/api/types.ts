@@ -73,8 +73,10 @@ export interface TopicDetailResponse {
 export interface FlinkJobSummary {
   queryId: string;
   /**
-   * Nul quand la soumission a échoué avant qu'un JobClient existe — `submitJob` enregistre le
-   * refus avant de lever. Le résumé et le détail décrivent le même champ et le déclaraient
+   * Nul quand un enregistrement a été écrit avant qu'un JobClient existe. C'était le fait de
+   * `submitJob`, qui filait le refus avant de lever ; ce chemin a été retiré avec le mode « Flink
+   * job », mais un enregistrement écrit par une version antérieure porte toujours la forme, et un
+   * store doit relire ce qu'il a écrit. Le résumé et le détail décrivent le même champ et le déclaraient
    * différemment, ce qui est la moitié de F11 dans `FLINK-JOBS-AUDIT.md` : la carte faisait un
    * `substring` dessus. Inatteignable aujourd'hui (un tel enregistrement est terminal, donc filtré
    * hors de la liste que le tableau de bord reçoit), à un filtre près.
