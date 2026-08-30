@@ -1069,6 +1069,15 @@ jobs:
       #                     which TypeScript believes without checking: when an endpoint started
       #                     returning records instead of strings nothing failed to compile and the
       #                     Compare page died at runtime, months later.
+      #   check-notes-parity CLAUDE.md is the map, docs/notes/ holds the rationale, and neither
+      #                     repeats the other. CLAUDE.md says exactly that in its own second
+      #                     paragraph and #316 split it on that rule, 505 KB to 21 KB — then it
+      #                     grew back to 487 KB, of which 382 KB were lines byte-identical to a
+      #                     note. Nobody reversed the decision; it eroded, because writing into
+      #                     both files is the easy path when you are editing both. It is loaded
+      #                     into every session's context and the notes are not, which is the whole
+      #                     point of the split, so the duplication was paid on every session. One
+      #                     direction only: a note may hold more than the map, never the reverse.
       #   check-doc-paths   every repository path the maintainer docs name in PROSE rather than
       #                     in a link — check-links.py never saw those, and three pointed at
       #                     documents and a directory deleted months earlier. docs/notes/ is
