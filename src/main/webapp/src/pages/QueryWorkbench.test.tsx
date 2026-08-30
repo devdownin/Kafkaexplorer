@@ -45,21 +45,6 @@ const setSelection = (start: number, end: number) => {
   cursorListeners.forEach(fn => fn({ selection: makeSelection() }));
 };
 
-/** Dernière plage passée à `setSelection`, en coordonnées ligne/colonne Monaco. */
-let lastSetSelection: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number } | null = null;
-
-/** Le texte que la sélection posée recouvre — ce qu'une frappe remplacerait. */
-function selectedText(): string {
-  if (!lastSetSelection) return '';
-  const lines = currentValue.split('\n');
-  const offsetOf = (line: number, column: number) =>
-    lines.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0) + column - 1;
-  return currentValue.slice(
-    offsetOf(lastSetSelection.startLineNumber, lastSetSelection.startColumn),
-    offsetOf(lastSetSelection.endLineNumber, lastSetSelection.endColumn),
-  );
-}
-
 function offsetToPosition(text: string, offset: number) {
   const clamped = Math.max(0, Math.min(offset, text.length));
   const before = text.slice(0, clamped);
@@ -116,7 +101,6 @@ vi.mock('@monaco-editor/react', () => {
       },
       focus: () => {},
       setPosition: () => {},
-      setSelection: (range: typeof lastSetSelection) => { lastSetSelection = range; },
       revealPositionInCenter: () => {},
       revealPositionInCenterIfOutsideViewport: () => {},
     };
@@ -185,7 +169,6 @@ beforeEach(() => {
   cursorListeners = [];
   cursorOffset = 0;
   selectionRange = null;
-  lastSetSelection = null;
   currentValue = '';
   submittedEdits = [];
   get.mockReset();
@@ -366,151 +349,41 @@ describe('QueryWorkbench — nothing silently replaces the tab you are writing i
   });
 });
 
-describe('QueryWorkbench — the sidebar follows the execution mode', () => {
-  const selectJobMode = () => userEvent.click(screen.getByRole('button', { name: 'Flink job' }));
-  const clickTopic = () =>
-    userEvent.click(screen.getByRole('button', { name: 'INSERT INTO from demo.orders.1.received' }));
-
-  /** Le schéma que `/api/query/schema/{table}` rend pour une table générée par l'application. */
-  const withSchema = (schema: Record<string, string>) => get.mockImplementation((url: string) => {
-    if (url === '/api/query/init') return Promise.resolve({ data: CATALOGUE });
-    if (url.startsWith('/api/query/schema/')) return Promise.resolve({ data: schema });
-    return Promise.resolve({ data: {} });
-  });
-
-  it('writes an INSERT INTO in Flink job mode, the only statement that mode accepts', async () => {
-    renderPage();
-    await screen.findByText('demo.orders.1.received');
-    await selectJobMode();
-
-    await clickTopic();
-
-    await waitFor(() => expect(editor().value).toContain('INSERT INTO demo_orders_1_received_out'));
-    expect(editor().value).toContain('FROM demo_orders_1_received');
-    expect(editor().value).not.toContain('LIMIT');
-  });
-
+describe('QueryWorkbench — the editor reads, and says so', () => {
   /*
-   * `proc_time AS PROCTIME()` est une colonne calculée que le générateur de DDL ajoute à toute
-   * table : elle sort d'un `SELECT *` mais aucun sink ne l'accepte, donc l'INSERT échouait sur
-   * un désaccord d'arité — une erreur qui ne nomme pas sa cause.
+   * Le mode « Flink job » a été retiré : il ne fonctionnait pas. Ce qu'il faut garantir tient en
+   * deux faits — il n'y a plus de sélecteur de mode à trouver, et un INSERT collé dans l'onglet
+   * est refusé *avec sa raison* plutôt que posté à un endpoint qui ne mène nulle part.
    */
-  it('lists the columns and leaves out the computed one, which no sink accepts', async () => {
-    withSchema({ id: 'STRING', amount: 'DOUBLE', event_time: 'TIMESTAMP(3)', proc_time: 'TIMESTAMP_LTZ(3)' });
+  it('offers no execution mode to choose from', async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
-    await selectJobMode();
 
-    await clickTopic();
-
-    await waitFor(() => expect(editor().value).toContain('`id`'));
-    expect(editor().value).toContain('`amount`');
-    expect(editor().value).toContain('`event_time`');
-    expect(editor().value).not.toContain('proc_time');
-    expect(editor().value).not.toContain('SELECT *');
+    expect(screen.queryByRole('button', { name: 'Flink job' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Execution mode' })).not.toBeInTheDocument();
   });
 
-  it('falls back to SELECT * when Flink does not know the table yet, and says what that risks', async () => {
-    // Table non enregistrée : le schéma résolu est vide, il n'y a aucune colonne à lister.
-    withSchema({});
+  it('poses a bounded read on the sidebar click, whatever the table', async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
-    await selectJobMode();
-
-    await clickTopic();
-
-    await waitFor(() => expect(editor().value).toContain('SELECT * FROM demo_orders_1_received'));
-    expect(editor().value).toContain('proc_time, which a sink refuses');
-  });
-
-  /*
-   * Un nom inventé ne peut qu'échouer ; une table du catalogue résout. C'est tout ce qui est
-   * promis — le commentaire renvoie la vérification des colonnes à l'utilisateur.
-   */
-  it('targets an existing Flink table when the catalogue holds one', async () => {
-    get.mockImplementation((url: string) => {
-      if (url === '/api/query/init') {
-        return Promise.resolve({ data: { ...CATALOGUE, tables: ['demo_orders_1_received_enriched'] } });
-      }
-      return Promise.resolve({ data: {} });
-    });
-    renderPage();
-    await screen.findByText('demo.orders.1.received');
-    await selectJobMode();
-
-    await clickTopic();
-
-    await waitFor(() => expect(editor().value).toContain('INSERT INTO demo_orders_1_received_enriched'));
-    expect(editor().value).toContain('is an existing Flink table');
-    expect(editor().value).not.toContain('_received_out');
-    // Et c'est ce nom-là que la frappe remplacera.
-    await waitFor(() => expect(selectedText()).toBe('demo_orders_1_received_enriched'));
-  });
-
-  it('leaves the placeholder selected, so the first keystroke replaces it', async () => {
-    renderPage();
-    await screen.findByText('demo.orders.1.received');
-    await selectJobMode();
-
-    await clickTopic();
-
-    await waitFor(() => expect(selectedText()).toBe('demo_orders_1_received_out'));
-  });
-
-  // L'écran vide n'offrait aucun point de départ en mode Job : les propositions étaient
-  // conditionnées au mode lecture, alors que c'est là que la forme attendue est la moins évidente.
-  it('offers a starting point in Job mode too, and it is an INSERT', async () => {
-    renderPage();
-    await screen.findByText('demo.orders.1.received');
-    await selectJobMode();
-
-    const starter = await screen.findByText(/INSERT INTO demo_orders_1_received_out SELECT … FROM/);
-    await userEvent.click(starter);
-
-    await waitFor(() => expect(editor().value).toContain('INSERT INTO demo_orders_1_received_out'));
-    // Même geste que la barre latérale : la cible est posée sélectionnée.
-    await waitFor(() => expect(selectedText()).toBe('demo_orders_1_received_out'));
-  });
-
-  it('selects nothing in Read mode — there is no placeholder to replace', async () => {
-    renderPage();
-    await screen.findByText('demo.orders.1.received');
-
-    await userEvent.click(screen.getByRole('button', { name: 'SELECT from demo.orders.1.received' }));
-
-    await waitFor(() => expect(editor().value).toContain('SELECT * FROM'));
-    expect(selectedText()).toBe('');
-  });
-
-  // Le SELECT du mode lecture était refusé par la garde de mode : le clic ne pouvait mener
-  // qu'au panneau « Flink Job mode only accepts INSERT INTO ».
-  it('no longer poses a statement its own Run button would refuse', async () => {
-    renderPage();
-    await screen.findByText('demo.orders.1.received');
-    await selectJobMode();
-
-    await userEvent.click(screen.getByRole('button', { name: 'INSERT INTO from demo.orders.1.received' }));
-    await waitFor(() => expect(editor().value).toContain('INSERT INTO'));
-
-    await userEvent.click(screen.getByRole('button', { name: /Submit job/ }));
-
-    // Le SQL a passé la garde de mode et atteint l'endpoint des jobs, au lieu de s'arrêter sur
-    // « Flink Job mode only accepts INSERT INTO ».
-    await waitFor(() => expect(post.mock.calls.some(c => c[0] === '/api/query/jobs')).toBe(true));
-    const submitted = post.mock.calls.find(c => c[0] === '/api/query/jobs')![1] as { sql: string };
-    expect(submitted.sql).toContain('INSERT INTO demo_orders_1_received_out');
-    expect(screen.queryByText('Flink Job mode only accepts INSERT INTO')).not.toBeInTheDocument();
-  });
-
-  it('goes back to a bounded SELECT when Read mode is selected again', async () => {
-    renderPage();
-    await screen.findByText('demo.orders.1.received');
-    await selectJobMode();
-    await userEvent.click(screen.getByRole('button', { name: 'Sync read' }));
 
     await userEvent.click(screen.getByRole('button', { name: 'SELECT from demo.orders.1.received' }));
 
     await waitFor(() => expect(editor().value).toBe('SELECT * FROM demo_orders_1_received LIMIT 50'));
+  });
+
+  it('refuses an INSERT with its reason, and posts it nowhere', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.clear(editor());
+    await userEvent.paste('INSERT INTO x SELECT * FROM demo_orders_1_received');
+    setCursor(0);
+
+    await userEvent.click(screen.getByRole('button', { name: /Run query|Run statement/ }));
+
+    expect(await screen.findByText('INSERT INTO is not run by the SQL editor')).toBeInTheDocument();
+    expect(post.mock.calls.some(c => c[0] === '/api/query/jobs')).toBe(false);
+    expect(post.mock.calls.some(c => c[0] === '/api/query/run-sync')).toBe(false);
   });
 });
 
@@ -750,50 +623,6 @@ describe('QueryWorkbench — a selection that holds several statements', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Run selection/ }));
 
     await waitFor(() => expect(sentSql()).toEqual(['SELECT 1 FROM a']));
-  });
-});
-
-describe('QueryWorkbench — Flink Job mode runs several statements too', () => {
-  const JOB = {
-    queryId: 'q1', flinkJobId: 'f1', statementType: 'INSERT_INTO', status: 'RUNNING',
-    sql: 'INSERT INTO x SELECT 1', startedAt: 0, endedAt: null, cancelRequested: false,
-  };
-  const sql = 'INSERT INTO x SELECT * FROM a;\nINSERT INTO y SELECT * FROM b;';
-
-  beforeEach(() => {
-    post.mockImplementation((url: string) => url === '/api/query/validate'
-      ? Promise.resolve({ data: { valid: true } })
-      : Promise.resolve({ data: JOB }));
-  });
-
-  /*
-   * Run visait déjà la seule instruction sous le curseur en mode Job, mais le compteur et
-   * « Run all » y étaient masqués : un onglet de trois INSERT en soumettait un, sans que rien ne
-   * le dise. Une exécution partielle silencieuse est ce que ce compteur existe pour empêcher.
-   */
-  it('says which statement Run will submit, and offers to submit them all', async () => {
-    renderPage();
-    await screen.findByText('demo.orders.1.received');
-    await userEvent.click(screen.getByRole('button', { name: 'Flink job' }));
-    await userEvent.clear(editor());
-    await userEvent.paste(sql);
-    setCursor(0);
-
-    expect(await screen.findByText('Statement 1/2')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Run all/ })).toBeInTheDocument();
-  });
-
-  it('submits every INSERT of the tab', async () => {
-    renderPage();
-    await screen.findByText('demo.orders.1.received');
-    await userEvent.click(screen.getByRole('button', { name: 'Flink job' }));
-    await userEvent.clear(editor());
-    await userEvent.paste(sql);
-    setCursor(0);
-
-    await userEvent.click(await screen.findByRole('button', { name: /Run all/ }));
-
-    await waitFor(() => expect(post.mock.calls.filter(c => c[0] === '/api/query/jobs')).toHaveLength(2));
   });
 });
 

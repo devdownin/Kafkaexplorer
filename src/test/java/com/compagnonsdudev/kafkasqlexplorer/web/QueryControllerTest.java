@@ -278,20 +278,19 @@ class QueryControllerTest {
     }
 
     /**
-     * Une soumission refusée dit pourquoi, et le statut dit à qui la faute.
+     * Il n'y a plus de {@code POST /api/query/jobs}.
      *
-     * <p>{@code POST /api/query/jobs} répondait « Internal Server Error » et rien d'autre : le
-     * refus de la liste blanche voyageait dans une {@code ResponseStatusException}, dont la raison
-     * atterrit dans le champ {@code message} du corps d'erreur par défaut de Spring — supprimé,
-     * puisque {@code server.error.include-message} vaut {@code never} — et toute autre
-     * {@code RuntimeException} n'était pas attrapée du tout. Le navigateur lit {@code message}
-     * puis {@code error} dans le corps et n'avait ni l'un ni l'autre, si bien que le seul geste
-     * de l'éditeur qui n'a aucun repli était aussi le seul dont on n'apprenait rien.
+     * <p>Il soumettait un {@code INSERT INTO} comme job Flink continu, pour le mode « Flink job »
+     * du SQL editor. Ce mode ne fonctionnait pas et a été retiré ; l'endpoint est parti avec,
+     * plutôt que de rester un second chemin non authentifié vers le moteur de requêtes que plus
+     * aucun appelant n'exerce. Trois cas couvraient ici la façon dont ses refus se nommaient : ils
+     * n'ont plus d'objet, et ce qui les remplace est l'absence elle-même.
      *
-     * <p>Trois cas plutôt qu'un, parce qu'ils envoient l'opérateur à trois endroits : ce que cette
-     * application refuse d'exécuter, une faute de frappe dans un nom de table, et une panne du
-     * moteur — qui reste un 500, la classification étant celle du moteur de requête et non une
-     * seconde règle écrite ici.
+     * <p>Le statut attendu est <b>405 et non 404</b>, et c'est mesuré plutôt que supposé :
+     * {@code GET /jobs} existe toujours (le registre est alimenté par les lectures synchrones),
+     * donc le chemin résout et c'est la méthode qui ne passe pas. Restaurer le {@code @PostMapping}
+     * ferait passer l'appel et échouer ce cas, ce qui est tout ce qu'on lui demande — même argument
+     * que {@code MetricControllerTest.theUncalledSqlPreviewEndpointIsGone}.
      */
     @Test
     void aRefusedJobSubmissionCarriesItsReason() throws Exception {
@@ -315,31 +314,17 @@ class QueryControllerTest {
 
         mockMvc.perform(post("/api/query/jobs")
                 .contentType("application/json")
-                .content("{\"sql\":\"INSERT INTO no_such_sink SELECT id FROM orders\"}"))
-            .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.error").value(
-                org.hamcrest.Matchers.containsString("no_such_sink")));
+                .content("{\"sql\":\"INSERT INTO sink SELECT id FROM orders\"}"))
+            .andExpect(status().isMethodNotAllowed());
     }
 
-    /**
-     * Une panne moteur reste un 500 — mais un 500 qui porte la phrase du moteur.
-     *
-     * <p>C'est le cas qui a produit le rapport : le connecteur refusait une option du DDL généré,
-     * et l'INSERT, seul chemin de cette page sans repli sur le lecteur direct, le rendait en
-     * « Internal Server Error ». La cause est corrigée ailleurs ; ce que ce cas fixe, c'est que la
-     * prochaine panne du même genre arrive nommée.
-     */
+    /** Le registre que les trois lectures servent reste servi : une lecture synchrone l'alimente. */
     @Test
-    void anEngineFailureStaysAFiveHundredButNamesItself() throws Exception {
-        when(flinkJobService.submit(any())).thenThrow(new IllegalStateException(
-            "Unsupported options found for 'kafka'. Unsupported options: json.ignore-parse-errors"));
+    void theJobRegistryIsStillReadable() throws Exception {
+        when(flinkJobService.listJobs()).thenReturn(java.util.List.of());
 
-        mockMvc.perform(post("/api/query/jobs")
-                .contentType("application/json")
-                .content("{\"sql\":\"INSERT INTO sink SELECT id FROM orders\"}"))
-            .andExpect(status().isInternalServerError())
-            .andExpect(jsonPath("$.error").value(
-                org.hamcrest.Matchers.containsString("Unsupported options")));
+        mockMvc.perform(get("/api/query/jobs"))
+            .andExpect(status().isOk());
     }
 
     /**

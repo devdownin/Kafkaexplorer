@@ -747,30 +747,6 @@ class FlinkSqlServiceTest {
     }
 
     /**
-     * En mode Job, l'absence de schéma est un refus qui se nomme — pas un « table inconnue ».
-     *
-     * <p>{@code deferToDirect} veut dire « laisse le lecteur direct s'en charger », et il n'y en a
-     * pas ici : un job est soumis à Flink ou ne l'est pas. Laisser passer la requête rendrait
-     * l'« Object not found » du planner, sur un nom parfaitement correct, à propos d'une table que
-     * cette application a délibérément choisi de ne pas créer.
-     */
-    @Test
-    void inJobModeAnUninferableSourceIsRefusedByName() throws Exception {
-        doReturn(List.of("no.schema.topic")).when(kafkaAdminService).listTopics();
-        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("no.schema.topic");
-        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
-
-        IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
-            () -> service.submitJob(QueryRequest.sql(
-                "INSERT INTO some_sink SELECT id FROM no_schema_topic", 10, 5_000L, "earliest-offset")));
-
-        assertTrue(refused.getMessage().contains("No schema could be inferred"), refused.getMessage());
-        assertFalse(refused.getMessage().toLowerCase().contains("not found"),
-            "the planner's complaint about a correct name must not be what the caller reads: "
-                + refused.getMessage());
-    }
-
-    /**
      * « Les plus récentes » est une question que seul le lecteur direct sait poser.
      *
      * <p>Tant que le planner ne répondait à rien, {@code readMode} était honoré par accident. Une

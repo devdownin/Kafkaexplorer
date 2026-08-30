@@ -54,8 +54,6 @@ export interface Lesson {
    * si le planner est indisponible. `ANY` : les deux moteurs répondent.
    */
   engine: 'ANY' | 'FLINK';
-  /** `false` pour ce que le bouton Run refuse (INSERT INTO → mode Job). */
-  runnable: boolean;
   keywords: string[];
 }
 
@@ -80,7 +78,6 @@ export const LESSONS: Lesson[] = [
     pitfall:
       'Asking for more rows than the topic holds: the query waits for messages that never come and ends on "Query timed out after 10000ms". Lower the limit, or read a busier topic.',
     engine: 'ANY',
-    runnable: true,
     keywords: ['select', 'star', 'limit', 'first query', 'auto-registration'],
   },
   {
@@ -101,7 +98,6 @@ LIMIT 20`,
       'A field named event_time inside the payload wins: the generated DDL only adds the metadata column when the schema does not already define one.',
     ],
     engine: 'ANY',
-    runnable: true,
     keywords: ['projection', 'columns', 'event_time', 'proc_time', 'metadata'],
   },
   {
@@ -121,7 +117,6 @@ LIMIT 50`,
     pitfall:
       'Reading rows that do not match your WHERE and assuming the data is wrong. Check the engine badge and the warnings above the grid first.',
     engine: 'ANY',
-    runnable: true,
     keywords: ['where', 'filter', 'predicate', 'warnings', 'fallback'],
   },
   {
@@ -143,7 +138,6 @@ GROUP BY type`,
     pitfall:
       'An aggregate with no window over a live stream is a changelog: on the Flink engine every new message updates the result, and you see each update as a row. Group by a time window when you want one row per bucket.',
     engine: 'ANY',
-    runnable: true,
     keywords: ['count', 'sum', 'avg', 'group by', 'aggregate', 'alias', 'metric_value'],
   },
   {
@@ -168,7 +162,6 @@ GROUP BY window_start, window_end`,
     pitfall:
       'Pointing DESCRIPTOR at a column that is not a time. The fallback reader resolves the column as an ISO-8601 or epoch field and drops back to the Kafka record timestamp; the Flink planner just rejects it.',
     engine: 'ANY',
-    runnable: true,
     keywords: ['tumble', 'window', 'descriptor', 'interval', 'time series', 'window_start'],
   },
   {
@@ -192,7 +185,6 @@ GROUP BY window_start, window_end`,
     pitfall:
       'HOP, CUMULATE and SESSION are exact on the Flink engine only. If a query falls back, they are approximated as a tumbling window of the same width, and the result says so in its warnings.',
     engine: 'ANY',
-    runnable: true,
     keywords: ['hop', 'sliding', 'cumulate', 'session', 'window', 'approximation'],
   },
   {
@@ -215,7 +207,6 @@ LIMIT 20`,
     pitfall:
       'Writing customer.profile.name. The column is a STRING, so the planner reports an unknown identifier — and a rejected query is not retried on the other engine.',
     engine: 'FLINK',
-    runnable: true,
     keywords: ['json', 'nested', 'json_value', 'jsonpath', 'struct', 'string column'],
   },
   {
@@ -237,7 +228,6 @@ LIMIT 20`,
     pitfall:
       'Expecting columns named after the XML elements. There is exactly one column, raw_value; every field you want is an XmlExtract call.',
     engine: 'FLINK',
-    runnable: true,
     keywords: ['xml', 'xpath', 'xmlextract', 'udf', 'raw_value'],
   },
   {
@@ -261,7 +251,6 @@ WHERE row_num = 1`,
     pitfall:
       'If the Flink planner is unavailable, this query fails rather than returning approximate rows. That is deliberate — wrong rows are worse than a refusal.',
     engine: 'FLINK',
-    runnable: true,
     keywords: ['deduplicate', 'row_number', 'over', 'partition by', 'subquery', 'latest'],
   },
   {
@@ -286,7 +275,6 @@ LIMIT 20`,
     pitfall:
       'Joining a topic you have never opened. Registration happens on a plain SELECT, so run SELECT * FROM demo_customers LIMIT 1 first.',
     engine: 'FLINK',
-    runnable: true,
     keywords: ['join', 'two topics', 'enrich', 'reference data', 'registration'],
   },
   {
@@ -308,7 +296,6 @@ GROUP BY customer_id`,
       'amount > 500 is a comparison, which is another reason this one belongs to the Flink engine.',
     ],
     engine: 'FLINK',
-    runnable: true,
     keywords: ['with', 'cte', 'common table expression', 'readable'],
   },
   {
@@ -339,7 +326,6 @@ GROUP BY customer_id`,
     pitfall:
       'value.json.ignore-parse-errors is what keeps one malformed message from failing the whole read. Dropping it turns a poison record into a failed query. The value. prefix is not decoration: the format is declared as value.format, so its options carry that prefix too, and the connector refuses the bare key — not at CREATE TABLE, which validates nothing, but the first time the table is read from or written to.',
     engine: 'FLINK',
-    runnable: true,
     keywords: ['create table', 'ddl', 'connector', 'schema', 'startup mode'],
   },
   {
@@ -358,32 +344,7 @@ GROUP BY type`,
       'The Validate button in the editor uses the same path — a syntax error comes back with its line and column before anything is read.',
     ],
     engine: 'FLINK',
-    runnable: true,
     keywords: ['explain', 'plan', 'validate', 'dry run'],
-  },
-  {
-    id: 'insert',
-    group: 'Beyond SELECT',
-    title: 'Write a continuous stream',
-    goal: 'Keep a derived topic up to date, forever.',
-    sql: `INSERT INTO orders_enriched
-SELECT
-  o.id,
-  o.amount,
-  c.segment
-FROM demo_orders_1_received AS o
-JOIN demo_customers AS c
-  ON o.customer_id = c.customer_id`,
-    reading: [
-      'INSERT INTO is not run by the editor: it is submitted as a Flink job through Job mode, and it keeps running after the page is closed.',
-      'The target table must exist first — declare it with CREATE TABLE, pointing at the topic you want written.',
-      'Running jobs, their Flink job id and their history are on the Dashboard; the Lineage page draws what each job reads and writes.',
-    ],
-    pitfall:
-      'Pressing Run on an INSERT. The answer is "INSERT INTO statements must be submitted via Flink Job mode" — a routing rule, not a syntax complaint.',
-    engine: 'FLINK',
-    runnable: false,
-    keywords: ['insert into', 'job', 'continuous', 'sink', 'pipeline'],
   },
 ];
 
@@ -453,9 +414,9 @@ export const ENGINE_MATRIX: EngineCapability[] = [
   },
   {
     feature: 'INSERT INTO',
-    flink: true,
+    flink: false,
     direct: false,
-    note: 'Submitted as a continuous Flink job through Job mode, not run inline.',
+    note: 'Not run by this editor. Write the pipeline in a Flink job of your own, outside the app.',
   },
 ];
 
@@ -532,12 +493,12 @@ export const ERROR_GUIDE: ErrorGuideEntry[] = [
   {
     message: 'Only SELECT, EXPLAIN and CREATE TABLE statements are allowed.',
     meaning: 'The statement whitelist. UPDATE, DELETE, DROP and ALTER have no path through this app.',
-    fix: 'For INSERT INTO, use Job mode. For anything else, there is no way round it — by design.',
+    fix: 'There is no way round it — by design. An INSERT INTO pipeline belongs in a Flink job of your own.',
   },
   {
-    message: 'INSERT INTO statements must be submitted via Flink Job mode.',
-    meaning: 'Routing, not syntax: an INSERT is a continuous job, not a query with an answer.',
-    fix: 'Submit it as a job; follow it from the Dashboard.',
+    message: 'INSERT INTO is not run by the SQL editor',
+    meaning: 'The editor executes reads. Submitting a continuous INSERT was removed — it did not work.',
+    fix: 'Run the pipeline as a Flink job outside the app; the editor reads what it produces.',
   },
   {
     message: 'Cross joins are not allowed in this environment.',

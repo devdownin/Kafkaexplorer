@@ -107,11 +107,6 @@ const LessonCard: React.FC<LessonCardProps> = ({ lesson, index, copied, onCopy }
               <Badge tone="primary">Flink engine</Badge>
             </Tooltip>
           )}
-          {!lesson.runnable && (
-            <Tooltip content="Run refuses this statement — it is submitted as a continuous Flink job instead.">
-              <Badge tone="secondary">Job mode</Badge>
-            </Tooltip>
-          )}
         </div>
         <p className="text-[12.5px] text-on-surface-variant leading-relaxed mt-1">{lesson.goal}</p>
       </div>
@@ -121,7 +116,7 @@ const LessonCard: React.FC<LessonCardProps> = ({ lesson, index, copied, onCopy }
       sql={lesson.sql}
       copied={copied}
       onCopy={onCopy}
-      openHref={lesson.runnable ? editorLink(lesson.sql) : undefined}
+      openHref={editorLink(lesson.sql)}
     />
 
     <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-start">
@@ -394,13 +389,6 @@ const Help: React.FC = () => {
             <p className="text-[12px] text-on-surface leading-relaxed">
               A bounded, in-process Kafka scan used only when the planner itself fails. Projections, equality filters,
               aggregates and tumbling windows — up to 100 000 messages read per aggregate query.
-            </p>
-          </Card>
-          <Card padding="md" className="space-y-2">
-            <Badge tone="secondary">Job mode</Badge>
-            <p className="text-[12px] text-on-surface leading-relaxed">
-              <Code>INSERT INTO</Code> is not a query with an answer: it is submitted as a continuous Flink job, tracked
-              on the Dashboard with its status, job id and history.
             </p>
           </Card>
         </div>

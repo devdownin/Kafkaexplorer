@@ -110,15 +110,12 @@ describe('lesson content', () => {
     LESSONS.forEach((l) => expect(LESSON_GROUPS).toContain(l.group));
   });
 
+  // Chaque leçon s'ouvre dans l'éditeur : elle doit donc être une instruction qu'il exécute.
+  // Le mode « Flink job » ayant été retiré, un INSERT INTO n'en est plus une — d'où l'absence
+  // de toute leçon qui en propose un, plutôt qu'un drapeau « non exécutable ».
   it('only shows statements the backend whitelist accepts', () => {
-    LESSONS.filter((l) => l.runnable).forEach((lesson) => {
-      expect(lesson.sql.trimStart()).toMatch(/^(SELECT|WITH|CREATE TABLE|EXPLAIN)\b/);
-    });
-  });
-
-  it('marks INSERT INTO as not runnable from the editor', () => {
     LESSONS.forEach((lesson) => {
-      if (/^\s*INSERT INTO\b/i.test(lesson.sql)) expect(lesson.runnable).toBe(false);
+      expect(lesson.sql.trimStart()).toMatch(/^(SELECT|WITH|CREATE TABLE|EXPLAIN)\b/);
     });
   });
 

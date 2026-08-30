@@ -773,6 +773,16 @@ public class FlinkSqlService {
         return stripSqlComments(normalizeIdentifierQuotes(sql.trim()));
     }
 
+    /**
+     * Runs a statement and returns its rows.
+     *
+     * <p>An {@code INSERT INTO} is refused here rather than by {@code executeSql}'s whitelist, and
+     * the difference is the message: "Only SELECT, EXPLAIN and CREATE TABLE statements are allowed"
+     * reads as a security restriction, where the truth is narrower — this application submits no
+     * continuous job. It used to point at {@code POST /api/query/jobs}, which was the Flink Job
+     * mode of the SQL editor; that mode did not work and has been removed, endpoint included, so a
+     * message naming it would send an operator to a door that is no longer there.
+     */
     public QueryResult executeSync(QueryRequest request) {
         String strippedSql = prepareSql(request.sql());
         if (isJobModeStatement(extractStatementType(strippedSql))) {
