@@ -143,14 +143,11 @@ HISTORICAL = {
     # same file. It is narrow — one file, one artifact, one version each.
     ('docs/notes/ci-and-checks.md', 'flink-connector-kafka', '4.0.1-2.0'),
     ('docs/notes/ci-and-checks.md', 'anthropic-java', '2.16.1'),
-    # CLAUDE.md carries the same three sentences — it is the map those notes expand on, so the
-    # historical NPE and the paragraph about this very check live in both files. The exemptions
-    # were keyed on `docs/notes/` alone, so this whole job was red on main: the check was failing
-    # on the document that describes it, on prose that names a stale value on purpose. Same
-    # rationale as the three above, and the same narrowness — one file, one artifact, one version.
-    ('CLAUDE.md', 'Flink', '1.18'),
-    ('CLAUDE.md', 'flink-connector-kafka', '4.0.1-2.0'),
-    ('CLAUDE.md', 'anthropic-java', '2.16.1'),
+    # CLAUDE.md used to carry the same three sentences, and had three exemptions of its own. It
+    # no longer does: the duplicated prose moved back into docs/notes/, which is where the map
+    # said it lived all along. This check's own stale_exemptions pass is what noticed — it went
+    # red on the three entries the moment their prose left the file, which is the whole reason
+    # that pass exists and the reason these are deleted rather than left "just in case".
 }
 
 # Variables that are neither Spring properties nor set by the Dockerfiles: they are read
