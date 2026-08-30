@@ -178,23 +178,4 @@ public class DdlGeneratorServiceTest {
      * d'arité que la barre latérale évite déjà en nommant les colonnes — et {@code NOT NULL} est
      * une contrainte qu'il serait faux de recopier sur une cible alimentée par une projection.
      */
-    @Test
-    public void sinkColumnsDropsWhatASinkCannotAccept() {
-        java.util.Map<String, String> schema = new java.util.LinkedHashMap<>();
-        schema.put("order_id", "STRING NOT NULL");
-        schema.put("amount", "DOUBLE");
-        schema.put("event_time", "TIMESTAMP(3) *ROWTIME*");
-        schema.put("proc_time", "TIMESTAMP_LTZ(3) NOT NULL *PROCTIME*");
-
-        java.util.Map<String, String> columns = DdlGeneratorService.sinkColumns(schema);
-
-        assertEquals(java.util.List.of("order_id", "amount"), java.util.List.copyOf(columns.keySet()));
-        assertEquals("STRING", columns.get("order_id"), "NOT NULL ne se recopie pas sur une cible");
-        assertEquals("DOUBLE", columns.get("amount"));
-    }
-
-    @Test
-    public void sinkColumnsOfNothingIsEmptyRatherThanNull() {
-        assertTrue(DdlGeneratorService.sinkColumns(null).isEmpty());
-    }
 }

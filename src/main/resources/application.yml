@@ -112,7 +112,6 @@ explorer:
   # Which end of each topic duplicate detection reads: LATEST (default) or EARLIEST.
   audit-duplicate-scan-from: LATEST
   inference-sample-size: 10
-  inference-poll-timeout-ms: 2000
   # How many byte-array consumers the per-topic record readers keep between reads. 0 disables the
   # pool, and that is deliberate: building a KafkaConsumer costs a connect, an ApiVersions exchange
   # and a metadata fetch — plus a handshake and an authentication round trip on a TLS or SASL
@@ -184,6 +183,9 @@ explorer:
   # submission starts its own embedded MiniCluster — measured at ~80 threads and ~6 MB of heap
   # per job, in the process that also serves the UI — so the cap bounds a gesture that is easy
   # to repeat from the editor. The refusal names the count and this setting.
+  # Guards FlinkSqlService.submitJob, which no HTTP path reaches since POST /api/query/jobs
+  # went with Flink Job mode — so this cannot bind on a running deployment today. Kept
+  # because submitJob is kept as the tested home of what an INSERT means here.
   max-concurrent-jobs: 10
   flink-job-store-path: data/flink-jobs.json
   flink-job-retention-hours: 24
