@@ -74,6 +74,22 @@ class SqlErrorClassifierTest {
                 + "Hints can only be applied to tables.").isUserError());
     }
 
+    /**
+     * Ce que le planner streaming refuse de construire est une faute de la requête.
+     *
+     * <p>Un `ORDER BY` sans borne et un `EXISTS` corrélé sont du SQL valide qui n'a pas de sens sur
+     * un flux. Classés en panne moteur, ils se repliaient sur le lecteur direct, qui ne connaît que
+     * des topics et répondait « Table 'x' not found » — sur une table qui existe — tandis que la
+     * vraie raison partait dans les warnings.
+     */
+    @Test
+    void whatTheStreamingPlannerCannotBuildIsAUserError() {
+        assertTrue(SqlErrorClassifier.classify(
+            "Sort on a non-time-attribute field is not supported.").isUserError());
+        assertTrue(SqlErrorClassifier.classify(
+            "unexpected correlate variable $cor1 in the plan").isUserError());
+    }
+
     @Test
     void aRestrictedStatementIsAUserError() {
         assertTrue(SqlErrorClassifier.classify("Cross joins are not allowed in this environment.").isUserError());

@@ -596,6 +596,44 @@ public class FlinkSqlService {
         return open + 2 < sql.length() && sql.charAt(open + 2) == '+';
     }
 
+    /** {@code AS SELECT} / {@code AS WITH} au niveau du statement, littéraux mis à part. */
+    private static final Pattern CTAS_TAIL = Pattern.compile("(?i)\\bAS\\s+(?:SELECT|WITH)\\b");
+
+    /**
+     * Un {@code CREATE TABLE … AS SELECT}, et non un {@code CREATE TABLE} ordinaire.
+     *
+     * <p>Les littéraux sont neutralisés avant le test : une option peut parfaitement contenir le
+     * texte {@code 'as select'} ({@code WITH ('note' = 'as select …')}), et refuser un CREATE
+     * TABLE à cause du contenu d'une chaîne serait un faux positif sur la seule DDL que cette
+     * application accepte. Les commentaires, eux, ont déjà été retirés par l'appelant.
+     */
+    static boolean isCreateTableAsSelect(String upperSql) {
+        if (upperSql == null || !upperSql.startsWith("CREATE TABLE")) return false;
+        return CTAS_TAIL.matcher(withoutStringLiterals(upperSql)).find();
+    }
+
+    /** Le texte avec le contenu de chaque littéral simple-quote remplacé par des espaces. */
+    private static String withoutStringLiterals(String sql) {
+        StringBuilder out = new StringBuilder(sql.length());
+        boolean inLiteral = false;
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (c == '\'') {
+                // Une quote doublée à l'intérieur d'un littéral l'échappe et ne le ferme pas.
+                if (inLiteral && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+                    out.append("  ");
+                    i++;
+                    continue;
+                }
+                inLiteral = !inLiteral;
+                out.append('\'');
+                continue;
+            }
+            out.append(inLiteral ? ' ' : c);
+        }
+        return out.toString();
+    }
+
     private String extractStatementType(String sql) {
         if (sql == null || sql.isBlank()) return "UNKNOWN";
         // Classified past a leading CTE chain, so `WITH … INSERT INTO` and `WITH … SELECT` are
@@ -914,6 +952,27 @@ public class FlinkSqlService {
         // Security: Prevent execution of dangerous or unsupported DDL/DML.
         if (!sql.startsWith("SELECT") && !sql.startsWith("EXPLAIN") && !sql.startsWith("CREATE TABLE")) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, "Only SELECT, EXPLAIN and CREATE TABLE statements are allowed.");
+        }
+        /*
+         * `CREATE TABLE … AS SELECT` est un INSERT déguisé, et la whitelist le laissait passer
+         * parce qu'elle classe sur le premier mot — le même défaut que `INSERT OVERWRITE` un cran
+         * plus loin, ici avec des conséquences plus lourdes. Ce chemin-ci est celui de la
+         * *lecture* : un CTAS y crée la table **et démarre le job qui l'alimente**, sans passer
+         * par `submitJob`. Le job n'entre donc dans aucun registre — il est invisible au tableau
+         * de bord, ne compte pas contre `explorer.max-concurrent-jobs`, et
+         * `POST /api/query/cancel/{queryId}` n'a aucun identifiant pour l'atteindre. Sur une
+         * source Kafka, cela veut dire un job continu que rien ne peut ni voir ni arrêter, lancé
+         * par le point d'entrée que `executeSync` refuse justement aux INSERT.
+         *
+         * Le refus nomme la marche à suivre — le `CREATE TABLE` puis l'`INSERT INTO`, que
+         * l'éditeur sait enchaîner avec « Run all » — plutôt que de s'arrêter sur une interdiction.
+         */
+        if (isCreateTableAsSelect(sql)) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0,
+                "CREATE TABLE … AS SELECT starts a job that writes rows, so it is not run here: "
+                    + "the job would be invisible to the dashboard and could not be cancelled. "
+                    + "Declare the table with CREATE TABLE, then submit the INSERT INTO in Flink "
+                    + "Job mode (Run all does both in order).");
         }
 
         try {

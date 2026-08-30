@@ -85,6 +85,14 @@ public final class SqlErrorClassifier {
             + "|insert overwrite requires"
             // Un hint d'options posé sur une vue plutôt que sur une table.
             + "|cannot be enriched with new options"
+            // Ce que le planner *streaming* refuse de construire : la requête est valide en SQL et
+            // n'a pas de sens sur un flux. Non reconnues, ces deux-là étaient des pannes moteur,
+            // donc la requête se repliait sur le lecteur direct — qui ne connaît que des topics
+            // Kafka et répondait « Table 'x' not found » sur une table qui existe, en reléguant la
+            // vraie raison dans les warnings. C'est la substitution que ce classifieur existe pour
+            // empêcher : l'avis d'un autre moteur sur une requête qu'il n'a jamais su exécuter.
+            + "|sort on a non-time-attribute field is not supported"
+            + "|unexpected correlate variable"
             + "|cannot be cast to"
             + "|argument type mismatch"
             + "|not allowed in this environment"
