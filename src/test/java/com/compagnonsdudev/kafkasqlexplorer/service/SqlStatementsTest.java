@@ -102,4 +102,34 @@ class SqlStatementsTest {
         String sql = "SELECT withdrawal FROM t";
         assertEquals(sql, SqlStatements.withoutLeadingCte(sql));
     }
+
+    // ── Le calcul de fenêtre ──────────────────────────────────────────────────────────
+
+    /**
+     * Les <strong>quatre</strong> fonctions, dont {@code CUMULATE}.
+     *
+     * <p>C'est le défaut qui a fait sortir cette méthode : la règle vivait en deux exemplaires dans
+     * {@code FlinkSqlService}, et celui qui aiguillait vers le calcul de fenêtre ne nommait que
+     * trois d'entre elles. Une fenêtre cumulative arrivée au lecteur direct était donc traitée
+     * comme une agrégation ordinaire — la fenêtre disparaissait sans même l'avertissement
+     * d'approximation que ses voisines recevaient.
+     */
+    @Test
+    void recognisesEveryWindowFunction() {
+        for (String fn : new String[] { "TUMBLE", "HOP", "CUMULATE", "SESSION" }) {
+            String sql = "SELECT window_start FROM TABLE(" + fn
+                + "(TABLE orders, DESCRIPTOR(ts), INTERVAL '1' MINUTE)) GROUP BY window_start";
+            assertTrue(SqlStatements.hasWindowTableCall(sql), fn);
+            assertTrue(SqlStatements.hasWindowTableCall(sql.toLowerCase(java.util.Locale.ROOT)), fn + " en minuscules");
+        }
+    }
+
+    @Test
+    void doesNotFireOnAnOrdinaryQuery() {
+        assertFalse(SqlStatements.hasWindowTableCall("SELECT * FROM orders"));
+        assertFalse(SqlStatements.hasWindowTableCall("SELECT COUNT(*) AS n FROM orders GROUP BY state"));
+        // Une colonne qui porte le nom d'une fonction de fenêtre n'est pas un appel de fenêtre.
+        assertFalse(SqlStatements.hasWindowTableCall("SELECT session FROM orders"));
+        assertFalse(SqlStatements.hasWindowTableCall(null));
+    }
 }
