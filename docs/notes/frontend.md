@@ -225,6 +225,40 @@ qu'aucun contexte d'empilement soit créé, et le modal reste au-dessus de la Si
 `space-y-6` a suivi le contenu dans ce conteneur : laissé sur la racine, il aurait donné une
 marge haute au calque et décalé son `inset-0`.
 
+**Et le calque est `sticky`, pas `absolute`, pour une deuxième mesure.** Dans un conteneur qui
+défile, `absolute inset-0` se résout sur la **fenêtre de défilement** et non sur le contenu :
+mesuré sur la page Metrics de la démo en 1440×900, le calque faisait 844 px pour 2 318 px de
+contenu, et après défilement jusqu'en bas son sommet se trouvait 1 474 px au-dessus de la zone
+visible. L'ornement occupait le premier tiers de la page puis s'en allait — ce qui se lit comme
+un défaut, pas comme une intention, sur un fond censé être ambiant. `sticky top-0 h-0` le fait
+suivre la fenêtre sans rien prendre au flux ; l'hôte du canvas, en `absolute` dedans, annule le
+`p-6` de la racine par des marges négatives pour aller à bord perdu, et fait `h-screen` — un
+dépassement de la hauteur d'en-tête que le conteneur rogne, là où une hauteur trop courte
+laisserait une bande nue en bas. Re-mesuré après coup : la zone visible est couverte en haut
+**comme en bas**, et sur 1 184 px de large pour 1 184 px de racine.
+
+Le `sticky` forme un contexte d'empilement, contrairement à `absolute` — sans conséquence ici,
+parce qu'il naît sur *le calque* et non sur la page : le modal vit dans le conteneur frère, donc
+il n'y est pas enfermé. Le contrôle Chromium du paragraphe précédent a été refait après ce
+changement et rend toujours `modal on top`. jsdom ne disposant rien, ce que le test unitaire
+pinne est le *contrat de classes* (`sticky`, `h-0`, pas d'`absolute inset-0`, les trois marges
+négatives) : la géométrie a été mesurée une fois, la décision est gardée pour toujours.
+
+**`docs/check-alias-parity.py` garde l'alias `@/`.** Il est déclaré trois fois — `paths` dans
+`tsconfig.json` (que lit `tsc`), `resolve.alias` dans `vite.config.ts` (que lisent Vite *et*
+Vitest), `aliases` dans `components.json` (que lit le CLI shadcn) — et aucune des trois ne lit
+les autres. Aucune n'est fausse isolément ; elles ne peuvent l'être que *les unes par rapport aux
+autres*, ce que seule une vérification qui lit les trois peut voir. Chaque sens de la panne est
+silencieux : sans l'entrée Vite, `tsc` passe et le build ne résout plus ; sans l'entrée tsconfig,
+l'application se construit et tourne pendant que le typecheck tombe ; avec un `components.json`
+qui vise ailleurs, `shadcn add` écrit le fichier dans un dossier que ni le compilateur ni le
+bundler ne voient — le composant est sur le disque, l'import est rouge, et rien ne nomme l'alias
+comme cause. Il vérifie en plus qu'`aliases.utils` résout vers un fichier qui existe, puisque
+c'est de là que tout composant généré importe `cn`, et que la cible tsconfig reste relative
+(`./src/*`), `baseUrl` étant déprécié par le TypeScript de ce dépôt. Les quatre pannes ont été
+provoquées une à une pour vérifier qu'il les attrape, et qu'il sort bien en 1 — la boucle
+`for check in docs/check-*.py` de `ci.yml` le ramasse sans modification du workflow.
+
 **Le registre est configuré dans `components.json`** (`@reactbits` et `@reactbits-starter`, en-tête
 `Authorization: Bearer ${REACTBITS_LICENSE_KEY}`). Deux choix y sont délibérés. `cssVariables` est
 à **`false`** : ce projet définit `background`, `foreground`, `card`, `muted`, `border`, `primary`

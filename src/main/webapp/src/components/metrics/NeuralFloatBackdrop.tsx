@@ -49,16 +49,36 @@ export const NeuralFloatBackdrop: React.FC<NeuralFloatBackdropProps> = ({ active
     <div
       data-testid="neural-float-backdrop"
       aria-hidden="true"
-      /* Pas de `-z-10` : un z négatif n'irait derrière le contenu que si un ancêtre proche
-         formait un contexte d'empilement, or en poser un sur la page enfermerait le modal
-         « Add metric » sous la Sidebar (voir le commentaire de la racine dans Metrics.tsx).
-         Le calque est donc simplement le *premier* des deux enfants positionnés `z-auto` de la
-         racine, et le contenu, second, peint par-dessus par ordre du DOM.
+      /* `sticky top-0 h-0` plutôt que `absolute inset-0`, et c'est une mesure qui l'a décidé.
+         Dans un conteneur qui défile, `inset-0` se résout sur la *fenêtre de défilement* et pas
+         sur le contenu : mesuré sur la page Metrics de la démo en 1440×900, le calque faisait
+         844 px pour 2 318 px de contenu, et après défilement jusqu'en bas son sommet était
+         1 474 px au-dessus de la zone visible — l'ornement occupait le premier tiers de la page
+         puis disparaissait. Un fond qui s'en va au défilement se lit comme un défaut, pas comme
+         une intention. `sticky` le fait suivre la fenêtre ; `h-0` lui retire toute place dans le
+         flux, de sorte qu'il ne pousse rien.
+
+         Le `sticky` forme un contexte d'empilement, et c'est sans conséquence ici : il naît sur
+         *ce* calque, pas sur la page. Le modal « Add metric » vit dans le conteneur frère, donc
+         il n'y est pas enfermé — c'est tout le sujet du commentaire de la racine dans
+         Metrics.tsx, et le contrôle Chromium a été refait après ce changement.
+
+         Pas de `-z-10` : un z négatif n'irait derrière le contenu que si un ancêtre proche
+         formait un contexte d'empilement, or en poser un sur la page est précisément ce qui
+         enfermerait le modal. Le calque reste le *premier* des deux enfants positionnés
+         `z-auto` de la racine, et le contenu, second, peint par-dessus par ordre du DOM.
+
          `motion-reduce:hidden` : l'ornement est le premier à disparaître quand l'OS demande
          moins de mouvement, et c'est déjà vrai avant que le composant n'arrive. */
-      className="pointer-events-none absolute inset-0 overflow-hidden motion-reduce:hidden"
+      className="pointer-events-none sticky top-0 h-0 motion-reduce:hidden"
     >
-      {/* <NeuralFloat /> — voir l'en-tête de ce fichier */}
+      {/* Les marges négatives annulent le `p-6` de la racine : un ornement de fond se lit à bord
+          perdu, pas encadré par la gouttière de la page. `h-screen` dépasse la zone visible de la
+          hauteur de l'en-tête, ce que le conteneur de défilement rogne — un dépassement est sans
+          effet ici, alors qu'une hauteur trop courte laisserait une bande nue en bas. */}
+      <div className="absolute -top-6 -left-6 -right-6 h-screen overflow-hidden">
+        {/* <NeuralFloat /> — voir l'en-tête de ce fichier */}
+      </div>
     </div>
   );
 };

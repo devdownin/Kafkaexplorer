@@ -545,4 +545,35 @@ describe('Neural Float backdrop', () => {
     expect(layer).toHaveAttribute('aria-hidden', 'true');
     expect(layer.className).toContain('pointer-events-none');
   });
+
+  /*
+   * Le calque suit la fenêtre au lieu de défiler avec le contenu.
+   *
+   * jsdom ne dispose rien, donc ce cas pinne le *contrat de classes* et pas la géométrie ; la
+   * mesure, elle, a été prise dans Chromium (page Metrics de la démo, 1440×900 : `absolute
+   * inset-0` donnait 844 px de calque pour 2 318 px de contenu et sortait de l'écran au
+   * défilement, `sticky top-0 h-0` couvre la zone visible en haut comme en bas). Ce qu'on garde
+   * ici, c'est la décision : un retour à `absolute inset-0` la reprendrait en silence.
+   */
+  it('follows the viewport rather than scrolling away with the content', async () => {
+    stubApi([running]);
+    await renderPage();
+    const layer = await screen.findByTestId('neural-float-backdrop');
+
+    expect(layer.className).toContain('sticky');
+    // `h-0` : l'ancre ne prend aucune place dans le flux, sans quoi elle pousserait la page.
+    expect(layer.className).toContain('h-0');
+    expect(layer.className).not.toContain('absolute');
+    expect(layer.className).not.toContain('inset-0');
+
+    // L'hôte du canvas bleed par-dessus le `p-6` de la racine, sinon l'ornement serait encadré
+    // par la gouttière de la page au lieu d'aller à bord perdu.
+    const host = layer.firstElementChild as HTMLElement;
+    expect(host).toBeTruthy();
+    expect(host.className).toContain('absolute');
+    expect(host.className).toContain('overflow-hidden');
+    for (const bleed of ['-top-6', '-left-6', '-right-6']) {
+      expect(host.className).toContain(bleed);
+    }
+  });
 });
