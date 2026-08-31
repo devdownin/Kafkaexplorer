@@ -121,6 +121,54 @@ public final class SqlStatements {
             && (sql.contains("/*+") || sql.toUpperCase(java.util.Locale.ROOT).contains("OPTIONS("));
     }
 
+    /**
+     * Le texte de l'instruction, le <em>contenu</em> de chaque littéral et de chaque identifiant
+     * échappé remplacé par des espaces — la longueur et toutes les positions sont conservées.
+     *
+     * <p>C'est la base de toute lecture lexicale de ce dépôt, et elle manquait à presque toutes.
+     * Un motif appliqué au texte brut ne sait pas où commence une chaîne, donc il trouve ses
+     * mots-clés dedans : {@code WHERE note = 'voir -- plus bas'} perdait tout ce qui suit le
+     * {@code --} au retrait des commentaires, {@code WHERE msg = 'CROSS JOIN'} était refusé par le
+     * garde, {@code WHERE note = 'select * from autre'} faisait enregistrer une table fantôme, et
+     * un {@code LIMIT} cité dans une valeur tronquait la lecture. Aucun de ces cas ne rend une
+     * erreur : ils rendent une <em>autre</em> requête que celle qui a été écrite.
+     *
+     * <p>Deux règles, celles de Calcite. Une quote doublée à l'intérieur d'un littéral l'échappe et
+     * ne le ferme pas ({@code 'It''s'}), et un accent grave ouvre un <em>identifiant</em> qui peut
+     * contenir n'importe quoi — d'où {@code CREATE TABLE `weird as select`}, faux positif déjà payé
+     * une fois ici. Les délimiteurs eux-mêmes sont conservés : ce qui est neutralisé, c'est ce
+     * qu'ils entourent, pour qu'un motif qui les cite continue de fonctionner.
+     *
+     * <p>Les positions étant préservées, un appelant qui a besoin de la <em>valeur</em> d'un
+     * littéral trouve ses bornes ici et découpe le texte d'origine.
+     */
+    public static String outsideLiterals(String sql) {
+        if (sql == null) return null;
+        StringBuilder out = new StringBuilder(sql.length());
+        char delimiter = 0;
+        for (int i = 0; i < sql.length(); i++) {
+            char c = sql.charAt(i);
+            if (delimiter == 0) {
+                if (c == '\'' || c == '`') delimiter = c;
+                out.append(c);
+                continue;
+            }
+            if (c == delimiter) {
+                // Doublé, il échappe et ne ferme pas — vrai des deux délimiteurs.
+                if (i + 1 < sql.length() && sql.charAt(i + 1) == delimiter) {
+                    out.append("  ");
+                    i++;
+                    continue;
+                }
+                delimiter = 0;
+                out.append(c);
+                continue;
+            }
+            out.append(' ');
+        }
+        return out.toString();
+    }
+
     /** True when `word` sits at `from` as a whole word, case-insensitively. */
     private static boolean isWordAt(String s, int from, String word) {
         if (from < 0 || from + word.length() > s.length()) return false;

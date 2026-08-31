@@ -132,4 +132,60 @@ class SqlStatementsTest {
         assertFalse(SqlStatements.hasWindowTableCall("SELECT session FROM orders"));
         assertFalse(SqlStatements.hasWindowTableCall(null));
     }
+
+    // ── outsideLiterals : la base de toute lecture lexicale ───────────────────────────
+
+    /**
+     * Ce qui est neutralisé, c'est le <em>contenu</em> — et les positions ne bougent pas.
+     *
+     * <p>C'est la propriété dont tout le reste dépend : les appelants cherchent leurs bornes sur ce
+     * texte-ci puis découpent l'original pour en lire les valeurs. Une longueur qui changerait
+     * ferait glisser chaque découpe d'un caractère par littéral, en silence.
+     */
+    @Test
+    void blanksTheContentsAndKeepsEveryPosition() {
+        String sql = "SELECT id FROM t WHERE note = 'voir -- plus bas' LIMIT 5";
+        String scan = SqlStatements.outsideLiterals(sql);
+
+        assertEquals(sql.length(), scan.length());
+        assertFalse(scan.contains("--"), scan);
+        assertTrue(scan.contains("LIMIT 5"), "ce qui est hors littéral est intact : " + scan);
+        assertEquals(sql.indexOf("LIMIT"), scan.indexOf("LIMIT"));
+        // Les délimiteurs restent, pour qu'un motif qui les cite continue de fonctionner.
+        assertEquals(2, scan.chars().filter(c -> c == '\'').count());
+    }
+
+    /** Une quote doublée échappe le littéral et ne le ferme pas — la règle de Calcite. */
+    @Test
+    void aDoubledQuoteEscapesRatherThanCloses() {
+        String scan = SqlStatements.outsideLiterals("SELECT * FROM t WHERE s = 'it''s -- fine' AND x = 1");
+
+        assertFalse(scan.contains("--"), scan);
+        assertTrue(scan.contains("AND x = 1"), "le littéral se termine bien à la fin : " + scan);
+    }
+
+    /**
+     * Un identifiant entre accents graves est neutralisé aussi.
+     *
+     * <p>Le faux positif est connu de ce dépôt : {@code CREATE TABLE `weird as select`} avait été
+     * classé CTAS et refusé, sur le contenu d'un identifiant.
+     */
+    @Test
+    void aQuotedIdentifierIsNeutralisedToo() {
+        String scan = SqlStatements.outsideLiterals("CREATE TABLE `weird as select` (id STRING)");
+
+        assertFalse(scan.toUpperCase(java.util.Locale.ROOT).contains("AS SELECT"), scan);
+        assertTrue(scan.contains("CREATE TABLE `"), scan);
+        assertTrue(scan.contains("(id STRING)"), scan);
+    }
+
+    /** Un littéral jamais fermé emporte la fin : le lexer ne peut rien affirmer au-delà. */
+    @Test
+    void anUnterminatedLiteralSwallowsWhatFollows() {
+        String scan = SqlStatements.outsideLiterals("SELECT 'unterminated FROM x");
+
+        assertEquals("SELECT 'unterminated FROM x".length(), scan.length());
+        assertFalse(scan.contains("FROM"), scan);
+        assertEquals(null, SqlStatements.outsideLiterals(null));
+    }
 }
