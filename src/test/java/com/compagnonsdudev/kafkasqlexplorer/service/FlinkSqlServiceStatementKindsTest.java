@@ -314,10 +314,17 @@ class FlinkSqlServiceStatementKindsTest {
             QueryResult result = run(sql);
             assertNull(result.error(), sql + " → " + result.error());
         }
-        // Le test lexical, lui, se trompe bien sur ces deux formes : c'est pourquoi le parseur
-        // passe en premier, et pourquoi la regex reste derrière plutôt que devant.
-        assertTrue(FlinkSqlService.isCreateTableAsSelect(
+        // Le test lexical ne s'y trompe plus : il neutralise désormais le contenu des identifiants
+        // entre accents graves comme celui des littéraux (`SqlStatements.outsideLiterals`), et
+        // c'est exactement le faux positif qu'il produisait ici. L'ordre ne change pas pour
+        // autant — le parseur passe devant, parce qu'il répond sur la structure et non sur une
+        // ressemblance de texte, et parce que ce motif reste faillible sur ce qu'on n'a pas
+        // encore rencontré.
+        assertFalse(FlinkSqlService.isCreateTableAsSelect(
                 "CREATE TABLE `WEIRD AS SELECT` (ID STRING) WITH ('CONNECTOR'='BLACKHOLE')"));
+        // Et il reconnaît toujours un vrai CTAS, littéraux neutralisés ou non.
+        assertTrue(FlinkSqlService.isCreateTableAsSelect(
+                "CREATE TABLE K_TARGET AS SELECT ORDER_ID FROM K_ORDERS"));
     }
 
     /** Et un vrai CTAS reste refusé, parseur ou regex. */
