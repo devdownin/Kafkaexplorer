@@ -19,6 +19,24 @@ install chromium`). The capture exits non-zero if any screen fails — seven scr
 eight means the eighth silently disappears from the documentation, so a partial run is a
 failed run.
 
+**Installed globally, Playwright needs `NODE_PATH` to be found**, and every command on this page
+assumes it:
+
+```bash
+export NODE_PATH="$(npm root -g)"     # what ci.yml sets on all three scripts
+```
+
+The three scripts resolve the package with `createRequire(import.meta.url)`, whose lookup walks
+`node_modules` directories upward from `docs/screenshots/` — and a global install is in none of
+them. Without it the run stops on *"playwright not found. Install it (`npm i -g playwright`)"*,
+which sends you to do the thing you have just done: the message is right that the package cannot
+be resolved and wrong about why, so the obvious next move — installing it again, or installing it
+locally — is the one that does not help. Installing it *locally* is in fact worse than useless
+here: npm resolves the newest release, which expects a browser build the image does not carry, and
+the launch then fails asking for a download rather than saying anything about resolution. `ci.yml`
+has always set `NODE_PATH` on all three invocations, so CI never met any of this and the README
+never said it.
+
 On an image that ships its own Chromium (`PLAYWRIGHT_BROWSERS_PATH`) while Playwright was
 installed separately, the two version numbers diverge and the launch fails asking for a
 download the image forbids. Point **`CHROMIUM_PATH`** at the binary that is already there
