@@ -65,6 +65,28 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A string literal could rewrite the statement.** Every lexical pass read the raw SQL, so a
+  keyword quoted in a value was taken for the real thing — and none of those cases returns an
+  error, they answer a *different query*. `WHERE note = 'voir -- plus bas'` lost everything after
+  the value when comments were stripped; `WHERE msg = 'CROSS JOIN'` was refused by the guard;
+  `WHERE note = 'select * from autre'` made the reader look for a topic named *autre*, and
+  auto-registration created a table for it if one existed; `WHERE note = 'limit 1'` cut the page to
+  one row. One scanner (`SqlStatements.outsideLiterals`) now blanks the contents of literals and
+  backtick identifiers while keeping every position, so a caller finds its boundaries on it and
+  slices the original when it needs the value. Comment stripping is the same pass.
+- **A column qualified by its table alias returned nothing.** `SELECT o.state FROM demo_orders o
+  WHERE o.state = 'SHIPPED'` is ordinary SQL and the direct reader answered zero rows: the key
+  `o.state` was looked up whole, then walked into an object `o` that does not exist, so every row
+  was rejected — an empty grid on a correct query. The projection beside it returned a column of
+  nulls, and `SUM(o.amount)` returned nothing at all. The prefix is now stripped when it is the
+  table's own name or its alias, and only after the written path has failed, so a flattened XML key
+  that really is called `o.state` still wins. The column comes back under its bare name, which is
+  what the Flink planner produces.
+- **An empty result no longer hides what was read.** A filtered projection stops at a scan ceiling
+  (5 000 to 100 000 records); reaching it without filling the page came back as an empty grid,
+  indistinguishable from "no record matches" — and on a topic older than that ceiling it is the
+  wrong answer every time. The result now names how many records were read, from which end, and
+  the two ways out. The aggregate branch already did this; the projection did not.
 - **A window over a Kafka topic is now answered by the direct reader on purpose, not after a
   failed detour.** A Kafka source is unbounded: it never finishes, so a window's last bucket never
   closes, and the collection loop returns only at the row cap or at the query budget. A windowed

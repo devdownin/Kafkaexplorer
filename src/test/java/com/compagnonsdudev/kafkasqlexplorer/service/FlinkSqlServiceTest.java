@@ -1252,6 +1252,155 @@ class FlinkSqlServiceTest {
     }
 
     /**
+     * Un délimiteur de commentaire à l'intérieur d'une chaîne n'en est pas un.
+     *
+     * <p>Le nettoyage lisait le texte brut, donc {@code WHERE note = 'voir -- plus bas'} perdait
+     * tout ce qui suivait le tiret : l'instruction était <em>réécrite</em> avant que quiconque la
+     * regarde, et ce qui arrivait au planner était une autre requête — le plus souvent
+     * inanalysable, donc rapportée comme une faute de syntaxe de l'utilisateur, sur une requête
+     * juste.
+     */
+    @Test
+    void aCommentDelimiterInsideAStringIsNotAComment() {
+        String lineish = "SELECT id FROM t WHERE note = 'voir -- plus bas' LIMIT 5";
+        assertEquals(lineish, service.stripSqlComments(lineish));
+
+        String blockish = "SELECT id FROM t WHERE note = 'a /* b */ c'";
+        assertEquals(blockish, service.stripSqlComments(blockish));
+
+        // Et une quote doublée échappe le littéral au lieu de le fermer : ce qui suit est encore
+        // dedans, donc le `--` aussi.
+        String escaped = "SELECT id FROM t WHERE note = 'it''s -- fine'";
+        assertEquals(escaped, service.stripSqlComments(escaped));
+
+        // Un vrai commentaire, dans la même requête, s'en va toujours.
+        assertEquals("SELECT id FROM t WHERE note = 'a -- b'",
+            service.stripSqlComments("SELECT id FROM t WHERE note = 'a -- b' -- et le reste"));
+    }
+
+    /**
+     * Une table nommée dans une chaîne n'est pas la table de la requête.
+     *
+     * <p>Sans cela, {@code WHERE note = 'select * from autre'} faisait lire « autre » comme la
+     * source : le lecteur direct y cherchait un topic, et l'auto-enregistrement en créait la table
+     * si un topic de ce nom existait.
+     */
+    @Test
+    void aTableNamedInsideAStringIsNotTheTable() {
+        assertEquals("orders", service.extractPrimaryTable(
+            "SELECT id FROM orders WHERE note = 'select * from autre'"));
+        assertEquals(List.of("orders"), service.extractSourceTables(
+            "SELECT id FROM orders WHERE note = 'join clients on x'"));
+    }
+
+    /**
+     * Une colonne qualifiée par l'alias de sa table est résolue, et sort sous son nom nu.
+     *
+     * <p>{@code SELECT o.state FROM t o WHERE o.state = '…'} est du SQL ordinaire, et ce lecteur y
+     * répondait <strong>zéro ligne</strong> : la clé {@code o.state} était cherchée telle quelle
+     * dans le message, puis segment par segment dans un objet {@code o} qui n'existe pas. Une
+     * grille vide sur une requête juste — une réponse plausible et fausse, la pire des deux
+     * directions. Le nom de sortie est celui du planner ({@code state}), sans quoi l'en-tête et la
+     * ligne se contrediraient.
+     */
+    @Test
+    void aColumnQualifiedByItsTableAliasResolves() throws Exception {
+        stubWindowTopic();
+
+        QueryResult aliased = execute(
+            "SELECT o.id FROM win_topic o WHERE o.id = 'a'");
+
+        assertNoError(aliased);
+        assertEquals(1, aliased.rows().size(), "the alias must not filter every row out");
+        assertEquals(List.of("id"), aliased.columns(), "the planner names it `id`, so this does too");
+        assertEquals("a", aliased.rows().get(0).get("id"));
+
+        // Le nom de la table qualifie aussi, sans alias — et `AS` est facultatif.
+        assertEquals(1, execute("SELECT id FROM win_topic WHERE win_topic.id = 'a'").rows().size());
+        assertEquals(1, execute("SELECT o.id FROM win_topic AS o WHERE o.id = 'a'").rows().size());
+    }
+
+    /** Et dans un agrégat, où la colonne était lue par un accès direct à la map. */
+    @Test
+    void anAggregateOverAQualifiedColumnResolvesToo() throws Exception {
+        doReturn(List.of("agg.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(anyString());
+        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn(List.of(
+            new org.apache.kafka.clients.consumer.ConsumerRecord<>("agg.topic", 0, 0L, null, "{\"amount\":10}"),
+            new org.apache.kafka.clients.consumer.ConsumerRecord<>("agg.topic", 0, 1L, null, "{\"amount\":32}")
+        )).when(kafkaAdminService).getRecentRecords(eq("agg.topic"), anyInt());
+
+        QueryResult result = execute("SELECT SUM(o.amount) AS total FROM agg_topic o");
+
+        assertNoError(result);
+        assertEquals(42.0, ((Number) result.rows().get(0).get("total")).doubleValue());
+    }
+
+    /**
+     * Une page incomplète dont la lecture a buté sur son plafond dit ce qu'elle a lu.
+     *
+     * <p>La branche agrégat le faisait, celle-ci non : un {@code WHERE} qui ne trouve rien dans la
+     * tranche lue rendait une grille vide, indiscernable d'un « aucun enregistrement ne
+     * correspond » — et sur un topic plus ancien que le plafond, c'est la réponse fausse par
+     * construction.
+     */
+    @Test
+    void aProjectionThatFilledItsScanCeilingSaysWhatItRead() throws Exception {
+        doReturn(List.of("big.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(anyString());
+        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        // Le plafond d'une projection filtrée est de 5 000 enregistrements : les fournir tous,
+        // c'est ce qui rend la lecture « arrêtée sur son plafond » plutôt que « épuisée ».
+        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> many = new java.util.ArrayList<>();
+        for (int i = 0; i < 5_000; i++) {
+            many.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                "big.topic", 0, i, null, "{\"id\":\"present\"}"));
+        }
+        doReturn(many).when(kafkaAdminService).getRecentRecords(eq("big.topic"), anyInt());
+
+        QueryResult result = execute("SELECT id FROM big_topic WHERE id = 'absent'");
+
+        assertNoError(result);
+        assertTrue(result.rows().isEmpty());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.startsWith(FlinkSqlService.SCAN_CAPPED)),
+            "an empty page that stopped on its ceiling must say so, got: " + result.warnings());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("most recent")),
+            "and say which end it read from, got: " + result.warnings());
+
+        // Une lecture qui n'a pas atteint son plafond ne dit rien : le silence est alors exact.
+        doReturn(many.subList(0, 3)).when(kafkaAdminService).getRecentRecords(eq("big.topic"), anyInt());
+        QueryResult short_ = execute("SELECT id FROM big_topic WHERE id = 'absent'");
+        assertTrue(short_.warnings().stream().noneMatch(w -> w.startsWith(FlinkSqlService.SCAN_CAPPED)),
+            "nothing was left unread, got: " + short_.warnings());
+    }
+
+    /**
+     * Un mot-clé cité dans une valeur ne change pas la lecture.
+     *
+     * <p>{@code LIMIT} était cherché dans le texte brut, donc une valeur qui le contient réduisait
+     * la page silencieusement.
+     */
+    @Test
+    void aRowCapQuotedInAValueIsNotARowCap() throws Exception {
+        doReturn(List.of("note.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(anyString());
+        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn(List.of(
+            new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                "note.topic", 0, 0L, null, "{\"id\":\"a\",\"note\":\"limit 1\"}"),
+            new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                "note.topic", 0, 1L, null, "{\"id\":\"b\",\"note\":\"limit 1\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("note.topic"), anyInt());
+
+        QueryResult result = execute("SELECT id FROM note_topic WHERE note = 'limit 1'");
+
+        assertNoError(result);
+        assertEquals(2, result.rows().size(),
+            "both records match — 'limit 1' is a value, not a row cap, got: " + result.rows());
+    }
+
+    /**
      * Un hint survit au nettoyage — c'est du SQL, pas un commentaire.
      *
      * <p>La syntaxe des hints de Calcite et de Flink est en forme de commentaire : seul le

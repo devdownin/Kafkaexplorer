@@ -26,7 +26,10 @@ public class SqlQueryValidator {
 
     public void validate(String sql) {
         if (sql == null || sql.trim().isEmpty()) return;
-        String upperSql = sql.toUpperCase();
+        // Hors littéraux, comme toute lecture lexicale de ce dépôt : `WHERE msg = 'CROSS JOIN'`
+        // est une valeur, pas une jointure, et cette instruction était refusée pour le contenu
+        // d'une chaîne — un faux positif sur une requête que rien n'interdisait.
+        String upperSql = SqlStatements.outsideLiterals(sql).toUpperCase();
 
         if (!explorerConfig.isAllowCrossJoin()) {
             if (upperSql.contains("CROSS JOIN")) {

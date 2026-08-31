@@ -387,9 +387,14 @@ public class FlinkSqlService {
      */
     /** Package-private: driven directly by {@code FlinkSqlServiceTest}, like {@link #stripSqlComments}. */
     String extractPrimaryTable(String sql) {
-        Matcher window = WINDOW_CALL.matcher(sql);
+        // Hors littéraux : `WHERE note = 'select * from autre'` faisait autrement lire « autre »
+        // comme la table de la requête — donc chercher un topic de ce nom, et l'enregistrer s'il
+        // existe. Ce que les groupes capturent est identique au texte d'origine, les positions
+        // étant conservées et un nom de table ne pouvant pas se trouver dans un littéral.
+        String scan = SqlStatements.outsideLiterals(sql);
+        Matcher window = WINDOW_CALL.matcher(scan);
         if (window.find()) return window.group(2);
-        Matcher from = FROM_TABLE.matcher(sql);
+        Matcher from = FROM_TABLE.matcher(scan);
         return from.find() ? from.group(1) : null;
     }
 
@@ -413,13 +418,14 @@ public class FlinkSqlService {
      */
     List<String> extractSourceTables(String sql) {
         Set<String> names = new LinkedHashSet<>();
+        String scan = SqlStatements.outsideLiterals(sql);
         String primary = extractPrimaryTable(sql);
         if (primary != null && !NOT_A_TABLE_NAME.contains(primary.toUpperCase(Locale.ROOT))) {
             names.add(primary);
         }
-        Matcher window = WINDOW_CALL.matcher(sql);
+        Matcher window = WINDOW_CALL.matcher(scan);
         while (window.find()) names.add(window.group(2));
-        Matcher source = SOURCE_TABLE.matcher(sql);
+        Matcher source = SOURCE_TABLE.matcher(scan);
         while (source.find()) {
             String name = source.group(1);
             if (!NOT_A_TABLE_NAME.contains(name.toUpperCase(Locale.ROOT))) names.add(name);
@@ -570,44 +576,58 @@ public class FlinkSqlService {
     /** Package-private: driven directly by {@code FlinkSqlServiceTest}, like {@link #unsupportedWhereFragments}. */
     String stripSqlComments(String sql) {
         if (sql == null) return null;
-        sql = stripBlockComments(sql);
-        // Line comments stay a regex: `--[^\n]*` has no ambiguity, so it is linear.
-        sql = sql.replaceAll("--[^\n]*", "");
-        return sql.trim();
+        return stripComments(sql).trim();
     }
 
     /**
-     * Removes SQL block comments in a single left-to-right pass.
+     * Removes SQL comments in a single left-to-right pass, <b>outside string literals</b>.
      *
-     * <p>This was a regex, and not a slow one — a <em>crashing</em> one. The unrolled-loop form
-     * it used recursed once per repetition in Java's backtracking engine, so a statement built
-     * from a few thousand unterminated comment openers raised {@link StackOverflowError} — an
-     * {@code Error}, so nothing on the request path caught it. Rewriting it as a lazy scan
-     * removed the crash and left it quadratic: with no closing delimiter anywhere, every opener
-     * in the input rescans the whole remainder.
+     * <p>Two defects, one pass. The first is historical: block comments were stripped by a regex
+     * whose unrolled-loop form recursed once per repetition in Java's backtracking engine, so a
+     * few thousand unterminated openers raised {@link StackOverflowError} — an {@code Error}, so
+     * nothing on the request path caught it. A hand-written scan is linear and shorter.
      *
-     * <p>A hand-written scan is linear, allocates one builder, and is the shorter code. The
-     * semantics are the regex's: a block runs to the <em>first</em> closing delimiter after it,
-     * an unterminated block is not a comment and is left as written (so it cannot swallow the
-     * statement), and each removed block becomes one space — a comment between two tokens must
-     * not weld them together.
+     * <p>The second is that the scan did not know what a literal was. {@code --} and
+     * <code>/*</code> were comment openers wherever they appeared, so
+     * {@code WHERE note = 'voir -- plus bas'} lost everything after the quote's contents — the
+     * statement was <em>rewritten</em> before anything looked at it, and what reached the planner
+     * was a different query (usually an unparseable one, reported as the user's syntax error).
+     * The delimiters are found on {@link SqlStatements#outsideLiterals}, whose positions match the
+     * original character for character, and the spans are cut out of the original.
+     *
+     * <p>The rest of the semantics is unchanged: a block runs to the <em>first</em> closing
+     * delimiter after it, an unterminated block is not a comment and is left as written (so it
+     * cannot swallow the statement), each removed block becomes one space — a comment between two
+     * tokens must not weld them together — and a line comment stops at its newline, which stays.
+     * A hint is not a comment and is kept whole.
      */
-    private static String stripBlockComments(String sql) {
-        int open = sql.indexOf("/*");
-        if (open < 0) return sql;
+    private static String stripComments(String sql) {
+        String scan = SqlStatements.outsideLiterals(sql);
         StringBuilder out = new StringBuilder(sql.length());
         int from = 0;
-        while (open >= 0) {
-            int close = sql.indexOf("*/", open + 2);
-            if (close < 0) break;              // unterminated: keep the rest verbatim
-            if (isHint(sql, open)) {
-                // Un hint n'est pas un commentaire, il porte juste le même habillage.
-                out.append(sql, from, close + 2);
-            } else {
-                out.append(sql, from, open).append(' ');
+        int i = 0;
+        while (i + 1 < scan.length()) {
+            char c = scan.charAt(i);
+            char next = scan.charAt(i + 1);
+            if (c == '-' && next == '-') {
+                int end = scan.indexOf('\n', i);
+                if (end < 0) end = scan.length();
+                out.append(sql, from, i);
+                from = end;
+                i = end;
+                continue;
             }
-            from = close + 2;
-            open = sql.indexOf("/*", from);
+            if (c == '/' && next == '*') {
+                int close = scan.indexOf("*/", i + 2);
+                if (close < 0) break;              // unterminated: keep the rest verbatim
+                if (!isHint(scan, i)) {
+                    out.append(sql, from, i).append(' ');
+                    from = close + 2;
+                }
+                i = close + 2;
+                continue;
+            }
+            i++;
         }
         return out.append(sql, from, sql.length()).toString();
     }
@@ -625,6 +645,9 @@ public class FlinkSqlService {
      * <p>Ce que cela coûtait dépasse l'éditeur : c'est sur ce mécanisme que reposait l'expérience
      * ayant conclu que ce connecteur refuse {@code scan.bounded.mode}. L'option n'était jamais
      * partie, et la clé réellement refusée dans le même {@code WITH (…)} était une autre.
+     *
+     * <p>Lue sur le texte dont les littéraux sont neutralisés, comme l'ouverture qu'elle qualifie :
+     * les positions y sont les mêmes et un {@code +} hors littéral est bien celui qu'on cherche.
      */
     private static boolean isHint(String sql, int open) {
         return open + 2 < sql.length() && sql.charAt(open + 2) == '+';
@@ -643,7 +666,7 @@ public class FlinkSqlService {
      */
     static boolean isCreateTableAsSelect(String upperSql) {
         if (upperSql == null || !upperSql.startsWith("CREATE TABLE")) return false;
-        return CTAS_TAIL.matcher(withoutStringLiterals(upperSql)).find();
+        return CTAS_TAIL.matcher(SqlStatements.outsideLiterals(upperSql)).find();
     }
 
     /**
@@ -686,28 +709,6 @@ public class FlinkSqlService {
         if (upperBody == null || !upperBody.startsWith("CREATE TABLE")) return false;
         Boolean parsed = parserSaysCreateTableAsSelect(sql);
         return parsed != null ? parsed : isCreateTableAsSelect(upperBody);
-    }
-
-    /** Le texte avec le contenu de chaque littéral simple-quote remplacé par des espaces. */
-    private static String withoutStringLiterals(String sql) {
-        StringBuilder out = new StringBuilder(sql.length());
-        boolean inLiteral = false;
-        for (int i = 0; i < sql.length(); i++) {
-            char c = sql.charAt(i);
-            if (c == '\'') {
-                // Une quote doublée à l'intérieur d'un littéral l'échappe et ne le ferme pas.
-                if (inLiteral && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
-                    out.append("  ");
-                    i++;
-                    continue;
-                }
-                inLiteral = !inLiteral;
-                out.append('\'');
-                continue;
-            }
-            out.append(inLiteral ? ' ' : c);
-        }
-        return out.toString();
     }
 
     private String extractStatementType(String sql) {
@@ -2068,6 +2069,70 @@ public class FlinkSqlService {
         return current;
     }
 
+    /**
+     * Les mots par lesquels une colonne peut être qualifiée dans cette instruction : le nom de la
+     * table, et l'alias qu'elle porte s'il y en a un.
+     *
+     * <p>{@code SELECT o.state FROM demo_orders o WHERE o.state = 'SHIPPED'} est du SQL parfaitement
+     * ordinaire, et ce lecteur y répondait <strong>zéro ligne</strong> : la condition portait la clé
+     * {@code o.state}, cherchée telle quelle dans le message puis segment par segment dans un objet
+     * {@code o} qui n'existe pas, donc chaque ligne était rejetée. Une grille vide sur une requête
+     * juste — la pire des deux directions, une réponse plausible et fausse plutôt qu'un refus. La
+     * projection avait le même défaut, en rendant une colonne de {@code null}.
+     *
+     * <p>L'alias est reconnu avec ou sans {@code AS}, et un mot-clé qui suit le nom de la table
+     * n'en est pas un — sans cette liste, {@code FROM orders WHERE …} donnerait l'alias
+     * « WHERE ». Le nom de la table est toujours retenu : {@code SELECT orders.state FROM orders}
+     * se qualifie sans alias.
+     */
+    private static final Pattern FROM_ALIAS = Pattern.compile(
+        "(?i)\\bFROM\\s+[`\"]?[\\w.\\-]+[`\"]?(?:\\s+AS)?\\s+([A-Za-z_]\\w*)");
+
+    /** Ce qui suit une table sans en être l'alias. */
+    private static final Set<String> NOT_AN_ALIAS = Set.of(
+        "AS", "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET", "FETCH", "JOIN", "INNER",
+        "LEFT", "RIGHT", "FULL", "CROSS", "OUTER", "ON", "USING", "UNION", "EXCEPT", "INTERSECT",
+        "WINDOW", "FOR", "EMIT", "PARTITION", "TABLESAMPLE", "WITH");
+
+    static Set<String> tableQualifiers(String scan, String tableRef) {
+        Set<String> qualifiers = new LinkedHashSet<>();
+        if (tableRef != null) qualifiers.add(tableRef.toLowerCase(Locale.ROOT));
+        Matcher alias = FROM_ALIAS.matcher(scan);
+        if (alias.find() && !NOT_AN_ALIAS.contains(alias.group(1).toUpperCase(Locale.ROOT))) {
+            qualifiers.add(alias.group(1).toLowerCase(Locale.ROOT));
+        }
+        return qualifiers;
+    }
+
+    /**
+     * La même colonne sans son préfixe de table, ou {@code null} quand elle n'en porte pas.
+     *
+     * <p>Seulement quand le préfixe est bien celui de cette table : un champ imbriqué
+     * {@code customer.name} n'a rien à voir avec une qualification, et le retirer ferait chercher
+     * un {@code name} de premier niveau qui n'existe pas.
+     */
+    static String withoutQualifier(String path, Set<String> qualifiers) {
+        int dot = path.indexOf('.');
+        if (dot <= 0 || dot + 1 >= path.length()) return null;
+        return qualifiers.contains(path.substring(0, dot).toLowerCase(Locale.ROOT))
+            ? path.substring(dot + 1)
+            : null;
+    }
+
+    /**
+     * La valeur d'une colonne du message, le préfixe de table retiré <em>en dernier recours</em>.
+     *
+     * <p>Dans cet ordre parce qu'un payload XML aplati porte des clés à points : si le message a
+     * réellement un champ nommé {@code o.state}, c'est lui la réponse, et le préfixe n'est essayé
+     * que lorsque la recherche directe n'a rien donné.
+     */
+    private Object resolveColumn(Map<String, Object> row, String path, Set<String> qualifiers) {
+        Object direct = getNestedValue(row, path);
+        if (direct != null) return direct;
+        String bare = withoutQualifier(path, qualifiers);
+        return bare == null ? null : getNestedValue(row, bare);
+    }
+
     /** How many records an in-process aggregate may read before it stops and says it stopped. */
     public static final int AGGREGATE_SCAN_RECORDS = 100_000;
 
@@ -2187,15 +2252,22 @@ public class FlinkSqlService {
     }
 
     private QueryResult kafkaDirectSelect(String sql, String readMode, int limit, long startTime) {
-        // Extract table name from FROM clause
-        Pattern fromPattern = Pattern.compile("(?i)\\bFROM\\s+`?([\\w.\\-]+)`?");
-        Matcher fromMatcher = fromPattern.matcher(sql);
+        // Chaque lecture lexicale de cette méthode se fait sur le texte dont les littéraux sont
+        // neutralisés, et une seule fois : les positions y sont celles de `sql`, donc ce qui est
+        // capturé hors littéral est le texte d'origine. Sans cela, `WHERE note = 'from ailleurs'`
+        // choisissait la mauvaise table et `WHERE note = 'limit 1'` tronquait la lecture.
+        String scan = SqlStatements.outsideLiterals(sql);
+        // Extract table name from FROM clause. Le motif est celui de `FROM_TABLE`, partagé plutôt
+        // que recopié : la copie locale n'admettait pas le guillemet double que l'autre acceptait.
+        Matcher fromMatcher = FROM_TABLE.matcher(scan);
         if (!fromMatcher.find()) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(),
                 System.currentTimeMillis() - startTime, "Cannot parse table name from SQL");
         }
         String rawTableRef = fromMatcher.group(1);
         String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
+        // Le nom de la table et son alias : ce par quoi une colonne peut être qualifiée.
+        Set<String> qualifiers = tableQualifiers(scan, rawTableRef);
 
         // Detect TUMBLE / HOP / CUMULATE / SESSION window functions — route to dedicated handler.
         // La règle est partagée avec `isSingleTableRead` : la copie locale omettait CUMULATE, si
@@ -2206,11 +2278,11 @@ public class FlinkSqlService {
         }
 
         // Detect aggregate functions in the SELECT portion only (before FROM)
-        boolean isAggregate = AGGREGATE_PRESENT.matcher(sql.substring(0, fromMatcher.start())).find();
+        boolean isAggregate = AGGREGATE_PRESENT.matcher(scan.substring(0, fromMatcher.start())).find();
 
         // Respect LIMIT from SQL if smaller than configured limit (skip for aggregates)
         if (!isAggregate) {
-            Matcher limitMatcher = LIMIT_CLAUSE.matcher(sql);
+            Matcher limitMatcher = LIMIT_CLAUSE.matcher(scan);
             if (limitMatcher.find()) {
                 limit = Math.min(limit, Integer.parseInt(limitMatcher.group(1)));
             }
@@ -2262,7 +2334,7 @@ public class FlinkSqlService {
             if (value == null || value.isBlank()) continue;
             Map<String, Object> row = parseMessageToRow(value);
             if (row.isEmpty()) continue;
-            if (!matchesWhereConditions(row, whereConds)) continue;
+            if (!matchesWhereConditions(row, whereConds, qualifiers)) continue;
             if (isAggregate) {
                 rows.add(row);
                 continue;
@@ -2273,8 +2345,13 @@ public class FlinkSqlService {
                     // Handle "source_col AS alias" — fetch by source name, output under alias
                     String[] aliasParts = colExpr.split("(?i)\\s++AS\\s++", 2);
                     String sourceCol = aliasParts[0].trim();
-                    String outputCol = aliasParts.length > 1 ? aliasParts[1].trim() : sourceCol;
-                    projected.put(outputCol, toSerializable(getNestedValue(row, sourceCol)));
+                    // Sans alias explicite, la colonne sort sous son nom *nu* : c'est ce que le
+                    // planner produit pour `SELECT o.state`, et deux moteurs qui nomment
+                    // différemment la même colonne cassent tout ce qui lit le résultat par son nom.
+                    String bare = withoutQualifier(sourceCol, qualifiers);
+                    String outputCol = aliasParts.length > 1 ? aliasParts[1].trim()
+                        : (bare != null ? bare : sourceCol);
+                    projected.put(outputCol, toSerializable(resolveColumn(row, sourceCol, qualifiers)));
                 }
                 row = projected;
             } else {
@@ -2315,11 +2392,53 @@ public class FlinkSqlService {
             ? new ArrayList<>(colSet)
             : requestedCols.stream().map(c -> {
                 String[] p = c.split("(?i)\\s++AS\\s++", 2);
-                return p.length > 1 ? p[1].trim() : p[0].trim();
+                if (p.length > 1) return p[1].trim();
+                // Le même nom nu que celui sous lequel la valeur est rangée : sinon l'en-tête
+                // annonce `o.state` pendant que la ligne porte `state`, et la colonne s'affiche
+                // vide.
+                String bare = withoutQualifier(p[0].trim(), qualifiers);
+                return bare != null ? bare : p[0].trim();
             }).collect(Collectors.toList());
         log.debug("[KafkaDirect] topic='{}' rows={} readMode={}", topic, rows.size(), readMode);
+        List<String> notes = new ArrayList<>(whereWarnings);
+        /*
+         * Une page incomplète dont la lecture a buté sur son propre plafond dit ce qu'elle a lu.
+         *
+         * La branche agrégat le faisait déjà (`AGGREGATE_SCAN_CAPPED`) et celle-ci non, alors que
+         * c'est là que le silence trompe le plus : un `WHERE` qui ne trouve rien dans la tranche
+         * lue rend une grille vide, indiscernable d'un « aucun enregistrement ne correspond ». Sur
+         * un topic plus ancien que le plafond, la réponse est même systématiquement fausse dans ce
+         * sens. La condition dit exactement ce qu'on sait : la lecture s'est arrêtée sur son
+         * plafond (`records.size() >= fetch`) et la page n'est pas pleine, donc il peut rester des
+         * lignes au-delà.
+         */
+        if (rows.size() < limit && records.size() >= fetch) {
+            notes.add(SCAN_CAPPED + " — this read covered " + records.size() + " record(s) of '"
+                + topic + "', taken " + describeScanEnd(readMode) + ", and returned "
+                + rows.size() + " row(s). Rows matching this query may lie beyond them: narrow the "
+                + "WHERE clause, or read from the other end.");
+        }
         return new QueryResult(columns, rows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
-            .withWarnings(whereWarnings);
+            .withWarnings(notes);
+    }
+
+    /** The head of the caveat a projection carries when its scan stopped on the row it was capped at. */
+    public static final String SCAN_CAPPED = "Scan ceiling reached";
+
+    /**
+     * Which end of the topic a direct read entered by, in the words a caveat can use.
+     *
+     * <p>Deliberately not {@code MetricService}'s sentence of the same shape: there {@code null}
+     * describes that module's own default (earliest), here it describes what
+     * {@link #fetchForDirectRead} actually does with it (the recent end). Sharing one phrase
+     * between the two would make one of them lie.
+     */
+    private static String describeScanEnd(String readMode) {
+        Long since = sinceTimestampOf(readMode);
+        if (since != null) return "forward from " + java.time.Instant.ofEpochMilli(since);
+        return "earliest-offset".equals(readMode)
+            ? "from the oldest records forward"
+            : "from the most recent records backwards";
     }
 
     /**
@@ -2328,6 +2447,11 @@ public class FlinkSqlService {
      * Each aggregate in the SELECT must have an alias (e.g. COUNT(*) AS metric_value).
      */
     private QueryResult kafkaAggregateSelect(String sql, List<Map<String, Object>> inputRows, long startTime) {
+        // Le préfixe de table qu'une colonne peut porter — `SUM(o.amount)`, `GROUP BY o.state` —
+        // dérivé de l'instruction plutôt que passé de main en main : cette méthode a le SQL, et un
+        // paramètre de plus sur trois appels serait une occasion de plus de l'oublier.
+        String scan = SqlStatements.outsideLiterals(sql);
+        Set<String> qualifiers = tableQualifiers(scan, extractPrimaryTable(sql));
         // Parse SELECT portion (everything between SELECT and FROM)
         Matcher selMatcher = SELECT_PROJECTION.matcher(sql);
         if (!selMatcher.find()) {
@@ -2354,11 +2478,12 @@ public class FlinkSqlService {
 
         // Parse optional GROUP BY columns
         List<String> groupCols = new ArrayList<>();
-        Matcher gm = Pattern.compile(
-            "(?i)\\bGROUP\\s+BY\\s+([^;]+?)(?:\\s+HAVING\\b|\\s+ORDER\\b|\\s+LIMIT\\b|\\s*;|\\s*$)")
-            .matcher(sql);
+        // Bornes cherchées hors littéraux, contenu découpé dans l'original : un `GROUP BY` cité
+        // dans une valeur ne groupe rien, et une colonne entre accents graves doit rester lisible
+        // (le texte neutralisé, lui, l'a vidée).
+        Matcher gm = GROUP_BY_BLOCK.matcher(scan);
         if (gm.find()) {
-            for (String c : gm.group(1).split(",")) {
+            for (String c : sql.substring(gm.start(1), gm.end(1)).split(",")) {
                 String col = c.trim().replace("`", "").replace("\"", "");
                 if (!col.isEmpty()) groupCols.add(col);
             }
@@ -2374,7 +2499,7 @@ public class FlinkSqlService {
                     // Resolve nested JSON / flattened XML paths (and case) like WHERE does, instead
                     // of a direct key lookup that would collapse nested paths into a single group.
                     .map(c -> {
-                        Object v = getNestedValue(row, c);
+                        Object v = resolveColumn(row, c, qualifiers);
                         if (v == null) v = findValueIgnoreCase(row, c);
                         return v == null ? "" : String.valueOf(v);
                     })
@@ -2396,7 +2521,7 @@ public class FlinkSqlService {
                 }
             }
             for (String[] agg : aggs) {
-                result.put(agg[2], evalAggregate(agg[0], agg[1], "true".equals(agg[3]), groupRows));
+                result.put(agg[2], evalAggregate(agg[0], agg[1], "true".equals(agg[3]), groupRows, qualifiers));
             }
             resultRows.add(result);
         }
@@ -2516,6 +2641,9 @@ public class FlinkSqlService {
 
         Map<String, String> whereConds = extractSimpleWhere(sql);
         List<String> whereWarnings = unsupportedWhereFragments(sql);
+        // Une fenêtre n'a pas d'alias de table à porter — `TUMBLE(TABLE t, …)` n'en offre pas la
+        // place — mais le nom de la table qualifie ses colonnes comme partout ailleurs.
+        Set<String> qualifiers = tableQualifiers(SqlStatements.outsideLiterals(sql), tableName);
 
         // Bucket messages by tumbling window
         Map<Long, List<Map<String, Object>>> windows = new LinkedHashMap<>();
@@ -2524,7 +2652,7 @@ public class FlinkSqlService {
             if (value == null || value.isBlank()) continue;
             Map<String, Object> row = parseMessageToRow(value);
             if (row.isEmpty()) continue;
-            if (!matchesWhereConditions(row, whereConds)) continue;
+            if (!matchesWhereConditions(row, whereConds, qualifiers)) continue;
 
             // Resolve timestamp: message field → epoch detection → Kafka record ts
             long tsMillis = parseEventTimeMillis(row.get(timeCol), record.timestamp());
@@ -2544,7 +2672,7 @@ public class FlinkSqlService {
             row.put("window_start", fmt.format(java.time.Instant.ofEpochMilli(bucketStart)));
             row.put("window_end",   fmt.format(java.time.Instant.ofEpochMilli(bucketStart + intervalMs)));
             for (String[] agg : aggs) {
-                row.put(agg[2], evalAggregate(agg[0], agg[1], "true".equals(agg[3]), entry.getValue()));
+                row.put(agg[2], evalAggregate(agg[0], agg[1], "true".equals(agg[3]), entry.getValue(), qualifiers));
             }
             resultRows.add(row);
         }
@@ -2574,20 +2702,21 @@ public class FlinkSqlService {
     }
 
     /** Evaluates a single aggregate function over a list of rows. */
-    private Object evalAggregate(String func, String col, boolean distinct, List<Map<String, Object>> rows) {
+    private Object evalAggregate(String func, String col, boolean distinct,
+                                 List<Map<String, Object>> rows, Set<String> qualifiers) {
         if ("COUNT".equals(func)) {
             // Counts are integral — returning double made the UI display "42.0"
             if ("*".equals(col)) return (long) rows.size();
             if (distinct) {
                 return (long) rows.stream()
-                    .map(r -> r.get(col)).filter(v -> v != null)
+                    .map(r -> resolveColumn(r, col, qualifiers)).filter(v -> v != null)
                     .map(Object::toString)
                     .collect(Collectors.toSet()).size();
             }
-            return rows.stream().filter(r -> r.get(col) != null).count();
+            return rows.stream().filter(r -> resolveColumn(r, col, qualifiers) != null).count();
         }
         List<Double> nums = rows.stream()
-            .map(r -> asDouble(r.get(col)))
+            .map(r -> asDouble(resolveColumn(r, col, qualifiers)))
             .filter(Objects::nonNull)
             .collect(Collectors.toList());
         if (nums.isEmpty()) return null;
@@ -2629,6 +2758,14 @@ public class FlinkSqlService {
             .collect(Collectors.toList());
     }
 
+    /** GROUP BY body, up to whatever clause follows it. Compiled once, not per aggregate read. */
+    private static final Pattern GROUP_BY_BLOCK = Pattern.compile(
+        "(?i)\\bGROUP\\s+BY\\s+([^;]+?)(?:\\s+HAVING\\b|\\s+ORDER\\b|\\s+LIMIT\\b|\\s*;|\\s*$)");
+
+    /** WHERE body, up to the row cap or the end of the statement. Compiled once, not per read. */
+    private static final Pattern WHERE_BLOCK =
+        Pattern.compile("(?i)\\bWHERE\\s+(.+?)(?:\\bLIMIT\\b|;|$)", Pattern.DOTALL);
+
     /** WHERE body, stopping before the clauses that follow it — otherwise GROUP BY looks unsupported. */
     private static final Pattern WHERE_WARNING_BLOCK = Pattern.compile(
         "(?i)\\bWHERE\\s+(.+?)(?:\\bGROUP\\s+BY\\b|\\bORDER\\s+BY\\b|\\bHAVING\\b|\\bLIMIT\\b|;|$)",
@@ -2637,10 +2774,13 @@ public class FlinkSqlService {
     /** Package-private: driven directly by {@code FlinkSqlServiceTest}. */
     Map<String, String> extractSimpleWhere(String sql) {
         Map<String, String> conditions = new LinkedHashMap<>();
-        Pattern whereBlock = Pattern.compile("(?i)\\bWHERE\\s+(.+?)(?:\\bLIMIT\\b|;|$)", Pattern.DOTALL);
-        Matcher wm = whereBlock.matcher(sql);
+        // Les bornes de la clause se cherchent hors littéraux — un `WHERE` ou un `LIMIT` cité dans
+        // une valeur les déplaçait — et le contenu se découpe dans le texte d'origine, puisque
+        // c'est justement la valeur des littéraux qu'on vient y chercher. Les positions des deux
+        // textes coïncident, c'est tout l'objet de `outsideLiterals`.
+        Matcher wm = WHERE_BLOCK.matcher(SqlStatements.outsideLiterals(sql));
         if (!wm.find()) return conditions;
-        String whereClause = wm.group(1).trim();
+        String whereClause = sql.substring(wm.start(1), wm.end(1)).trim();
         // Keep the original case of the column name: message fields are case-sensitive
         // (e.g. "orderId") and lowercasing the key would make every lookup miss.
         // Dots are allowed so nested JSON / flattened XML paths can be filtered.
@@ -2660,11 +2800,13 @@ public class FlinkSqlService {
      * wrong answer.
      */
     List<String> unsupportedWhereFragments(String sql) {
-        Matcher wm = WHERE_WARNING_BLOCK.matcher(sql);
+        Matcher wm = WHERE_WARNING_BLOCK.matcher(SqlStatements.outsideLiterals(sql));
         if (!wm.find()) {
             return List.of();
         }
-        String remainder = wm.group(1)
+        // Découpé dans l'original : ce qui est rapporté à l'utilisateur, c'est le fragment qu'il a
+        // écrit, valeurs comprises.
+        String remainder = sql.substring(wm.start(1), wm.end(1))
             .replaceAll("(?i)`?+[\\w.]++`?+\\s*+=\\s*+'[^']*+'", " ")   // supported conditions
             .replaceAll("(?i)\\bAND\\b", " ")                     // supported combinator
             .replaceAll("[()]", " ")
@@ -2678,11 +2820,18 @@ public class FlinkSqlService {
             + "in the result.");
     }
 
-    private boolean matchesWhereConditions(Map<String, Object> row, Map<String, String> conditions) {
+    /**
+     * @param qualifiers ce par quoi une colonne peut être préfixée dans cette instruction — le nom
+     *                   de la table et son alias ; vide quand la question ne se pose pas
+     */
+    private boolean matchesWhereConditions(Map<String, Object> row, Map<String, String> conditions,
+                                           Set<String> qualifiers) {
         for (Map.Entry<String, String> cond : conditions.entrySet()) {
-            Object val = getNestedValue(row, cond.getKey());
+            Object val = resolveColumn(row, cond.getKey(), qualifiers);
             if (val == null) {
                 val = findValueIgnoreCase(row, cond.getKey());
+                String bare = val == null ? withoutQualifier(cond.getKey(), qualifiers) : null;
+                if (bare != null) val = findValueIgnoreCase(row, bare);
             }
             if (val == null) return false;
             if (!val.toString().equalsIgnoreCase(cond.getValue())) return false;

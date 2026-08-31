@@ -330,6 +330,29 @@ class FlinkSqlServiceStatementKindsTest {
                 "un CTAS refusé ne doit rien avoir créé");
     }
 
+    /**
+     * Le garde lit hors littéraux : une valeur n'est pas une jointure.
+     *
+     * <p>{@code SqlQueryValidator} cherchait « CROSS JOIN » dans le texte brut, donc
+     * {@code WHERE state = 'CROSS JOIN'} — ou n'importe quel message d'un topic qui contient ces
+     * deux mots — était refusé avec « Cross joins are not allowed in this environment », sur une
+     * requête que rien n'interdit. Un garde qui se déclenche sur le contenu d'une chaîne est un
+     * garde qu'on apprend à contourner.
+     */
+    @Test
+    void aValueThatReadsLikeACrossJoinIsNotOne() {
+        QueryResult result = run("SELECT order_id FROM k_orders WHERE state = 'CROSS JOIN'");
+
+        assertNull(result.error(), String.valueOf(result.error()));
+        assertEquals("FLINK", result.engine());
+        assertTrue(result.rows().isEmpty(), "aucune commande n'est dans cet état");
+
+        // Et une vraie jointure croisée reste refusée.
+        QueryResult refused = run("SELECT o.order_id FROM k_orders o CROSS JOIN k_customers c");
+        assertNotNull(refused.error());
+        assertTrue(refused.error().contains("Cross joins are not allowed"), refused.error());
+    }
+
     // ── Ce que la whitelist refuse, famille par famille ───────────────────────────────
 
     /**
