@@ -1748,6 +1748,20 @@ public class FlinkSqlService {
         flinkSelectDisabledAt = at;
     }
 
+    /**
+     * Sème de test symétrique : rendre le planner comme au démarrage du processus.
+     *
+     * <p>Le disjoncteur est un état de la <em>durée du processus</em>, et c'est voulu — un planner
+     * qui a lâché trois fois ne se rouvre pas parce qu'on lui pose une autre question. Mais une
+     * classe de tests qui provoque délibérément des pannes moteur fait de ce même état une fuite
+     * d'un cas vers le suivant : le cas d'après reçoit le lecteur direct, sans erreur, et ce qu'il
+     * mesure alors n'est plus ce qu'il croit mesurer. C'est le pendant de la remise à zéro des
+     * mocks que ces classes font déjà, pour la même raison et sur le même principe.
+     */
+    void resetFlinkSelectLatchForTest() {
+        clearFlinkSelectLatch();
+    }
+
     public boolean isFlinkSelectDisabled() {
         return flinkSelectDisabled;
     }

@@ -149,6 +149,17 @@ class FlinkSqlServiceTest {
         reset(kafkaAdminService, schemaInferenceService, ddlGeneratorService);
         // Safe default: no auto-registration side-effects for tests that don't configure the mock
         doReturn(List.of()).when(kafkaAdminService).listTopics();
+        // Et le disjoncteur avec eux, pour exactement la raison écrite au-dessus.
+        //
+        // `flinkSelectDisabled` a la durée du processus, ce qui est le bon comportement en
+        // production et une fuite ici : plusieurs cas de cette classe provoquent délibérément une
+        // panne moteur, trois d'entre eux latchent le disjoncteur, et tous ceux qui suivent
+        // reçoivent alors le lecteur direct — sans erreur, donc sans rien qui le dise. Le symptôme
+        // observé est un cas qui échoue sur « Table 'xml_messages' not found. No matching Kafka
+        // topic exists. », c'est-à-dire la phrase du lecteur direct sur une requête que le planner
+        // a toujours servie, et qui n'échoue que là où l'ordre d'exécution place trois pannes
+        // avant lui.
+        service.resetFlinkSelectLatchForTest();
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
@@ -430,6 +441,15 @@ class FlinkSqlServiceTest {
                 "(distinguishes timeout from a successful but empty SELECT)");
         assertTrue(elapsed < 10_000,
                 "A timed-out query must return promptly, but took " + elapsed + "ms");
+
+        // Et le runtime est rendu avant de sortir — voir awaitRuntimeIsFree().
+        //
+        // Ce cas et la fenêtre que le planner ne peut pas finir sont les deux seuls de la classe à
+        // laisser derrière eux un job sur une source qui ne s'arrête jamais. C'est ce qui a fait
+        // échouer `xmlExtractUdfIsRegisteredAndParsesXml` en intégration continue et nulle part
+        // ailleurs : il reçoit « Table 'xml_messages' not found. No matching Kafka topic exists. »,
+        // la phrase du lecteur direct, sur une requête que le planner a toujours servie.
+        awaitRuntimeIsFree();
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
