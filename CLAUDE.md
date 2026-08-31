@@ -744,8 +744,15 @@ without being a phone — turns out to be painful in practice. What is load-bear
   since Monaco stacks several and a clipping inside its own rendering is Monaco's defect, not this
   application's. With them gone, and with the one real finding they were crowding out fixed
   (`SuggestionsPanel` truncated the name of the metric a proposal is already covered by, with
-  nothing carrying it), **every page and state reports zero unreachable at desktop width**, which
-  is the precondition for ever gating that column.
+  nothing carrying it), the column became safe to gate, and `UNREACHABLE_BUDGET` gates it.
+  **This line used to claim more than that — "every page and state reports zero unreachable at
+  desktop width" — and a re-run refuted it**, which is the whole reason the bullet below says to
+  read a zero as unconfirmed. Two rows were non-zero at 1440x900: `topic-explorer` at 2, since
+  fixed to 0 by a `title` on the message table's preview cell, and `settings` at 1, which is the
+  connection pill's dot — a decorative 12 px `span` carrying no text, so nothing is cut off in the
+  sense the column means. That one is budgeted and named rather than corrected on a guess, so the
+  honest form of the claim is *one row, known, and not content*. The absolute was never necessary:
+  what makes a column gateable is that its findings are real, not that they are all zero.
 - **`--detail` reports the innermost clipped element, not the pile above it.** A container is
   usually cut off only because its child is, so one defect surfaced three or four times under the
   class names of a stack of layout `div`s — and since the sample is capped at eight in DOM order,
