@@ -89,12 +89,20 @@ public class SqlQueryValidator {
         }
     }
 
+    /**
+     * Une jointure croisée <em>dans le plan</em>, sur les formulations que Flink y écrit.
+     *
+     * <p>La dernière condition a disparu : {@code plan.contains("JOIN") && !plan.contains("ON")}
+     * portait sur le texte entier du plan, où « ON » apparaît dans quantité de mots et de noms de
+     * colonnes — elle refusait donc des jointures ordinaires et laissait passer des croisées, sans
+     * qu'on puisse dire laquelle des deux se produisait. Ce que le plan nomme explicitement est
+     * gardé ; ce qui se lit dans l'instruction est demandé au parseur, qui répond exactement et
+     * plus tôt.
+     */
     private boolean isCrossJoinInPlan(String plan) {
-        // Flink plans often use these keywords for cross/cartesian joins
         return plan.contains("JOIN_TYPE: CROSS") ||
                plan.contains("CROSS JOIN") ||
-               plan.contains("CARTESIAN") ||
-               (plan.contains("JOIN") && !plan.contains("CONDITION") && !plan.contains("ON") && !plan.contains("USING") && !plan.contains("JOIN_TYPE"));
+               plan.contains("CARTESIAN");
     }
 
     private boolean isSystemTableInPlan(String plan) {

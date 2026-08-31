@@ -684,6 +684,14 @@ public class MetricService {
      */
     static boolean namesOneSourceOnly(String sql) {
         if (sql == null || sql.isBlank()) return false;
+        // Le parseur répond exactement à cette question — une source, aucune jointure, aucune
+        // sous-requête — là où les quatre tests lexicaux qui suivent l'approchent. Ils restent
+        // pour l'instruction que la grammaire refuse, et ils échouent fermé comme avant.
+        java.util.Optional<SqlAst.Read> ast = SqlAst.read(sql);
+        if (ast.isPresent()) {
+            SqlAst.Read read = ast.get();
+            return read.sources().size() == 1 && !read.join() && !read.crossJoin() && !read.subquery();
+        }
         String body = sql.trim();
         if (!body.toUpperCase(Locale.ROOT).startsWith("SELECT")) return false;
         if (JOIN_KEYWORD.matcher(body).find()) return false;

@@ -1252,6 +1252,48 @@ class FlinkSqlServiceTest {
     }
 
     /**
+     * Une égalité placée sous un {@code OR} n'est pas appliquée comme si elle était seule.
+     *
+     * <p>Le motif lisait {@code colonne = 'valeur'} n'importe où après le WHERE, donc
+     * {@code WHERE id = 'a' OR id = 'b'} donnait <em>deux</em> conditions, jointes par un ET
+     * implicite : aucune ligne ne peut satisfaire les deux, et la requête rendait zéro ligne là où
+     * elle en a deux. Des lignes valides écartées en silence — l'arbre ne descend que les
+     * conjonctions, donc l'ensemble part dans l'avertissement.
+     */
+    @Test
+    void anEqualityUnderAnOrIsReportedRatherThanApplied() throws Exception {
+        stubWindowTopic();
+
+        QueryResult result = execute("SELECT id FROM win_topic WHERE id = 'a' OR id = 'b'");
+
+        assertNoError(result);
+        assertEquals(2, result.rows().size(),
+            "an OR is not a conjunction: neither branch may be applied alone, got: " + result.rows());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("OR")),
+            "and what could not be applied is reported, got: " + result.warnings());
+    }
+
+    /**
+     * Une expression que ce lecteur ne sait pas calculer est refusée, pas rendue vide.
+     *
+     * <p>{@code JSON_VALUE(payload, '$.a')} était cherché comme s'il était le nom d'un champ :
+     * introuvable, donc une colonne de {@code null} — une réponse complète, avec la bonne en-tête
+     * et la mauvaise valeur. Et la liste de projection se découpait sur les virgules, donc cette
+     * seule colonne en devenait deux, dont aucune n'existe.
+     */
+    @Test
+    void anExpressionTheDirectReaderCannotComputeIsRefused() throws Exception {
+        stubWindowTopic();
+
+        QueryResult result = execute("SELECT JSON_VALUE(payload, '$.a') AS x FROM win_topic");
+
+        assertHasError(result);
+        assertTrue(result.error().contains("JSON_VALUE"),
+            "the refusal must name the expression, got: " + result.error());
+        assertTrue(result.rows().isEmpty(), "a refusal returns no rows, got: " + result.rows());
+    }
+
+    /**
      * Un délimiteur de commentaire à l'intérieur d'une chaîne n'en est pas un.
      *
      * <p>Le nettoyage lisait le texte brut, donc {@code WHERE note = 'voir -- plus bas'} perdait

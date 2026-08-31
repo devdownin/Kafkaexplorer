@@ -65,6 +65,27 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`FROM a, b` was a cross join nobody refused.** `explorer.allow-cross-joins=false` forbade the
+  cartesian product under one of its two spellings: the guard looked for the text `CROSS JOIN`,
+  which the comma form does not contain, and the heuristic beside it only fired on a plan
+  containing `JOIN` without `ON` or `CONDITION` — true of no real plan, while being able to refuse
+  ordinary joins. The statement's shape is now read by Flink's own grammar (`SqlAst`), which names
+  both spellings alike and answers before any table is resolved; that heuristic's last clause is
+  gone.
+- **An equality under an `OR` was applied as if it stood alone.** `WHERE a = 'x' OR b = 'y'` gave
+  the direct reader two conditions joined by an implicit AND — no row can satisfy both, so a query
+  that has rows came back empty. The WHERE is now split from the parsed statement, where only
+  conjunctions are descended, and what does not become an applicable equality *is* what the result
+  reports as ignored. A condition written in a `HAVING` no longer leaks into the row filter either.
+- **A projection could not survive a function call.** The list was split on commas, so
+  `SELECT JSON_VALUE(c, '$.a') AS x` became two columns of which neither exists; the expression was
+  then looked up as a field name and came back as a column of `null` — a complete answer with the
+  right header and the wrong value. Items are read from the parsed statement, and an expression the
+  direct reader cannot evaluate is refused by name instead.
+- **The two engines are now compared against each other on a real broker.** Each was tested alone —
+  one against a planner, the other against mocks — so nothing ever compared their answers, which is
+  how a fallback that drops a predicate or loses a qualified column passed every test there was.
+  Five shapes and a count, with the planner side bounded so the comparison cannot become a timeout.
 - **A string literal could rewrite the statement.** Every lexical pass read the raw SQL, so a
   keyword quoted in a value was taken for the real thing — and none of those cases returns an
   error, they answer a *different query*. `WHERE note = 'voir -- plus bas'` lost everything after
