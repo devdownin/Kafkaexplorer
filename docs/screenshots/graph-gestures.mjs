@@ -18,6 +18,7 @@
 //   node graph-gestures.mjs http://127.0.0.1:4173 --detail   # dit chaque transform lu
 
 import { createRequire } from 'node:module';
+import { failOnUnstubbedRoutes } from './unstubbed.mjs';
 
 // Même résolution que capture.mjs et layout-probe.mjs.
 const require = createRequire(import.meta.url);
@@ -267,6 +268,9 @@ async function run() {
   }
 
   await browser.close();
+  // Whatever this run produced describes an incomplete page if anything went unstubbed, so the
+  // question is asked before any verdict is reached. See unstubbed.mjs.
+  await failOnUnstubbedRoutes(baseUrl);
 }
 
 await run();

@@ -18,6 +18,7 @@
 //   node layout-probe.mjs http://127.0.0.1:4173 --detail  # names the containers that clip
 
 import { createRequire } from 'node:module';
+import { failOnUnstubbedRoutes } from './unstubbed.mjs';
 
 // Same resolution as capture.mjs: playwright is whatever the environment provides, and an
 // explicit failure beats an opaque MODULE_NOT_FOUND.
@@ -207,7 +208,15 @@ const UNREACHABLE_BUDGET = {
   'sql-editor': 3,
   'sql-editor·confirm': 0,
   'sql-editor·ddl': 0,
-  'topic-explorer': 2,
+  /*
+   * 2 jusqu'au 2026-08-31, en tablette et en desktop, et la ligne n'a longtemps rien dit : la
+   * cellule d'aperçu de la table (`max-w-0 w-full truncate`) rognait 1 711 px de charge utile
+   * dans 704 px sans `title` ni ancêtre qui défile. Le texte n'était pas perdu pour autant —
+   * cliquer la ligne affiche la MessageCard complète, et la page le propose — mais cette colonne
+   * mesure le balisage, pas la navigation, et un survol vaut mieux qu'un clic quand on balaie
+   * cinquante lignes. Le `title` posé, la ligne mesure 0 : c'est un plancher, pas un budget.
+   */
+  'topic-explorer': 0,
   'stream-flow': 0,
   'data-model': 0,
   'audit': 0,
@@ -238,7 +247,13 @@ const TARGET_BUDGET = {
   // recalibrer, et non le contrôle qu'il faut corriger ici.
   'sql-editor': 42,
   'sql-editor·confirm': 39,
-  'sql-editor·ddl': 40,
+  /*
+   * 40 jusqu'au 2026-08-31, et le point retiré n'est pas une amélioration de la page : c'est la
+   * mesure qui a cessé d'être fausse. `GET /api/query/ddl-preview` n'était pas bouchonné, donc
+   * cet état était mesuré sur le modal en **erreur** — un contrôle de plus, une cible de moins de
+   * 24 px de plus — au lieu du DDL qu'il montre en vrai. Voir unstubbed.mjs.
+   */
+  'sql-editor·ddl': 39,
   'topic-explorer': 3,
   'stream-flow': 19,
   'data-model': 7,
@@ -612,6 +627,10 @@ if (mode === '--sweep') {
 }
 
 await browser.close();
+
+// Whatever this run produced describes an incomplete page if anything went unstubbed, so the
+// question is asked before any verdict is reached. See unstubbed.mjs.
+await failOnUnstubbedRoutes(baseUrl);
 
 if (mode === '--check') {
   const failures = [];

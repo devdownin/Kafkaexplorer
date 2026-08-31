@@ -385,6 +385,19 @@ suggestion cards overflow their grid by 8 px at phone width, the clipped line be
 On the Topic Explorer: the message table's preview cell, `truncate` by design — the full payload is
 reached by selecting the row, which is an affordance the probe cannot see.
 
+**That last row is gone since 2026-08-31, and how it went is worth more than the row.** It was
+correctly diagnosed here — nothing was hidden, the click reaches the record — and that diagnosis
+was then used to leave it alone, on a budget line in `layout-probe.mjs` carrying no comment. Two
+readings later it looked like a row nobody had examined, because the reasoning lived in this file
+and the number lived in that one. What the re-examination actually found is that both things are
+true at once: the payload *is* reachable, **and** a hover is what one does when scanning fifty rows
+for the one carrying a field, where a click means selecting a row to read it and then going back.
+The cell carries `title={previewOf(message.value)}` now — the same 240 characters it already
+renders, of which the 704 px column shows about forty — so `topic-explorer` reads **0
+unreachable** at every width and its budget is a floor rather than a ceiling. The lesson is the
+filing, not the fix: a budget line that records a decision has to carry it, or the decision is
+re-litigated by whoever reads the number first.
+
 So W7's recorded answer holds in substance — nothing of consequence is hidden — but not in the
 absolute form it was written in, and it now rests on a number that means what it says.
 

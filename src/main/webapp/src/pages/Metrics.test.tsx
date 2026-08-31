@@ -506,14 +506,15 @@ describe('les deux côtés dans le temps', () => {
 });
 
 /*
- * Le calque d'accueil de « Neural Float » (React Bits Pro).
+ * Le fond animé de la page.
  *
- * Le composant lui-même n'est pas installé — le registre `pro.reactbits.dev` est injoignable
- * depuis cet environnement — mais sa *condition* d'affichage l'est, et c'est elle qui se
- * réglerait silencieusement de travers. Ces cas la pinnent au niveau de la page, là où
- * `metricsHealth.test.ts` la pinne au niveau de la règle.
+ * Ce qui est pinné ici n'est ni le dessin ni la géométrie — jsdom ne dispose rien et n'a pas de
+ * canevas — mais la *condition* d'affichage et le contrat de classes, c'est-à-dire les deux
+ * seules choses qui se règlent de travers en silence. `metricsHealth.test.ts` pinne la règle au
+ * niveau de la règle, ceci la pinne au niveau de la page, et `metricsPulseField.test.ts` couvre
+ * la moitié calculatoire du fond.
  */
-describe('Neural Float backdrop', () => {
+describe('Metrics pulse backdrop', () => {
   const running = templateMetric;
   const pending = { ...templateMetric, id: 'm-2', name: 'never_ran', lastValue: null, lastUpdateTime: null };
   const failing = { ...templateMetric, id: 'm-3', name: 'broken', errorMessage: 'Table not found' };
@@ -522,28 +523,50 @@ describe('Neural Float backdrop', () => {
     stubApi([]);
     await renderPage();
     await screen.findByText('No metrics yet');
-    expect(screen.queryByTestId('neural-float-backdrop')).toBeNull();
+    expect(screen.queryByTestId('metrics-pulse-backdrop')).toBeNull();
   });
 
   it('is absent when the only metrics are pending or failing', async () => {
     stubApi([pending, failing]);
     await renderPage();
     await waitFor(() => expect(screen.getByText('broken')).toBeInTheDocument());
-    expect(screen.queryByTestId('neural-float-backdrop')).toBeNull();
+    expect(screen.queryByTestId('metrics-pulse-backdrop')).toBeNull();
   });
 
   it('mounts once at least one metric is running', async () => {
     stubApi([running]);
     await renderPage();
-    await waitFor(() => expect(screen.getByTestId('neural-float-backdrop')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId('metrics-pulse-backdrop')).toBeInTheDocument());
   });
 
   it('stays out of the reading order and takes no pointer', async () => {
     stubApi([running]);
     await renderPage();
-    const layer = await screen.findByTestId('neural-float-backdrop');
+    const layer = await screen.findByTestId('metrics-pulse-backdrop');
     expect(layer).toHaveAttribute('aria-hidden', 'true');
     expect(layer.className).toContain('pointer-events-none');
+
+    /*
+     * L'ornement est le premier à partir quand l'OS demande moins de mouvement. Le CSS est la
+     * moitié visible de cette règle — l'autre est dans le composant, qui ne démarre alors aucune
+     * boucle — et c'est celle-ci qui se perdrait en réécrivant une classe.
+     */
+    expect(layer.className).toContain('motion-reduce:hidden');
+  });
+
+  /*
+   * Le canevas est bien là, et il ne peint rien ici : jsdom n'a aucune mise en page, donc l'hôte
+   * mesure 0×0 et le composant sort *avant* d'appeler `getContext` — que jsdom n'implémente pas
+   * et signale bruyamment. Ce cas dit donc deux choses à la fois : la surface de dessin existe,
+   * et la suite de tests n'a pas à la faire taire avec un bouchon.
+   */
+  it('carries a canvas that draws nothing until something has been laid out', async () => {
+    stubApi([running]);
+    await renderPage();
+    const layer = await screen.findByTestId('metrics-pulse-backdrop');
+    const canvas = layer.querySelector('canvas');
+    expect(canvas).toBeTruthy();
+    expect(canvas).toBeInstanceOf(HTMLCanvasElement);
   });
 
   /*
@@ -558,7 +581,7 @@ describe('Neural Float backdrop', () => {
   it('follows the viewport rather than scrolling away with the content', async () => {
     stubApi([running]);
     await renderPage();
-    const layer = await screen.findByTestId('neural-float-backdrop');
+    const layer = await screen.findByTestId('metrics-pulse-backdrop');
 
     expect(layer.className).toContain('sticky');
     // `h-0` : l'ancre ne prend aucune place dans le flux, sans quoi elle pousserait la page.

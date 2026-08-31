@@ -142,6 +142,10 @@ RETIRED = {
     'docker-compose.release.yml': 'was replaced by compose/image.yml',
     'docker-compose-spectra.yml': 'was deleted: it needed a sibling SpectraLLM checkout',
     'docker-compose-spectra-hub.small.yml': 'was deleted: it is four .env lines, not a file',
+    'components.json': 'was deleted with the React Bits registry: it configured a paid registry '
+                       'behind a licence key nothing in the tree sets',
+    'docs/check-alias-parity.py': 'was deleted with the `@/` alias it guarded, the alias having '
+                                  'existed only for the shadcn registry and carrying no import',
 }
 
 TOKEN = re.compile(r'`([^`\n]+)`')

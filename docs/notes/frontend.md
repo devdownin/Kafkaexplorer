@@ -180,61 +180,153 @@ Dev server proxy: Vite forwards `/api/*` to `http://localhost:8080` (configured 
 - Les champs sélectionnés alimentent `SELECT col1, col2 FROM topic LIMIT 50` via `openInEditor()`.
 
 
-## Metrics — le calque « Neural Float » et le registre React Bits Pro
+## Metrics — le fond animé de la page, et pourquoi il n'est pas installé
 
-Le composant **n'est pas dans l'arbre**, et ce fichier existe pour que personne ne conclue à un
-oubli. `npx shadcn@latest add @reactbits-starter/neural-float-tw` n'a pas pu être exécuté :
-`pro.reactbits.dev` **et** `ui.shadcn.com` sont refusés au CONNECT (403) par la politique réseau
-de l'environnement de build, et aucune `REACTBITS_LICENSE_KEY` n'y est définie — le CLI shadcn ne
-peut même pas charger son index de registres. Ce qui est posé ici est donc tout ce qui ne dépend
-pas du registre, et rien d'autre.
+Cette section a longtemps décrit un calque **vide** qui attendait « Neural Float » de React Bits :
+`npx shadcn@latest add @reactbits-starter/neural-float-tw` ne passait pas, `pro.reactbits.dev`
+étant refusé au CONNECT par la politique réseau de l'environnement de build et aucune
+`REACTBITS_LICENSE_KEY` n'y étant définie. Le blocage réseau a servi d'explication pendant tout ce
+temps, et **ce n'était pas la vraie**. Deux faits, vérifiés depuis, referment la question — les
+voici, parce qu'elle se reposera le jour où quelqu'un retrouvera `components.json` dans l'histoire
+du dépôt.
 
-**Ce qui est fait, et pourquoi c'est la moitié qui compte.** La condition d'affichage est la
-seule partie qu'un paquet ne fournit jamais, et c'est celle qui se règle de travers en silence.
-`hasRunningMetric` (`pages/metricsHealth.ts`) lit « au moins une métrique en marche » comme
-`summarizeMetrics(...).reporting > 0` — une valeur produite au dernier passage, sans erreur — et
-**dérive** de `summarizeMetrics` au lieu de réécrire la règle. Les deux autres états ne sont pas
-des degrés de la même chose : une métrique `failing` expose encore la valeur d'avant, donc elle
-*paraît* vivante alors qu'elle ne mesure plus rien, et `pending` n'a jamais rien produit. C'est
-aussi pourquoi la condition n'est pas `counts.ok > 0`, qui répond à la question voisine et fausse
-ici : une métrique peut être `critical` — au-dessus de son seuil — tout en tournant parfaitement.
+**« Neural Float » n'est pas dans la bibliothèque libre.** Le catalogue libre de React Bits est
+énumérable (le registre est servi par `reactbits.dev`, injoignable ici, mais le dépôt d'origine
+est lisible sur `raw.githubusercontent.com`, qui lui passe) : ses fonds sont *Aurora*, *Particles*,
+*Threads*, *Waves*, *DotField*, *LetterGlitch*, *Silk*, *Orb*, *Galaxy* et une vingtaine d'autres,
+et aucun ne s'appelle Neural Float. C'est un composant de **React Bits Pro**, une bibliothèque
+payante séparée. La commande notée ici visait donc un composant qu'aucune clé libre n'aurait
+servi : elle aurait répondu 404 même sans pare-feu, et le registre `@reactbits-starter` qu'elle
+nommait était reconstruit de mémoire, jamais confronté à une documentation.
 
-**`NeuralFloatBackdrop` rend `null` quand la condition est fausse**, plutôt qu'un calque masqué :
+**Et l'ensemble libre n'est pas absorbable ici.** Il est publié sous **MIT + Commons Clause** :
+la clause additionnelle interdit de « vendre, sous-licencier ou redistribuer les composants
+eux-mêmes, seuls, en lot ou portés ». Ce dépôt est sous AGPL v3 et il *est* redistribué —
+sources publiques, jar signé, images GHCR et Docker Hub — et l'AGPL interdit précisément
+d'ajouter une restriction à ce que reçoit celui à qui on transmet l'œuvre. Vendoriser un de ces
+fichiers demanderait donc une exception nommée à la licence du projet, sur chaque artefact publié,
+**pour un ornement**. Ce n'est pas un jugement sur React Bits, dont la clause vise le repackaging
+de la bibliothèque : c'est que l'AGPL et une clause non-libre ne cohabitent pas sans exception, et
+qu'un fond de page n'en vaut pas une.
+
+Le fond est donc **écrit ici**, sous la même licence que le reste, sans dépendance nouvelle
+(canevas 2D, aucun paquet npm ajouté), sans registre et sans clé. Ce que le calque vide portait
+déjà — la condition d'affichage, le placement, l'accessibilité — est conservé tel quel : c'est la
+moitié qui avait été mesurée, et rien ne l'a invalidée.
+
+**La condition d'affichage est la partie qu'un paquet n'aurait jamais fournie**, et c'est celle
+qui se règle de travers en silence. `hasRunningMetric` (`pages/metricsHealth.ts`) lit « au moins
+une métrique en marche » comme `summarizeMetrics(...).reporting > 0` — une valeur produite au
+dernier passage, sans erreur — et **dérive** de `summarizeMetrics` au lieu de réécrire la règle.
+Les deux autres états ne sont pas des degrés de la même chose : une métrique `failing` expose
+encore la valeur d'avant, donc elle *paraît* vivante alors qu'elle ne mesure plus rien, et
+`pending` n'a jamais rien produit. C'est aussi pourquoi la condition n'est pas `counts.ok > 0`,
+qui répond à la question voisine et fausse ici : une métrique peut être `critical` — au-dessus de
+son seuil — tout en tournant parfaitement.
+
+**`MetricsPulseBackdrop` rend `null` quand la condition est fausse**, plutôt qu'un calque masqué :
 une page qui ne mesure rien encore n'a pas à payer une boucle d'animation, et un `<canvas>`
-invisible qui tourne est exactement ce qu'on ne retrouve pas six mois plus tard. Il porte déjà
-`aria-hidden`, `pointer-events-none` et `motion-reduce:hidden` — l'ornement est le premier à
-disparaître quand l'OS demande moins de mouvement, et cela vaut avant même que le composant
-n'arrive.
+invisible qui tourne est exactement ce qu'on ne retrouve pas six mois plus tard. Il porte
+`aria-hidden`, `pointer-events-none` et `motion-reduce:hidden`.
 
-**Le placement est porteur, et il a coûté un aller-retour.** Le réflexe — racine en
-`relative isolate`, calque en `absolute inset-0 -z-10` — **casse le modal « Add metric »**. Le
-`isolate` fait de la page un contexte d'empilement ; le modal est `fixed z-50` *à l'intérieur*,
-la Sidebar est `fixed z-50` *à l'extérieur* (`components/Layout.tsx` la rend en frère de la
-colonne de contenu), et le modal se retrouve donc enfermé sous elle. Mesuré plutôt que raisonné,
-avec `docs/screenshots/layout-probe.mjs` déjà debout et `document.elementFromPoint(100, 500)`
-en plein dans la Sidebar, modal ouvert : `SIDEBAR ON TOP` avec `isolate`, `modal on top` sans.
-Et sans contexte d'empilement, un `-z-10` ne sert à rien non plus — il passerait derrière le
-`bg-background` de la coquille, qui est un bloc en flux et peint donc *au-dessus* des descendants
-à z négatif.
+**Le mouvement réduit est traité deux fois, et ce n'est pas une redondance.** La classe
+`motion-reduce:hidden` cache le calque immédiatement, sans attendre que React monte quoi que ce
+soit ; le test `matchMedia('(prefers-reduced-motion: reduce)')` dans l'effet fait qu'aucune boucle
+ne démarre. Le CSS seul laisserait tourner une animation invisible — ce que le paragraphe
+précédent refuse — et le JS seul laisserait une image s'afficher avant le premier effet.
+
+### Ce que coûte un fond sur un écran de supervision
+
+C'est la question qui a dimensionné le reste : cette page reste ouverte des heures, sur un poste
+qui affiche par ailleurs des graphes. Quatre décisions en découlent, et chacune borne le pire cas
+plutôt que le cas courant.
+
+**Le compte de points est plafonné** (`DEFAULT_FIELD_OPTIONS.maxNodes`, 90). La densité est une
+surface — un point pour 26 000 px², soit 50 points en 1440×900 — mais le coût des liens croît en
+n² : un écran 4K en demanderait ~320, donc ×6,5 sur le compte et ×42 sur la boucle de liens. Le
+plafond est ce qui rend le pire cas connu au lieu d'être fonction de l'écran de l'utilisateur.
+
+**La cadence est ramenée à ~30 images par seconde.** Les points dérivent à 7 px/s : il n'y a pas
+de mouvement rapide à rendre, et diviser la cadence par deux divise le coût par deux pour une
+différence que l'œil ne fait pas. `requestAnimationFrame` reste le battement plutôt qu'un
+`setInterval`, parce que c'est lui qui s'arrête tout seul quand l'onglet passe à l'arrière-plan —
+d'où aussi le pas de temps plafonné à 250 ms, sans quoi le champ se téléporterait au retour.
+
+**La mesure ne se fait pas à chaque image.** Lire `getBoundingClientRect` par image, c'est imposer
+au navigateur un recalcul de mise en page trente fois par seconde pour une taille qui ne bouge
+presque jamais. Un drapeau, levé au montage et par le `ResizeObserver`, la déclenche — et il reste
+levé tant que la mesure n'a rien donné, sans quoi un hôte pas encore disposé au montage resterait
+vide pour toujours. Le `ResizeObserver` ne redessine pas lui-même : il se déclenche en rafale
+pendant qu'on tire un bord de fenêtre, et peindre à chaque notification referait exactement le
+travail que la cadence plafonnée évite.
+
+**Et le champ n'est pas recréé au redimensionnement** (`resizeField`). Le réflexe — rappeler
+`createField` sur chaque notification — refait tirer chaque position : le fond *saute* à chaque
+image d'un redimensionnement, et un redimensionnement en produit des dizaines. Le défaut n'est
+jamais visible en développement, où on redimensionne rarement, et systématique chez qui range deux
+fenêtres côte à côte. Les positions sont donc mises à l'échelle proportionnellement et seul
+l'écart de compte est comblé. Le garde-fou « surface précédente nulle » qui l'accompagne n'est pas
+théorique : c'est une division par zéro, donc chaque position multipliée par l'infini et le champ
+qui disparaît, au premier montage d'un hôte pas encore disposé — le cas de jsdom, et celui d'un
+onglet ouvert en arrière-plan.
+
+**Le calque se déclare ornemental, et c'est une capture d'écran qui l'a exigé.** Un fond qui
+dérive en continu rend `docs/img/metrics.png` irreproductible : mesuré sur un même build et un même
+serveur, deux passages de `capture.mjs` rendaient les sept autres pages identiques au bit près et
+celle-ci différente à chaque fois, 24 437 pixels dispersés sur toute l'image. C'est exactement la
+propriété que `fixtures.mjs` tient en dérivant tout d'un instant fixe — une capture qui bouge seule
+est une capture qu'on cesse de relire — et ce fond l'avait cassée sans que rien ne le dise. Une
+graine fixe a été essayée **et mesurée avant d'être gardée** : elle ne corrige rien, puisqu'elle
+fait répéter les positions de départ pendant que la dérive, elle, suit le temps écoulé et que
+l'obturateur tombe à un instant qui varie. `data-decorative` sur l'ancre, que `capture.mjs` masque,
+est donc la correction — un attribut que le calque pose sur lui-même plutôt qu'une liste tenue dans
+l'outil, et qu'il ne peut honnêtement poser que parce qu'il est `aria-hidden` et ne porte aucun
+texte.
+
+**La moitié calculatoire est un module pur** (`components/metrics/metricsPulseField.ts`), pour la
+raison habituelle ici : ce qui se règle silencieusement de travers dans une animation n'est pas le
+dessin mais la géométrie, et rien de tout cela n'échoue — ça rend une page lente ou une image qui
+saute, sans que personne sache dire quand c'est arrivé. `random` y est un paramètre, ce qui est la
+seule chose qui rend ces fonctions vérifiables : un test tire une suite connue et lit des
+positions, au lieu d'affirmer qu'un mock a été appelé. Le composant ne garde que le canevas.
+
+**Le canevas ne peint rien tant que rien n'est disposé, et c'est ce qui garde la suite de tests
+silencieuse.** Le garde-fou « surface nulle » est *avant* `getContext` : jsdom n'a aucune mise en
+page (donc un rectangle de 0×0) et n'implémente pas `getContext`, qu'il signale bruyamment sur la
+console quand on l'appelle. Sortir sur la mesure est de toute façon la bonne conduite dans un
+navigateur, de sorte que la suite n'a **aucun bouchon** à poser pour ce composant — contrairement
+aux trois de `src/test/setup.ts`, qui existent parce qu'il n'y avait pas d'autre issue.
+
+### Le placement, qui a coûté deux allers-retours
+
+**Le réflexe casse le modal « Add metric ».** Racine en `relative isolate`, calque en
+`absolute inset-0 -z-10` : le `isolate` fait de la page un contexte d'empilement ; le modal est
+`fixed z-50` *à l'intérieur*, la Sidebar est `fixed z-50` *à l'extérieur*
+(`components/Layout.tsx` la rend en frère de la colonne de contenu), et le modal se retrouve donc
+enfermé sous elle. Mesuré plutôt que raisonné, avec `docs/screenshots/layout-probe.mjs` déjà
+debout et `document.elementFromPoint(100, 500)` en plein dans la Sidebar, modal ouvert :
+`SIDEBAR ON TOP` avec `isolate`, `modal on top` sans. Et sans contexte d'empilement, un `-z-10` ne
+sert à rien non plus — il passerait derrière le `bg-background` de la coquille, qui est un bloc en
+flux et peint donc *au-dessus* des descendants à z négatif.
 
 Ce qui est en place n'a donc ni `isolate` ni z négatif : la racine est `relative` et porte
 exactement **deux** enfants positionnés en `z-auto` — le calque d'abord, un conteneur
-`relative space-y-6` ensuite qui reprend tout l'ancien contenu. Entre deux éléments positionnés
-sans z-index, c'est l'ordre du DOM qui tranche, donc le contenu peint par-dessus le calque sans
+`relative space-y-6` ensuite qui reprend tout le contenu. Entre deux éléments positionnés sans
+z-index, c'est l'ordre du DOM qui tranche, donc le contenu peint par-dessus le calque sans
 qu'aucun contexte d'empilement soit créé, et le modal reste au-dessus de la Sidebar. Le
-`space-y-6` a suivi le contenu dans ce conteneur : laissé sur la racine, il aurait donné une
-marge haute au calque et décalé son `inset-0`.
+`space-y-6` a suivi le contenu dans ce conteneur : laissé sur la racine, il aurait donné une marge
+haute au calque et décalé son `inset-0`.
 
 **Et le calque est `sticky`, pas `absolute`, pour une deuxième mesure.** Dans un conteneur qui
 défile, `absolute inset-0` se résout sur la **fenêtre de défilement** et non sur le contenu :
 mesuré sur la page Metrics de la démo en 1440×900, le calque faisait 844 px pour 2 318 px de
 contenu, et après défilement jusqu'en bas son sommet se trouvait 1 474 px au-dessus de la zone
-visible. L'ornement occupait le premier tiers de la page puis s'en allait — ce qui se lit comme
-un défaut, pas comme une intention, sur un fond censé être ambiant. `sticky top-0 h-0` le fait
-suivre la fenêtre sans rien prendre au flux ; l'hôte du canvas, en `absolute` dedans, fait
-`h-screen` — un dépassement de la hauteur d'en-tête que le conteneur rogne, là où une hauteur
-trop courte laisserait une bande nue en bas. Re-mesuré après coup : la zone visible est couverte
-en haut **comme en bas**, et sur 1 184 px de large pour 1 184 px de racine.
+visible. L'ornement occupait le premier tiers de la page puis s'en allait — ce qui se lit comme un
+défaut, pas comme une intention, sur un fond censé être ambiant. `sticky top-0 h-0` le fait suivre
+la fenêtre sans rien prendre au flux ; l'hôte du canevas, en `absolute` dedans, fait `h-screen` —
+un dépassement de la hauteur d'en-tête que le conteneur rogne, là où une hauteur trop courte
+laisserait une bande nue en bas. Re-mesuré après coup : la zone visible est couverte en haut
+**comme en bas**, et sur 1 184 px de large pour 1 184 px de racine.
 
 **Le débord horizontal est porté par l'ancre (`-mx-6`), pas par l'hôte, et ça a coûté un job CI
 rouge.** Écrit d'abord en `-left-6 -right-6` sur l'hôte, celui-ci devenait plus large que l'ancre
@@ -253,46 +345,24 @@ débord, puisque c'est lui qui a cassé.
 Le `sticky` forme un contexte d'empilement, contrairement à `absolute` — sans conséquence ici,
 parce qu'il naît sur *le calque* et non sur la page : le modal vit dans le conteneur frère, donc
 il n'y est pas enfermé. Le contrôle Chromium du paragraphe précédent a été refait après ce
-changement et rend toujours `modal on top`. jsdom ne disposant rien, ce que le test unitaire
-pinne est le *contrat de classes* (`sticky`, `h-0`, pas d'`absolute inset-0`, les trois marges
+changement et rend toujours `modal on top`. jsdom ne disposant rien, ce que le test unitaire pinne
+est le *contrat de classes* (`sticky`, `h-0`, pas d'`absolute inset-0`, les trois marges
 négatives) : la géométrie a été mesurée une fois, la décision est gardée pour toujours.
 
-**`docs/check-alias-parity.py` garde l'alias `@/`.** Il est déclaré trois fois — `paths` dans
-`tsconfig.json` (que lit `tsc`), `resolve.alias` dans `vite.config.ts` (que lisent Vite *et*
-Vitest), `aliases` dans `components.json` (que lit le CLI shadcn) — et aucune des trois ne lit
-les autres. Aucune n'est fausse isolément ; elles ne peuvent l'être que *les unes par rapport aux
-autres*, ce que seule une vérification qui lit les trois peut voir. Chaque sens de la panne est
-silencieux : sans l'entrée Vite, `tsc` passe et le build ne résout plus ; sans l'entrée tsconfig,
-l'application se construit et tourne pendant que le typecheck tombe ; avec un `components.json`
-qui vise ailleurs, `shadcn add` écrit le fichier dans un dossier que ni le compilateur ni le
-bundler ne voient — le composant est sur le disque, l'import est rouge, et rien ne nomme l'alias
-comme cause. Il vérifie en plus qu'`aliases.utils` résout vers un fichier qui existe, puisque
-c'est de là que tout composant généré importe `cn`, et que la cible tsconfig reste relative
-(`./src/*`), `baseUrl` étant déprécié par le TypeScript de ce dépôt. Les quatre pannes ont été
-provoquées une à une pour vérifier qu'il les attrape, et qu'il sort bien en 1 — la boucle
-`for check in docs/check-*.py` de `ci.yml` le ramasse sans modification du workflow.
+### Ce qui est parti avec le registre
 
-**Le registre est configuré dans `components.json`** (`@reactbits` et `@reactbits-starter`, en-tête
-`Authorization: Bearer ${REACTBITS_LICENSE_KEY}`). Deux choix y sont délibérés. `cssVariables` est
-à **`false`** : ce projet définit `background`, `foreground`, `card`, `muted`, `border`, `primary`
-comme couleurs Tailwind littérales (le bloc « Alias (compat shadcn-style) » de
-`tailwind.config.js`), pas comme variables CSS — avec `true`, les composants générés émettraient
-des classes attendant `hsl(var(--background))` que rien ici ne définit. Et `aliases.utils` pointe
-`@/components/ui/cn`, qui est déjà exactement le `cn` de shadcn (clsx + tailwind-merge), donc un
-composant installé se branche sans adaptateur.
+`components.json`, l'alias `@/` et `docs/check-alias-parity.py` ont été supprimés ensemble, et
+c'est une seule décision : les trois n'existaient que pour installer un composant depuis un
+registre shadcn. `components.json` décrivait un registre **payant** derrière une
+`REACTBITS_LICENSE_KEY` que rien dans l'arbre ne définit ; l'alias `@/` n'avait **aucun import**
+dans toute la SPA — son unique occurrence était la ligne commentée du calque vide — et sa propre
+vérification le disait en toutes lettres (« Nothing in the SPA used it when it was added, which is
+precisely why it needs a guard »). Un garde sur une configuration inerte reste un garde sur une
+configuration inerte : c'est la règle que `docs/check-config-yaml.py` applique aux clés
+`explorer.*`, appliquée ici au reste. La boucle `for check in docs/check-*.py` de `ci.yml` ramasse
+simplement un fichier de moins, et les imports relatifs de la SPA n'ont jamais bougé.
 
-**L'alias `@/` est neuf**, ajouté parce que les composants d'un registre shadcn s'importent ainsi.
-Il est décrit à **trois** endroits qui doivent bouger ensemble — `paths` dans `tsconfig.json` (que
-lit `tsc`), `resolve.alias` dans `vite.config.ts` (que lisent Vite et Vitest), et `aliases` dans
-`components.json` (que lit le CLI) — et les imports relatifs existants restent valables : rien n'a
-été réécrit. `paths` est en `./src/*` sans `baseUrl`, ce dernier étant déprécié par le TypeScript
-de ce dépôt (TS5101).
-
-**Pour finir l'installation**, sur une machine qui atteint le registre : exporter
-`REACTBITS_LICENSE_KEY`, lancer la commande `shadcn add` ci-dessus depuis `src/main/webapp`, puis
-décommenter l'import et la balise dans `NeuralFloatBackdrop.tsx` en ajustant le nom exporté et les
-props au composant réellement livré. Rien d'autre dans l'application n'a à changer — la page monte
-déjà le calque et lui passe sa condition. Les gabarits d'URL des deux registres sont reconstruits
-sur la forme shadcn standard (`{name}`) et **n'ont pas pu être vérifiés** contre
-<https://pro.reactbits.dev/docs/installation>, injoignable d'ici : c'est le premier point à
-confronter à la doc si le `add` répond 404.
+Rien de tout cela ne ferme la porte : réinstaller un registre shadcn demande de reposer
+`components.json` et les deux entrées d'alias, ce que la présente section documente. Ce qui est
+acquis, en revanche, c'est le verdict sur React Bits — Pro pour Neural Float, Commons Clause pour
+le libre — et il tient indépendamment du réseau.
