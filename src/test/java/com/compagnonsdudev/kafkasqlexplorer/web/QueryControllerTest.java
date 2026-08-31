@@ -4,7 +4,6 @@ package com.compagnonsdudev.kafkasqlexplorer.web;
 
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.service.DdlGeneratorService;
-import com.compagnonsdudev.kafkasqlexplorer.service.FlinkJobService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.SchemaInferenceService;
@@ -54,7 +53,6 @@ class QueryControllerTest {
     private DdlGeneratorService ddlGeneratorService;
     private KafkaAdminService kafkaAdminService;
     private FlinkSqlService flinkSqlService;
-    private FlinkJobService flinkJobService;
     private MockMvc mockMvc;
 
     @BeforeEach
@@ -63,11 +61,9 @@ class QueryControllerTest {
         ddlGeneratorService = Mockito.mock(DdlGeneratorService.class);
         kafkaAdminService = Mockito.mock(KafkaAdminService.class);
         flinkSqlService = Mockito.mock(FlinkSqlService.class);
-        flinkJobService = Mockito.mock(FlinkJobService.class);
         QueryController controller = new QueryController(
             flinkSqlService,
             Mockito.mock(SqlExplorationService.class),
-            flinkJobService,
             kafkaAdminService,
             Mockito.mock(SqlQueryValidator.class),
             schemaInferenceService,
@@ -165,13 +161,17 @@ class QueryControllerTest {
 
     // ── POST /cancel ─────────────────────────────────────────────────────────────
     //
-    // Both cancel endpoints returned void and answered 200 whatever happened, so a caller could not
-    // tell a cancelled Flink job from an id with no live job behind it — and a KAFKA_DIRECT scan
-    // has no Flink job by construction, so that is the common case, not the edge one.
+    // It returned void and answered 200 whatever happened, so a caller could not tell a cancelled
+    // Flink job from an id with no live job behind it — and a KAFKA_DIRECT scan has no Flink job
+    // by construction, so that is the common case, not the edge one.
+    //
+    // There was a second route with the same contract, POST /jobs/{id}/cancel, called by the
+    // dashboard's job card; it went with that card. `theWholeJobSurfaceIsGone` below is what
+    // holds it gone.
 
     @Test
     void reportsThatAJobWasActuallyCancelled() throws Exception {
-        when(flinkJobService.cancel("q-1")).thenReturn(FlinkSqlService.CancelOutcome.CANCELLED);
+        when(flinkSqlService.cancelQuery("q-1")).thenReturn(FlinkSqlService.CancelOutcome.CANCELLED);
 
         mockMvc.perform(post("/api/query/cancel/q-1"))
             .andExpect(status().isOk())
@@ -181,22 +181,13 @@ class QueryControllerTest {
 
     @Test
     void reportsThatThereWasNoJobToCancel() throws Exception {
-        when(flinkJobService.cancel("q-2")).thenReturn(FlinkSqlService.CancelOutcome.NO_ACTIVE_JOB);
+        when(flinkSqlService.cancelQuery("q-2")).thenReturn(FlinkSqlService.CancelOutcome.NO_ACTIVE_JOB);
 
         mockMvc.perform(post("/api/query/cancel/q-2"))
             // Still 200: "nothing to cancel" is a legitimate outcome of a well-formed request.
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.cancelled").value(false))
             .andExpect(jsonPath("$.outcome").value("NO_ACTIVE_JOB"));
-    }
-
-    @Test
-    void theJobScopedCancelAnswersTheSameContract() throws Exception {
-        when(flinkJobService.cancel("q-3")).thenReturn(FlinkSqlService.CancelOutcome.CANCELLED);
-
-        mockMvc.perform(post("/api/query/jobs/q-3/cancel"))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.cancelled").value(true));
     }
 
     @Test
@@ -278,18 +269,22 @@ class QueryControllerTest {
     }
 
     /**
-     * Il n'y a plus de {@code POST /api/query/jobs}.
+     * Il n'y a plus rien sous {@code /api/query/jobs} — ni la soumission, ni les trois lectures.
      *
-     * <p>Il soumettait un {@code INSERT INTO} comme job Flink continu, pour le mode « Flink job »
-     * du SQL editor. Ce mode ne fonctionnait pas et a été retiré ; l'endpoint est parti avec,
-     * plutôt que de rester un second chemin non authentifié vers le moteur de requêtes que plus
-     * aucun appelant n'exerce. Trois cas couvraient ici la façon dont ses refus se nommaient : ils
-     * n'ont plus d'objet, et ce qui les remplace est l'absence elle-même.
+     * <p>{@code POST /jobs} soumettait un {@code INSERT INTO} comme job Flink continu, pour le mode
+     * « Flink job » du SQL editor. Ce mode ne fonctionnait pas et a été retiré ; l'endpoint est
+     * parti avec, plutôt que de rester un second chemin non authentifié vers le moteur de requêtes
+     * que plus aucun appelant n'exerce.
      *
-     * <p>Le statut attendu est <b>405 et non 404</b>, et c'est mesuré plutôt que supposé :
-     * {@code GET /jobs} existe toujours (le registre est alimenté par les lectures synchrones),
-     * donc le chemin résout et c'est la méthode qui ne passe pas. Restaurer le {@code @PostMapping}
-     * ferait passer l'appel et échouer ce cas, ce qui est tout ce qu'on lui demande — même argument
+     * <p>Les trois lectures lui ont survécu six mois parce qu'elles servaient le tableau « Flink
+     * SQL Jobs » du tableau de bord. Sans soumission, ce tableau ne listait plus des jobs mais les
+     * lectures synchrones déjà terminées que {@code FlinkJobStore} enregistrait au passage, une par
+     * rafraîchissement de métrique ; il a été retiré, et ces routes avec.
+     *
+     * <p>Le statut attendu est <b>404 et non 405</b>, et le changement est le fait : tant que
+     * {@code GET /jobs} existait, le chemin résolvait et c'était la méthode qui ne passait pas.
+     * Plus rien n'est servi là, donc plus rien ne résout. Restaurer l'une quelconque des quatre
+     * routes ferait échouer un de ces cas, ce qui est tout ce qu'on leur demande — même argument
      * que {@code MetricControllerTest.theUncalledSqlPreviewEndpointIsGone}.
      */
     @Test
@@ -297,30 +292,34 @@ class QueryControllerTest {
         mockMvc.perform(post("/api/query/jobs")
                 .contentType("application/json")
                 .content("{\"sql\":\"INSERT INTO sink SELECT id FROM orders\"}"))
-            .andExpect(status().isMethodNotAllowed());
+            .andExpect(status().isNotFound());
     }
 
     /**
-     * Et ce n'est pas non plus une question de charge utile : quel que soit le corps, la méthode
-     * n'est pas servie sur ce chemin. Les deux cas qui vivaient ici décrivaient la *façon* dont ce
-     * point d'entrée nommait ses refus ; ils n'ont plus d'objet, et ce qui les remplace est
-     * l'absence elle-même — vérifiée sur les deux corps qu'ils envoyaient.
+     * Et ce n'est pas non plus une question de charge utile : rien n'est servi sur ce chemin. Les
+     * deux cas qui vivaient ici décrivaient la *façon* dont ce point d'entrée nommait ses refus ;
+     * ils n'ont plus d'objet, et ce qui les remplace est l'absence elle-même — vérifiée sur les
+     * deux corps qu'ils envoyaient.
      */
     @Test
     void andNotForAStatementItWouldHaveRefusedEither() throws Exception {
         mockMvc.perform(post("/api/query/jobs")
                 .contentType("application/json")
                 .content("{\"sql\":\"SELECT 1\"}"))
-            .andExpect(status().isMethodNotAllowed());
+            .andExpect(status().isNotFound());
     }
 
-    /** Le registre que les trois lectures servent reste servi : une lecture synchrone l'alimente. */
+    /**
+     * Les trois lectures aussi. {@code POST /cancel/{queryId}} reste — c'est le bouton Stop de
+     * l'éditeur, et il lit le registre en mémoire — mais son alias sous {@code /jobs} est parti
+     * avec la carte qui l'appelait : deux chemins vers un même comportement est la forme qui
+     * dérive.
+     */
     @Test
-    void theJobRegistryIsStillReadable() throws Exception {
-        when(flinkJobService.listJobs()).thenReturn(java.util.List.of());
-
-        mockMvc.perform(get("/api/query/jobs"))
-            .andExpect(status().isOk());
+    void theWholeJobSurfaceIsGone() throws Exception {
+        mockMvc.perform(get("/api/query/jobs")).andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/query/jobs/q-1")).andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/query/jobs/q-1/cancel")).andExpect(status().isNotFound());
     }
 
     /**
@@ -334,8 +333,7 @@ class QueryControllerTest {
      * {@code TableController}. Trois cas décrivaient ici la façon dont il refusait ; ce qui les
      * remplace est l'absence elle-même.
      *
-     * <p>404 et non 405 : aucune autre méthode n'est servie sur ce chemin, contrairement à
-     * {@code /jobs} dont le GET existe toujours.
+     * <p>404 et non 405 : aucune méthode n'est servie sur ce chemin.
      */
     @Test
     void thereIsNoSinkDdlEndpoint() throws Exception {

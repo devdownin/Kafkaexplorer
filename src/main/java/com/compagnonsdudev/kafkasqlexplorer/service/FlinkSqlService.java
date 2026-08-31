@@ -3,7 +3,6 @@
 package com.compagnonsdudev.kafkasqlexplorer.service;
 
 import com.compagnonsdudev.kafkasqlexplorer.domain.ChangelogInfo;
-import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkManagedJobDetails;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkJobSummary;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
@@ -56,7 +55,6 @@ public class FlinkSqlService {
     private final KafkaAdminService kafkaAdminService;
     private final SchemaInferenceService schemaInferenceService;
     private final DdlGeneratorService ddlGeneratorService;
-    private final FlinkJobStore flinkJobStore;
     private final FlinkTableStore flinkTableStore;
 
     /**
@@ -73,13 +71,15 @@ public class FlinkSqlService {
     /**
      * The jobs this process currently holds a live {@link JobClient} for.
      *
-     * <p>It was called {@code activeJobs}, and that name collided with a different notion of
-     * "active" one method away: {@link #getActiveJobs()} answers from the <em>store</em>, filtered
-     * on {@link FlinkJobStore#isTerminal}, while this map is what the runtime is holding right now.
-     * Two meanings under one word, on the two methods a caller has to choose between.
+     * <p><b>It is the only registry left, and that is the point.</b> A {@code FlinkJobStore}
+     * used to sit beside it, persisting a record per statement to {@code data/} so a dashboard
+     * table could list what had run. That table is gone — nothing submits a job over HTTP any
+     * more — and the store went with it rather than staying a file rewritten on every planner
+     * answer for no reader. What the map answers is a live question, in memory: which
+     * {@code JobClient}s does this process hold right now.
      *
      * <p><b>Two populations, two lifetimes, and knowing which is which is the point.</b> A job
-     * submitted in Flink Job mode stays here for as long as it runs, which may be days — that is
+     * from {@link #submitJob} stays here for as long as it runs, which may be days — that is
      * what {@code POST /api/config}'s 409 guard, the lineage graph and the KPI suggestions are
      * asking about. A synchronous read is here only for the duration of its HTTP request, because
      * {@code POST /api/query/cancel/{queryId}} has to find it while the query runs; it is handed
@@ -95,10 +95,11 @@ public class FlinkSqlService {
     /**
      * The status of a job whose status could not be read.
      *
-     * <p>Deliberately not {@code UNKNOWN}: {@link FlinkJobStore#isTerminal} counts that one as the
-     * job being over — it is what a record recovered from the file carries, and what a job whose
-     * MiniCluster has been shut down under it carries. A status poll that timed out is neither.
-     * Reusing UNKNOWN for it meant a single slow answer ended a running job on paper.
+     * <p>Deliberately not {@code UNKNOWN}, which is what a job whose MiniCluster has been shut
+     * down under it carries and which the sweep therefore reads as the job being over. A status
+     * poll that timed out is neither: reusing UNKNOWN for it meant a single slow answer ended a
+     * running job on paper, dropping it out of the map that {@code POST /api/query/cancel} and
+     * the 409 guard both read.
      */
     static final String STATUS_UNAVAILABLE = "UNAVAILABLE";
 
@@ -265,8 +266,7 @@ public class FlinkSqlService {
     public FlinkSqlService(TableEnvironment tableEnv, FlinkRuntimeCoordinator runtimeCoordinator,
                            ExplorerConfig explorerConfig, SqlQueryValidator sqlQueryValidator,
                            KafkaAdminService kafkaAdminService, SchemaInferenceService schemaInferenceService,
-                           DdlGeneratorService ddlGeneratorService, FlinkJobStore flinkJobStore,
-                           FlinkTableStore flinkTableStore) {
+                           DdlGeneratorService ddlGeneratorService, FlinkTableStore flinkTableStore) {
         this.tableEnv = tableEnv;
         this.runtimeCoordinator = runtimeCoordinator;
         this.explorerConfig = explorerConfig;
@@ -274,7 +274,6 @@ public class FlinkSqlService {
         this.kafkaAdminService = kafkaAdminService;
         this.schemaInferenceService = schemaInferenceService;
         this.ddlGeneratorService = ddlGeneratorService;
-        this.flinkJobStore = flinkJobStore;
         this.flinkTableStore = flinkTableStore;
         // Register our custom XML extraction function globally in the Flink environment.
         runtimeCoordinator.runMutation("register-xml-extract-udf", () ->
@@ -728,7 +727,18 @@ public class FlinkSqlService {
         return upper.split("\\s+", 2)[0];
     }
 
-    private FlinkJobSummary buildJobSummary(JobInfo info) {
+    /**
+     * Reads a held job's status from the runtime and words it.
+     *
+     * <p>Package-private rather than private, and that is a test decision worth stating: it is
+     * where {@code CANCELLING} and {@link #STATUS_UNAVAILABLE} are decided, and until the
+     * dashboard's job table was removed those two were reachable from a test through
+     * {@code getActiveJobs()}. The only public caller left is {@link #submitJob}, which no HTTP
+     * path reaches, so asserting the classification would otherwise mean asserting it through the
+     * sweep — which can only say "kept" or "dropped" and cannot tell a job that timed out from one
+     * that is running.
+     */
+    FlinkJobSummary buildJobSummary(JobInfo info) {
         String status = "UNKNOWN";
         try {
             JobStatus flinkStatus = info.client().getJobStatus().get(150, TimeUnit.MILLISECONDS);
@@ -782,36 +792,22 @@ public class FlinkSqlService {
         );
     }
 
-    private void persistJobSnapshot(JobInfo info, FlinkJobSummary summary, String statusDetail, String errorMessage) {
-        FlinkManagedJobDetails updated = flinkJobStore.update(
-            info.queryId(),
-            summary.status(),
-            statusDetail,
-            errorMessage,
-            summary.cancelRequested(),
-            info.cancelRequestedAt(),
-            summary.endedAt(),
-            info.flinkJobId()
-        );
-        if (updated == null) {
-            flinkJobStore.create(
-                info.queryId(),
-                info.flinkJobId(),
-                info.statementType(),
-                info.executionMode(),
-                summary.status(),
-                statusDetail,
-                info.sql(),
-                info.startedAt(),
-                errorMessage
-            );
-        }
-    }
-
-    private void syncPersistedJobs() {
-        // buildJobSummary blocks up to 150ms on the Flink status call per job, so a serial sweep of
-        // N jobs would block up to N×150ms. Poll the statuses in parallel; keep persistence serial
-        // (single writer to the job store) and remove jobs that have reached a terminal state.
+    /**
+     * Drops from {@link #heldJobs} every job the runtime says has ended.
+     *
+     * <p>It was {@code syncPersistedJobs}, and the name described the half that has been removed:
+     * it wrote a snapshot of each held job to {@code FlinkJobStore} on the way past, and the
+     * sweep was the side effect. With no store the sweep is the whole method, and it is the part
+     * that was load-bearing — a finished query stays in the map until something looks, and three
+     * callers act on what the map says.
+     *
+     * <p>{@link #buildJobSummary} blocks up to 150 ms on the Flink status call per job, so a
+     * serial pass over N jobs would block up to N×150 ms; the statuses are polled in parallel and
+     * only the removal is done in order. A job whose status could not be read carries
+     * {@link #STATUS_UNAVAILABLE} and no {@code endedAt}, so it stays — "we could not ask" is not
+     * an answer, and treating it as one is how a running job used to be dropped here.
+     */
+    private void reapEndedJobs() {
         List<Map.Entry<String, JobInfo>> entries = new ArrayList<>(heldJobs.entrySet());
         if (entries.isEmpty()) return;
 
@@ -823,11 +819,7 @@ public class FlinkSqlService {
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
         for (Map.Entry<String, JobInfo> e : entries) {
-            JobInfo info = e.getValue();
-            FlinkJobSummary summary = summaries.get(e.getKey());
-            String statusDetail = summary.cancelRequested() ? "Cancellation requested by user" : null;
-            persistJobSnapshot(info, summary, statusDetail, null);
-            if (summary.endedAt() != null) {
+            if (summaries.get(e.getKey()).endedAt() != null) {
                 heldJobs.remove(e.getKey());
             }
         }
@@ -889,17 +881,6 @@ public class FlinkSqlService {
         String statementType = extractStatementType(strippedSql);
 
         if (!isJobModeStatement(statementType)) {
-            flinkJobStore.create(
-                queryId,
-                null,
-                statementType,
-                "ASYNC_JOB",
-                "FAILED",
-                "Rejected before execution",
-                strippedSql,
-                startedAt,
-                JOB_MODE_REFUSAL
-            );
             throw new IllegalArgumentException(JOB_MODE_REFUSAL);
         }
 
@@ -941,42 +922,18 @@ public class FlinkSqlService {
 
             JobInfo info = new JobInfo(queryId, strippedSql, statementType, "ASYNC_JOB", client, startedAt);
             heldJobs.put(queryId, info);
-            FlinkJobSummary summary = buildJobSummary(info);
-            flinkJobStore.create(
-                queryId,
-                info.flinkJobId(),
-                statementType,
-                info.executionMode(),
-                summary.status(),
-                "Submitted via Flink Job mode",
-                strippedSql,
-                startedAt,
-                null
-            );
-            return summary;
+            return buildJobSummary(info);
         } catch (RuntimeException e) {
-            RuntimeException reported = explainMultiStatementRefusal(e);
-            // explain(), et non getMessage() : c'est nul sur une NullPointerException, et ce champ
-            // est la seule trace de la raison — `FlinkJobCard` l'affiche sous la carte rouge, et
-            // rien d'autre ne la garde. Flink emballe par ailleurs le texte utile (la ligne et la
-            // colonne de Calcite, la clé d'option refusée par le connecteur) dans une exception
-            // externe générique, que explain() aplatit.
-            flinkJobStore.create(
-                queryId,
-                null,
-                statementType,
-                "ASYNC_JOB",
-                "FAILED",
-                "Submission failed before a Flink JobClient was available",
-                strippedSql,
-                startedAt,
-                SqlErrorClassifier.explain(reported)
-            );
-            throw reported;
+            // explainMultiStatementRefusal re-words Flink's "only single statement supported" to
+            // name the two ways out. The failure now travels only as this exception: the three
+            // `FlinkJobStore.create` calls that used to file it — one here, one on the refusal
+            // above, one on success — wrote to a file whose only reader was the dashboard's job
+            // table, and that table is gone.
+            throw explainMultiStatementRefusal(e);
         }
     }
 
-    /** Ce que le mode Job n'exécute pas, dit une fois — le magasin et l'exception le partagent. */
+    /** Ce que {@link #submitJob} n'exécute pas. */
     static final String JOB_MODE_REFUSAL =
         "Only INSERT and STATEMENT SET statements are allowed in Flink Job mode.";
 
@@ -1007,7 +964,7 @@ public class FlinkSqlService {
             "This deployment already holds %d streaming job(s), which is the maximum "
                 + "(explorer.max-concurrent-jobs = %d). Each one runs its own embedded Flink "
                 + "cluster — about 80 threads — inside the process that serves this UI. Stop one "
-                + "from the dashboard, or raise the setting.", held, max));
+                + "with POST /api/query/cancel/{queryId}, or raise the setting.", held, max));
     }
 
     /**
@@ -1693,21 +1650,6 @@ public class FlinkSqlService {
                 JobInfo info = new JobInfo(queryId, finalSql, statementType, "SYNC_READ", client, System.currentTimeMillis());
                 heldJobs.put(queryId, info);
                 registered.set(info);
-                FlinkJobSummary summary = buildJobSummary(info);
-                // create() writes the record; the update that used to follow it repeated the same
-                // status and the same detail, so it bought a second full rewrite of the store file
-                // and nothing else.
-                flinkJobStore.create(
-                    queryId,
-                    info.flinkJobId(),
-                    statementType,
-                    info.executionMode(),
-                    summary.status(),
-                    "Executed through synchronous exploration mode",
-                    finalSql,
-                    info.startedAt(),
-                    null
-                );
             });
 
             final TableResult tableResult = result;
@@ -1853,9 +1795,9 @@ public class FlinkSqlService {
      *
      * <p>The cancel endpoint needs the entry <em>while</em> the query runs — that is the whole
      * point of {@code POST /api/query/cancel/{queryId}} — and nothing needs it afterwards: the
-     * fetcher closes the iterator, which takes the Flink job with it. Whatever the runtime still
-     * says about it is recorded rather than invented, so a job whose MiniCluster is already gone
-     * is filed as UNKNOWN exactly as the status sweep would have filed it.
+     * fetcher closes the iterator, which takes the Flink job with it. It ran a status poll on the
+     * way out to file the outcome, which cost up to 150 ms on the request's own thread; with the
+     * job store gone there is nothing to file it to, so the entry is simply handed back.
      */
     private void releaseSyncJob(JobInfo info) {
         if (info == null) return;
@@ -1863,14 +1805,6 @@ public class FlinkSqlService {
             info.markEnded(System.currentTimeMillis());
         }
         heldJobs.remove(info.queryId());
-        try {
-            persistJobSnapshot(info, buildJobSummary(info), "Synchronous read finished", null);
-        } catch (RuntimeException e) {
-            // Bookkeeping must never replace the answer the caller is holding — this runs from a
-            // finally, including the one on the failure path.
-            log.debug("[FlinkSQL] queryId={} could not be filed after its read: {}",
-                info.queryId(), SqlErrorClassifier.explain(e));
-        }
     }
 
     /**
@@ -2628,7 +2562,6 @@ public class FlinkSqlService {
         JobInfo info = heldJobs.get(queryId);
         if (info != null) {
             info.markCancelRequested();
-            persistJobSnapshot(info, buildJobSummary(info), "Cancellation requested by user", null);
             if (requestCancel(info)) {
                 return CancelOutcome.CANCELLED;
             }
@@ -2638,80 +2571,36 @@ public class FlinkSqlService {
             // instead, on the most ordinary race there is: pressing Stop as the query completes.
             info.markEnded(System.currentTimeMillis());
             heldJobs.remove(queryId);
-            persistJobSnapshot(info, buildJobSummary(info),
-                "Cancellation requested, but the Flink job had already finished", null);
             return CancelOutcome.NO_ACTIVE_JOB;
         }
-        // A job that already ended keeps the status it ended with. Writing UNKNOWN here — which is
-        // what this did — erased how the job finished, in the store and in the history the details
-        // endpoint serves, on the most ordinary gesture there is: pressing Kill on a dashboard card
-        // whose job completed between two five-second polls. The attempt is still recorded, as a
-        // history entry under the status that was actually observed; only the verdict is left
-        // alone. `null` status means "keep what is there" to the store.
-        boolean alreadyEnded = flinkJobStore.findById(queryId)
-            .map(job -> FlinkJobStore.isTerminal(job.status()))
-            .orElse(false);
-        flinkJobStore.update(
-            queryId,
-            alreadyEnded ? null : "UNKNOWN",
-            alreadyEnded
-                ? "Cancellation requested after the job had already ended"
-                : "Cancellation requested but no live Flink JobClient was available",
-            null,
-            true,
-            System.currentTimeMillis(),
-            null,
-            null
-        );
+        // Nothing under that id: it finished and was swept, it was a KAFKA_DIRECT scan that never
+        // had a Flink job, or the id is unknown. All three used to write a record into
+        // `FlinkJobStore` on the way out — care was taken there not to overwrite how a job had
+        // actually ended — but the only reader of those records was the dashboard's job table,
+        // which is gone. The outcome the caller gets is unchanged; only the filing is.
         return CancelOutcome.NO_ACTIVE_JOB;
     }
 
-    public CancelOutcome cancelJob(String queryId) {
-        return cancelQuery(queryId);
-    }
-
-    public List<FlinkJobSummary> getActiveJobs() {
-        syncPersistedJobs();
-        return flinkJobStore.listActive().stream()
-            .map(FlinkManagedJobDetails::toSummary)
-            .toList();
-    }
-
-    public List<FlinkJobSummary> listRecentJobs() {
-        syncPersistedJobs();
-        return flinkJobStore.listAll().stream()
-            .map(FlinkManagedJobDetails::toSummary)
-            .toList();
-    }
-
-    public Optional<FlinkManagedJobDetails> getJob(String queryId) {
-        syncPersistedJobs();
-        return flinkJobStore.findById(queryId);
-    }
-
     /**
-     * The live registry, reconciled — <em>not</em> the store's idea of what is active.
+     * The live registry, swept.
      *
-     * <p>Named {@code getActiveJobsDetails} while {@link #getActiveJobs()} sat beside it answering
-     * a different question from a different source: this one is the {@code JobClient}s the runtime
-     * holds, that one is the job records the store does not count as terminal. A suffix is not a
-     * distinction, and the three callers here act on the answer.
+     * <p>It used to skip the sweep, and the asymmetry was not cosmetic: a finished query stays in
+     * {@link #heldJobs} until <em>something</em> looks, and the three callers here are the ones
+     * that act on the answer — {@code POST /api/config} counts them to refuse a cluster repoint
+     * with 409, the lineage graph draws a node per job, and the KPI suggestions derive a pipeline
+     * edge from each. A query the user ran and finished would therefore go on refusing their next
+     * config save until some other screen happened to sweep. It stayed invisible because the
+     * dashboard polled a sibling method every 30 s, so a browser being open hid it — which is
+     * exactly why it surfaced the day a probe ran with no browser open at all. That sibling has
+     * since been removed with the dashboard's job table, which makes this the <em>only</em> path
+     * that sweeps: skipping it here would bring the defect straight back.
+     *
+     * <p>Affordable: {@link #reapEndedJobs} returns immediately on an empty map, and none of these
+     * callers is on a timer — each is a user gesture, where the ≤150 ms status poll per live job
+     * is not worth trading correctness for.
      */
     public Map<String, JobInfo> getHeldJobs() {
-        // Reconcile first, exactly as getActiveJobs() does. This method used to skip it, and the
-        // asymmetry was not cosmetic: a finished query stays in `heldJobs` until *something*
-        // sweeps it, and the three callers here are the ones that act on the answer —
-        // `POST /api/config` counts them to refuse a cluster repoint with 409, the lineage graph
-        // draws a node per job, and the KPI suggestions derive a pipeline edge from each. A query
-        // the user ran and finished would therefore go on refusing their next config save until
-        // some *other* screen happened to call getActiveJobs(). It stayed invisible because the
-        // dashboard polls that sibling every 30 s, so a browser being open hid it — which is
-        // exactly why it surfaced the day a probe ran with no browser open at all.
-        //
-        // Affordable: syncPersistedJobs() returns immediately on an empty map, and none of these
-        // callers is on a timer — each is a user gesture, where the ≤150 ms status poll per live
-        // job is not worth trading correctness for.
-        syncPersistedJobs();
+        reapEndedJobs();
         // Defensive snapshot — callers only read; never hand out the live internal map.
         return Map.copyOf(heldJobs);
     }

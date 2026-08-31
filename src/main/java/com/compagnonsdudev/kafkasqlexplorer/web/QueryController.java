@@ -8,11 +8,8 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.QueryCancelResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryInitResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
-import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkManagedJobDetails;
-import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkJobSummary;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.service.DdlGeneratorService;
-import com.compagnonsdudev.kafkasqlexplorer.service.FlinkJobService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.SchemaInferenceService;
@@ -35,19 +32,17 @@ public class QueryController {
 
     private final FlinkSqlService flinkSqlService;
     private final SqlExplorationService sqlExplorationService;
-    private final FlinkJobService flinkJobService;
     private final KafkaAdminService kafkaAdminService;
     private final SqlQueryValidator sqlQueryValidator;
     private final SchemaInferenceService schemaInferenceService;
     private final DdlGeneratorService ddlGeneratorService;
 
     public QueryController(FlinkSqlService flinkSqlService, SqlExplorationService sqlExplorationService,
-                           FlinkJobService flinkJobService, KafkaAdminService kafkaAdminService,
+                           KafkaAdminService kafkaAdminService,
                            SqlQueryValidator sqlQueryValidator, SchemaInferenceService schemaInferenceService,
                            DdlGeneratorService ddlGeneratorService) {
         this.flinkSqlService = flinkSqlService;
         this.sqlExplorationService = sqlExplorationService;
-        this.flinkJobService = flinkJobService;
         this.kafkaAdminService = kafkaAdminService;
         this.sqlQueryValidator = sqlQueryValidator;
         this.schemaInferenceService = schemaInferenceService;
@@ -111,28 +106,27 @@ public class QueryController {
     }
 
     /*
-     * Il n'y a pas de `POST /jobs`.
+     * Il n'y a plus rien sous `/jobs`.
      *
-     * <p>Il existait : il soumettait un `INSERT INTO` comme job Flink continu, pour le mode « Flink
-     * job » du SQL editor. Ce mode ne fonctionnait pas et a été retiré de l'éditeur ; l'endpoint
-     * est parti avec, plutôt que de rester un second chemin non authentifié vers le moteur de
-     * requêtes que plus aucun appelant n'exerce — la forme que ce paquet a déjà supprimée deux fois
-     * (`POST /api/metrics/preview`, `TableController`).
+     * <p>Il y a eu quatre routes. `POST /jobs` soumettait un `INSERT INTO` comme job Flink continu,
+     * pour le mode « Flink job » du SQL editor ; ce mode ne fonctionnait pas et a été retiré de
+     * l'éditeur, l'endpoint partant avec plutôt que de rester un second chemin non authentifié vers
+     * le moteur de requêtes que plus aucun appelant n'exerce — la forme que ce paquet a déjà
+     * supprimée deux fois (`POST /api/metrics/preview`, `TableController`).
      *
-     * <p>Les trois lectures ci-dessous restent : le registre qu'elles servent est alimenté par les
-     * lectures synchrones, qui y déposent leur `JobClient` le temps de leur requête HTTP.
+     * <p>Les trois lectures qui lui ont survécu — `GET /jobs`, `GET /jobs/{queryId}` et
+     * `POST /jobs/{queryId}/cancel` — servaient le tableau « Flink SQL Jobs » du tableau de bord, et
+     * lui seul. Sans soumission, ce tableau ne listait plus des jobs : il listait les lectures
+     * synchrones déjà terminées que `FlinkJobStore` avait enregistrées au passage, une par
+     * rafraîchissement de métrique. Le tableau est parti, ces routes avec, et le magasin qui les
+     * alimentait aussi.
+     *
+     * <p>Ce qui reste est `POST /cancel/{queryId}` ci-dessous, que le bouton Stop de l'éditeur
+     * appelle : il lit le registre en mémoire, alimenté par les lectures synchrones qui y déposent
+     * leur `JobClient` le temps de leur requête HTTP. `POST /jobs/{queryId}/cancel` en était un
+     * alias, appelé par la carte du tableau de bord ; deux chemins vers un même comportement est
+     * la forme qui dérive, et il n'a plus d'appelant.
      */
-
-    @GetMapping(value = "/jobs", produces = "application/json")
-    public List<FlinkJobSummary> listJobs() {
-        return flinkJobService.listJobs();
-    }
-
-    @GetMapping(value = "/jobs/{queryId}", produces = "application/json")
-    public FlinkManagedJobDetails getJob(@PathVariable("queryId") String queryId) {
-        return flinkJobService.getJob(queryId)
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Job not found: " + queryId));
-    }
 
     @GetMapping(value = "/schema/{tableName}", produces = "application/json")
     public Map<String, String> getSchema(@PathVariable("tableName") String tableName) {
@@ -180,7 +174,7 @@ public class QueryController {
     /**
      * Cancels a running query, and <em>says what that achieved</em>.
      *
-     * <p>Both endpoints used to return {@code void} and answer 200 whatever happened, so the caller
+     * <p>It used to return {@code void} and answer 200 whatever happened, so the caller
      * could not tell a cancelled Flink job from an id with no live job behind it. That is a real
      * distinction rather than a detail: a {@code KAFKA_DIRECT} scan has no Flink job by
      * construction, so a UI that reports "cancelled" on the strength of a 200 promises more than
@@ -192,12 +186,7 @@ public class QueryController {
      */
     @PostMapping("/cancel/{queryId}")
     public QueryCancelResponse cancel(@PathVariable("queryId") String queryId) {
-        return QueryCancelResponse.of(flinkJobService.cancel(queryId));
-    }
-
-    @PostMapping("/jobs/{queryId}/cancel")
-    public QueryCancelResponse cancelJob(@PathVariable("queryId") String queryId) {
-        return cancel(queryId);
+        return QueryCancelResponse.of(flinkSqlService.cancelQuery(queryId));
     }
 
     @GetMapping("/ddl-preview")

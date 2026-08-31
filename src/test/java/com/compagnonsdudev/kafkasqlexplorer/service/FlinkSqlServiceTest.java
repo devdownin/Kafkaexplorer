@@ -65,7 +65,6 @@ class FlinkSqlServiceTest {
         ExplorerConfig config = new ExplorerConfig();
         config.setDefaultMaxRows(50);
         config.setDefaultQueryTimeoutMs(10_000);
-        config.setFlinkJobStorePath(Files.createTempFile("flink-jobs-test-", ".json").toString());
 
         kafkaAdminService = mock(KafkaAdminService.class);
         schemaInferenceService = mock(SchemaInferenceService.class);
@@ -73,13 +72,12 @@ class FlinkSqlServiceTest {
 
         FlinkRuntimeCoordinator runtimeCoordinator = new FlinkRuntimeCoordinator(tableEnv);
         SqlQueryValidator validator = new SqlQueryValidator(config, tableEnv, runtimeCoordinator);
-        FlinkJobStore flinkJobStore = new FlinkJobStore(config);
         // A temporary path, so a CREATE TABLE run by a test does not write into the checkout's
         // data/ directory — and so two runs of the suite cannot see each other's tables.
         config.setFlinkTableStorePath(
             Files.createTempFile("flink-tables-", ".json").toString());
         service = new FlinkSqlService(tableEnv, runtimeCoordinator, config, validator,
-                kafkaAdminService, schemaInferenceService, ddlGeneratorService, flinkJobStore,
+                kafkaAdminService, schemaInferenceService, ddlGeneratorService,
                 new FlinkTableStore(config));
 
         // ── In-memory test data (registered once, reused by all tests) ───────

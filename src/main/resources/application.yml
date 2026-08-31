@@ -187,8 +187,6 @@ explorer:
   # went with Flink Job mode — so this cannot bind on a running deployment today. Kept
   # because submitJob is kept as the tested home of what an INSERT means here.
   max-concurrent-jobs: 10
-  flink-job-store-path: data/flink-jobs.json
-  flink-job-retention-hours: 24
   # Keep what the Settings page is used to change — the bootstrap address, the connection mode and
   # its SSL/Confluent credentials, the whole LLM configuration — so that stopping the application
   # does not discard it. POST /api/config used to mutate two singletons and write nothing: the one

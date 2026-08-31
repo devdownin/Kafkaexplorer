@@ -15,7 +15,17 @@ button. It had never been reviewed, and `FlinkJobStore` had no test of its own.
 This document is that review, in the shape the other scope documents here take: every item is
 derived from the code, names where it comes from, and is ranked.
 
-> **Status.** **F1 through F8 have shipped**, in one change, with `FlinkJobStoreTest` (new) and
+> **Status — the subsystem this reviews no longer exists.** `FlinkJobStore`, `FlinkJobService`,
+> the four `QueryController` endpoints and the Dashboard's "Flink SQL Jobs" panel have all been
+> removed. Flink Job mode — the continuous `INSERT INTO` submitted from the SQL editor — was the
+> reason they existed; once it went, the panel listed not jobs but the synchronous reads the store
+> recorded on the way past, all finished, and the store was a whole-list rewrite per planner answer
+> for a reader that no longer showed anything. What survives is `heldJobs` and its accessor, which
+> is what `POST /api/query/cancel/{queryId}`, the 409 repoint guard, `LineageService` and
+> `MetricSuggestionService` actually read. The document is kept as the record of what was measured
+> — the measured write costs below are the reason not to reintroduce the file — not as a plan.
+>
+> **Status of the items themselves.** **F1 through F8 had shipped**, in one change, with `FlinkJobStoreTest` (new) and
 > three cases added to `FlinkSqlServiceJobRegistryTest`. What each section below describes is the
 > state that work was done *from*; each ends with what replaced it. **F9 and F11 through F13 are
 > recorded and not implemented** — the reason is given under each, and in two cases the reason is

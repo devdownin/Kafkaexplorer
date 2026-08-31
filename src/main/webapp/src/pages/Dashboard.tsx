@@ -4,17 +4,15 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { useToast } from '../components/Toast';
 import ErrorBanner from '../components/ErrorBanner';
 import {
-  PageHeader, Stat, Card, Badge, Button, EmptyState,
+  PageHeader, Stat, Badge, Button, EmptyState,
   Table, TableHead, TableBody, TableRow, Th, Td,
-  Input, Select, useConfirm, StatGridSkeleton, TableSkeleton,
+  Input, Select, StatGridSkeleton, TableSkeleton,
   Switch,
 } from '../components/ui';
 import Sparkline from '../components/dashboard/Sparkline';
-import FlinkJobCard from '../components/dashboard/FlinkJobCard';
-import type { FlinkJobSummary, TopicActivityResponse } from '../api/types';
+import type { TopicActivityResponse } from '../api/types';
 import { describeApiError } from './queryError';
 import {
   ACTIVITY_WINDOWS, ACTIVITY_OFF, describeActivityScope, describeScale, readActivityChoice,
@@ -46,12 +44,6 @@ interface DashboardData {
   topicSizes: Record<string, number>;
   totalMessages: number;
   tables: string[];
-  /*
-   * Le type partagé, pas une redéclaration : cette forme était recopiée à la main ici, ce qui est
-   * précisément ce que `check-api-types.py` existe pour supprimer — une annotation écrite au point
-   * d'appel, que TypeScript croit sur parole et que le serveur peut démentir en silence.
-   */
-  jobs: FlinkJobSummary[];
   health: boolean;
   topicLastMessages: Record<string, number | null>;
 }
@@ -98,8 +90,6 @@ function formatLastMessage(ts: number | null | undefined, now: number): string {
 }
 
 const Dashboard: React.FC = () => {
-  const { toast } = useToast();
-  const confirm = useConfirm();
   const navigate = useNavigate();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -109,7 +99,6 @@ const Dashboard: React.FC = () => {
   const [pageSize, setPageSize] = useState(25);
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
-  const [killingJob, setKillingJob] = useState<string | null>(null);
   const [hideEmpty, setHideEmpty] = useState(false);
   const [hideDlt, setHideDlt] = useState(false);
   /** Marquer les topics de reprise — un signalement, pas un filtre : rien n'est retiré. */
@@ -400,7 +389,7 @@ const Dashboard: React.FC = () => {
 
   if (loading) return (
     <div className="p-4 md:p-6 space-y-6">
-      <PageHeader title="Dashboard" description="Live overview of your Kafka cluster — topics, throughput and running Flink jobs." />
+      <PageHeader title="Dashboard" description="Live overview of your Kafka cluster — topics, throughput and registered Flink tables." />
       <StatGridSkeleton count={4} />
       <div className="skeleton-shimmer h-5 w-28" />
       <TableSkeleton rows={8} columns={5} />
@@ -412,27 +401,6 @@ const Dashboard: React.FC = () => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(key); setSortDir('asc'); }
     setPage(0);
-  };
-
-  const killJob = async (jobId: string) => {
-    const ok = await confirm({
-      title: 'Cancel this Flink job?',
-      description: 'The running SQL statement will be cancelled. This cannot be undone.',
-      confirmLabel: 'Kill job',
-      tone: 'danger',
-      icon: 'cancel',
-    });
-    if (!ok) return;
-    setKillingJob(jobId);
-    try {
-      await axios.post(`/api/query/jobs/${jobId}/cancel`);
-      toast('Job cancelled', 'success');
-      void fetchData({ reportErrors: false });
-    } catch {
-      toast('Failed to cancel job', 'error');
-    } finally {
-      setKillingJob(null);
-    }
   };
 
   const handleSearch = (term: string) => {
@@ -453,8 +421,6 @@ const Dashboard: React.FC = () => {
   const topicTrend = topicDiff > 0 ? `+${topicDiff} since last visit`
                    : topicDiff < 0 ? `${topicDiff} since last visit`
                    : 'No change since last visit';
-
-  const activeJobCount = data.jobs.length;
 
   /** Combien des lignes affichées portent une vraie mesure — le reste est dit, pas dessiné. */
   const measuredActivityCount = activity
@@ -484,7 +450,7 @@ const Dashboard: React.FC = () => {
     <div className="p-4 md:p-6 space-y-6">
       <PageHeader
         title="Dashboard"
-        description="Live overview of your Kafka cluster — topics, throughput and running Flink jobs."
+        description="Live overview of your Kafka cluster — topics, throughput and registered Flink tables."
         actions={
           <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
             {/*
@@ -541,13 +507,21 @@ const Dashboard: React.FC = () => {
           value={data.tables.length.toLocaleString()}
           hint={data.tables.length > 0 ? `${data.tables.length} registered` : 'None registered'}
         />
+        {/*
+          * Cette tuile comptait les jobs Flink, avec l'état du cluster pour seule couleur et pour
+          * seul sous-titre. Le compte est parti avec le tableau « Flink SQL Jobs » — plus rien ne
+          * soumet de job, et ce qu'il affichait en pratique était le nombre de lectures
+          * synchrones déjà terminées que le magasin avait enregistrées au passage. Ce qui reste
+          * est ce que la tuile disait vraiment : le cluster répond, ou non.
+          */}
         <Stat
-          label="Active Jobs" icon="sync" tone={data.health ? 'success' : 'error'}
-          value={activeJobCount.toLocaleString()}
+          label="Cluster Health" icon={data.health ? 'check_circle' : 'error'}
+          tone={data.health ? 'success' : 'error'}
+          value={data.health ? 'Healthy' : 'Degraded'}
           hint={
             <span className={`inline-flex items-center gap-1.5 ${data.health ? 'text-success' : 'text-error'}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${data.health ? 'bg-success' : 'bg-error'}`} />
-              {data.health ? 'Healthy' : 'Degraded'}
+              {data.health ? 'Broker reachable' : 'Broker unreachable'}
             </span>
           }
         />
@@ -812,31 +786,6 @@ const Dashboard: React.FC = () => {
             </button>
           </div>
         </div>
-      </section>
-
-      {/* Flink Jobs */}
-      <section className="space-y-3">
-        <h2 className="text-[15px] font-semibold text-on-surface flex items-center gap-2">
-          Flink SQL Jobs
-          <span className="text-[12px] font-normal text-on-surface-variant tabular-nums">({data.jobs.length})</span>
-        </h2>
-        {data.jobs.length === 0 ? (
-          <Card padding="none">
-            <EmptyState icon="cloud_off" title="No active jobs" description="Long-running Flink SQL statements will appear here while they execute." />
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {data.jobs.map(job => (
-              <FlinkJobCard
-                key={job.queryId}
-                job={job}
-                now={now}
-                killing={killingJob === job.queryId}
-                onKill={id => void killJob(id)}
-              />
-            ))}
-          </div>
-        )}
       </section>
     </div>
   );

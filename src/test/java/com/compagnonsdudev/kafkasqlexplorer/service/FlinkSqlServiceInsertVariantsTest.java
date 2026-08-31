@@ -4,7 +4,6 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkJobSummary;
-import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkManagedJobDetails;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
@@ -64,7 +63,6 @@ class FlinkSqlServiceInsertVariantsTest {
 
     private StreamTableEnvironment tableEnv;
     private FlinkSqlService service;
-    private FlinkJobStore jobStore;
     private ExplorerConfig config;
     private KafkaAdminService kafkaAdminService;
     private SchemaInferenceService schemaInferenceService;
@@ -84,7 +82,6 @@ class FlinkSqlServiceInsertVariantsTest {
         config = new ExplorerConfig();
         config.setDefaultMaxRows(50);
         config.setDefaultQueryTimeoutMs(10_000);
-        config.setFlinkJobStorePath(Files.createTempFile("insert-variants-jobs-", ".json").toString());
         config.setFlinkTableStorePath(Files.createTempFile("insert-variants-tables-", ".json").toString());
         // Les défauts livrés : le validateur refuse les jointures croisées, et c'est un des refus
         // que cette classe vérifie.
@@ -97,9 +94,8 @@ class FlinkSqlServiceInsertVariantsTest {
 
         FlinkRuntimeCoordinator coordinator = new FlinkRuntimeCoordinator(tableEnv);
         SqlQueryValidator validator = new SqlQueryValidator(config, tableEnv, coordinator);
-        jobStore = new FlinkJobStore(config);
         service = new FlinkSqlService(tableEnv, coordinator, config, validator, kafkaAdminService,
-                schemaInferenceService, ddlGeneratorService, jobStore, new FlinkTableStore(config));
+                schemaInferenceService, ddlGeneratorService, new FlinkTableStore(config));
 
         // Sources bornées : le job se termine tout seul, donc rien ne reste en vol d'un cas à
         // l'autre même si l'annulation arrive après la fin.
@@ -143,12 +139,10 @@ class FlinkSqlServiceInsertVariantsTest {
         assertEquals("INSERT", summary.statementType());
         assertFalse(summary.queryId().isBlank());
         assertFalse(summary.flinkJobId().isBlank(), "Flink a rendu un JobClient, donc le job existe");
-        FlinkManagedJobDetails persisted = jobStore.findById(summary.queryId()).orElseThrow();
-        assertEquals("INSERT", persisted.statementType());
-        assertEquals("ASYNC_JOB", persisted.executionMode());
-        assertNull(persisted.errorMessage());
+        assertEquals("RUNNING", summary.status());
+        assertNull(summary.endedAt());
 
-        service.cancelJob(summary.queryId());
+        service.cancelQuery(summary.queryId());
     }
 
     /**
@@ -370,14 +364,16 @@ class FlinkSqlServiceInsertVariantsTest {
     }
 
     /**
-     * Ce que le mode Job refuse d'exécuter est refusé <em>et consigné</em>.
+     * Ce que {@code submitJob} refuse d'exécuter est refusé, avec sa phrase.
      *
-     * <p>Le refus est une {@code IllegalArgumentException}, que le contrôleur rend en 400 avec sa
-     * phrase ; et il laisse une trace FAILED dans le magasin, qui est ce que la carte du tableau
-     * de bord affiche — sans quoi la raison n'existerait nulle part.
+     * <p>Le refus est une {@code IllegalArgumentException}, que l'appelant rend en 400. Il laissait
+     * aussi une trace FAILED dans {@code FlinkJobStore} — ce que la carte du tableau de bord
+     * affichait sous la carte rouge, et la seule trace de la raison. Le tableau est parti et le
+     * magasin avec, donc la phrase de l'exception est redevenue la seule trace : c'est ce que ce
+     * cas vérifie, et rien ne la double plus en silence.
      */
     @Test
-    void whatJobModeDoesNotRunIsRefusedAndRecorded() {
+    void whatSubmitJobDoesNotRunIsRefusedWithItsReason() {
         for (String sql : List.of(
                 "SELECT order_id FROM ins_orders",
                 "CREATE TABLE ins_nope (id STRING) WITH ('connector'='blackhole')",
@@ -386,14 +382,6 @@ class FlinkSqlServiceInsertVariantsTest {
                     () -> service.submitJob(QueryRequest.sql(sql, 50, 10_000L, null)), sql);
             assertTrue(refused.getMessage().contains("Only INSERT and STATEMENT SET statements are allowed"),
                     refused.getMessage());
-
-            FlinkManagedJobDetails recorded = jobStore.listAll().stream()
-                    .filter(j -> sql.equals(j.sql()))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("aucune trace du refus pour : " + sql));
-            assertEquals("FAILED", recorded.status());
-            assertTrue(recorded.errorMessage().contains("Only INSERT and STATEMENT SET statements are allowed"),
-                    recorded.errorMessage());
         }
     }
 
@@ -466,7 +454,7 @@ class FlinkSqlServiceInsertVariantsTest {
         assertEquals("STATEMENT_SET", summary.statementType());
         assertFalse(summary.flinkJobId().isBlank(), "les deux INSERT partagent un seul job Flink");
 
-        service.cancelJob(summary.queryId());
+        service.cancelQuery(summary.queryId());
     }
 
     /**
@@ -499,7 +487,7 @@ class FlinkSqlServiceInsertVariantsTest {
         assertTrue(service.listTables().contains("ins_right_src"),
                 "la table du JOIN doit être enregistrée elle aussi, sinon son nom correct "
                         + "répond « Object not found »");
-        service.cancelJob(summary.queryId());
+        service.cancelQuery(summary.queryId());
         when(kafkaAdminService.listTopics()).thenReturn(List.of());
     }
 
@@ -518,7 +506,7 @@ class FlinkSqlServiceInsertVariantsTest {
                 request.readMode(), "insert-variants-42", request.directRead()));
 
         assertEquals("insert-variants-42", summary.queryId());
-        assertEquals(FlinkSqlService.CancelOutcome.CANCELLED, service.cancelJob("insert-variants-42"));
+        assertEquals(FlinkSqlService.CancelOutcome.CANCELLED, service.cancelQuery("insert-variants-42"));
     }
 
     /**
@@ -545,7 +533,7 @@ class FlinkSqlServiceInsertVariantsTest {
                     "le refus doit nommer le réglage : " + refused.getMessage());
             assertTrue(refused.getMessage().contains("1"), refused.getMessage());
 
-            service.cancelJob(first.queryId());
+            service.cancelQuery(first.queryId());
         } finally {
             config.setMaxConcurrentJobs(10);
         }
@@ -584,7 +572,7 @@ class FlinkSqlServiceInsertVariantsTest {
         assertNotNull(summary.flinkJobId(), "Flink doit avoir rendu un JobClient : " + sql);
         assertFalse(summary.flinkJobId().isBlank(), sql);
 
-        service.cancelJob(summary.queryId());
+        service.cancelQuery(summary.queryId());
     }
 
     /** Soumet en attendant un refus, et rend sa classification — celle qui décide du statut HTTP. */

@@ -170,7 +170,6 @@ class KafkaClusterIntegrationTest {
         ExplorerConfig config = new ExplorerConfig();
         config.setDefaultMaxRows(50);
         config.setDefaultQueryTimeoutMs(10_000);
-        config.setFlinkJobStorePath(Files.createTempFile("it-flink-jobs-", ".json").toString());
         config.setFlinkTableStorePath(Files.createTempFile("it-flink-tables-", ".json").toString());
 
         SchemaInferenceService schemaInference = new SchemaInferenceService(
@@ -183,7 +182,7 @@ class KafkaClusterIntegrationTest {
         return new FlinkSqlService(tableEnv, coordinator, config,
             new SqlQueryValidator(config, tableEnv, coordinator),
             adminService, schemaInference, ddlGenerator,
-            new FlinkJobStore(config), new FlinkTableStore(config));
+            new FlinkTableStore(config));
     }
 
     /** The value a count-delta metric publishes: the last numeric row, never the first. */

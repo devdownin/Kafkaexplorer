@@ -10,7 +10,6 @@ public record DashboardResponse(
     Map<String, Long> topicSizes,
     long totalMessages,
     List<String> tables,
-    List<FlinkJobSummary> jobs,
     boolean health,
     /** Display label from {@code explorer.cluster-name} — chosen by whoever deployed the app. */
     String clusterName,

@@ -326,7 +326,7 @@ allocates; a cluster audit over thousands of topics is the workload that wants m
 |---|---|
 | **Port** | `8080` — UI and REST API, one server. |
 | **Volume** `/app/logs` | `kafkaexplorer.log`. Mount a **named volume**, not a host file: Docker would create a directory in its place and Logback could not open its log at all. |
-| **Volume** `/app/data` | Flink job history (`flink-jobs.json`) — lost on every container replacement without it. |
+| **Volume** `/app/data` | The Settings page's own input (`settings.json`) and the tables you declare with `CREATE TABLE` (`flink-tables.json`) — lost on every container replacement without it. |
 | **Liveness** | `GET /actuator/health/liveness` — what the built-in `HEALTHCHECK` polls. |
 | **Readiness** | `GET /actuator/health/readiness` — liveness **plus** a reachable broker. An unreachable broker means "cannot answer queries", not "restart me": the UI still serves and can be repointed. |
 | **Metrics** | `GET /actuator/prometheus` — JVM, HTTP, KRaft quorum lag, consumer-group lag for the topics you name, and any SQL query you turn into a metric from the UI. |
