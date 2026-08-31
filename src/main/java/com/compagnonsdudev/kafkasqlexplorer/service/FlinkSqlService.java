@@ -1146,6 +1146,45 @@ public class FlinkSqlService {
                     return autoReg.registered() ? withRegisteredFlag(direct) : direct;
                 }
                 /*
+                 * Une fenêtre posée sur un topic Kafka est répondue par le lecteur direct, et elle
+                 * lui est confiée **nommément** plutôt qu'après un échec.
+                 *
+                 * Ce n'est pas une préférence : une source Kafka est non bornée, donc elle ne se
+                 * termine jamais, donc la dernière fenêtre ne se ferme pas — et la boucle de
+                 * collecte ne rend la main qu'au plafond de lignes ou au budget. Une requête
+                 * fenêtrée qui produit moins de lignes que le plafond, ce qui est le cas ordinaire
+                 * (`SELECT window_start, COUNT(*) …` sur un topic d'une journée en fenêtres de
+                 * cinq minutes), ne pouvait donc que dépenser ses dix secondes et se replier ici,
+                 * en jetant au passage les lignes déjà collectées. Le repli était l'issue, pas
+                 * l'exception : autant y aller sans payer le budget.
+                 *
+                 * Trois garde-fous, et chacun ferme une façon de rendre des lignes fausses.
+                 *
+                 * La **forme** : `namesOneSourceOnly` (la même définition que celle des
+                 * métriques, pas une copie) refuse une fenêtre jointe à une autre table ou posée
+                 * sur une sous-requête. Ce lecteur lirait la première table et ignorerait le
+                 * reste, en silence — exactement ce que le classifieur d'erreurs existe pour
+                 * empêcher.
+                 *
+                 * La **table** : elle doit être un topic Kafka que cette application a enregistré
+                 * elle-même. Une table écrite par un opérateur est la sienne, et ses options — un
+                 * scan borné, un watermark — sont peut-être précisément ce qui permet au planner
+                 * de répondre ; la lui retirer serait défaire son travail.
+                 *
+                 * Le **hint** : une instruction qui porte ses propres options de connecteur —
+                 * un hint Calcite `OPTIONS(…)` — dit ce qu'elle veut de la source (un
+                 * `scan.bounded.mode`, typiquement, qui la fait terminer), donc elle part au
+                 * planner comme demandé.
+                 */
+                if (SqlStatements.hasWindowTableCall(sqlToExecute)
+                        && MetricService.namesOneSourceOnly(sqlToExecute)
+                        && !SqlStatements.carriesAnOptionsHint(sqlToExecute)
+                        && isGeneratedKafkaTable(extractPrimaryTable(sqlToExecute))) {
+                    QueryResult windowed = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
+                    windowed = withExtraWarning(windowed, WINDOWED_READ_NOTE);
+                    return autoReg.registered() ? withRegisteredFlag(windowed) : windowed;
+                }
+                /*
                  * Un mode de lecture nommé est une question que seul ce lecteur sait poser.
                  *
                  * Tant que le planner ne répondait à rien, chaque SELECT sur un topic Kafka
@@ -1499,6 +1538,51 @@ public class FlinkSqlService {
         if (readMode == null || readMode.isBlank()) return false;
         String mode = readMode.trim();
         return "latest-offset".equals(mode) || mode.startsWith(SINCE_READ_MODE_PREFIX);
+    }
+
+    /**
+     * Ce qu'un résultat fenêtré dit du moteur qui l'a produit.
+     *
+     * <p>Rien n'a échoué ici — c'est le lecteur qui répond à cette forme — donc la phrase ne
+     * commence pas par {@link #DIRECT_READER_CAVEAT}, qui annonce un repli. Elle dit ce que le
+     * lecteur a fait, ce qu'il ne fait pas, et par où passer pour obtenir les fenêtres du planner.
+     * L'approximation de HOP, CUMULATE et SESSION est ajoutée séparément par
+     * {@code kafkaWindowSelect}, qui seul sait laquelle a été demandée.
+     */
+    private static final String WINDOWED_READ_NOTE =
+        "This window was computed by the direct Kafka reader, over the records it read (at most "
+            + "100 000), bucketed by the column the DESCRIPTOR names. The Flink planner is not "
+            + "asked: a Kafka source is unbounded, so its last window never closes and the query "
+            + "would spend its whole budget before falling back here anyway. To get the planner's "
+            + "windows instead, declare the table yourself with 'scan.bounded.mode' = "
+            + "'latest-offset' and a WATERMARK on the time column — a bounded scan ends, so every "
+            + "window closes.";
+
+    /**
+     * Cette table est-elle un topic Kafka que <em>nous</em> avons enregistré ?
+     *
+     * <p>Le registre des définitions écrites à la main tranche en premier et négativement : une
+     * table qu'un opérateur a tapée reste au planner, quoi qu'elle nomme comme topic. Le reste est
+     * une correspondance de nom avec le catalogue Kafka, la même que celle de
+     * l'auto-enregistrement et du lecteur direct — qui la refera juste après, sur un appel mis en
+     * cache.
+     *
+     * <p>Un broker injoignable rend {@code false} : le planner décide alors, comme avant. Une
+     * requête ne doit pas changer de moteur parce qu'une liste de topics n'a pas pu être lue.
+     */
+    private boolean isGeneratedKafkaTable(String rawTableRef) {
+        if (rawTableRef == null) return false;
+        String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
+        for (FlinkTableStore.StoredTable stored : flinkTableStore.all()) {
+            if (stored.name().equals(flinkTableName)) return false;
+        }
+        try {
+            return kafkaAdminService.listTopics().stream()
+                .anyMatch(topic -> DdlGeneratorService.toTableName(topic).equals(flinkTableName));
+        } catch (Exception e) {
+            log.debug("Could not list topics while routing a windowed read: {}", e.getMessage());
+            return false;
+        }
     }
 
     /**

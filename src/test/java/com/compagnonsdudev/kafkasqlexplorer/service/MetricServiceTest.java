@@ -1297,6 +1297,11 @@ class MetricServiceTest {
         assertFalse(MetricService.isSingleTableRead(
             "WITH recent AS (SELECT * FROM orders) SELECT COUNT(*) AS metric_value FROM recent"));
         assertFalse(MetricService.isSingleTableRead("SELECT 1 AS metric_value"));
+        // Une fenêtre n'est pas une lecture ordinaire : ce prédicat échoue fermé dessus, et son
+        // aiguillage se décide ailleurs (`FlinkSqlService`, avant même que le planner soit
+        // consulté) sur la moitié structurelle ci-dessous.
+        assertFalse(MetricService.isSingleTableRead("SELECT window_start FROM TABLE("
+            + "TUMBLE(TABLE orders, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) GROUP BY window_start"));
 
         stubBySql(Map.of("topic_a", directCount(2.0), "JOIN", flinkRows(List.of(Map.of("metric_value", 1.0)))));
         service.previewMetric(countDelta(Map.of(
@@ -1306,6 +1311,28 @@ class MetricServiceTest {
             .collect(java.util.stream.Collectors.toMap(r -> r.sql().contains("topic_a"), r -> r, (a, b) -> a));
         assertTrue(bySide.get(true).wantsDirectRead(), "the generated shape goes to the direct reader");
         assertFalse(bySide.get(false).wantsDirectRead(), "a join needs the planner, whatever it costs");
+    }
+
+    /**
+     * La moitié structurelle, partagée avec l'aiguillage des fenêtres.
+     *
+     * <p>Elle répond « cette instruction ne lit-elle qu'une source ? » sans rien dire des
+     * fenêtres, parce que son second appelant en aiguille une : une fenêtre <em>jointe</em> à une
+     * autre table doit rester au planner, le lecteur direct lisant la première et ignorant le
+     * reste en silence.
+     */
+    @Test
+    void theStructuralHalfAnswersForAWindowToo() {
+        String window = "SELECT window_start FROM TABLE("
+            + "TUMBLE(TABLE orders, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) GROUP BY window_start";
+
+        assertTrue(MetricService.namesOneSourceOnly(window));
+        assertFalse(MetricService.namesOneSourceOnly(window.replace(") GROUP BY",
+            ") w JOIN customers c ON c.id = w.id GROUP BY")));
+        assertFalse(MetricService.namesOneSourceOnly(
+            "SELECT window_start FROM TABLE(TUMBLE(TABLE (SELECT * FROM orders), "
+                + "DESCRIPTOR(event_time), INTERVAL '5' MINUTE))"));
+        assertFalse(MetricService.namesOneSourceOnly(null));
     }
 
     @Test

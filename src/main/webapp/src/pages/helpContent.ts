@@ -52,8 +52,11 @@ export interface Lesson {
   /**
    * `FLINK` : le lecteur direct ne sait pas l'exécuter, donc la requête échoue
    * si le planner est indisponible. `ANY` : les deux moteurs répondent.
+   * `KAFKA_DIRECT` : c'est le lecteur qui répond, et le planner n'est pas consulté —
+   * le cas des fenêtres sur un topic, dont la dernière ne se fermerait jamais sur une
+   * source Kafka non bornée.
    */
-  engine: 'ANY' | 'FLINK';
+  engine: 'ANY' | 'FLINK' | 'KAFKA_DIRECT';
   keywords: string[];
 }
 
@@ -159,10 +162,12 @@ GROUP BY window_start, window_end`,
       'The windowing function wraps the table — FROM TABLE(TUMBLE(TABLE t, …)) — it is not a clause you append.',
       'DESCRIPTOR names the time column. window_start and window_end are produced by the window, so you both select and group by them.',
       'The demo sensors spread their readings over two hours, which is what makes several buckets appear. On a topic where everything landed in the same minute, one bucket is the correct answer.',
+      'A window over a topic is computed by the direct reader, always — the planner is not asked. A Kafka source never ends, so its last window would never close: the query would spend its whole budget and be answered here anyway. The reader buckets by the column DESCRIPTOR names, resolving it in the payload and falling back to the Kafka record timestamp.',
+      'To get the planner\u2019s windows instead, declare the table yourself with \'scan.bounded.mode\' = \'latest-offset\' and a WATERMARK on the time column. A bounded scan ends, so every window closes.',
     ],
     pitfall:
-      'Pointing DESCRIPTOR at a column that carries no watermark — any payload column, however timestamp-shaped. The Flink planner rejects it (“the timecol is a time attribute type, but is TIMESTAMP(3)”) and the query is answered by the direct reader, which resolves the column as an ISO-8601 or epoch field and drops back to the Kafka record timestamp. Window over event_time, or declare the table yourself with a watermark on the column you want.',
-    engine: 'ANY',
+      'Expecting the row cap to be a window. The reader reads at most 100 000 records, so the buckets describe that slice of the topic and not the whole of it — and on a topic older than the cap, the oldest buckets are simply not there.',
+    engine: 'KAFKA_DIRECT',
     keywords: ['tumble', 'window', 'descriptor', 'interval', 'time series', 'window_start'],
   },
   {
@@ -184,8 +189,8 @@ GROUP BY window_start, window_end`,
       'CUMULATE and SESSION follow the same shape; SESSION additionally requires a PARTITION BY key.',
     ],
     pitfall:
-      'HOP, CUMULATE and SESSION are exact on the Flink engine only. If a query falls back, they are approximated as a tumbling window of the same width, and the result says so in its warnings.',
-    engine: 'ANY',
+      'HOP, CUMULATE and SESSION are exact on the Flink planner only, and a window over a topic does not go there: they come back approximated as a tumbling window of the same width, and the result says so in its warnings. Declare the table yourself with a bounded scan when the overlap is the point.',
+    engine: 'KAFKA_DIRECT',
     keywords: ['hop', 'sliding', 'cumulate', 'session', 'window', 'approximation'],
   },
   {
@@ -389,13 +394,13 @@ export const ENGINE_MATRIX: EngineCapability[] = [
     feature: 'TUMBLE window',
     flink: true,
     direct: true,
-    note: 'The direct reader buckets by the time column, falling back to the Kafka record timestamp.',
+    note: 'Over a topic the direct reader answers, bucketing by the time column and falling back to the Kafka record timestamp. The planner answers one over a table you declared with a bounded scan.',
   },
   {
     feature: 'HOP / CUMULATE / SESSION windows',
     flink: true,
     direct: 'partial',
-    note: 'Approximated as a tumbling window of the same width, and the warning says so.',
+    note: 'Approximated as a tumbling window of the same width, and the warning says so. Exact only on the planner, i.e. on a bounded table you declared.',
   },
   {
     feature: 'ORDER BY',

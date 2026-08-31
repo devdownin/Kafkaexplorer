@@ -55,6 +55,8 @@ class FlinkSqlServiceTest {
     private KafkaAdminService kafkaAdminService;
     private SchemaInferenceService schemaInferenceService;
     private DdlGeneratorService ddlGeneratorService;
+    /** Ce qui distingue une table écrite à la main d'une table dérivée d'un topic. */
+    private FlinkTableStore flinkTableStore;
 
     @BeforeAll
     void setup() throws Exception {
@@ -76,9 +78,10 @@ class FlinkSqlServiceTest {
         // data/ directory — and so two runs of the suite cannot see each other's tables.
         config.setFlinkTableStorePath(
             Files.createTempFile("flink-tables-", ".json").toString());
+        flinkTableStore = new FlinkTableStore(config);
         service = new FlinkSqlService(tableEnv, runtimeCoordinator, config, validator,
                 kafkaAdminService, schemaInferenceService, ddlGeneratorService,
-                new FlinkTableStore(config));
+                flinkTableStore);
 
         // ── In-memory test data (registered once, reused by all tests) ───────
         tableEnv.createTemporaryView("orders",
@@ -130,22 +133,6 @@ class FlinkSqlServiceTest {
         tableEnv.executeSql(
                 "CREATE TABLE IF NOT EXISTS infinite_source (id BIGINT) " +
                 "WITH ('connector'='datagen')");
-
-        // Une table horodatée *sans* watermark : sa colonne temporelle n'est donc pas un attribut
-        // temporel, et toute fenêtre posée dessus est refusée par le planner. C'est la forme de
-        // toutes les tables générées avant que `DdlGeneratorService` ne déclare un watermark, et
-        // c'est encore celle d'un `event_time` venu du payload.
-        tableEnv.executeSql(
-                "CREATE TABLE IF NOT EXISTS win_no_watermark (id STRING, event_time TIMESTAMP(3)) "
-                + "WITH ('connector'='datagen','number-of-rows'='2')");
-
-        // Et sa jumelle avec watermark, sur une source qui ne finit jamais : la fenêtre se
-        // *planifie*, et c'est l'exécution qui ne rend pas la main — la forme d'une lecture
-        // fenêtrée d'un topic Kafka non borné.
-        tableEnv.executeSql(
-                "CREATE TABLE IF NOT EXISTS win_unbounded (id STRING, event_time TIMESTAMP(3), "
-                + "WATERMARK FOR event_time AS event_time - INTERVAL '5' SECOND) "
-                + "WITH ('connector'='datagen','rows-per-second'='5')");
     }
 
     /**
@@ -895,6 +882,106 @@ class FlinkSqlServiceTest {
         assertEquals(1, result.rows().size(), "both records belong to the same 1-hour bucket");
     }
 
+    // ──────────────────────────────────────────────────────────────────────────────
+    // Une fenêtre sur un topic Kafka : le lecteur direct, nommément
+    // ──────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Elle ne passe pas par le planner du tout.
+     *
+     * <p>Une source Kafka est non bornée : sa dernière fenêtre ne se ferme jamais, et la collecte
+     * ne rend la main qu'au plafond de lignes ou au budget. Une fenêtre qui produit moins de
+     * lignes que le plafond — le cas ordinaire — ne pouvait donc que dépenser ses dix secondes et
+     * se replier ici, en jetant les lignes déjà collectées. Le repli étant l'issue, l'attente
+     * n'achetait rien.
+     *
+     * <p>Ce que le résultat en dit est une <em>note</em>, pas un avertissement de repli : rien n'a
+     * échoué, c'est le moteur qui répond à cette forme.
+     */
+    @Test
+    void aWindowOnAKafkaTopicIsAnsweredByTheDirectReaderWithoutAskingThePlanner() throws Exception {
+        stubWindowTopic();
+
+        QueryResult result = execute("SELECT window_start, window_end, COUNT(*) AS c FROM TABLE("
+                + "TUMBLE(TABLE win_topic, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) "
+                + "GROUP BY window_start, window_end");
+
+        assertNoError(result);
+        assertEquals("KAFKA_DIRECT", result.engine());
+        assertEquals(2, result.rows().size());
+        assertTrue(result.warnings().stream().anyMatch(w -> w.contains("The Flink planner is not asked")),
+                "the result must say which engine answered and why, got: " + result.warnings());
+        assertTrue(result.warnings().stream().noneMatch(w -> w.contains("fell back")),
+                "nothing failed here — a fallback caveat would describe the wrong thing, got: "
+                    + result.warnings());
+    }
+
+    /**
+     * Le mode de lecture est honoré du même coup, ce qui n'allait pas de soi.
+     *
+     * <p>Avant, une fenêtre partait au planner, échouait et se repliait : le lecteur recevait bien
+     * le mode, mais après un aller-retour. Et quand le planner répondait, « Latest » et
+     * « Earliest » rendaient deux sémantiques différentes pour le même HOP — le défaut que
+     * {@code MetricService.isSingleTableRead} refusait les fenêtres pour corriger. Les deux
+     * passent maintenant par le même moteur.
+     */
+    @Test
+    void suchAWindowHonoursTheReadModeItWasGiven() throws Exception {
+        stubWindowTopic();
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "win.topic", 0, 0L, null, "{\"id\":\"a\",\"event_time\":\"2026-01-01T00:00:00Z\"}")
+        )).when(kafkaAdminService).getEarliestRecords(eq("win.topic"), anyInt());
+
+        QueryResult result = service.executeSql(QueryRequest.sql(
+                "SELECT window_start, COUNT(*) AS c FROM TABLE("
+                    + "TUMBLE(TABLE win_topic, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) "
+                    + "GROUP BY window_start", 50, 10_000L, "earliest-offset"));
+
+        assertNoError(result);
+        assertEquals("KAFKA_DIRECT", result.engine());
+        verify(kafkaAdminService).getEarliestRecords(eq("win.topic"), anyInt());
+        verify(kafkaAdminService, never()).getRecentRecords(eq("win.topic"), anyInt());
+    }
+
+    /**
+     * Une fenêtre <em>jointe</em> à une autre table n'est pas aiguillée.
+     *
+     * <p>Ce lecteur lirait la première table et ignorerait la jointure, en silence — des lignes
+     * fausses, ce que tout le reste de ce service est construit pour éviter. La forme est
+     * demandée à {@code MetricService.namesOneSourceOnly}, une définition partagée plutôt qu'une
+     * seconde copie de « une seule table ».
+     */
+    @Test
+    void aWindowJoinedToAnotherTableIsNotHandedToTheDirectReader() throws Exception {
+        stubWindowTopic();
+
+        QueryResult result = execute("SELECT w.window_start FROM TABLE("
+                + "TUMBLE(TABLE win_topic, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) w "
+                + "JOIN customers c ON c.customer_id = w.id");
+
+        assertTrue(result.warnings().stream().noneMatch(w -> w.contains("The Flink planner is not asked")),
+                "a joined window must not be routed away from the planner, got: " + result.warnings());
+    }
+
+    /**
+     * Et une instruction qui porte ses propres options de connecteur part au planner.
+     *
+     * <p>Un {@code scan.bounded.mode} est précisément ce qui fait terminer la source, donc fermer
+     * la dernière fenêtre : l'auteur a dit ce qu'il voulait, l'aiguillage s'efface.
+     */
+    @Test
+    void aWindowCarryingItsOwnOptionsHintIsLeftToThePlanner() throws Exception {
+        stubWindowTopic();
+
+        QueryResult result = execute("SELECT window_start FROM TABLE(TUMBLE(TABLE win_topic "
+                + "/*+ OPTIONS('scan.bounded.mode'='latest-offset') */, "
+                + "DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) GROUP BY window_start");
+
+        assertTrue(result.warnings().stream().noneMatch(w -> w.contains("The Flink planner is not asked")),
+                "a statement naming its own options must reach the planner, got: " + result.warnings());
+    }
+
     /**
      * Une fenêtre sur une colonne sans watermark : le repli est expliqué, pas recopié du planner.
      *
@@ -969,6 +1056,13 @@ class FlinkSqlServiceTest {
     @Test
     void aWindowThePlannerCannotFinishSaysThatRatherThanQuotingATimeout() throws Exception {
         doReturn(List.of("win.unbounded")).when(kafkaAdminService).listTopics();
+        // Écrite à la main, donc le planner est consulté : la fenêtre se *planifie* (le watermark
+        // est là) et c'est l'exécution qui ne rend pas la main, la source ne finissant jamais.
+        assertNoError(service.executeSql(QueryRequest.sql(
+                "CREATE TABLE IF NOT EXISTS win_unbounded (id STRING, event_time TIMESTAMP(3), "
+                    + "WATERMARK FOR event_time AS event_time - INTERVAL '5' SECOND) "
+                    + "WITH ('connector'='datagen','rows-per-second'='5')", 10, 10_000L, null)));
+        assertStoredAsHandWritten("win_unbounded");
         doReturn(List.of(
                 new org.apache.kafka.clients.consumer.ConsumerRecord<>(
                         "win.unbounded", 0, 0L, null,
@@ -992,12 +1086,23 @@ class FlinkSqlServiceTest {
                 "the generic timeout sentence sends the reader after the wrong thing, got: " + caveat);
     }
 
-    /** Des enregistrements derrière `win_no_watermark`, pour que le repli ait de quoi répondre. */
+    /**
+     * Une table <em>écrite à la main</em> sans watermark, et des enregistrements derrière elle.
+     *
+     * <p>Écrite à la main, et c'est ce qui compte : une fenêtre sur une table que cette
+     * application a elle-même générée depuis un topic part au lecteur direct sans consulter le
+     * planner (voir le cas d'aiguillage plus bas), donc le refus du planner ne se produirait
+     * jamais. Une définition qu'un opérateur a tapée reste au planner — la sienne peut très bien
+     * porter ce qu'il faut — et c'est elle qui se fait refuser ici, faute de watermark.
+     */
     private void stubNoWatermarkTopic() throws Exception {
-        // Le topic existe pour le lecteur direct ; la table, elle, est déjà enregistrée, donc
-        // l'auto-enregistrement passe son chemin et la définition sans watermark est bien celle
-        // que le planner voit.
         doReturn(List.of("win.no.watermark")).when(kafkaAdminService).listTopics();
+        // Par le service, pas par `tableEnv` : c'est ce qui la fait entrer dans FlinkTableStore,
+        // où l'aiguillage la reconnaît comme n'étant pas la nôtre.
+        assertNoError(service.executeSql(QueryRequest.sql(
+                "CREATE TABLE IF NOT EXISTS win_no_watermark (id STRING, event_time TIMESTAMP(3)) "
+                    + "WITH ('connector'='datagen','number-of-rows'='2')", 10, 10_000L, null)));
+        assertStoredAsHandWritten("win_no_watermark");
         doReturn(List.of(
                 new org.apache.kafka.clients.consumer.ConsumerRecord<>(
                         "win.no.watermark", 0, 0L, null,
@@ -1052,6 +1157,16 @@ class FlinkSqlServiceTest {
 
     private QueryResult execute(String sql) {
         return service.executeSql(new QueryRequest(sql, null, 50, 10_000L, null));
+    }
+
+    /**
+     * La précondition de deux cas ci-dessus, affirmée plutôt que supposée : c'est l'entrée dans le
+     * registre qui fait que la fenêtre est confiée au planner au lieu d'être aiguillée vers le
+     * lecteur direct, et un registre muet ferait échouer ces cas loin de leur cause.
+     */
+    private void assertStoredAsHandWritten(String table) {
+        assertTrue(flinkTableStore.all().stream().anyMatch(t -> table.equals(t.name())),
+                "the definition must be kept as hand-written, or the planner is never consulted");
     }
 
     private void assertNoError(QueryResult result) {

@@ -65,6 +65,19 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **A window over a Kafka topic is now answered by the direct reader on purpose, not after a
+  failed detour.** A Kafka source is unbounded: it never finishes, so a window's last bucket never
+  closes, and the collection loop returns only at the row cap or at the query budget. A windowed
+  query producing fewer rows than the cap — the ordinary case — could therefore only spend its ten
+  seconds and be answered by that reader anyway, with the rows it had already collected discarded
+  along with the timeout. It is handed there directly, honouring the read mode on the way, so
+  `Latest` and `Earliest` no longer mean two different windows. Three conditions keep it from
+  returning wrong rows: the statement must read one source (a window joined to another table would
+  have that reader read the first and ignore the rest), the table must be one this application
+  registered from a topic rather than one an operator typed, and the statement must not carry its
+  own `OPTIONS(…)` hint — `'scan.bounded.mode' = 'latest-offset'` is what makes the source end, so
+  a statement asking for it goes to the planner as asked. The result says which engine answered
+  and what to declare to get the other one.
 - **No windowed query had ever run on the Flink engine, and the refusal read as a breakdown.** A
   column carrying timestamps is only a *time attribute* once a `WATERMARK` is declared on it, and no
   generated table declared one — so `TABLE(TUMBLE(TABLE t, DESCRIPTOR(event_time), …))`, which is
@@ -72,8 +85,9 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   planning time on every topic: *The window function requires the timecol is a time attribute type,
   but is TIMESTAMP(3)*. Every window therefore fell back to the direct Kafka reader, which
   approximates `HOP`, `CUMULATE` and `SESSION` as tumbling windows. Three things are fixed. The
-  generated DDL now carries `WATERMARK FOR event_time AS event_time - INTERVAL '5' SECOND`, which
-  also unlocks event-time `OVER` windows and `ORDER BY` on the timestamp; it is added only to the
+  generated DDL now carries `WATERMARK FOR event_time AS event_time - INTERVAL '5' SECOND`, without
+  which no event-time construct is legal on a generated table at all — an `OVER`, an `ORDER BY` on
+  the timestamp, and a window on a statement that bounds its own scan; it is added only to the
   `event_time` this application declares, never to one coming from the payload. A window refused for
   want of a time attribute no longer counts toward the SELECT circuit breaker — three of them used to
   take the planner out for *every* query of the process for ten minutes — and the caveat now names
