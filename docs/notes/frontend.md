@@ -179,3 +179,120 @@ Dev server proxy: Vite forwards `/api/*` to `http://localhost:8080` (configured 
 - `JsonNode` passe `fieldPath` en dot-notation récursivement (`fieldPath ? fieldPath+"."+k : k`). `XmlViewer` utilise `DOMParser` navigateur (récursif) avec le même schéma de chemin.
 - Les champs sélectionnés alimentent `SELECT col1, col2 FROM topic LIMIT 50` via `openInEditor()`.
 
+
+## Metrics — le calque « Neural Float » et le registre React Bits Pro
+
+Le composant **n'est pas dans l'arbre**, et ce fichier existe pour que personne ne conclue à un
+oubli. `npx shadcn@latest add @reactbits-starter/neural-float-tw` n'a pas pu être exécuté :
+`pro.reactbits.dev` **et** `ui.shadcn.com` sont refusés au CONNECT (403) par la politique réseau
+de l'environnement de build, et aucune `REACTBITS_LICENSE_KEY` n'y est définie — le CLI shadcn ne
+peut même pas charger son index de registres. Ce qui est posé ici est donc tout ce qui ne dépend
+pas du registre, et rien d'autre.
+
+**Ce qui est fait, et pourquoi c'est la moitié qui compte.** La condition d'affichage est la
+seule partie qu'un paquet ne fournit jamais, et c'est celle qui se règle de travers en silence.
+`hasRunningMetric` (`pages/metricsHealth.ts`) lit « au moins une métrique en marche » comme
+`summarizeMetrics(...).reporting > 0` — une valeur produite au dernier passage, sans erreur — et
+**dérive** de `summarizeMetrics` au lieu de réécrire la règle. Les deux autres états ne sont pas
+des degrés de la même chose : une métrique `failing` expose encore la valeur d'avant, donc elle
+*paraît* vivante alors qu'elle ne mesure plus rien, et `pending` n'a jamais rien produit. C'est
+aussi pourquoi la condition n'est pas `counts.ok > 0`, qui répond à la question voisine et fausse
+ici : une métrique peut être `critical` — au-dessus de son seuil — tout en tournant parfaitement.
+
+**`NeuralFloatBackdrop` rend `null` quand la condition est fausse**, plutôt qu'un calque masqué :
+une page qui ne mesure rien encore n'a pas à payer une boucle d'animation, et un `<canvas>`
+invisible qui tourne est exactement ce qu'on ne retrouve pas six mois plus tard. Il porte déjà
+`aria-hidden`, `pointer-events-none` et `motion-reduce:hidden` — l'ornement est le premier à
+disparaître quand l'OS demande moins de mouvement, et cela vaut avant même que le composant
+n'arrive.
+
+**Le placement est porteur, et il a coûté un aller-retour.** Le réflexe — racine en
+`relative isolate`, calque en `absolute inset-0 -z-10` — **casse le modal « Add metric »**. Le
+`isolate` fait de la page un contexte d'empilement ; le modal est `fixed z-50` *à l'intérieur*,
+la Sidebar est `fixed z-50` *à l'extérieur* (`components/Layout.tsx` la rend en frère de la
+colonne de contenu), et le modal se retrouve donc enfermé sous elle. Mesuré plutôt que raisonné,
+avec `docs/screenshots/layout-probe.mjs` déjà debout et `document.elementFromPoint(100, 500)`
+en plein dans la Sidebar, modal ouvert : `SIDEBAR ON TOP` avec `isolate`, `modal on top` sans.
+Et sans contexte d'empilement, un `-z-10` ne sert à rien non plus — il passerait derrière le
+`bg-background` de la coquille, qui est un bloc en flux et peint donc *au-dessus* des descendants
+à z négatif.
+
+Ce qui est en place n'a donc ni `isolate` ni z négatif : la racine est `relative` et porte
+exactement **deux** enfants positionnés en `z-auto` — le calque d'abord, un conteneur
+`relative space-y-6` ensuite qui reprend tout l'ancien contenu. Entre deux éléments positionnés
+sans z-index, c'est l'ordre du DOM qui tranche, donc le contenu peint par-dessus le calque sans
+qu'aucun contexte d'empilement soit créé, et le modal reste au-dessus de la Sidebar. Le
+`space-y-6` a suivi le contenu dans ce conteneur : laissé sur la racine, il aurait donné une
+marge haute au calque et décalé son `inset-0`.
+
+**Et le calque est `sticky`, pas `absolute`, pour une deuxième mesure.** Dans un conteneur qui
+défile, `absolute inset-0` se résout sur la **fenêtre de défilement** et non sur le contenu :
+mesuré sur la page Metrics de la démo en 1440×900, le calque faisait 844 px pour 2 318 px de
+contenu, et après défilement jusqu'en bas son sommet se trouvait 1 474 px au-dessus de la zone
+visible. L'ornement occupait le premier tiers de la page puis s'en allait — ce qui se lit comme
+un défaut, pas comme une intention, sur un fond censé être ambiant. `sticky top-0 h-0` le fait
+suivre la fenêtre sans rien prendre au flux ; l'hôte du canvas, en `absolute` dedans, fait
+`h-screen` — un dépassement de la hauteur d'en-tête que le conteneur rogne, là où une hauteur
+trop courte laisserait une bande nue en bas. Re-mesuré après coup : la zone visible est couverte
+en haut **comme en bas**, et sur 1 184 px de large pour 1 184 px de racine.
+
+**Le débord horizontal est porté par l'ancre (`-mx-6`), pas par l'hôte, et ça a coûté un job CI
+rouge.** Écrit d'abord en `-left-6 -right-6` sur l'hôte, celui-ci devenait plus large que l'ancre
+qui le contient : `layout-probe --check` comptait alors l'ancre comme un conteneur qui rogne son
+contenu sans moyen d'atteindre le reste, `metrics` passait de 0 à 1 `unreachable` **aux deux
+largeurs**, et le job screenshots échouait. La tentation était d'apprendre à la sonde à ignorer
+les calques décoratifs — elle exclut déjà `sr-only` et les couches internes de Monaco pour des
+raisons de cette famille. C'était le mauvais réflexe : la géométrie était réellement fautive, pas
+la mesure. Porté par l'ancre, le débord annule exactement le `p-6` de la racine — l'ancre fait la
+largeur de la *boîte de padding* de la racine, l'hôte fait `inset-x-0` donc la largeur de
+l'ancre — et plus rien ne dépasse de son parent à aucun des trois niveaux (vérifié : `anchor`,
+`root` et `host` rapportent tous `scrollWidth <= clientWidth`). `metrics` est revenu à ses
+chiffres d'avant le changement, `clipped=10 unreachable=0`. Le cas unitaire pinne le sens du
+débord, puisque c'est lui qui a cassé.
+
+Le `sticky` forme un contexte d'empilement, contrairement à `absolute` — sans conséquence ici,
+parce qu'il naît sur *le calque* et non sur la page : le modal vit dans le conteneur frère, donc
+il n'y est pas enfermé. Le contrôle Chromium du paragraphe précédent a été refait après ce
+changement et rend toujours `modal on top`. jsdom ne disposant rien, ce que le test unitaire
+pinne est le *contrat de classes* (`sticky`, `h-0`, pas d'`absolute inset-0`, les trois marges
+négatives) : la géométrie a été mesurée une fois, la décision est gardée pour toujours.
+
+**`docs/check-alias-parity.py` garde l'alias `@/`.** Il est déclaré trois fois — `paths` dans
+`tsconfig.json` (que lit `tsc`), `resolve.alias` dans `vite.config.ts` (que lisent Vite *et*
+Vitest), `aliases` dans `components.json` (que lit le CLI shadcn) — et aucune des trois ne lit
+les autres. Aucune n'est fausse isolément ; elles ne peuvent l'être que *les unes par rapport aux
+autres*, ce que seule une vérification qui lit les trois peut voir. Chaque sens de la panne est
+silencieux : sans l'entrée Vite, `tsc` passe et le build ne résout plus ; sans l'entrée tsconfig,
+l'application se construit et tourne pendant que le typecheck tombe ; avec un `components.json`
+qui vise ailleurs, `shadcn add` écrit le fichier dans un dossier que ni le compilateur ni le
+bundler ne voient — le composant est sur le disque, l'import est rouge, et rien ne nomme l'alias
+comme cause. Il vérifie en plus qu'`aliases.utils` résout vers un fichier qui existe, puisque
+c'est de là que tout composant généré importe `cn`, et que la cible tsconfig reste relative
+(`./src/*`), `baseUrl` étant déprécié par le TypeScript de ce dépôt. Les quatre pannes ont été
+provoquées une à une pour vérifier qu'il les attrape, et qu'il sort bien en 1 — la boucle
+`for check in docs/check-*.py` de `ci.yml` le ramasse sans modification du workflow.
+
+**Le registre est configuré dans `components.json`** (`@reactbits` et `@reactbits-starter`, en-tête
+`Authorization: Bearer ${REACTBITS_LICENSE_KEY}`). Deux choix y sont délibérés. `cssVariables` est
+à **`false`** : ce projet définit `background`, `foreground`, `card`, `muted`, `border`, `primary`
+comme couleurs Tailwind littérales (le bloc « Alias (compat shadcn-style) » de
+`tailwind.config.js`), pas comme variables CSS — avec `true`, les composants générés émettraient
+des classes attendant `hsl(var(--background))` que rien ici ne définit. Et `aliases.utils` pointe
+`@/components/ui/cn`, qui est déjà exactement le `cn` de shadcn (clsx + tailwind-merge), donc un
+composant installé se branche sans adaptateur.
+
+**L'alias `@/` est neuf**, ajouté parce que les composants d'un registre shadcn s'importent ainsi.
+Il est décrit à **trois** endroits qui doivent bouger ensemble — `paths` dans `tsconfig.json` (que
+lit `tsc`), `resolve.alias` dans `vite.config.ts` (que lisent Vite et Vitest), et `aliases` dans
+`components.json` (que lit le CLI) — et les imports relatifs existants restent valables : rien n'a
+été réécrit. `paths` est en `./src/*` sans `baseUrl`, ce dernier étant déprécié par le TypeScript
+de ce dépôt (TS5101).
+
+**Pour finir l'installation**, sur une machine qui atteint le registre : exporter
+`REACTBITS_LICENSE_KEY`, lancer la commande `shadcn add` ci-dessus depuis `src/main/webapp`, puis
+décommenter l'import et la balise dans `NeuralFloatBackdrop.tsx` en ajustant le nom exporté et les
+props au composant réellement livré. Rien d'autre dans l'application n'a à changer — la page monte
+déjà le calque et lui passe sa condition. Les gabarits d'URL des deux registres sont reconstruits
+sur la forme shadcn standard (`{name}`) et **n'ont pas pu être vérifiés** contre
+<https://pro.reactbits.dev/docs/installation>, injoignable d'ici : c'est le premier point à
+confronter à la doc si le `add` répond 404.

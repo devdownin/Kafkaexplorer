@@ -22,6 +22,8 @@ import { clearDraft, readDraft, writeDraft } from '../draftStore';
 // La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
 import type { AuditHistory, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse, TableMetadata } from '../api/types';
+import { hasRunningMetric } from './metricsHealth';
+import { NeuralFloatBackdrop } from '../components/metrics/NeuralFloatBackdrop';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
 import { TemplateParamsEditor } from '../components/metrics/TemplateParamsEditor';
@@ -591,6 +593,12 @@ const Metrics: React.FC = () => {
     { ok: 0, warning: 0, critical: 0, error: 0, pending: 0 }
   );
 
+  // L'ornement de fond ne s'allume que si la page a quelque chose à orner : au moins une
+  // métrique qui a produit une valeur au dernier passage. `hasRunningMetric` porte la règle —
+  // `counts.ok` juste au-dessus répond à une autre question (le verdict par seuil), et une
+  // métrique peut être `critical` tout en tournant parfaitement.
+  const anyMetricRunning = useMemo(() => hasRunningMetric(metrics), [metrics]);
+
   const SEVERITY_ORDER: Record<string, number> = { error: 0, critical: 1, warning: 2, ok: 3, pending: 4 };
   const filteredMetrics = metrics
     .filter(m => filterType === 'all' || m.type === filterType)
@@ -598,7 +606,18 @@ const Metrics: React.FC = () => {
     .sort((a, b) => SEVERITY_ORDER[getStatus(a)] - SEVERITY_ORDER[getStatus(b)]);
 
   return (
-    <div className="p-6 space-y-6 overflow-y-auto h-full">
+    // `relative` ancre le calque Neural Float, et rien de plus : surtout pas `isolate`, qui
+    // ferait de cette page un contexte d'empilement et y enfermerait le modal « Add metric » —
+    // il est `fixed z-50`, la Sidebar aussi, et la Sidebar est en dehors de cette page. Le modal
+    // passerait sous la barre latérale. Le calque passe donc derrière le contenu par l'ordre du
+    // DOM entre deux éléments positionnés `z-auto`, pas par un `-z-10` qui exigerait ce contexte.
+    <div className="relative p-6 overflow-y-auto h-full">
+
+      <NeuralFloatBackdrop active={anyMetricRunning} />
+
+      {/* `space-y-6` vit ici plutôt que sur la racine : sur la racine, il donnerait une marge
+          haute au calque et décalerait son `inset-0`. */}
+      <div className="relative space-y-6">
 
       {/* Header */}
       <PageHeader
@@ -1242,6 +1261,8 @@ const Metrics: React.FC = () => {
           </div>
         </div>
       )}
+
+      </div>
     </div>
   );
 };

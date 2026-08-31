@@ -504,3 +504,88 @@ describe('les deux côtés dans le temps', () => {
     expect(screen.getAllByText('left')).toHaveLength(1);
   });
 });
+
+/*
+ * Le calque d'accueil de « Neural Float » (React Bits Pro).
+ *
+ * Le composant lui-même n'est pas installé — le registre `pro.reactbits.dev` est injoignable
+ * depuis cet environnement — mais sa *condition* d'affichage l'est, et c'est elle qui se
+ * réglerait silencieusement de travers. Ces cas la pinnent au niveau de la page, là où
+ * `metricsHealth.test.ts` la pinne au niveau de la règle.
+ */
+describe('Neural Float backdrop', () => {
+  const running = templateMetric;
+  const pending = { ...templateMetric, id: 'm-2', name: 'never_ran', lastValue: null, lastUpdateTime: null };
+  const failing = { ...templateMetric, id: 'm-3', name: 'broken', errorMessage: 'Table not found' };
+
+  it('is absent while no metric is configured', async () => {
+    stubApi([]);
+    await renderPage();
+    await screen.findByText('No metrics yet');
+    expect(screen.queryByTestId('neural-float-backdrop')).toBeNull();
+  });
+
+  it('is absent when the only metrics are pending or failing', async () => {
+    stubApi([pending, failing]);
+    await renderPage();
+    await waitFor(() => expect(screen.getByText('broken')).toBeInTheDocument());
+    expect(screen.queryByTestId('neural-float-backdrop')).toBeNull();
+  });
+
+  it('mounts once at least one metric is running', async () => {
+    stubApi([running]);
+    await renderPage();
+    await waitFor(() => expect(screen.getByTestId('neural-float-backdrop')).toBeInTheDocument());
+  });
+
+  it('stays out of the reading order and takes no pointer', async () => {
+    stubApi([running]);
+    await renderPage();
+    const layer = await screen.findByTestId('neural-float-backdrop');
+    expect(layer).toHaveAttribute('aria-hidden', 'true');
+    expect(layer.className).toContain('pointer-events-none');
+  });
+
+  /*
+   * Le calque suit la fenêtre au lieu de défiler avec le contenu.
+   *
+   * jsdom ne dispose rien, donc ce cas pinne le *contrat de classes* et pas la géométrie ; la
+   * mesure, elle, a été prise dans Chromium (page Metrics de la démo, 1440×900 : `absolute
+   * inset-0` donnait 844 px de calque pour 2 318 px de contenu et sortait de l'écran au
+   * défilement, `sticky top-0 h-0` couvre la zone visible en haut comme en bas). Ce qu'on garde
+   * ici, c'est la décision : un retour à `absolute inset-0` la reprendrait en silence.
+   */
+  it('follows the viewport rather than scrolling away with the content', async () => {
+    stubApi([running]);
+    await renderPage();
+    const layer = await screen.findByTestId('neural-float-backdrop');
+
+    expect(layer.className).toContain('sticky');
+    // `h-0` : l'ancre ne prend aucune place dans le flux, sans quoi elle pousserait la page.
+    expect(layer.className).toContain('h-0');
+    expect(layer.className).not.toContain('absolute');
+    expect(layer.className).not.toContain('inset-0');
+
+    // Le débord horizontal annule le `p-6` de la racine, sinon l'ornement serait encadré par la
+    // gouttière de la page au lieu d'aller à bord perdu.
+    expect(layer.className).toContain('-mx-6');
+
+    const host = layer.firstElementChild as HTMLElement;
+    expect(host).toBeTruthy();
+    expect(host.className).toContain('absolute');
+    expect(host.className).toContain('overflow-hidden');
+    expect(host.className).toContain('-top-6');
+
+    /*
+     * Et le débord est porté par l'ancre, pas par l'hôte — ce qui a coûté un job CI rouge.
+     * Avec `-left-6 -right-6` ici, l'hôte devenait plus large que l'ancre qui le contient, et
+     * `layout-probe --check` comptait l'ancre comme rognant son contenu sans moyen d'atteindre
+     * le reste : `metrics` passait de 0 à 1 `unreachable` aux deux largeurs. L'hôte doit donc
+     * s'en tenir à `inset-x-0`, et rien ne doit dépasser de son parent à aucun niveau.
+     */
+    expect(host.className).toContain('inset-x-0');
+    for (const horizontalBleed of ['-left-6', '-right-6', '-mx-6']) {
+      expect(host.className).not.toContain(horizontalBleed);
+    }
+  });
+});

@@ -93,3 +93,19 @@ export function healthTone(health: MetricsHealth): HealthTone {
   if (health.pending > 0) return 'warning';
   return 'success';
 }
+
+/**
+ * Y a-t-il au moins une métrique *en marche* ?
+ *
+ * « En marche » se lit ici comme `reporting` et pas autrement : une valeur produite au dernier
+ * passage, sans erreur. Les deux autres états ne sont pas des degrés de la même chose —
+ * `failing` expose encore la valeur d'avant, donc une métrique en échec *paraît* vivante alors
+ * qu'elle ne mesure plus rien, et `pending` n'a jamais rien produit. Compter l'une ou l'autre
+ * comme « en marche » serait exactement la flatterie que `summarizeMetrics` existe pour refuser.
+ *
+ * Dérivé de `summarizeMetrics` plutôt que réécrit : deux définitions de « qui rapporte » est la
+ * façon dont l'une se met à répondre autrement que l'autre.
+ */
+export function hasRunningMetric(metrics: readonly MetricStatusInput[]): boolean {
+  return summarizeMetrics(metrics).reporting > 0;
+}
