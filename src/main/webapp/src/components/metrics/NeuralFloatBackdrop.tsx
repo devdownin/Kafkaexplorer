@@ -70,13 +70,21 @@ export const NeuralFloatBackdrop: React.FC<NeuralFloatBackdropProps> = ({ active
 
          `motion-reduce:hidden` : l'ornement est le premier à disparaître quand l'OS demande
          moins de mouvement, et c'est déjà vrai avant que le composant n'arrive. */
-      className="pointer-events-none sticky top-0 h-0 motion-reduce:hidden"
+      className="pointer-events-none sticky top-0 h-0 -mx-6 motion-reduce:hidden"
     >
-      {/* Les marges négatives annulent le `p-6` de la racine : un ornement de fond se lit à bord
-          perdu, pas encadré par la gouttière de la page. `h-screen` dépasse la zone visible de la
-          hauteur de l'en-tête, ce que le conteneur de défilement rogne — un dépassement est sans
-          effet ici, alors qu'une hauteur trop courte laisserait une bande nue en bas. */}
-      <div className="absolute -top-6 -left-6 -right-6 h-screen overflow-hidden">
+      {/* Le débord horizontal est porté par l'ancre (`-mx-6` ci-dessus) et **pas** par cet hôte,
+          qui se contente d'`inset-x-0`. La différence n'est pas cosmétique : avec les marges
+          négatives ici, l'hôte était plus large que l'ancre qui le contient, et `layout-probe`
+          comptait l'ancre comme un conteneur qui rogne son contenu sans moyen d'atteindre le
+          reste — `metrics` passait de 0 à 1 `unreachable` aux deux largeurs et faisait échouer
+          le job screenshots. Porté par l'ancre, le débord annule exactement le `p-6` de la
+          racine : l'ancre fait la largeur de la *boîte de padding* de la racine, l'hôte fait la
+          largeur de l'ancre, et plus rien ne dépasse de son parent à aucun niveau.
+
+          `h-screen` dépasse la zone visible de la hauteur de l'en-tête, ce que le conteneur de
+          défilement rogne — un dépassement vertical est sans effet ici, alors qu'une hauteur
+          trop courte laisserait une bande nue en bas. */}
+      <div className="absolute inset-x-0 -top-6 h-screen overflow-hidden">
         {/* <NeuralFloat /> — voir l'en-tête de ce fichier */}
       </div>
     </div>

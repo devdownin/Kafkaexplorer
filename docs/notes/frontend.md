@@ -231,11 +231,24 @@ mesuré sur la page Metrics de la démo en 1440×900, le calque faisait 844 px p
 contenu, et après défilement jusqu'en bas son sommet se trouvait 1 474 px au-dessus de la zone
 visible. L'ornement occupait le premier tiers de la page puis s'en allait — ce qui se lit comme
 un défaut, pas comme une intention, sur un fond censé être ambiant. `sticky top-0 h-0` le fait
-suivre la fenêtre sans rien prendre au flux ; l'hôte du canvas, en `absolute` dedans, annule le
-`p-6` de la racine par des marges négatives pour aller à bord perdu, et fait `h-screen` — un
-dépassement de la hauteur d'en-tête que le conteneur rogne, là où une hauteur trop courte
-laisserait une bande nue en bas. Re-mesuré après coup : la zone visible est couverte en haut
-**comme en bas**, et sur 1 184 px de large pour 1 184 px de racine.
+suivre la fenêtre sans rien prendre au flux ; l'hôte du canvas, en `absolute` dedans, fait
+`h-screen` — un dépassement de la hauteur d'en-tête que le conteneur rogne, là où une hauteur
+trop courte laisserait une bande nue en bas. Re-mesuré après coup : la zone visible est couverte
+en haut **comme en bas**, et sur 1 184 px de large pour 1 184 px de racine.
+
+**Le débord horizontal est porté par l'ancre (`-mx-6`), pas par l'hôte, et ça a coûté un job CI
+rouge.** Écrit d'abord en `-left-6 -right-6` sur l'hôte, celui-ci devenait plus large que l'ancre
+qui le contient : `layout-probe --check` comptait alors l'ancre comme un conteneur qui rogne son
+contenu sans moyen d'atteindre le reste, `metrics` passait de 0 à 1 `unreachable` **aux deux
+largeurs**, et le job screenshots échouait. La tentation était d'apprendre à la sonde à ignorer
+les calques décoratifs — elle exclut déjà `sr-only` et les couches internes de Monaco pour des
+raisons de cette famille. C'était le mauvais réflexe : la géométrie était réellement fautive, pas
+la mesure. Porté par l'ancre, le débord annule exactement le `p-6` de la racine — l'ancre fait la
+largeur de la *boîte de padding* de la racine, l'hôte fait `inset-x-0` donc la largeur de
+l'ancre — et plus rien ne dépasse de son parent à aucun des trois niveaux (vérifié : `anchor`,
+`root` et `host` rapportent tous `scrollWidth <= clientWidth`). `metrics` est revenu à ses
+chiffres d'avant le changement, `clipped=10 unreachable=0`. Le cas unitaire pinne le sens du
+débord, puisque c'est lui qui a cassé.
 
 Le `sticky` forme un contexte d'empilement, contrairement à `absolute` — sans conséquence ici,
 parce qu'il naît sur *le calque* et non sur la page : le modal vit dans le conteneur frère, donc

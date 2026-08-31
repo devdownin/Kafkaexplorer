@@ -566,14 +566,26 @@ describe('Neural Float backdrop', () => {
     expect(layer.className).not.toContain('absolute');
     expect(layer.className).not.toContain('inset-0');
 
-    // L'hôte du canvas bleed par-dessus le `p-6` de la racine, sinon l'ornement serait encadré
-    // par la gouttière de la page au lieu d'aller à bord perdu.
+    // Le débord horizontal annule le `p-6` de la racine, sinon l'ornement serait encadré par la
+    // gouttière de la page au lieu d'aller à bord perdu.
+    expect(layer.className).toContain('-mx-6');
+
     const host = layer.firstElementChild as HTMLElement;
     expect(host).toBeTruthy();
     expect(host.className).toContain('absolute');
     expect(host.className).toContain('overflow-hidden');
-    for (const bleed of ['-top-6', '-left-6', '-right-6']) {
-      expect(host.className).toContain(bleed);
+    expect(host.className).toContain('-top-6');
+
+    /*
+     * Et le débord est porté par l'ancre, pas par l'hôte — ce qui a coûté un job CI rouge.
+     * Avec `-left-6 -right-6` ici, l'hôte devenait plus large que l'ancre qui le contient, et
+     * `layout-probe --check` comptait l'ancre comme rognant son contenu sans moyen d'atteindre
+     * le reste : `metrics` passait de 0 à 1 `unreachable` aux deux largeurs. L'hôte doit donc
+     * s'en tenir à `inset-x-0`, et rien ne doit dépasser de son parent à aucun niveau.
+     */
+    expect(host.className).toContain('inset-x-0');
+    for (const horizontalBleed of ['-left-6', '-right-6', '-mx-6']) {
+      expect(host.className).not.toContain(horizontalBleed);
     }
   });
 });
