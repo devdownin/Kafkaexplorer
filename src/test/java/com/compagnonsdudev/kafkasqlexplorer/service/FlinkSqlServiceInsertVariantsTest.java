@@ -519,6 +519,14 @@ class FlinkSqlServiceInsertVariantsTest {
      */
     @Test
     void pastTheCapASubmissionIsRefusedWithItsCount() {
+        // Le registre est vidé avant de compter.
+        //
+        // `cancelQuery` demande l'annulation et laisse l'entrée : c'est le balayage de
+        // `getHeldJobs()` qui la retire, une fois le job réellement terminé. Un job annulé par le
+        // cas précédent peut donc encore être compté ici, et c'est alors la *première* soumission
+        // qui se fait refuser — un échec qui ne dit rien de ce que ce cas mesure, et qui dépend de
+        // l'ordre d'exécution. Ce que ce test veut établir commence à registre vide.
+        awaitNoHeldJob();
         config.setMaxConcurrentJobs(1);
         try {
             FlinkJobSummary first = service.submitJob(QueryRequest.sql(
@@ -563,6 +571,23 @@ class FlinkSqlServiceInsertVariantsTest {
     }
 
     // ── Outils ────────────────────────────────────────────────────────────────────────
+
+    /** Attend, borné, que plus aucun job continu ne soit tenu — voir le cas du plafond. */
+    private void awaitNoHeldJob() {
+        for (int attempt = 0; attempt < 40; attempt++) {
+            long held = service.getHeldJobs().values().stream()
+                    .filter(info -> "ASYNC_JOB".equals(info.executionMode()))
+                    .count();
+            if (held == 0) return;
+            try {
+                Thread.sleep(250);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        fail("a cancelled job never left the registry, so the cap cannot be measured");
+    }
 
     /** Soumet, exige un job réel, puis rend la main au MiniCluster. */
     private void submitted(String sql) {

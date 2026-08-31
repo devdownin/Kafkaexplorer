@@ -57,6 +57,8 @@ class FlinkSqlServiceTest {
     private DdlGeneratorService ddlGeneratorService;
     /** Ce qui distingue une table écrite à la main d'une table dérivée d'un topic. */
     private FlinkTableStore flinkTableStore;
+    /** Le sérialiseur d'accès au runtime — voir {@link #awaitRuntimeIsFree()}. */
+    private FlinkRuntimeCoordinator runtimeCoordinator;
 
     @BeforeAll
     void setup() throws Exception {
@@ -72,7 +74,7 @@ class FlinkSqlServiceTest {
         schemaInferenceService = mock(SchemaInferenceService.class);
         ddlGeneratorService = mock(DdlGeneratorService.class);
 
-        FlinkRuntimeCoordinator runtimeCoordinator = new FlinkRuntimeCoordinator(tableEnv);
+        runtimeCoordinator = new FlinkRuntimeCoordinator(tableEnv);
         SqlQueryValidator validator = new SqlQueryValidator(config, tableEnv, runtimeCoordinator);
         // A temporary path, so a CREATE TABLE run by a test does not write into the checkout's
         // data/ directory — and so two runs of the suite cannot see each other's tables.
@@ -1084,6 +1086,47 @@ class FlinkSqlServiceTest {
                 "the caveat must name the way out, got: " + caveat);
         assertFalse(caveat.contains("fewer messages than the limit"),
                 "the generic timeout sentence sends the reader after the wrong thing, got: " + caveat);
+
+        // Et le runtime est rendu avant de sortir.
+        //
+        // Ce cas est le seul de la classe à laisser derrière lui un job sur une source qui ne
+        // finit pas : le budget de 200 ms expire, `cancelJobInternal` demande l'annulation, et le
+        // MiniCluster met un instant à la suivre. Tant qu'il ne l'a pas suivie, la mutation en
+        // cours tient le verrou d'écriture du coordinateur, et le cas suivant — quel qu'il soit —
+        // reçoit « The Flink runtime was busy ». C'est une panne *moteur* pour
+        // `SqlErrorClassifier`, donc un repli silencieux sur le lecteur direct, et trois de ces
+        // replis latchent le disjoncteur pour tout le reste de la classe. C'est ce qui a fait
+        // échouer `xmlExtractUdfIsRegisteredAndParsesXml`, une requête que le planner a toujours
+        // servie, sur une intégration continue où l'ordre d'exécution n'est pas celui d'ici.
+        //
+        // Attendre est donc l'assertion, pas une précaution : ce test n'a le droit de rendre la
+        // main qu'une fois le runtime de nouveau libre.
+        awaitRuntimeIsFree();
+    }
+
+    /**
+     * Boucle bornée jusqu'à ce que le runtime Flink accepte de nouveau une mutation.
+     *
+     * <p>La question est posée au coordinateur plutôt qu'à une requête, et c'est ce qui la rend
+     * fiable : {@code runMutation} passe par la file du mono-thread <em>puis</em> par le verrou
+     * d'écriture, donc les deux choses qu'un job en cours d'annulation peut retenir. Une requête
+     * de sondage, elle, traverserait tout le chemin de repli — et trois sondages malheureux
+     * auraient latché le disjoncteur qu'on cherche justement à protéger, pour dix minutes.
+     *
+     * <p>Bornée et non endormie : ce qui est attendu est un état observable, pas une durée choisie
+     * au hasard. Un échec ici est une vraie information — le runtime n'est pas revenu, et tout ce
+     * qui suivrait serait mesuré sur un moteur absent.
+     */
+    private void awaitRuntimeIsFree() {
+        for (int attempt = 0; attempt < 60; attempt++) {
+            try {
+                runtimeCoordinator.runMutation("test-probe", () -> null, 250L);
+                return;
+            } catch (FlinkRuntimeCoordinator.FlinkRuntimeBusyException stillBusy) {
+                // Le seul cas où réessayer a un sens : le runtime est pris, pas cassé.
+            }
+        }
+        fail("the Flink runtime never became free again after a cancelled job");
     }
 
     /**
