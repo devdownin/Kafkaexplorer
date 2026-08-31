@@ -1619,9 +1619,16 @@ public class FlinkSqlService {
         // Une trace reste, sans le WARN que `recordFlinkSelectFailure` écrivait : ce n'est pas une
         // panne, et une métrique fenêtrée qui se rafraîchit toutes les trente secondes en écrirait
         // une ligne à chaque cycle.
-        log.info("A window over {} has no time attribute — the direct reader answers it; "
-            + "declare a WATERMARK on that column to run it on the planner",
-            LogSafe.name(column == null ? "?" : column));
+        //
+        // La colonne n'y est pas, et c'est délibéré : elle voyage déjà dans l'avertissement du
+        // résultat, qui est là où on la lit. L'interpoler ici ajoutait une donnée venue de la
+        // requête dans un appel de journal, ce que `java/sensitive-log` signale — et que
+        // `LogSafe` ne peut pas clore, CodeQL n'admettant aucune fonction de rédaction comme
+        // barrière (voir docs/notes). Une ligne de trace ne vaut pas une alerte de plus dans une
+        // liste qui se dépouille à la main.
+        log.info("A window was opened over a column with no time attribute — the direct reader "
+            + "answered it; the result names the column and the WATERMARK clause that moves it "
+            + "to the planner");
         return "The Flink planner cannot open a window over " + named + ": a window function needs a "
             + "time attribute, and that column is an ordinary timestamp. The direct reader bucketed "
             + "the records by it instead. To run this window on the engine, declare the table "
