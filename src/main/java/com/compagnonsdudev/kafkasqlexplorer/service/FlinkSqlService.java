@@ -387,14 +387,30 @@ public class FlinkSqlService {
      */
     /** Package-private: driven directly by {@code FlinkSqlServiceTest}, like {@link #stripSqlComments}. */
     String extractPrimaryTable(String sql) {
-        // Hors littéraux : `WHERE note = 'select * from autre'` faisait autrement lire « autre »
-        // comme la table de la requête — donc chercher un topic de ce nom, et l'enregistrer s'il
-        // existe. Ce que les groupes capturent est identique au texte d'origine, les positions
-        // étant conservées et un nom de table ne pouvant pas se trouver dans un littéral.
-        String scan = SqlStatements.outsideLiterals(sql);
-        Matcher window = WINDOW_CALL.matcher(scan);
+        /*
+         * Le parseur d'abord, et les motifs sur le texte **d'origine** derrière.
+         *
+         * Ces deux motifs ont été appliqués un temps au texte dont les littéraux sont neutralisés,
+         * pour qu'un `WHERE note = 'select * from autre'` ne fasse pas lire « autre » comme la
+         * source. C'était juste pour le FROM et faux pour la fenêtre : `WINDOW_CALL` cite
+         * l'INTERVAL, donc ses chiffres — `INTERVAL '5' MINUTE` — et un littéral neutralisé le
+         * rend introuvable. La fenêtre n'était alors plus reconnue nulle part : la table n'était
+         * pas enregistrée, le planner répondait « Object not found » sur un topic parfaitement
+         * présent, et le repli ne se déclenchait pas puisque personne n'avait décidé de le
+         * déférer. Six cas de fenêtre l'ont dit d'un coup.
+         *
+         * Le parseur répond correctement aux deux — c'est le seul qui sache qu'un littéral n'est
+         * pas du SQL — donc c'est lui qui répond, et les motifs reprennent la main, sur le texte
+         * tel qu'écrit, quand la grammaire a refusé.
+         */
+        Optional<SqlAst.Read> ast = SqlAst.read(sql);
+        if (ast.isPresent()) {
+            List<String> names = SqlAst.tableNames(ast.get());
+            if (!names.isEmpty()) return names.get(0);
+        }
+        Matcher window = WINDOW_CALL.matcher(sql);
         if (window.find()) return window.group(2);
-        Matcher from = FROM_TABLE.matcher(scan);
+        Matcher from = FROM_TABLE.matcher(sql);
         return from.find() ? from.group(1) : null;
     }
 
@@ -418,14 +434,20 @@ public class FlinkSqlService {
      */
     List<String> extractSourceTables(String sql) {
         Set<String> names = new LinkedHashSet<>();
-        String scan = SqlStatements.outsideLiterals(sql);
+        // Le parseur les donne toutes, la primaire en tête, et sans confondre un littéral avec du
+        // SQL. Les motifs restent dessous, sur le texte d'origine — voir `extractPrimaryTable`.
+        Optional<SqlAst.Read> ast = SqlAst.read(sql);
+        if (ast.isPresent()) {
+            List<String> parsed = SqlAst.tableNames(ast.get());
+            if (!parsed.isEmpty()) return List.copyOf(parsed);
+        }
         String primary = extractPrimaryTable(sql);
         if (primary != null && !NOT_A_TABLE_NAME.contains(primary.toUpperCase(Locale.ROOT))) {
             names.add(primary);
         }
-        Matcher window = WINDOW_CALL.matcher(scan);
+        Matcher window = WINDOW_CALL.matcher(sql);
         while (window.find()) names.add(window.group(2));
-        Matcher source = SOURCE_TABLE.matcher(scan);
+        Matcher source = SOURCE_TABLE.matcher(sql);
         while (source.find()) {
             String name = source.group(1);
             if (!NOT_A_TABLE_NAME.contains(name.toUpperCase(Locale.ROOT))) names.add(name);

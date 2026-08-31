@@ -35,6 +35,17 @@ public class SqlQueryValidator {
             if (upperSql.contains("CROSS JOIN")) {
                 throw new IllegalArgumentException("Cross joins are not allowed in this environment.");
             }
+            /*
+             * `FROM a, b` est une jointure croisée écrite à l'ancienne, et aucun garde ne la voyait
+             * passer : le texte ne contient pas « CROSS JOIN », et l'heuristique sur le plan ne
+             * nomme que ce que Flink y écrit explicitement. Le parseur, lui, en fait la même
+             * jointure que celle écrite en toutes lettres, et il répond avant toute résolution de
+             * table — donc y compris sur un topic pas encore enregistré, là où l'EXPLAIN plus bas
+             * ne répond pas.
+             */
+            if (SqlAst.read(sql).map(SqlAst.Read::crossJoin).orElse(false)) {
+                throw new IllegalArgumentException("Cross joins are not allowed in this environment.");
+            }
         }
 
         if (explorerConfig.isAllowCrossJoin() && explorerConfig.isAllowSystemTableAccess()) {
@@ -100,9 +111,14 @@ public class SqlQueryValidator {
      * plus tôt.
      */
     private boolean isCrossJoinInPlan(String plan) {
-        return plan.contains("JOIN_TYPE: CROSS") ||
-               plan.contains("CROSS JOIN") ||
-               plan.contains("CARTESIAN");
+        // Hors littéraux, ici aussi : un plan recopie les valeurs de la requête, donc
+        // `WHERE state = 'CROSS JOIN'` écrit ces deux mots dans le plan et faisait refuser une
+        // requête qui ne joint rien. C'est le même faux positif qu'au niveau du texte, un étage
+        // plus bas — et il est resté seul debout quand l'autre a été corrigé.
+        String outsideValues = SqlStatements.outsideLiterals(plan);
+        return outsideValues.contains("JOIN_TYPE: CROSS") ||
+               outsideValues.contains("CROSS JOIN") ||
+               outsideValues.contains("CARTESIAN");
     }
 
     private boolean isSystemTableInPlan(String plan) {
