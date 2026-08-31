@@ -76,15 +76,20 @@ export function buildWindowSql(spec: WindowSpec): string {
  * Ce que l'utilisateur doit savoir avant d'exécuter, ou chaîne vide.
  *
  * SESSION sans clé produit du SQL que Flink refuse : mieux vaut le dire dans l'assistant que
- * de laisser l'erreur du planner l'apprendre. HOP et SESSION, eux, ne sont qu'approximés si
- * la requête retombe sur le lecteur Kafka direct.
+ * de laisser l'erreur du planner l'apprendre.
+ *
+ * HOP et SESSION, eux, sont *approximés* — au conditionnel avant, « si la requête retombe sur le
+ * lecteur Kafka direct », ce qui n'était plus une condition : une fenêtre posée sur un topic est
+ * répondue par ce lecteur, nommément, parce qu'une source Kafka non bornée ne ferme jamais sa
+ * dernière fenêtre sur le planner. Le dire au conditionnel laissait attendre des fenêtres
+ * chevauchantes qui n'arrivent pas.
  */
 export function windowCaveat(spec: WindowSpec): string {
   if (spec.kind === 'SESSION' && !(spec.partitionBy ?? '').trim()) {
     return 'Flink requires a PARTITION BY key for SESSION windows — fill it in before running.';
   }
   if (spec.kind !== 'TUMBLE') {
-    return `${spec.kind} runs on the Flink engine. If the query falls back to the direct Kafka reader, it is approximated as a tumbling window.`;
+    return `Over a Kafka topic, ${spec.kind} is approximated as a tumbling window of the same width: the direct reader answers windows, and it buckets by timestamp. Declare the table yourself with a bounded scan to get the real ${spec.kind} from the Flink planner.`;
   }
   return '';
 }

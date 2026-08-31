@@ -1146,6 +1146,45 @@ public class FlinkSqlService {
                     return autoReg.registered() ? withRegisteredFlag(direct) : direct;
                 }
                 /*
+                 * Une fenêtre posée sur un topic Kafka est répondue par le lecteur direct, et elle
+                 * lui est confiée **nommément** plutôt qu'après un échec.
+                 *
+                 * Ce n'est pas une préférence : une source Kafka est non bornée, donc elle ne se
+                 * termine jamais, donc la dernière fenêtre ne se ferme pas — et la boucle de
+                 * collecte ne rend la main qu'au plafond de lignes ou au budget. Une requête
+                 * fenêtrée qui produit moins de lignes que le plafond, ce qui est le cas ordinaire
+                 * (`SELECT window_start, COUNT(*) …` sur un topic d'une journée en fenêtres de
+                 * cinq minutes), ne pouvait donc que dépenser ses dix secondes et se replier ici,
+                 * en jetant au passage les lignes déjà collectées. Le repli était l'issue, pas
+                 * l'exception : autant y aller sans payer le budget.
+                 *
+                 * Trois garde-fous, et chacun ferme une façon de rendre des lignes fausses.
+                 *
+                 * La **forme** : `namesOneSourceOnly` (la même définition que celle des
+                 * métriques, pas une copie) refuse une fenêtre jointe à une autre table ou posée
+                 * sur une sous-requête. Ce lecteur lirait la première table et ignorerait le
+                 * reste, en silence — exactement ce que le classifieur d'erreurs existe pour
+                 * empêcher.
+                 *
+                 * La **table** : elle doit être un topic Kafka que cette application a enregistré
+                 * elle-même. Une table écrite par un opérateur est la sienne, et ses options — un
+                 * scan borné, un watermark — sont peut-être précisément ce qui permet au planner
+                 * de répondre ; la lui retirer serait défaire son travail.
+                 *
+                 * Le **hint** : une instruction qui porte ses propres options de connecteur —
+                 * un hint Calcite `OPTIONS(…)` — dit ce qu'elle veut de la source (un
+                 * `scan.bounded.mode`, typiquement, qui la fait terminer), donc elle part au
+                 * planner comme demandé.
+                 */
+                if (SqlStatements.hasWindowTableCall(sqlToExecute)
+                        && MetricService.namesOneSourceOnly(sqlToExecute)
+                        && !SqlStatements.carriesAnOptionsHint(sqlToExecute)
+                        && isGeneratedKafkaTable(extractPrimaryTable(sqlToExecute))) {
+                    QueryResult windowed = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
+                    windowed = withExtraWarning(windowed, WINDOWED_READ_NOTE);
+                    return autoReg.registered() ? withRegisteredFlag(windowed) : windowed;
+                }
+                /*
                  * Un mode de lecture nommé est une question que seul ce lecteur sait poser.
                  *
                  * Tant que le planner ne répondait à rien, chaque SELECT sur un topic Kafka
@@ -1197,20 +1236,47 @@ public class FlinkSqlService {
                         if (flinkResult.error().startsWith("Query timed out")) {
                             flinkSelectFailures.set(0);
                             log.warn("Flink SELECT timed out — falling back to direct Kafka read for this query");
-                            engineFailure = flinkResult.error();
+                            // Sur une fenêtre, « la requête a dépassé son délai » décrit mal ce qui
+                            // s'est passé, et le message générique envoie chercher un topic trop
+                            // gros : une source Kafka non bornée ne se termine pas, donc la
+                            // dernière fenêtre ne se ferme que quand des enregistrements plus
+                            // récents arrivent, et la collecte ne rend la main qu'au plafond de
+                            // lignes ou au budget. C'est une propriété de la lecture, pas une
+                            // lenteur, et elle a une sortie que le message nomme.
+                            engineFailure = SqlStatements.hasWindowTableCall(sqlToExecute)
+                                ? "The Flink planner accepted this window but could not finish it "
+                                    + "within " + timeout + " ms: a Kafka source is unbounded, so its "
+                                    + "last window closes only when later records arrive. The direct "
+                                    + "reader bucketed the records it read instead. Bound the read to "
+                                    + "let the planner answer — declare the table with "
+                                    + "'scan.bounded.mode' = 'latest-offset' — or raise the timeout."
+                                : flinkResult.error();
                         } else {
-                            QueryResult rejected = rejectIfUserError(
-                                flinkResult.error(), sqlToExecute, startTime, autoReg.deferredToDirectReader());
-                            if (rejected != null) return rejected;
-                            recordFlinkSelectFailure(flinkResult.error());
-                            engineFailure = flinkResult.error();
+                            String noTimeAttribute = windowNeedsATimeAttribute(flinkResult.error(), sqlToExecute);
+                            if (noTimeAttribute != null) {
+                                flinkSelectFailures.set(0);
+                                engineFailure = noTimeAttribute;
+                            } else {
+                                QueryResult rejected = rejectIfUserError(
+                                    flinkResult.error(), sqlToExecute, startTime, autoReg.deferredToDirectReader());
+                                if (rejected != null) return rejected;
+                                recordFlinkSelectFailure(flinkResult.error());
+                                engineFailure = SqlErrorClassifier.readable(flinkResult.error());
+                            }
                         }
                     } catch (Throwable t) {
-                        QueryResult rejected = rejectIfUserError(
-                            SqlErrorClassifier.explain(t), sqlToExecute, startTime, autoReg.deferredToDirectReader());
-                        if (rejected != null) return rejected;
-                        recordFlinkSelectFailure(t.toString());
-                        engineFailure = SqlErrorClassifier.explain(t);
+                        String explained = SqlErrorClassifier.explain(t);
+                        String noTimeAttribute = windowNeedsATimeAttribute(explained, sqlToExecute);
+                        if (noTimeAttribute != null) {
+                            flinkSelectFailures.set(0);
+                            engineFailure = noTimeAttribute;
+                        } else {
+                            QueryResult rejected = rejectIfUserError(
+                                explained, sqlToExecute, startTime, autoReg.deferredToDirectReader());
+                            if (rejected != null) return rejected;
+                            recordFlinkSelectFailure(t.toString());
+                            engineFailure = SqlErrorClassifier.readable(explained);
+                        }
                     }
                 }
                 /*
@@ -1456,7 +1522,8 @@ public class FlinkSqlService {
                 LogSafe.text(sql), LogSafe.text(classification.message()));
         flinkSelectFailures.set(0);
         return new QueryResult(Collections.emptyList(), Collections.emptyList(),
-            System.currentTimeMillis() - startTime, classification.message(), false, "FLINK");
+            System.currentTimeMillis() - startTime,
+            SqlErrorClassifier.readable(classification.message()), false, "FLINK");
     }
 
     /**
@@ -1471,6 +1538,95 @@ public class FlinkSqlService {
         if (readMode == null || readMode.isBlank()) return false;
         String mode = readMode.trim();
         return "latest-offset".equals(mode) || mode.startsWith(SINCE_READ_MODE_PREFIX);
+    }
+
+    /**
+     * Ce qu'un résultat fenêtré dit du moteur qui l'a produit.
+     *
+     * <p>Rien n'a échoué ici — c'est le lecteur qui répond à cette forme — donc la phrase ne
+     * commence pas par {@link #DIRECT_READER_CAVEAT}, qui annonce un repli. Elle dit ce que le
+     * lecteur a fait, ce qu'il ne fait pas, et par où passer pour obtenir les fenêtres du planner.
+     * L'approximation de HOP, CUMULATE et SESSION est ajoutée séparément par
+     * {@code kafkaWindowSelect}, qui seul sait laquelle a été demandée.
+     */
+    private static final String WINDOWED_READ_NOTE =
+        "This window was computed by the direct Kafka reader, over the records it read (at most "
+            + "100 000), bucketed by the column the DESCRIPTOR names. The Flink planner is not "
+            + "asked: a Kafka source is unbounded, so its last window never closes and the query "
+            + "would spend its whole budget before falling back here anyway. To get the planner's "
+            + "windows instead, declare the table yourself with 'scan.bounded.mode' = "
+            + "'latest-offset' and a WATERMARK on the time column — a bounded scan ends, so every "
+            + "window closes.";
+
+    /**
+     * Cette table est-elle un topic Kafka que <em>nous</em> avons enregistré ?
+     *
+     * <p>Le registre des définitions écrites à la main tranche en premier et négativement : une
+     * table qu'un opérateur a tapée reste au planner, quoi qu'elle nomme comme topic. Le reste est
+     * une correspondance de nom avec le catalogue Kafka, la même que celle de
+     * l'auto-enregistrement et du lecteur direct — qui la refera juste après, sur un appel mis en
+     * cache.
+     *
+     * <p>Un broker injoignable rend {@code false} : le planner décide alors, comme avant. Une
+     * requête ne doit pas changer de moteur parce qu'une liste de topics n'a pas pu être lue.
+     */
+    private boolean isGeneratedKafkaTable(String rawTableRef) {
+        if (rawTableRef == null) return false;
+        String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
+        for (FlinkTableStore.StoredTable stored : flinkTableStore.all()) {
+            if (stored.name().equals(flinkTableName)) return false;
+        }
+        try {
+            return kafkaAdminService.listTopics().stream()
+                .anyMatch(topic -> DdlGeneratorService.toTableName(topic).equals(flinkTableName));
+        } catch (Exception e) {
+            log.debug("Could not list topics while routing a windowed read: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * La phrase à rapporter quand le planner a refusé une <em>fenêtre</em> faute d'attribut
+     * temporel, ou {@code null} quand ce n'est pas ce qui s'est passé.
+     *
+     * <p>« The window function requires the timecol is a time attribute type, but is
+     * TIMESTAMP(3) » n'est pas une panne : c'est la définition de la table qui ne déclare aucun
+     * watermark sur la colonne que la fenêtre désigne. Lu comme une panne moteur, ce refus faisait
+     * trois choses fausses à la fois. Il partait dans les warnings sous sa forme brute — la règle
+     * Calcite, ses arguments et le plan {@code rel#…} — c'est-à-dire la seule partie du message
+     * qui ne dit rien à personne. Il comptait pour le disjoncteur, donc trois fenêtres d'affilée
+     * suffisaient à couper le planner pour <em>toutes</em> les requêtes du processus pendant dix
+     * minutes. Et il ne nommait ni la colonne ni le geste qui répare.
+     *
+     * <p>Le repli, lui, reste : ce lecteur sait vraiment répondre à une fenêtre — il regroupe par
+     * horodatage, en approximant HOP, CUMULATE et SESSION en fenêtres jointives, et il le dit.
+     * Refuser à la place lui retirerait une capacité réelle, sur la forme la plus courante ici :
+     * une fenêtre sur une colonne temporelle <em>du message</em>, que ce lecteur analyse très bien
+     * et sur laquelle aucun watermark ne peut être déclaré depuis un schéma inféré.
+     *
+     * <p>Depuis que {@code DdlGeneratorService} déclare un watermark sur l'{@code event_time}
+     * qu'il ajoute, la fenêtre par défaut de l'assistant passe par le planner : ce chemin-ci ne
+     * concerne plus que les colonnes temporelles venues du payload et les tables écrites à la
+     * main sans watermark.
+     */
+    private static String windowNeedsATimeAttribute(String rawError, String sql) {
+        if (rawError == null || !SqlStatements.hasWindowTableCall(sql)) return null;
+        if (!SqlErrorClassifier.mentionsATimeAttribute(rawError)) return null;
+        Matcher window = WINDOW_CALL.matcher(sql);
+        String column = window.find() ? window.group(3) : null;
+        String named = column == null ? "the column the window is opened over" : "`" + column + "`";
+        // Une trace reste, sans le WARN que `recordFlinkSelectFailure` écrivait : ce n'est pas une
+        // panne, et une métrique fenêtrée qui se rafraîchit toutes les trente secondes en écrirait
+        // une ligne à chaque cycle.
+        log.info("A window over {} has no time attribute — the direct reader answers it; "
+            + "declare a WATERMARK on that column to run it on the planner",
+            LogSafe.name(column == null ? "?" : column));
+        return "The Flink planner cannot open a window over " + named + ": a window function needs a "
+            + "time attribute, and that column is an ordinary timestamp. The direct reader bucketed "
+            + "the records by it instead. To run this window on the engine, declare the table "
+            + "yourself with a watermark on that column — WATERMARK FOR <col> AS <col> - "
+            + "INTERVAL '5' SECOND — as the generated tables do for their `event_time` column. "
+            + "The planner's own words: " + SqlErrorClassifier.readable(rawError);
     }
 
     /**

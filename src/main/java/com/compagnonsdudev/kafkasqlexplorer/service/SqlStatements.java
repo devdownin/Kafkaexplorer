@@ -103,6 +103,24 @@ public final class SqlStatements {
     private static final java.util.regex.Pattern WINDOW_TABLE_CALL =
         java.util.regex.Pattern.compile("(?i)\\bTABLE\\s*\\(\\s*(TUMBLE|HOP|CUMULATE|SESSION)\\s*\\(");
 
+    /**
+     * L'instruction porte-t-elle ses propres options de connecteur ?
+     *
+     * <p>{@code /*+ OPTIONS('scan.bounded.mode'='latest-offset') *}{@code /} est un <em>hint</em>
+     * Calcite, pas un commentaire (voir {@code FlinkSqlService.stripSqlComments}, qui le
+     * distingue au {@code +}), et c'est l'auteur qui dit ce qu'il veut du connecteur. Deux
+     * appelants en dépendent et pour la même raison : {@code MetricService} n'injecte pas le sien
+     * par-dessus, et l'aiguillage d'une fenêtre laisse une telle instruction au planner plutôt que
+     * de l'envoyer à un lecteur qui n'a aucune option à honorer.
+     *
+     * <p>{@code OPTIONS(} nu compte aussi, prudemment : une occurrence dans une chaîne de
+     * caractères n'y changerait qu'une chose, laisser la requête au moteur qui la lisait déjà.
+     */
+    public static boolean carriesAnOptionsHint(String sql) {
+        return sql != null
+            && (sql.contains("/*+") || sql.toUpperCase(java.util.Locale.ROOT).contains("OPTIONS("));
+    }
+
     /** True when `word` sits at `from` as a whole word, case-insensitively. */
     private static boolean isWordAt(String s, int from, String word) {
         if (from < 0 || from + word.length() > s.length()) return false;

@@ -107,6 +107,11 @@ const LessonCard: React.FC<LessonCardProps> = ({ lesson, index, copied, onCopy }
               <Badge tone="primary">Flink engine</Badge>
             </Tooltip>
           )}
+          {lesson.engine === 'KAFKA_DIRECT' && (
+            <Tooltip content="The direct Kafka reader answers this one, and the Flink planner is not asked: a Kafka source never ends, so a window's last bucket would never close.">
+              <Badge tone="neutral">Direct reader</Badge>
+            </Tooltip>
+          )}
         </div>
         <p className="text-[12.5px] text-on-surface-variant leading-relaxed mt-1">{lesson.goal}</p>
       </div>
@@ -243,7 +248,9 @@ const Help: React.FC = () => {
               body: (
                 <>
                   Every generated table carries <Code>event_time</Code> — the Kafka record timestamp, read as metadata —
-                  and <Code>proc_time</Code>, the moment the query reads the row. Windows group by the first.
+                  and <Code>proc_time</Code>, the moment the query reads the row. Windows group by the first, and they
+                  can because the table declares a watermark on it: without one, a timestamp column is not a
+                  <em> time attribute</em> and the planner refuses every window over it.
                 </>
               ),
             },
@@ -413,6 +420,17 @@ const Help: React.FC = () => {
             ))}
           </TableBody>
         </Table>
+
+        <Card padding="md" className="mt-4 space-y-2">
+          <h3 className="text-[13px] font-semibold text-on-surface">Why a window never goes to the planner</h3>
+          <p className="text-[12px] text-on-surface-variant leading-relaxed">
+            One shape is handed to the direct reader on purpose rather than after a failure: a window over a Kafka
+            topic. A Kafka source is unbounded, so its last window never closes — the query would spend its whole
+            budget and be answered by that reader anyway. Declaring the table yourself with{' '}
+            <Code>&#39;scan.bounded.mode&#39; = &#39;latest-offset&#39;</Code> and a <Code>WATERMARK</Code> on the time
+            column is what sends it to the planner: a bounded scan ends, so every window closes.
+          </p>
+        </Card>
 
         <Card padding="md" className="mt-4 space-y-2">
           <h3 className="text-[13px] font-semibold text-on-surface">Why a bad query is not retried elsewhere</h3>

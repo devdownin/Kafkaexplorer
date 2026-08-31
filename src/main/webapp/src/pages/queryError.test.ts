@@ -154,6 +154,28 @@ describe('describeQueryError', () => {
       expect(info.hint).toMatch(/LIMIT/);
     });
 
+    /**
+     * Le refus d'une fenêtre faute d'attribut temporel, dans la forme où il arrive vraiment :
+     * enveloppé dans la règle Calcite qui a échoué, ses arguments et le plan. Sans famille, ce
+     * pavé passait pour titre.
+     */
+    it('reads a window on a column with no watermark as a table to fix', () => {
+      const info = describeQueryError(
+        'Error while applying rule StreamPhysicalWindowTableFunctionRule(in:LOGICAL,out:STREAM_PHYSICAL), '
+        + "args [rel#27876:FlinkLogicalTableFunctionScan.LOGICAL.any.None: 0.[NONE].[NONE].[NONE]"
+        + '(invocation=TUMBLE(TABLE(#0), DESCRIPTOR(_UTF-16LE\'event_time\'), 300000:INTERVAL MINUTE))]: '
+        + 'The window function requires the timecol is a time attribute type, but is TIMESTAMP(3).');
+      expect(info.title).toMatch(/not a time attribute/);
+      expect(info.hint).toMatch(/WATERMARK/);
+      expect(info.raw).toMatch(/rel#/);
+    });
+
+    it('gives the same reading to an OVER window with no time attribute', () => {
+      const info = describeQueryError(
+        "OVER windows' ordering in stream mode must be defined on a time attribute.");
+      expect(info.title).toMatch(/not a time attribute/);
+    });
+
     it('names the rewrite for a correlated subquery', () => {
       const info = describeQueryError(
         'org.apache.calcite.plan.RelOptPlanner$CannotPlanException: unexpected correlate variable $cor0');

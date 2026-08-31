@@ -92,6 +92,12 @@ public final class SqlErrorClassifier {
             // vraie raison dans les warnings. C'est la substitution que ce classifieur existe pour
             // empêcher : l'avis d'un autre moteur sur une requête qu'il n'a jamais su exécuter.
             + "|sort on a non-time-attribute field is not supported"
+            // Un OVER en temps événement sur une colonne qui n'est pas un attribut temporel. La
+            // *fenêtre* TVF est traitée à part (voir `mentionsATimeAttribute`) parce que le
+            // lecteur direct sait vraiment en calculer une ; un OVER, non — il l'ignorerait en
+            // silence et rendrait des lignes, ce qui est la substitution que ce classifieur
+            // existe pour empêcher.
+            + "|over windows' ordering in stream mode must be defined on a time attribute"
             + "|unexpected correlate variable"
             + "|cannot be cast to"
             + "|argument type mismatch"
@@ -139,6 +145,76 @@ public final class SqlErrorClassifier {
     public static boolean isSyntaxError(Throwable error) {
         String message = explain(error);
         return !ENGINE_ERROR_TEXT.matcher(message).find() && SYNTAX_ERROR_TEXT.matcher(message).find();
+    }
+
+    /**
+     * Ce que le planner dit quand une expression temporelle porte sur une colonne qui n'est pas
+     * un <em>attribut temporel</em> — une colonne horodatée sur laquelle aucun watermark n'est
+     * déclaré.
+     *
+     * <p>Volontairement large, parce que le seul appelant la restreint déjà à une forme précise :
+     * {@code FlinkSqlService.windowNeedsATimeAttribute} ne la consulte que sur une requête qui
+     * contient un {@code TABLE(TUMBLE(…))}. La formulation exacte a déjà changé entre versions de
+     * Flink, et une garde de forme vaut mieux qu'une énumération de phrases.
+     */
+    private static final Pattern TIME_ATTRIBUTE_TEXT = Pattern.compile(
+        "requires the timecol is a time attribute"
+            + "|(?:must|should) be defined on a time attribute"
+            + "|(?:is|are) not a time attribute"
+            + "|must be a time attribute"
+            + "|can only be defined over a time attribute",
+        Pattern.CASE_INSENSITIVE);
+
+    /** Whether this failure is "that column carries no watermark", in any of Flink's wordings. */
+    public static boolean mentionsATimeAttribute(String rawMessage) {
+        return rawMessage != null && TIME_ATTRIBUTE_TEXT.matcher(rawMessage).find();
+    }
+
+    /**
+     * L'enveloppe Calcite d'un échec de planification : la règle, ses arguments et le plan.
+     *
+     * <p>Un refus arrive sous la forme {@code Error while applying rule
+     * StreamPhysicalWindowTableFunctionRule(in:LOGICAL,out:STREAM_PHYSICAL), args
+     * [rel#27876:FlinkLogicalTableFunctionScan…(…rowType=RecordType(…))]: <la vraie phrase>}. Les
+     * quatre cents caractères de tête décrivent l'état interne du planificateur ; la phrase utile
+     * est la dernière. Telle quelle, elle arrivait dans l'éditeur au bout d'un pavé que personne
+     * ne lit — et qui fait passer une définition de table à corriger pour une panne du serveur.
+     */
+    private static final String RULE_FAILURE_PREFIX = "Error while applying rule ";
+
+    /** Ce qui ferme la liste d'arguments et ouvre la vraie phrase. */
+    private static final String RULE_ARGS_END = "]:";
+
+    /**
+     * The same failure, with the planner's internal plan dump taken off the front.
+     *
+     * <p>Rien n'est perdu qui aide : le nom de la règle est conservé entre parenthèses (c'est ce
+     * qu'on cherche dans le journal de Flink), et la phrase de fin est rendue mot pour mot. Le
+     * classement, lui, continue de se faire sur le message complet — cette méthode est de la
+     * présentation, pas de la logique.
+     */
+    public static String readable(String rawMessage) {
+        if (rawMessage == null) return null;
+        String message = rawMessage.trim();
+        // Trois recherches littérales plutôt qu'une expression rationnelle : la liste d'arguments
+        // contient elle-même des crochets, donc le motif aurait un `.*?` non ancré — la forme que
+        // CodeQL signale (java/polynomial-redos) et que ce dépôt a déjà payée une fois.
+        int at = message.indexOf(RULE_FAILURE_PREFIX);
+        if (at < 0) return rawMessage;
+        int nameStart = at + RULE_FAILURE_PREFIX.length();
+        int nameEnd = nameStart;
+        while (nameEnd < message.length()
+            && (Character.isLetterOrDigit(message.charAt(nameEnd)) || message.charAt(nameEnd) == '_')) {
+            nameEnd++;
+        }
+        int argsEnd = message.indexOf(RULE_ARGS_END, nameEnd);
+        if (nameEnd == nameStart || argsEnd < 0) return rawMessage;
+        String cause = message.substring(argsEnd + RULE_ARGS_END.length()).trim();
+        if (cause.isEmpty()) return rawMessage;
+        // Ce qui précède l'enveloppe est conservé : Flink emboîte volontiers un « Cannot generate a
+        // valid execution plan… » par-dessus, et c'est une phrase qui aide, contrairement au plan.
+        return message.substring(0, at) + cause
+            + " (Flink planner rule " + message.substring(nameStart, nameEnd) + ")";
     }
 
     /** Classifies a raw error message (the planner path carries text, not the exception). */
@@ -205,6 +281,10 @@ public final class SqlErrorClassifier {
         String explained = parts.isEmpty()
             ? error.getClass().getSimpleName()
             : String.join(": ", parts);
+        // Avant la troncature, jamais après : l'enveloppe Calcite est faite d'un message et de sa
+        // cause, donc la phrase utile est *derrière* le plan et c'est elle que la coupe à
+        // MAX_EXPLAIN_CHARS emporte en premier sur une table large.
+        explained = readable(explained);
         return explained.length() > MAX_EXPLAIN_CHARS
             ? explained.substring(0, MAX_EXPLAIN_CHARS) + "… (truncated)"
             : explained;

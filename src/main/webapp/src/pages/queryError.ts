@@ -132,6 +132,16 @@ export function describeQueryError(rawInput: string | null | undefined): QueryEr
       location, raw,
     };
   }
+  // Une colonne horodatée n'est pas un attribut temporel tant qu'aucun watermark ne le déclare.
+  // Le message brut de Flink arrive enveloppé dans la règle Calcite qui a échoué et son plan ;
+  // sans famille, ce pavé passait pour titre.
+  if (/requires the timecol is a time attribute|(?:must|should) be defined on a time attribute|is not a time attribute|must be a time attribute/i.test(unwrapped)) {
+    return {
+      title: 'That column is not a time attribute',
+      hint: 'Event-time windows and OVER need a column carrying a watermark. Tables this explorer registers declare one on event_time — window over that, or declare the table yourself with WATERMARK FOR <col> AS <col> - INTERVAL \'5\' SECOND.',
+      location, raw,
+    };
+  }
   if (/unexpected correlate variable|correlate variable \$cor/i.test(unwrapped)) {
     return {
       title: 'Correlated subquery not supported',

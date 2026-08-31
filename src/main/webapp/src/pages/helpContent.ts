@@ -52,8 +52,11 @@ export interface Lesson {
   /**
    * `FLINK` : le lecteur direct ne sait pas l'exécuter, donc la requête échoue
    * si le planner est indisponible. `ANY` : les deux moteurs répondent.
+   * `KAFKA_DIRECT` : c'est le lecteur qui répond, et le planner n'est pas consulté —
+   * le cas des fenêtres sur un topic, dont la dernière ne se fermerait jamais sur une
+   * source Kafka non bornée.
    */
-  engine: 'ANY' | 'FLINK';
+  engine: 'ANY' | 'FLINK' | 'KAFKA_DIRECT';
   keywords: string[];
 }
 
@@ -95,7 +98,8 @@ LIMIT 20`,
     reading: [
       'Every generated table carries two extra columns: event_time (the Kafka record timestamp, read as metadata) and proc_time (the moment the query reads the row).',
       'event_time is what windows group by — it is the one column you get for free on every topic, whatever the payload looks like.',
-      'A field named event_time inside the payload wins: the generated DDL only adds the metadata column when the schema does not already define one.',
+      'A field named event_time inside the payload wins: the generated DDL only adds the metadata column when the schema does not already define one — and only the metadata one carries a watermark, so only it can open a window.',
+      'The generated table declares WATERMARK FOR event_time AS event_time - INTERVAL \'5\' SECOND. That watermark is what makes event_time a time attribute; without one, a window over it is refused by the planner and answered by the direct reader instead.',
     ],
     engine: 'ANY',
     keywords: ['projection', 'columns', 'event_time', 'proc_time', 'metadata'],
@@ -158,10 +162,12 @@ GROUP BY window_start, window_end`,
       'The windowing function wraps the table — FROM TABLE(TUMBLE(TABLE t, …)) — it is not a clause you append.',
       'DESCRIPTOR names the time column. window_start and window_end are produced by the window, so you both select and group by them.',
       'The demo sensors spread their readings over two hours, which is what makes several buckets appear. On a topic where everything landed in the same minute, one bucket is the correct answer.',
+      'A window over a topic is computed by the direct reader, always — the planner is not asked. A Kafka source never ends, so its last window would never close: the query would spend its whole budget and be answered here anyway. The reader buckets by the column DESCRIPTOR names, resolving it in the payload and falling back to the Kafka record timestamp.',
+      'To get the planner\u2019s windows instead, declare the table yourself with \'scan.bounded.mode\' = \'latest-offset\' and a WATERMARK on the time column. A bounded scan ends, so every window closes.',
     ],
     pitfall:
-      'Pointing DESCRIPTOR at a column that is not a time. The fallback reader resolves the column as an ISO-8601 or epoch field and drops back to the Kafka record timestamp; the Flink planner just rejects it.',
-    engine: 'ANY',
+      'Expecting the row cap to be a window. The reader reads at most 100 000 records, so the buckets describe that slice of the topic and not the whole of it — and on a topic older than the cap, the oldest buckets are simply not there.',
+    engine: 'KAFKA_DIRECT',
     keywords: ['tumble', 'window', 'descriptor', 'interval', 'time series', 'window_start'],
   },
   {
@@ -183,8 +189,8 @@ GROUP BY window_start, window_end`,
       'CUMULATE and SESSION follow the same shape; SESSION additionally requires a PARTITION BY key.',
     ],
     pitfall:
-      'HOP, CUMULATE and SESSION are exact on the Flink engine only. If a query falls back, they are approximated as a tumbling window of the same width, and the result says so in its warnings.',
-    engine: 'ANY',
+      'HOP, CUMULATE and SESSION are exact on the Flink planner only, and a window over a topic does not go there: they come back approximated as a tumbling window of the same width, and the result says so in its warnings. Declare the table yourself with a bounded scan when the overlap is the point.',
+    engine: 'KAFKA_DIRECT',
     keywords: ['hop', 'sliding', 'cumulate', 'session', 'window', 'approximation'],
   },
   {
@@ -308,7 +314,8 @@ GROUP BY customer_id`,
   \`amount\` DOUBLE,
   \`state\` STRING,
   \`event_time\` TIMESTAMP(3) METADATA FROM 'timestamp',
-  \`proc_time\` AS PROCTIME()
+  \`proc_time\` AS PROCTIME(),
+  WATERMARK FOR \`event_time\` AS \`event_time\` - INTERVAL '5' SECOND
 ) WITH (
   'connector' = 'kafka',
   'topic' = 'demo.orders.1.received',
@@ -321,6 +328,7 @@ GROUP BY customer_id`,
     reading: [
       'CREATE TABLE always goes through the Flink planner, never the fallback reader.',
       'The topic keeps its real name in the connector properties; only the SQL identifier is sanitized.',
+      'The WATERMARK line is what turns event_time into a time attribute — the one thing a window, an OVER or an event-time ORDER BY needs. Drop it and the planner refuses all three.',
       'Any DDL the app shows you is masked: passwords and the Confluent SASL secret are replaced before the string leaves the server, so paste your own credentials back in when you copy one.',
     ],
     pitfall:
@@ -386,13 +394,13 @@ export const ENGINE_MATRIX: EngineCapability[] = [
     feature: 'TUMBLE window',
     flink: true,
     direct: true,
-    note: 'The direct reader buckets by the time column, falling back to the Kafka record timestamp.',
+    note: 'Over a topic the direct reader answers, bucketing by the time column and falling back to the Kafka record timestamp. The planner answers one over a table you declared with a bounded scan.',
   },
   {
     feature: 'HOP / CUMULATE / SESSION windows',
     flink: true,
     direct: 'partial',
-    note: 'Approximated as a tumbling window of the same width, and the warning says so.',
+    note: 'Approximated as a tumbling window of the same width, and the warning says so. Exact only on the planner, i.e. on a bounded table you declared.',
   },
   {
     feature: 'ORDER BY',
@@ -429,7 +437,7 @@ export interface WindowPart {
 export const WINDOW_ANATOMY: WindowPart[] = [
   { fragment: 'FROM TABLE( … )', meaning: 'A windowing function returns a table, so the whole call sits where the table name would.' },
   { fragment: 'TUMBLE(TABLE demo_iot_sensors', meaning: 'The source table, introduced by the keyword TABLE a second time.' },
-  { fragment: 'DESCRIPTOR(event_time)', meaning: 'Which column carries the time. Almost always event_time.' },
+  { fragment: 'DESCRIPTOR(event_time)', meaning: 'Which column carries the time — and it has to be one the table declares a WATERMARK on. Almost always event_time, the only column a generated table watermarks.' },
   { fragment: "INTERVAL '5' MINUTES", meaning: 'The bucket width. Singular and plural units are both accepted.' },
   { fragment: 'GROUP BY window_start, window_end', meaning: 'The columns the window adds. Select them to see the bucket each row belongs to.' },
 ];

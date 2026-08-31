@@ -138,6 +138,40 @@ class FlinkDdlValidationTest {
                 "event_time must be a METADATA column (METADATA FROM 'timestamp')");
     }
 
+    /**
+     * Et Flink en fait un <em>attribut temporel</em>, ce qu'une chaîne cherchée dans le texte du
+     * DDL ne dirait pas.
+     *
+     * <p>C'est la moitié qui manquait : {@code event_time} existait, était bien une colonne
+     * METADATA, et n'était pas un attribut temporel faute de watermark. Le planner refusait donc
+     * toute fenêtre posée dessus — « The window function requires the timecol is a time attribute
+     * type, but is TIMESTAMP(3) » — c'est-à-dire la requête que l'assistant de fenêtrage écrit par
+     * défaut, sur la colonne que l'aide recommande. Le refus était classé en panne moteur : repli
+     * silencieux sur le lecteur direct (qui approxime HOP, CUMULATE et SESSION), pavé Calcite dans
+     * les avertissements, et trois fenêtres d'affilée coupaient le planner pour tout le processus.
+     *
+     * <p>La déclaration est vérifiée ici plutôt que par {@code contains("WATERMARK")} parce que la
+     * question n'est pas ce que la chaîne contient mais ce que le moteur en résout : une expression
+     * de watermark sur une colonne du mauvais type est acceptée par le parseur et refusée à la
+     * résolution.
+     */
+    @Test
+    void jsonDdlEventTimeIsARowtimeAttribute() {
+        assertEquals(1, jsonSchema.getWatermarkSpecs().size(),
+                "the generated table must declare exactly one watermark, got: "
+                    + jsonSchema.getWatermarkSpecs());
+        assertEquals("event_time", jsonSchema.getWatermarkSpecs().get(0).getRowtimeAttribute(),
+                "the watermark must be declared on event_time");
+    }
+
+    /** Et sur un topic XML, dont les colonnes physiques sont différentes mais pas les techniques. */
+    @Test
+    void xmlDdlEventTimeIsARowtimeAttributeToo() {
+        assertEquals(1, xmlSchema.getWatermarkSpecs().size(),
+                "the XML table must carry the same watermark, got: " + xmlSchema.getWatermarkSpecs());
+        assertEquals("event_time", xmlSchema.getWatermarkSpecs().get(0).getRowtimeAttribute());
+    }
+
     // ──────────────────────────────────────────────────────────────────────────────
     // XML format — raw_value must be physical, NOT metadata
     // ──────────────────────────────────────────────────────────────────────────────
