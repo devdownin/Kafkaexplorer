@@ -181,6 +181,17 @@ contracts changes, the screenshot is where it shows: a missing field renders as 
 empty panel rather than failing loudly. If a capture looks wrong, compare the fixture with the
 interface before assuming the UI broke.
 
+**`docs/check-fixtures.py` now does that comparison**, because "rather than failing loudly" was
+the whole problem and this paragraph was the only thing guarding it. It checks field names in both
+directions, at the top level, for every export mapped in its `CONTRACTS` table — and an export in
+neither that table nor `UNCONTRACTED` fails, so a fixture cannot be added without someone saying
+what it must satisfy. Its **first run found nine drifts**, of which one was visible and had
+shipped: `metrics.png` carried a "Measure a process" call-to-action, and its summary line was
+missing "a measured process", because the stub omitted the `processMeasured` boolean. The others
+were absorbed by `??` and falsy defaults — `internalTopicPrefix`, `kafkaError` / `flinkError`,
+`durationMs`, `tableRegistered`, `changelog`, `componentHistory` — plus a `jobs` array, and the
+two `/api/query/jobs` routes that served it, left behind by the removal of Flink Job mode.
+
 ## How the screens are driven
 
 By URL, not by clicking. The pages round-trip their whole state through the query string — a

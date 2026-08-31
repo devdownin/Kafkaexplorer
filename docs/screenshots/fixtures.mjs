@@ -74,59 +74,15 @@ export const dashboard = {
   topicSizes,
   totalMessages: Object.values(topicSizes).reduce((a, b) => a + b, 0),
   tables: ['demo_orders_1_received', 'demo_orders_nested', 'demo_iot_sensors', 'demo_payments_authorized'],
-  jobs: [
-    {
-      queryId: 'q-7f3a91c4', flinkJobId: '8b1e0a2c94d7f6135ae2', statementType: 'SELECT',
-      status: 'FINISHED', sql: 'SELECT order_id, status, amount_cents FROM demo_orders_5_shipped LIMIT 50',
-      startedAt: min(4), endedAt: min(4) + 2_310, cancelRequested: false,
-    },
-    {
-      queryId: 'q-2c05be18', flinkJobId: 'd42f7c1908ba6e35f0c1', statementType: 'CREATE TABLE',
-      status: 'FINISHED', sql: 'CREATE TABLE demo_iot_sensors (...) WITH (...)',
-      startedAt: min(11), endedAt: min(11) + 640, cancelRequested: false,
-    },
-  ],
   health: true,
   topicLastMessages,
+  // La valeur par défaut réelle d'`explorer.internal-topic-prefix` : la chaîne vide
+  // (`ExplorerConfig`), pas un préfixe inventé. `Layout` la lit avec `?? ''`, donc son absence ne
+  // se voyait pas — c'est précisément pourquoi elle a pu manquer, et pourquoi c'est une
+  // vérification et non un coup d'œil qui l'a trouvée.
+  internalTopicPrefix: '',
 };
 
-/**
- * `GET /api/query/jobs/{queryId}` — ce que la carte de job déplie.
- *
- * **Dérivée du job du tableau de bord**, jamais réécrite à côté : le résumé et le détail décrivent
- * le même job, et deux fixtures indépendantes finiraient par le décrire différemment — ce que la
- * page rendrait sans broncher. L'historique est ce que le magasin écrirait vraiment pour ce
- * job-là : une création, puis la fin.
- */
-export const flinkJobDetails = {
-  ...dashboard.jobs[0],
-  executionMode: 'SYNC_READ',
-  statusDetail: 'Executed through synchronous exploration mode',
-  cancelRequestedAt: null,
-  errorMessage: null,
-  lastUpdatedAt: dashboard.jobs[0].endedAt,
-  history: [
-    {
-      timestamp: dashboard.jobs[0].startedAt,
-      status: 'RUNNING',
-      detail: 'Executed through synchronous exploration mode',
-    },
-    { timestamp: dashboard.jobs[0].endedAt, status: 'FINISHED', detail: null },
-  ],
-};
-
-/**
- * `GET /api/dashboard/activity` — la colonne de sparklines du tableau des topics.
- *
- * Dérivée de la requête, comme le vrai endpoint : la page ne demande que les lignes affichées, et
- * une fixture qui répondrait pour tous les topics rendrait la capture muette sur ce point. La
- * série est pseudo-aléatoire mais **déterministe** (graine tirée du nom du topic), sur la règle de
- * ce harnais : une image qui change à chaque build est un diff que personne ne relit.
- *
- * Deux topics sortent du lot volontairement, parce que ce sont les deux cas que la colonne existe
- * pour distinguer : `demo.iot.sensors` produit en continu, et `internal.metrics.config` ne produit
- * presque rien — une ligne plate qui est une mesure, pas une absence de mesure.
- */
 export function topicActivity(url) {
   const requested = (url.searchParams.get('topics') ?? '').split(',').filter(Boolean);
   const buckets = Number(url.searchParams.get('buckets') ?? 24);
@@ -266,6 +222,10 @@ export const queryInit = {
   topics: TOPICS.filter(t => !t.startsWith('internal.')),
   tables: ['demo_orders_1_received', 'demo_orders_5_shipped', 'demo_orders_nested', 'demo_iot_sensors', 'demo_payments_authorized'],
   health: true,
+  // Les deux causes que cet endpoint rapporte au lieu de deux `catch` vides. `null` des deux
+  // côtés : sur la démo, le broker répond et le planificateur aussi.
+  kafkaError: null,
+  flinkError: null,
 };
 
 export const querySchema = {
@@ -290,6 +250,12 @@ export const queryResult = {
   error: null,
   engine: 'FLINK',
   warnings: [],
+  // `durationMs` et `tableRegistered` ne sont pas nullables dans `QueryResult` : il n'existe pas
+  // d'état « absent » pour eux, seulement une valeur que ce bouchon ne donnait pas.
+  durationMs: 412,
+  tableRegistered: true,
+  // Une lecture bornée, pas un changelog — c'est ce que rend un SELECT ... LIMIT sur ce chemin.
+  changelog: null,
 };
 
 export const QUERY_SQL = `-- Orders shipped above 50 EUR, newest first.
@@ -551,6 +517,9 @@ export const metrics = [
     lastSummary: { rowCount: 1 }, createTableSql: null,
     templateType: 'RAW_SQL', templateParams: {}, executionMode: 'SQL',
     labelTopic: 'demo.orders.1.received', labelFields: [],
+    // `null`, et pas un tableau vide : ce compteur n'a pas de valeurs *composantes*, ce qui n'est
+    // pas la même chose que d'en avoir zéro. La carte lit l'absence, elle ne dessine rien.
+    componentHistory: null,
   },
   {
     id: 'm-hop-latency', name: 'gauge_latency_demo_orders_3_enriched_to_demo_orders_4_transformed',
@@ -569,6 +538,7 @@ export const metrics = [
     },
     executionMode: 'TEMPLATE_BOUNDED_SCAN',
     labelTopic: 'demo.orders.3.enriched', labelFields: [],
+    componentHistory: null,
   },
 ];
 
@@ -769,6 +739,10 @@ export const metricSuggestions = {
   auditSource: 'CURRENT_RUN',
   auditTopics: 28,
   flowChainsSubmitted: 1,
+  // Le panneau distingue « le process mining a tourné et n'a rien trouvé » de « il n'a pas
+  // tourné ». Ici il a tourné : une trace Stream Flow a été enregistrée, ce que dit déjà
+  // `flowChainsSubmitted`.
+  processMeasured: true,
   notes: [
     'The audit reported consumer-lag findings on demo.orders.3.enriched. The backlog in *records* '
       + 'is not proposed as a SQL metric — it is exported directly from committed offsets: name '

@@ -149,7 +149,15 @@ Interactive elements below the 24 × 24 CSS px of WCAG 2.5.8 (Target Size, Minim
 | data-model | 7 / 84 | cluster | 1 / 21 |
 | settings | 1 / 49 | | |
 
-(The worse of phone and desktop for each page, which is what `--check` gates on.)
+(The worse of the three viewports for each page, which is what `--check` gates on.)
+
+**The tablet is gated again since 2026-08-31.** It had been dropped from `CHECK_VIEWPORTS` to hold
+the job's time budget, and that reason was retired by measuring it rather than by arguing: the
+screenshots job consumes **3 min 36 s of its 25-minute timeout**, 65 s of which is this probe, so a
+third width costs about thirty seconds. What it buys is not theoretical — 768 px is exactly the `md`
+breakpoint, and the `topic-explorer` row fixed the same day read 2 `unreachable` **at tablet as well
+as desktop**, so a regression confined to that width was gated by nothing while `--detail` had been
+measuring it all along. No budget had to move: all ten rows fit under the ceilings already set.
 
 `metrics` moved from 8 to 7 by the same route `Checkbox` and `Switch` took, and the route is the
 point: three icon buttons on the metric card — copy the SQL, copy the alert rule, refresh the
