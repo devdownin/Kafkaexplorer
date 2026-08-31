@@ -11,10 +11,6 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    /* Alias `@/` — requis par components.json : les composants installés via
-       `shadcn add` importent en `@/components/...`. Les imports relatifs
-       existants restent valables, rien n'est réécrit. */
-    "paths": { "@/*": ["./src/*"] },
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,

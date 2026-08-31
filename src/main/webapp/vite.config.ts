@@ -1,20 +1,10 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
-import { fileURLToPath, URL } from 'node:url'
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  resolve: {
-    // Doit rester le pendant exact de `paths` dans tsconfig.json et de `aliases`
-    // dans components.json : les composants installés depuis un registre shadcn
-    // (React Bits Pro) s'importent en `@/...`. tsc résout par tsconfig, Vite et
-    // Vitest par ceci — les trois décrivent un seul alias et bougent ensemble.
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
-    },
-  },
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',

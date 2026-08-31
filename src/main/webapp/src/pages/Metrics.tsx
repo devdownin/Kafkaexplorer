@@ -23,7 +23,7 @@ import { clearDraft, readDraft, writeDraft } from '../draftStore';
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
 import type { AuditHistory, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse, TableMetadata } from '../api/types';
 import { hasRunningMetric } from './metricsHealth';
-import { NeuralFloatBackdrop } from '../components/metrics/NeuralFloatBackdrop';
+import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
 import { TemplateParamsEditor } from '../components/metrics/TemplateParamsEditor';
@@ -606,14 +606,14 @@ const Metrics: React.FC = () => {
     .sort((a, b) => SEVERITY_ORDER[getStatus(a)] - SEVERITY_ORDER[getStatus(b)]);
 
   return (
-    // `relative` ancre le calque Neural Float, et rien de plus : surtout pas `isolate`, qui
+    // `relative` ancre le fond animé de la page, et rien de plus : surtout pas `isolate`, qui
     // ferait de cette page un contexte d'empilement et y enfermerait le modal « Add metric » —
     // il est `fixed z-50`, la Sidebar aussi, et la Sidebar est en dehors de cette page. Le modal
     // passerait sous la barre latérale. Le calque passe donc derrière le contenu par l'ordre du
     // DOM entre deux éléments positionnés `z-auto`, pas par un `-z-10` qui exigerait ce contexte.
     <div className="relative p-6 overflow-y-auto h-full">
 
-      <NeuralFloatBackdrop active={anyMetricRunning} />
+      <MetricsPulseBackdrop active={anyMetricRunning} />
 
       {/* `space-y-6` vit ici plutôt que sur la racine : sur la racine, il donnerait une marge
           haute au calque et décalerait son `inset-0`. */}
