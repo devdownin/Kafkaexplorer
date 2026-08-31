@@ -95,7 +95,8 @@ LIMIT 20`,
     reading: [
       'Every generated table carries two extra columns: event_time (the Kafka record timestamp, read as metadata) and proc_time (the moment the query reads the row).',
       'event_time is what windows group by — it is the one column you get for free on every topic, whatever the payload looks like.',
-      'A field named event_time inside the payload wins: the generated DDL only adds the metadata column when the schema does not already define one.',
+      'A field named event_time inside the payload wins: the generated DDL only adds the metadata column when the schema does not already define one — and only the metadata one carries a watermark, so only it can open a window.',
+      'The generated table declares WATERMARK FOR event_time AS event_time - INTERVAL \'5\' SECOND. That watermark is what makes event_time a time attribute; without one, a window over it is refused by the planner and answered by the direct reader instead.',
     ],
     engine: 'ANY',
     keywords: ['projection', 'columns', 'event_time', 'proc_time', 'metadata'],
@@ -160,7 +161,7 @@ GROUP BY window_start, window_end`,
       'The demo sensors spread their readings over two hours, which is what makes several buckets appear. On a topic where everything landed in the same minute, one bucket is the correct answer.',
     ],
     pitfall:
-      'Pointing DESCRIPTOR at a column that is not a time. The fallback reader resolves the column as an ISO-8601 or epoch field and drops back to the Kafka record timestamp; the Flink planner just rejects it.',
+      'Pointing DESCRIPTOR at a column that carries no watermark — any payload column, however timestamp-shaped. The Flink planner rejects it (“the timecol is a time attribute type, but is TIMESTAMP(3)”) and the query is answered by the direct reader, which resolves the column as an ISO-8601 or epoch field and drops back to the Kafka record timestamp. Window over event_time, or declare the table yourself with a watermark on the column you want.',
     engine: 'ANY',
     keywords: ['tumble', 'window', 'descriptor', 'interval', 'time series', 'window_start'],
   },
@@ -308,7 +309,8 @@ GROUP BY customer_id`,
   \`amount\` DOUBLE,
   \`state\` STRING,
   \`event_time\` TIMESTAMP(3) METADATA FROM 'timestamp',
-  \`proc_time\` AS PROCTIME()
+  \`proc_time\` AS PROCTIME(),
+  WATERMARK FOR \`event_time\` AS \`event_time\` - INTERVAL '5' SECOND
 ) WITH (
   'connector' = 'kafka',
   'topic' = 'demo.orders.1.received',
@@ -321,6 +323,7 @@ GROUP BY customer_id`,
     reading: [
       'CREATE TABLE always goes through the Flink planner, never the fallback reader.',
       'The topic keeps its real name in the connector properties; only the SQL identifier is sanitized.',
+      'The WATERMARK line is what turns event_time into a time attribute — the one thing a window, an OVER or an event-time ORDER BY needs. Drop it and the planner refuses all three.',
       'Any DDL the app shows you is masked: passwords and the Confluent SASL secret are replaced before the string leaves the server, so paste your own credentials back in when you copy one.',
     ],
     pitfall:
@@ -429,7 +432,7 @@ export interface WindowPart {
 export const WINDOW_ANATOMY: WindowPart[] = [
   { fragment: 'FROM TABLE( … )', meaning: 'A windowing function returns a table, so the whole call sits where the table name would.' },
   { fragment: 'TUMBLE(TABLE demo_iot_sensors', meaning: 'The source table, introduced by the keyword TABLE a second time.' },
-  { fragment: 'DESCRIPTOR(event_time)', meaning: 'Which column carries the time. Almost always event_time.' },
+  { fragment: 'DESCRIPTOR(event_time)', meaning: 'Which column carries the time — and it has to be one the table declares a WATERMARK on. Almost always event_time, the only column a generated table watermarks.' },
   { fragment: "INTERVAL '5' MINUTES", meaning: 'The bucket width. Singular and plural units are both accepted.' },
   { fragment: 'GROUP BY window_start, window_end', meaning: 'The columns the window adds. Select them to see the bucket each row belongs to.' },
 ];

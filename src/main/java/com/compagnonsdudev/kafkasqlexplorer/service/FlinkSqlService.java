@@ -1197,20 +1197,47 @@ public class FlinkSqlService {
                         if (flinkResult.error().startsWith("Query timed out")) {
                             flinkSelectFailures.set(0);
                             log.warn("Flink SELECT timed out — falling back to direct Kafka read for this query");
-                            engineFailure = flinkResult.error();
+                            // Sur une fenêtre, « la requête a dépassé son délai » décrit mal ce qui
+                            // s'est passé, et le message générique envoie chercher un topic trop
+                            // gros : une source Kafka non bornée ne se termine pas, donc la
+                            // dernière fenêtre ne se ferme que quand des enregistrements plus
+                            // récents arrivent, et la collecte ne rend la main qu'au plafond de
+                            // lignes ou au budget. C'est une propriété de la lecture, pas une
+                            // lenteur, et elle a une sortie que le message nomme.
+                            engineFailure = SqlStatements.hasWindowTableCall(sqlToExecute)
+                                ? "The Flink planner accepted this window but could not finish it "
+                                    + "within " + timeout + " ms: a Kafka source is unbounded, so its "
+                                    + "last window closes only when later records arrive. The direct "
+                                    + "reader bucketed the records it read instead. Bound the read to "
+                                    + "let the planner answer — declare the table with "
+                                    + "'scan.bounded.mode' = 'latest-offset' — or raise the timeout."
+                                : flinkResult.error();
                         } else {
-                            QueryResult rejected = rejectIfUserError(
-                                flinkResult.error(), sqlToExecute, startTime, autoReg.deferredToDirectReader());
-                            if (rejected != null) return rejected;
-                            recordFlinkSelectFailure(flinkResult.error());
-                            engineFailure = flinkResult.error();
+                            String noTimeAttribute = windowNeedsATimeAttribute(flinkResult.error(), sqlToExecute);
+                            if (noTimeAttribute != null) {
+                                flinkSelectFailures.set(0);
+                                engineFailure = noTimeAttribute;
+                            } else {
+                                QueryResult rejected = rejectIfUserError(
+                                    flinkResult.error(), sqlToExecute, startTime, autoReg.deferredToDirectReader());
+                                if (rejected != null) return rejected;
+                                recordFlinkSelectFailure(flinkResult.error());
+                                engineFailure = SqlErrorClassifier.readable(flinkResult.error());
+                            }
                         }
                     } catch (Throwable t) {
-                        QueryResult rejected = rejectIfUserError(
-                            SqlErrorClassifier.explain(t), sqlToExecute, startTime, autoReg.deferredToDirectReader());
-                        if (rejected != null) return rejected;
-                        recordFlinkSelectFailure(t.toString());
-                        engineFailure = SqlErrorClassifier.explain(t);
+                        String explained = SqlErrorClassifier.explain(t);
+                        String noTimeAttribute = windowNeedsATimeAttribute(explained, sqlToExecute);
+                        if (noTimeAttribute != null) {
+                            flinkSelectFailures.set(0);
+                            engineFailure = noTimeAttribute;
+                        } else {
+                            QueryResult rejected = rejectIfUserError(
+                                explained, sqlToExecute, startTime, autoReg.deferredToDirectReader());
+                            if (rejected != null) return rejected;
+                            recordFlinkSelectFailure(t.toString());
+                            engineFailure = SqlErrorClassifier.readable(explained);
+                        }
                     }
                 }
                 /*
@@ -1456,7 +1483,8 @@ public class FlinkSqlService {
                 LogSafe.text(sql), LogSafe.text(classification.message()));
         flinkSelectFailures.set(0);
         return new QueryResult(Collections.emptyList(), Collections.emptyList(),
-            System.currentTimeMillis() - startTime, classification.message(), false, "FLINK");
+            System.currentTimeMillis() - startTime,
+            SqlErrorClassifier.readable(classification.message()), false, "FLINK");
     }
 
     /**
@@ -1471,6 +1499,50 @@ public class FlinkSqlService {
         if (readMode == null || readMode.isBlank()) return false;
         String mode = readMode.trim();
         return "latest-offset".equals(mode) || mode.startsWith(SINCE_READ_MODE_PREFIX);
+    }
+
+    /**
+     * La phrase à rapporter quand le planner a refusé une <em>fenêtre</em> faute d'attribut
+     * temporel, ou {@code null} quand ce n'est pas ce qui s'est passé.
+     *
+     * <p>« The window function requires the timecol is a time attribute type, but is
+     * TIMESTAMP(3) » n'est pas une panne : c'est la définition de la table qui ne déclare aucun
+     * watermark sur la colonne que la fenêtre désigne. Lu comme une panne moteur, ce refus faisait
+     * trois choses fausses à la fois. Il partait dans les warnings sous sa forme brute — la règle
+     * Calcite, ses arguments et le plan {@code rel#…} — c'est-à-dire la seule partie du message
+     * qui ne dit rien à personne. Il comptait pour le disjoncteur, donc trois fenêtres d'affilée
+     * suffisaient à couper le planner pour <em>toutes</em> les requêtes du processus pendant dix
+     * minutes. Et il ne nommait ni la colonne ni le geste qui répare.
+     *
+     * <p>Le repli, lui, reste : ce lecteur sait vraiment répondre à une fenêtre — il regroupe par
+     * horodatage, en approximant HOP, CUMULATE et SESSION en fenêtres jointives, et il le dit.
+     * Refuser à la place lui retirerait une capacité réelle, sur la forme la plus courante ici :
+     * une fenêtre sur une colonne temporelle <em>du message</em>, que ce lecteur analyse très bien
+     * et sur laquelle aucun watermark ne peut être déclaré depuis un schéma inféré.
+     *
+     * <p>Depuis que {@code DdlGeneratorService} déclare un watermark sur l'{@code event_time}
+     * qu'il ajoute, la fenêtre par défaut de l'assistant passe par le planner : ce chemin-ci ne
+     * concerne plus que les colonnes temporelles venues du payload et les tables écrites à la
+     * main sans watermark.
+     */
+    private static String windowNeedsATimeAttribute(String rawError, String sql) {
+        if (rawError == null || !SqlStatements.hasWindowTableCall(sql)) return null;
+        if (!SqlErrorClassifier.mentionsATimeAttribute(rawError)) return null;
+        Matcher window = WINDOW_CALL.matcher(sql);
+        String column = window.find() ? window.group(3) : null;
+        String named = column == null ? "the column the window is opened over" : "`" + column + "`";
+        // Une trace reste, sans le WARN que `recordFlinkSelectFailure` écrivait : ce n'est pas une
+        // panne, et une métrique fenêtrée qui se rafraîchit toutes les trente secondes en écrirait
+        // une ligne à chaque cycle.
+        log.info("A window over {} has no time attribute — the direct reader answers it; "
+            + "declare a WATERMARK on that column to run it on the planner",
+            LogSafe.name(column == null ? "?" : column));
+        return "The Flink planner cannot open a window over " + named + ": a window function needs a "
+            + "time attribute, and that column is an ordinary timestamp. The direct reader bucketed "
+            + "the records by it instead. To run this window on the engine, declare the table "
+            + "yourself with a watermark on that column — WATERMARK FOR <col> AS <col> - "
+            + "INTERVAL '5' SECOND — as the generated tables do for their `event_time` column. "
+            + "The planner's own words: " + SqlErrorClassifier.readable(rawError);
     }
 
     /**

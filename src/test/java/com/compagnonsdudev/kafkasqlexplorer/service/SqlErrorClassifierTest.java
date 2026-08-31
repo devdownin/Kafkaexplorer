@@ -184,6 +184,76 @@ class SqlErrorClassifierTest {
         assertFalse(SqlErrorClassifier.explain(null).isBlank());
     }
 
+    // ── Le message tel qu'on le montre : la phrase, pas le plan ──────────────────────
+
+    /** Le refus exact que produit une fenêtre sur une colonne sans watermark. */
+    private static final String WINDOW_RULE_FAILURE =
+        "Error while applying rule StreamPhysicalWindowTableFunctionRule(in:LOGICAL,out:STREAM_PHYSICAL), "
+            + "args [rel#27876:FlinkLogicalTableFunctionScan.LOGICAL.any.None: 0.[NONE].[NONE].[NONE]"
+            + "(input#0=RelSubset#27875,invocation=TUMBLE(TABLE(#0), DESCRIPTOR(_UTF-16LE'event_time'), "
+            + "300000:INTERVAL MINUTE),rowType=RecordType(TIMESTAMP(3) event_time, TIMESTAMP(3) window_start, "
+            + "TIMESTAMP(3) window_end, TIMESTAMP(3) window_time))]: The window function requires the "
+            + "timecol is a time attribute type, but is TIMESTAMP(3).";
+
+    /**
+     * L'enveloppe Calcite est retirée, la phrase et le nom de la règle restent.
+     *
+     * <p>Trois cents caractères d'état interne du planificateur arrivaient dans l'éditeur devant la
+     * seule phrase qui dit quelque chose. La règle est gardée — c'est ce qu'on cherche dans le
+     * journal de Flink — mais le plan {@code rel#…}, non.
+     */
+    @Test
+    void readableKeepsTheSentenceAndDropsThePlan() {
+        String readable = SqlErrorClassifier.readable(WINDOW_RULE_FAILURE);
+
+        assertTrue(readable.startsWith("The window function requires the timecol is a time attribute"),
+            "the cause must lead, got: " + readable);
+        assertFalse(readable.contains("rel#"), "the plan dump must go, got: " + readable);
+        assertTrue(readable.contains("StreamPhysicalWindowTableFunctionRule"),
+            "the rule name is what one greps for in the Flink log, got: " + readable);
+    }
+
+    @Test
+    void readableLeavesAnOrdinaryMessageAlone() {
+        assertEquals("Object 'ordrs' not found", SqlErrorClassifier.readable("Object 'ordrs' not found"));
+        assertNull(SqlErrorClassifier.readable(null));
+    }
+
+    /** Ce que Flink emboîte par-dessus reste : c'est une phrase, contrairement au plan. */
+    @Test
+    void readableKeepsWhatWrapsTheRuleFailure() {
+        String readable = SqlErrorClassifier.readable(
+            "Cannot generate a valid execution plan for the given query: " + WINDOW_RULE_FAILURE);
+
+        assertTrue(readable.startsWith("Cannot generate a valid execution plan"), readable);
+        assertTrue(readable.contains("The window function requires the timecol"), readable);
+        assertFalse(readable.contains("rel#"), readable);
+    }
+
+    // ── « cette colonne ne porte pas de watermark », dans les formulations de Flink ───
+
+    @Test
+    void aTimeAttributeComplaintIsRecognised() {
+        assertTrue(SqlErrorClassifier.mentionsATimeAttribute(WINDOW_RULE_FAILURE));
+        assertTrue(SqlErrorClassifier.mentionsATimeAttribute(
+            "OVER windows' ordering in stream mode must be defined on a time attribute."));
+        assertFalse(SqlErrorClassifier.mentionsATimeAttribute("Object 'orders' not found"));
+        assertFalse(SqlErrorClassifier.mentionsATimeAttribute(null));
+    }
+
+    /**
+     * Un OVER en temps événement sur une colonne ordinaire est une erreur de l'utilisateur.
+     *
+     * <p>Contrairement à une fenêtre TVF, que le lecteur direct sait vraiment calculer : lui, il
+     * ignorerait l'OVER en silence et rendrait des lignes. C'est la substitution que ce
+     * classifieur existe pour empêcher.
+     */
+    @Test
+    void anOverWindowWithoutATimeAttributeIsAUserError() {
+        assertTrue(SqlErrorClassifier.classify(
+            "OVER windows' ordering in stream mode must be defined on a time attribute.").isUserError());
+    }
+
     // ── isSyntaxError(): pre-flight validation must only surface parse failures ───────
 
     @Test

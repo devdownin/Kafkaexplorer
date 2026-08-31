@@ -49,6 +49,12 @@ public class DdlGeneratorService {
     /** La limite de Kafka elle-même. */
     private static final int MAX_TOPIC_NAME_LENGTH = 249;
 
+    /**
+     * Le retard toléré par le watermark de {@code event_time}, en secondes. Voir
+     * {@link #generateDdl(String, Map, MessageFormat, String)} pour ce qu'il rend possible.
+     */
+    private static final int WATERMARK_LATENESS_SECONDS = 5;
+
     /** Whether Kafka could carry this as a topic name at all. */
     public static boolean isValidTopicName(String topic) {
         return topic != null
@@ -164,11 +170,33 @@ public class DdlGeneratorService {
 
         // Add standard technical columns (Metadata and Computed)
         // Guard against duplicate column names if they are already in the schema
-        if (!schema.containsKey("event_time")) {
+        boolean eventTimeIsOurs = !schema.containsKey("event_time");
+        if (eventTimeIsOurs) {
             columns.add("    `event_time` TIMESTAMP(3) METADATA FROM 'timestamp'");
         }
         if (!schema.containsKey("proc_time")) {
             columns.add("    `proc_time` AS PROCTIME()");
+        }
+        // Une colonne horodatée n'est pas un *attribut temporel* tant qu'aucun watermark ne le
+        // déclare, et c'est toute la différence : sans cette ligne, `event_time` reste un
+        // TIMESTAMP(3) ordinaire, donc le planner refuse à la planification chaque fenêtre
+        // (TUMBLE, HOP, CUMULATE, SESSION), chaque OVER en temps événement et chaque ORDER BY sur
+        // le temps — « The window function requires the timecol is a time attribute type, but is
+        // TIMESTAMP(3) ». Or l'assistant de fenêtrage livré avec l'éditeur écrit exactement ces
+        // requêtes-là, sur exactement cette colonne : aucune n'a jamais pu s'exécuter sur le
+        // moteur. Le refus se lisait comme une panne moteur, donc la requête se repliait sur le
+        // lecteur direct — qui approxime HOP, CUMULATE et SESSION en fenêtres jointives — en
+        // rapportant le texte brut de la règle Calcite, et trois fenêtres d'affilée suffisaient à
+        // couper le planner pour *toutes* les requêtes du processus (le disjoncteur).
+        //
+        // Le retard toléré est une constante : cinq secondes est ce que la documentation du
+        // connecteur Kafka écrit dans le même exemple, aucun déploiement n'a demandé autre chose,
+        // et une propriété de plus se règle à l'aveugle. Il ne s'applique qu'à la colonne que ce
+        // générateur possède — un `event_time` venu du payload est d'un type qu'on n'a pas choisi
+        // et d'une sémantique qu'on ne connaît pas, donc on ne déclare rien dessus.
+        if (eventTimeIsOurs) {
+            columns.add("    WATERMARK FOR `event_time` AS `event_time` - INTERVAL '"
+                + WATERMARK_LATENESS_SECONDS + "' SECOND");
         }
 
         // Write all columns

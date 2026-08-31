@@ -130,6 +130,22 @@ class FlinkSqlServiceTest {
         tableEnv.executeSql(
                 "CREATE TABLE IF NOT EXISTS infinite_source (id BIGINT) " +
                 "WITH ('connector'='datagen')");
+
+        // Une table horodatée *sans* watermark : sa colonne temporelle n'est donc pas un attribut
+        // temporel, et toute fenêtre posée dessus est refusée par le planner. C'est la forme de
+        // toutes les tables générées avant que `DdlGeneratorService` ne déclare un watermark, et
+        // c'est encore celle d'un `event_time` venu du payload.
+        tableEnv.executeSql(
+                "CREATE TABLE IF NOT EXISTS win_no_watermark (id STRING, event_time TIMESTAMP(3)) "
+                + "WITH ('connector'='datagen','number-of-rows'='2')");
+
+        // Et sa jumelle avec watermark, sur une source qui ne finit jamais : la fenêtre se
+        // *planifie*, et c'est l'exécution qui ne rend pas la main — la forme d'une lecture
+        // fenêtrée d'un topic Kafka non borné.
+        tableEnv.executeSql(
+                "CREATE TABLE IF NOT EXISTS win_unbounded (id STRING, event_time TIMESTAMP(3), "
+                + "WATERMARK FOR event_time AS event_time - INTERVAL '5' SECOND) "
+                + "WITH ('connector'='datagen','rows-per-second'='5')");
     }
 
     /**
@@ -877,6 +893,119 @@ class FlinkSqlServiceTest {
 
         assertNoError(result);
         assertEquals(1, result.rows().size(), "both records belong to the same 1-hour bucket");
+    }
+
+    /**
+     * Une fenêtre sur une colonne sans watermark : le repli est expliqué, pas recopié du planner.
+     *
+     * <p>Le planner refuse de construire la fenêtre — « The window function requires the timecol
+     * is a time attribute type, but is TIMESTAMP(3) » — et il le dit enveloppé dans la règle
+     * Calcite qui a échoué, ses arguments et le plan {@code rel#…}. Ce pavé arrivait tel quel dans
+     * les avertissements de l'éditeur, derrière une phrase disant que la requête s'était repliée
+     * « faute de JOIN et de sous-requêtes » : trois cents caractères d'état interne, et pas un mot
+     * sur la colonne en cause ni sur ce qui la répare.
+     *
+     * <p>Le repli lui-même est bon et reste : ce lecteur calcule vraiment la fenêtre, en résolvant
+     * la colonne dans le message. Ce qui change est ce qu'on en dit.
+     */
+    @Test
+    void aWindowOnAColumnWithNoWatermarkSaysWhichColumnAndHowToFixIt() throws Exception {
+        stubNoWatermarkTopic();
+
+        QueryResult result = execute("SELECT window_start, window_end, COUNT(*) AS c FROM TABLE("
+                + "TUMBLE(TABLE win_no_watermark, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) "
+                + "GROUP BY window_start, window_end");
+
+        assertNoError(result);
+        assertEquals("KAFKA_DIRECT", result.engine(), "the direct reader answers the window");
+        String caveat = result.warnings().stream()
+                .filter(w -> w.contains("time attribute"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no time-attribute caveat, got: " + result.warnings()));
+        assertTrue(caveat.contains("`event_time`"),
+                "the caveat must name the column the window is opened over, got: " + caveat);
+        assertTrue(caveat.contains("WATERMARK FOR"),
+                "and the gesture that fixes it, got: " + caveat);
+        assertFalse(caveat.contains("rel#"),
+                "the planner's internal plan has no business in a warning, got: " + caveat);
+    }
+
+    /**
+     * Et elle ne compte pas pour le disjoncteur.
+     *
+     * <p>C'est la moitié qui coûtait le plus cher : classé en panne moteur, ce refus incrémentait
+     * le compteur, donc trois fenêtres d'affilée — la chose la plus naturelle à faire dans
+     * l'assistant de fenêtrage — coupaient le planner Flink pour <em>toutes</em> les requêtes du
+     * processus pendant dix minutes, jointures et sous-requêtes comprises. La définition d'une
+     * table n'est pas une panne du moteur.
+     */
+    @Test
+    void suchAWindowNeverTripsTheCircuitBreaker() throws Exception {
+        stubNoWatermarkTopic();
+        String windowed = "SELECT window_start, COUNT(*) AS c FROM TABLE("
+                + "TUMBLE(TABLE win_no_watermark, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) "
+                + "GROUP BY window_start";
+
+        for (int i = 0; i < 4; i++) {
+            assertNoError(execute(windowed));
+        }
+
+        assertFalse(service.isFlinkSelectDisabled(),
+                "a table without a watermark must not disable the planner for the whole process");
+        // Et le planner répond toujours à ce qui n'est pas une fenêtre.
+        assertEquals("FLINK", execute("SELECT order_id FROM orders").engine());
+    }
+
+    /**
+     * Une fenêtre que le planner accepte mais ne peut pas terminer : le message le dit.
+     *
+     * <p>Le watermark posé, la fenêtre se planifie — et une source Kafka non bornée ne se termine
+     * pas, donc sa dernière fenêtre ne se ferme que quand des enregistrements plus récents
+     * arrivent : la collecte ne rend la main qu'au plafond de lignes ou au budget. Le message
+     * générique de dépassement de délai décrit alors mal ce qui s'est passé — « le topic a
+     * peut-être moins de messages que la limite » envoie chercher un problème de taille — là où
+     * c'est une propriété de la lecture, qui a une sortie.
+     */
+    @Test
+    void aWindowThePlannerCannotFinishSaysThatRatherThanQuotingATimeout() throws Exception {
+        doReturn(List.of("win.unbounded")).when(kafkaAdminService).listTopics();
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "win.unbounded", 0, 0L, null,
+                        "{\"id\":\"a\",\"event_time\":\"2026-01-01T00:00:00Z\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("win.unbounded"), anyInt());
+
+        QueryResult result = service.executeSql(new QueryRequest(
+                "SELECT window_start, COUNT(*) AS c FROM TABLE("
+                    + "TUMBLE(TABLE win_unbounded, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) "
+                    + "GROUP BY window_start", null, 50, 200L, null));
+
+        assertNoError(result);
+        assertEquals("KAFKA_DIRECT", result.engine());
+        String caveat = result.warnings().stream()
+                .filter(w -> w.contains("could not finish"))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("no windowed-read caveat, got: " + result.warnings()));
+        assertTrue(caveat.contains("scan.bounded.mode"),
+                "the caveat must name the way out, got: " + caveat);
+        assertFalse(caveat.contains("fewer messages than the limit"),
+                "the generic timeout sentence sends the reader after the wrong thing, got: " + caveat);
+    }
+
+    /** Des enregistrements derrière `win_no_watermark`, pour que le repli ait de quoi répondre. */
+    private void stubNoWatermarkTopic() throws Exception {
+        // Le topic existe pour le lecteur direct ; la table, elle, est déjà enregistrée, donc
+        // l'auto-enregistrement passe son chemin et la définition sans watermark est bien celle
+        // que le planner voit.
+        doReturn(List.of("win.no.watermark")).when(kafkaAdminService).listTopics();
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "win.no.watermark", 0, 0L, null,
+                        "{\"id\":\"a\",\"event_time\":\"2026-01-01T00:00:00Z\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "win.no.watermark", 0, 1L, null,
+                        "{\"id\":\"b\",\"event_time\":\"2026-01-01T00:07:00Z\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("win.no.watermark"), anyInt());
     }
 
     // ──────────────────────────────────────────────────────────────────────────────

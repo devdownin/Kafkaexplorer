@@ -6,6 +6,7 @@ import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import org.junit.jupiter.api.Test;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -178,4 +179,58 @@ public class DdlGeneratorServiceTest {
      * d'arité que la barre latérale évite déjà en nommant les colonnes — et {@code NOT NULL} est
      * une contrainte qu'il serait faux de recopier sur une cible alimentée par une projection.
      */
+
+    /**
+     * L'{@code event_time} généré porte un watermark, donc c'est un <em>attribut temporel</em>.
+     *
+     * <p>Sans cette ligne, la colonne reste un {@code TIMESTAMP(3)} ordinaire et le planner refuse
+     * à la planification toute fenêtre posée dessus — « The window function requires the timecol
+     * is a time attribute type, but is TIMESTAMP(3) » — c'est-à-dire exactement la requête que
+     * l'assistant de fenêtrage de l'éditeur écrit par défaut, sur exactement cette colonne. Le
+     * refus se lisait comme une panne moteur : repli sur le lecteur direct, texte brut de la règle
+     * Calcite dans les avertissements, et trois fenêtres d'affilée suffisaient à couper le planner
+     * pour tout le processus.
+     *
+     * <p>{@code FlinkDdlValidationTest} prend la même mesure de l'autre côté : que Flink résolve
+     * bien ce DDL en un attribut temporel, plutôt qu'une chaîne présente dans le texte.
+     */
+    @Test
+    public void generatedEventTimeCarriesAWatermarkSoWindowsCanBePlanned() {
+        KafkaConfig config = new KafkaConfig();
+        config.setBootstrapServers("localhost:9092");
+        DdlGeneratorService service = new DdlGeneratorService(config, new NamingConventionService());
+
+        String ddl = service.generateDdl("win_topic", Map.of("id", "BIGINT"), MessageFormat.JSON);
+
+        assertTrue(ddl.contains("WATERMARK FOR `event_time` AS `event_time` - INTERVAL '5' SECOND"),
+            "the generated event_time must be a time attribute, got:\n" + ddl);
+        // Une clause dans la liste de colonnes : la virgule qui la précède est ce qui rend le DDL
+        // analysable, et c'est la seule chose que la boucle d'écriture peut se tromper à poser.
+        assertTrue(ddl.contains("`proc_time` AS PROCTIME(),"),
+            "the watermark clause must follow the last column, comma included, got:\n" + ddl);
+    }
+
+    /**
+     * Un {@code event_time} venu du <em>payload</em> ne reçoit pas de watermark.
+     *
+     * <p>La colonne n'est alors pas la nôtre : son type sort de l'inférence (souvent
+     * {@code STRING}), et déclarer un watermark dessus produirait un DDL que Flink refuse — donc
+     * une table impossible à enregistrer, sur un topic qui marchait très bien avant.
+     */
+    @Test
+    public void aPayloadEventTimeGetsNoWatermark() {
+        KafkaConfig config = new KafkaConfig();
+        config.setBootstrapServers("localhost:9092");
+        DdlGeneratorService service = new DdlGeneratorService(config, new NamingConventionService());
+
+        Map<String, String> schema = new LinkedHashMap<>();
+        schema.put("id", "BIGINT");
+        schema.put("event_time", "STRING");
+
+        String ddl = service.generateDdl("payload_time_topic", schema, MessageFormat.JSON);
+
+        assertTrue(ddl.contains("`event_time` STRING"), ddl);
+        assertFalse(ddl.contains("WATERMARK"),
+            "no watermark on a column this generator does not own, got:\n" + ddl);
+    }
 }

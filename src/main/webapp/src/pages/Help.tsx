@@ -243,7 +243,9 @@ const Help: React.FC = () => {
               body: (
                 <>
                   Every generated table carries <Code>event_time</Code> — the Kafka record timestamp, read as metadata —
-                  and <Code>proc_time</Code>, the moment the query reads the row. Windows group by the first.
+                  and <Code>proc_time</Code>, the moment the query reads the row. Windows group by the first, and they
+                  can because the table declares a watermark on it: without one, a timestamp column is not a
+                  <em> time attribute</em> and the planner refuses every window over it.
                 </>
               ),
             },

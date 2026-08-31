@@ -65,6 +65,28 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **No windowed query had ever run on the Flink engine, and the refusal read as a breakdown.** A
+  column carrying timestamps is only a *time attribute* once a `WATERMARK` is declared on it, and no
+  generated table declared one — so `TABLE(TUMBLE(TABLE t, DESCRIPTOR(event_time), …))`, which is
+  what the editor's own Window Assistant writes and what the Help page teaches, was refused at
+  planning time on every topic: *The window function requires the timecol is a time attribute type,
+  but is TIMESTAMP(3)*. Every window therefore fell back to the direct Kafka reader, which
+  approximates `HOP`, `CUMULATE` and `SESSION` as tumbling windows. Three things are fixed. The
+  generated DDL now carries `WATERMARK FOR event_time AS event_time - INTERVAL '5' SECOND`, which
+  also unlocks event-time `OVER` windows and `ORDER BY` on the timestamp; it is added only to the
+  `event_time` this application declares, never to one coming from the payload. A window refused for
+  want of a time attribute no longer counts toward the SELECT circuit breaker — three of them used to
+  take the planner out for *every* query of the process for ten minutes — and the caveat now names
+  the column, says a watermark is what it lacks and shows the clause, instead of pasting the Calcite
+  rule, its arguments and the `rel#…` plan into the editor. And an `OVER` window over a column with
+  no watermark is reported rather than sent to a reader that has no `OVER` and would silently return
+  rows without it.
+- **A planner refusal is shown as its sentence, not as its plan.** Calcite reports one as `Error
+  while applying rule <Rule>(…), args [<the whole rel tree>]: <the actual cause>`, so the useful half
+  is last — and it was also the half the 2 000-character cap cut off first. The tree is dropped, the
+  rule name kept in parentheses, and anything wrapping it (Flink's own “Cannot generate a valid
+  execution plan”) preserved. Classification still reads the full text.
+
 - **A status that could not be read was filed as a job that had ended.** The generic catch in
   `buildJobSummary` reported a status call that ran out of its 150 ms as `UNKNOWN`, which the store
   counts as *terminal* — so one slow answer stamped an `endedAt` on a running job, dropped it out of

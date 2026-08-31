@@ -528,6 +528,46 @@ class KafkaClusterIntegrationTest {
     }
 
     /**
+     * Une fenêtre sur la table générée <em>se planifie</em> — ce que seul un vrai moteur peut dire.
+     *
+     * <p>La table déclare {@code event_time} en colonne METADATA depuis toujours, et rien dessus :
+     * une colonne horodatée n'est pas un <em>attribut temporel</em> tant qu'aucun watermark ne le
+     * déclare, donc le planner refusait à la planification toute fenêtre posée sur elle — « The
+     * window function requires the timecol is a time attribute type, but is TIMESTAMP(3) ». C'est
+     * exactement la requête que l'assistant de fenêtrage de l'éditeur écrit par défaut, sur
+     * exactement cette colonne : elle n'avait jamais pu s'exécuter sur le moteur, le refus se
+     * lisait comme une panne, et trois d'affilée coupaient le planner pour tout le processus.
+     *
+     * <p>La mesure passe par {@code EXPLAIN}, et c'est le point : une fenêtre <em>exécutée</em> sur
+     * une source Kafka non bornée ne se termine pas — sa dernière fenêtre ne se ferme que quand des
+     * enregistrements plus récents arrivent — donc elle dépenserait son budget et se replierait,
+     * quel que soit l'état du watermark. {@code EXPLAIN} s'arrête au plan : il réussit si et
+     * seulement si le planner a su construire la fenêtre, sans job, sans budget et sans repli.
+     *
+     * <p>La lecture qui précède est ce qui enregistre la table : {@code EXPLAIN} ne passe pas par
+     * l'auto-enregistrement.
+     */
+    @Test
+    void aWindowOverTheGeneratedTablePlans() throws Exception {
+        FlinkSqlService flink = flinkService();
+        String table = DdlGeneratorService.toTableName(TOPIC);
+
+        QueryResult read = flink.executeSql(QueryRequest.sql(
+            "SELECT id FROM " + table + " LIMIT 1", 1, 30_000L, "earliest-offset"));
+        assertNull(read.error(), String.valueOf(read.error()));
+
+        QueryResult explained = flink.executeSql(QueryRequest.sql(
+            "EXPLAIN SELECT window_start, COUNT(*) AS n FROM TABLE("
+                + "TUMBLE(TABLE " + table + ", DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) "
+                + "GROUP BY window_start", 10, 30_000L, "earliest-offset"));
+
+        assertNull(explained.error(),
+            "the generated table must carry a watermark on event_time, or no window can be planned "
+                + "over it: " + explained.error());
+        assertEquals("FLINK", explained.engine(), "EXPLAIN never leaves the planner");
+    }
+
+    /**
      * The count a metric actually publishes, through the reader the template now asks for by name.
      *
      * <p>A single-table read goes to the direct reader rather than the planner (D2/D3), so this is
