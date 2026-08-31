@@ -896,6 +896,62 @@ export const dataModel = {
  * Assez de nœuds pour que le graphe s'étende au-delà du viewport, ce dont le pan a besoin pour
  * être observable.
  */
+/**
+ * `GET /api/data-model/limits` — les bornes que la page lit au lieu d'en garder une copie.
+ *
+ * Les quatre valeurs sont celles du backend, pas des nombres plausibles : `maxTopics` est le
+ * défaut d'`explorer.data-model-max-topics` (ExplorerConfig), les trois autres sont les
+ * constantes de `DataModelService`. Un bouchon qui invente ses bornes ferait rendre à la page
+ * une phrase (« au plus N topics ») que le produit ne dit pas.
+ */
+export const dataModelLimits = {
+  maxTopics: 100,
+  defaultMaxTopics: 30,
+  perTopicTimeoutMs: 20_000,
+  inferenceThreads: 4,
+};
+
+/**
+ * `GET /api/metrics/label-preview?topic=…` — le dernier message d'un topic, aplati en champs
+ * feuilles, qui est ce que l'éditeur de métrique propose comme labels Prometheus.
+ *
+ * Le topic est lu dans l'URL comme `topicActivity` le fait : le contrôleur renvoie celui qu'on
+ * lui demande, et un bouchon qui répondrait toujours le même ferait afficher à l'éditeur un
+ * aperçu qui ne correspond pas au topic sélectionné — soit exactement le défaut qu'un aperçu
+ * existe pour éviter.
+ */
+export function labelPreview(url) {
+  const topic = url.searchParams.get('topic') ?? 'demo.orders.5.shipped';
+  return {
+    topic,
+    timestamp: min(3),
+    message: orderPayload('ORD-1042', 'SHIPPED', 12990, 'CUST-318'),
+    // Les feuilles, aplaties par chemin — ce que `extractLeafFields` produit : pas d'objet ni de
+    // tableau, et tout en chaînes.
+    fields: {
+      order_id: 'ORD-1042',
+      customer_id: 'CUST-318',
+      status: 'SHIPPED',
+      amount_cents: '12990',
+      currency: 'EUR',
+      'shipping.country': 'FR',
+      'shipping.city': 'Lyon',
+      'shipping.postal_code': '69003',
+      event_time: String(Math.floor(min(12) / 1000)),
+    },
+  };
+}
+
+/**
+ * `GET /api/query/ddl-preview?topic=…` — le DDL que l'éditeur montre avant de l'insérer.
+ *
+ * Il réutilise `topicDetail.ddl` plutôt que d'en écrire un deuxième : deux DDL de démonstration
+ * dans ce fichier, c'est celui que personne ne regarde qui finit par décrire un autre schéma que
+ * celui des captures. La forme est celle de `DdlPreviewResponse` — `ddl` **ou** `error`, jamais
+ * les deux.
+ */
+export const ddlPreview = { ddl: topicDetail.ddl };
+
 export const lineage = {
   nodes: [
     { id: 'demo.orders.1.received', label: 'demo.orders.1.received', type: 'topic', messageCount: 1284 },

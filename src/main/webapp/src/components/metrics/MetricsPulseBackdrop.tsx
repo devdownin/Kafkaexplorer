@@ -57,6 +57,7 @@ const FRAME_INTERVAL_MS = 1000 / 30;
  */
 const MAX_STEP_MS = 250;
 
+
 interface MetricsPulseBackdropProps {
   /**
    * Au moins une métrique *en marche* — voir `hasRunningMetric` dans `pages/metricsHealth.ts`.
@@ -200,6 +201,22 @@ export const MetricsPulseBackdrop: React.FC<MetricsPulseBackdropProps> = ({ acti
     <div
       data-testid="metrics-pulse-backdrop"
       aria-hidden="true"
+      /* Le calque se déclare ornemental, pour les outils qui ont besoin d'une image *stable*.
+         `capture.mjs` le masque avant de photographier, et ce n'est pas une coquetterie : mesuré
+         sur un même build et un même serveur, deux passages rendaient les sept autres pages
+         identiques au bit près et `metrics.png` différente à chaque fois — 24 437 pixels
+         dispersés. C'est exactement la propriété que `fixtures.mjs` énonce en dérivant tout d'un
+         instant fixe : « a screenshot that changes on every build is a diff nobody can review ».
+
+         Une graine fixe ne suffirait pas, et ça a été mesuré avant d'être écrit : les positions
+         initiales redeviennent identiques, mais le champ *dérive* avec le temps écoulé et la
+         capture tombe à un instant qui, lui, varie. Ce qu'il faut est donc de retirer l'ornement
+         de l'image, pas de rendre son tirage prévisible.
+
+         L'attribut plutôt que le `data-testid` dans l'outil : ce qu'on masque est « un décor »,
+         pas « ce composant-ci », et le prochain calque de ce genre n'aura pas à être ajouté à une
+         liste tenue ailleurs. */
+      data-decorative="true"
       /* `sticky top-0 h-0` plutôt que `absolute inset-0`, et c'est une mesure qui l'a décidé.
          Dans un conteneur qui défile, `inset-0` se résout sur la *fenêtre de défilement* et pas
          sur le contenu : mesuré sur la page Metrics de la démo en 1440×900, le calque faisait

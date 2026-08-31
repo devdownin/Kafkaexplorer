@@ -43,6 +43,7 @@ const API = [
   [m => m === '/api/query/run-sync', () => F.queryResult],
   [m => m === '/api/query/validate', () => ({ valid: true })],
   [m => m.startsWith('/api/query/schema/'), () => F.topicDetail.schema],
+  [m => m === '/api/query/ddl-preview', () => F.ddlPreview],
   [m => m === '/api/stream-flow', () => F.streamFlow],
   [m => m === '/api/audit/last', () => F.auditReport],
   [m => m === '/api/audit/history', () => F.auditHistory],
@@ -56,9 +57,28 @@ const API = [
   [m => m === '/api/metrics/templates', () => F.metricTemplates],
   [m => m === '/api/metrics/metadata', () => ({ demo_orders_1_received: ['id', 'status', 'amount_cents'] })],
   [m => m === '/api/metrics/suggestions', () => F.metricSuggestions],
+  [m => m === '/api/metrics/label-preview', url => F.labelPreview(url)],
   [m => m === '/api/data-model', () => F.dataModel],
+  [m => m === '/api/data-model/limits', () => F.dataModelLimits],
   [m => m === '/api/lineage', () => F.lineage],
 ];
+
+/**
+ * Les routes que la SPA a demandées et que ce fichier ne sert pas.
+ *
+ * Elles étaient déjà journalisées, et c'était le problème : le serveur tourne en arrière-plan
+ * dans le job CI, donc son avertissement partait dans un flux que personne ne lit. Trois routes
+ * ont vécu ainsi — `/api/data-model/limits`, `/api/metrics/label-preview`,
+ * `/api/query/ddl-preview` — et ce n'est pas seulement une capture d'écran d'une page amputée :
+ * `layout-probe --check` **mesure** ces mêmes pages et fait échouer une PR sur des budgets pris
+ * sur du contenu absent. Un gabarit qui mesure une page à qui il manque un panneau ne mesure pas
+ * ce qu'il annonce.
+ *
+ * L'ensemble est donc relevé et exposé, pour que celui qui mesure puisse échouer là-dessus. La
+ * règle est celle que la sonde applique déjà à ses états : ce qui n'a pas pu être servi est un
+ * échec, jamais un silence.
+ */
+const unstubbed = new Set();
 
 const send = (res, status, body, type) => {
   res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
@@ -79,9 +99,17 @@ const server = http.createServer((req, res) => {
     return res.end();
   }
 
+  // Hors de `/api/`, donc hors du champ de la SPA : elle ne demande jamais ce chemin, et le
+  // préfixe le dit. Avant la branche `/api/` comme avant le repli sur index.html, sinon la
+  // coquille répondrait 200 avec du HTML à une question qui attend une liste.
+  if (pathname === '/__unstubbed') {
+    return send(res, 200, JSON.stringify({ routes: [...unstubbed].sort() }), MIME['.json']);
+  }
+
   if (pathname.startsWith('/api/')) {
     const route = API.find(([match]) => match(pathname));
     if (!route) {
+      unstubbed.add(`${req.method} ${pathname}`);
       console.warn(`  ! unstubbed API route: ${req.method} ${pathname}`);
       return send(res, 404, JSON.stringify({ message: `no stub for ${pathname}` }), MIME['.json']);
     }

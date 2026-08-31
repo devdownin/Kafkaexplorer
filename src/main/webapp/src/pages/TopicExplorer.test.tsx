@@ -26,6 +26,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { TopicDetailResponse, TopicMessage } from '../api/types';
+import { previewOf } from '../components/topic/topicSearch';
 
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios, true);
@@ -173,5 +174,38 @@ describe('Topic Explorer page', () => {
     await renderAt('');
 
     await waitFor(() => expect(screen.getByText(TOPIC)).toBeInTheDocument());
+  });
+
+  /*
+   * La cellule d'aperçu de la table porte son texte en `title`.
+   *
+   * Elle est en `max-w-0 w-full`, donc elle prend ce qui reste de la table et rogne : mesuré par
+   * `layout-probe --detail` à 704 px pour 1 711 px de contenu, une quarantaine de caractères sur
+   * les 240 que garde `previewOf`. Le reste s'obtient en cliquant la ligne, et c'est bien ce que
+   * la page propose — mais pas en survolant, et un survol est ce qu'on fait quand on balaie
+   * cinquante lignes. jsdom ne dispose rien, donc ce cas ne mesure pas le rognage : il épingle
+   * l'attribut, qui est ce qui disparaît en silence quand on réécrit une ligne de classes.
+   */
+  it('carries the clipped preview in a title, so hovering shows it without selecting the row', async () => {
+    const long = JSON.stringify({ id: 'ORD-1042', payload: 'x'.repeat(400) });
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url.startsWith(`/api/topic/${encodeURIComponent(TOPIC)}?`)) {
+        return Promise.resolve({
+          status: 200,
+          data: { ...detail(), samples: [message({ value: long })] },
+        });
+      }
+      return Promise.resolve({ status: 200, data: {} });
+    });
+
+    await renderAt('');
+    await waitFor(() => expect(screen.getByText(TOPIC)).toBeInTheDocument());
+
+    const table = await screen.findByRole('table');
+    const cell = [...table.querySelectorAll('td')].find(td => td.classList.contains('max-w-0'));
+    expect(cell).toBeTruthy();
+    expect(cell).toHaveAttribute('title', previewOf(long));
+    // Et l'aperçu est bien tronqué : un `title` égal au texte entier dirait que rien n'est rogné.
+    expect(previewOf(long).length).toBeLessThan(long.length);
   });
 });

@@ -152,6 +152,29 @@ warning above the suggested KPIs — compared it to the real clock, so the scree
 every day and the Metrics shot eventually grew an amber banner about a two-month-old audit that
 says nothing about the product.
 
+**A moving ornament is removed before the shutter, and it had to be measured to be believed.**
+The Metrics page carries an animated backdrop that drifts continuously, so the fixed instant does
+not reach it: on one build and one server, two runs of `capture.mjs` produced seven byte-identical
+pages and a `metrics.png` differing every time — 24 437 pixels scattered over the whole image. A
+fixed random seed was tried first and is *not* the fix, which is why it is not here: it makes the
+starting positions repeat, while the drift depends on elapsed time and the shutter falls at an
+instant that varies. So the layer is hidden instead — `[data-decorative]`, which such layers set on
+themselves rather than being listed here, and which they can only honestly set when they are
+`aria-hidden` and carry no text. Nothing the capture documents is lost, and the eight screens are
+byte-identical across runs again.
+
+**An API route the SPA calls and `server.mjs` does not stub fails the run.** It used to be a
+`console.warn` from a process CI starts in the background, which is to say nowhere: three routes
+lived there unseen — `/api/data-model/limits`, `/api/metrics/label-preview` and
+`/api/query/ddl-preview`. The cost was not only a screenshot of a page missing a panel (Data Model
+could not state its own bounds, the very thing that endpoint exists for). `layout-probe --check`
+walks those same pages and **fails a pull request** on budgets measured against content that was
+never rendered: stubbing `ddl-preview` alone moved `sql-editor·ddl` from 40/116 undersized targets
+to 39/115, because the state being gated was the modal's *error*. The server records what it could
+not serve, `/__unstubbed` reports it, and `unstubbed.mjs` makes all three consumers exit non-zero —
+one helper rather than three copies, and a failure rather than a warning, which is the rule the
+probe already applies to its own states.
+
 The fixtures are shaped against the frontend's own TypeScript contracts
 (`TopicSearchResponse`, `SchemaInfo`, `AuditReport`, `ParsedFlow`…). When one of those
 contracts changes, the screenshot is where it shows: a missing field renders as `NaN` or an

@@ -270,6 +270,19 @@ théorique : c'est une division par zéro, donc chaque position multipliée par 
 qui disparaît, au premier montage d'un hôte pas encore disposé — le cas de jsdom, et celui d'un
 onglet ouvert en arrière-plan.
 
+**Le calque se déclare ornemental, et c'est une capture d'écran qui l'a exigé.** Un fond qui
+dérive en continu rend `docs/img/metrics.png` irreproductible : mesuré sur un même build et un même
+serveur, deux passages de `capture.mjs` rendaient les sept autres pages identiques au bit près et
+celle-ci différente à chaque fois, 24 437 pixels dispersés sur toute l'image. C'est exactement la
+propriété que `fixtures.mjs` tient en dérivant tout d'un instant fixe — une capture qui bouge seule
+est une capture qu'on cesse de relire — et ce fond l'avait cassée sans que rien ne le dise. Une
+graine fixe a été essayée **et mesurée avant d'être gardée** : elle ne corrige rien, puisqu'elle
+fait répéter les positions de départ pendant que la dérive, elle, suit le temps écoulé et que
+l'obturateur tombe à un instant qui varie. `data-decorative` sur l'ancre, que `capture.mjs` masque,
+est donc la correction — un attribut que le calque pose sur lui-même plutôt qu'une liste tenue dans
+l'outil, et qu'il ne peut honnêtement poser que parce qu'il est `aria-hidden` et ne porte aucun
+texte.
+
 **La moitié calculatoire est un module pur** (`components/metrics/metricsPulseField.ts`), pour la
 raison habituelle ici : ce qui se règle silencieusement de travers dans une animation n'est pas le
 dessin mais la géométrie, et rien de tout cela n'échoue — ça rend une page lente ou une image qui

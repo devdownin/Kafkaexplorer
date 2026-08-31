@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { NOW } from './fixtures.mjs';
+import { failOnUnstubbedRoutes } from './unstubbed.mjs';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 
@@ -223,6 +224,15 @@ for (const screen of SCREENS) {
     // Let transitions and the graph layout settle; a half-drawn edge is worse than a wait.
     await page.waitForTimeout(700);
     const file = path.join(outDir, `${screen.name}.png`);
+    // Un décor animé rend la capture irrelisible : mesuré sur un même build, deux passages
+    // donnaient sept pages identiques au bit près et `metrics.png` différente à chaque fois,
+    // 24 437 pixels dispersés — le fond de la page Metrics dérive en continu. C'est la
+    // propriété que ce fichier tient par ailleurs en dérivant tout d'un instant fixe (voir
+    // l'en-tête de fixtures.mjs), et un décor est précisément ce qu'on peut retirer sans
+    // rien retirer à ce que la capture documente : ces calques sont `aria-hidden` et ne
+    // portent aucun texte. Ils se déclarent eux-mêmes, plutôt que d'être listés ici.
+    await page.addStyleTag({ content: '[data-decorative] { display: none !important; }' });
+
     await page.screenshot({ path: file });
     const { before, after, skipped } = quantise(file);
     if (!skipped) { quantised++; savedFrom += before; savedTo += after; }
@@ -239,6 +249,10 @@ for (const screen of SCREENS) {
 }
 
 await browser.close();
+
+// Whatever this run produced describes an incomplete page if anything went unstubbed, so the
+// question is asked before any verdict is reached. See unstubbed.mjs.
+await failOnUnstubbedRoutes(baseUrl);
 
 if (failures.length) {
   console.error(`\n${failures.length} screen(s) failed:\n  ${failures.join('\n  ')}`);

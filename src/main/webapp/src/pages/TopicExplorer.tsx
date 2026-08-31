@@ -643,7 +643,18 @@ const MessageTable: React.FC<{
                     ? '—'
                     : <Highlighted text={message.key} highlight={highlight} />}
                 </td>
-                <td className="px-3 whitespace-nowrap text-on-surface max-w-0 w-full truncate">
+                {/* `title` porte l'aperçu que la cellule rogne. Elle est en `max-w-0 w-full`,
+                    donc elle prend ce qui reste de la table et coupe : mesuré à 704 px pour
+                    1 711 px de contenu, soit une quarantaine des 240 caractères que `previewOf`
+                    garde. Le reste n'est pas perdu — cliquer la ligne affiche la MessageCard
+                    complète en dessous, et la page le dit (« Select a row to read the record ») —
+                    mais un survol vaut mieux qu'un clic quand on balaie cinquante lignes à la
+                    recherche de celle qui porte un champ. C'est la même correction que celle
+                    faite sur les cartes de métrique, à ceci près qu'ici le clic existait déjà. */}
+                <td
+                  title={previewOf(message.value)}
+                  className="px-3 whitespace-nowrap text-on-surface max-w-0 w-full truncate"
+                >
                   <Highlighted text={previewOf(message.value)} highlight={highlight} />
                 </td>
               </tr>
