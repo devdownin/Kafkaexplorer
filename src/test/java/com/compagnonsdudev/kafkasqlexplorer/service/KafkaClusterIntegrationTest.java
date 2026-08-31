@@ -568,6 +568,85 @@ class KafkaClusterIntegrationTest {
     }
 
     /**
+     * Les deux moteurs répondent la même chose aux formes dont le lecteur direct se dit capable.
+     *
+     * <p>C'est le test que ce dépôt n'avait pas, et c'est celui qui attrape la classe entière de
+     * défauts qu'il passe son temps à corriger : « le repli a rendu des lignes, et elles étaient
+     * fausses ». Chaque moteur était vérifié <em>séparément</em>, l'un contre un planner réel et
+     * l'autre contre des mocks, donc rien ne comparait jamais leurs réponses — un lecteur qui
+     * ignore un WHERE, qui perd une colonne qualifiée ou qui applique une égalité prise sous un
+     * OR passait tous les tests du monde.
+     *
+     * <p>Le planner lit avec {@code scan.bounded.mode} : sans borne, une source Kafka ne se
+     * termine pas et un agrégat dépenserait son budget avant de répondre (voir
+     * {@code thisConnectorBoundsAScanWhenAsked}). C'est la même donnée pour les deux côtés, lue
+     * depuis le même bout.
+     *
+     * <p>Les valeurs sont comparées sous forme de chaînes et triées : les deux moteurs ont des
+     * types (BIGINT contre Integer JSON) et un ordre de lecture qui n'ont pas à coïncider. Ce qui
+     * doit coïncider, c'est <em>ce que la requête dit</em>.
+     */
+    @Test
+    void bothEnginesAgreeOnTheShapesTheDirectReaderClaimsToAnswer() throws Exception {
+        FlinkSqlService flink = flinkService();
+        String table = DdlGeneratorService.toTableName(TOPIC);
+        String bounded = " /*+ OPTIONS('scan.startup.mode'='earliest-offset',"
+            + "'scan.bounded.mode'='latest-offset') */ ";
+
+        record Shape(String label, String plannerSql, String directSql, String column) {}
+        List<Shape> shapes = List.of(
+            new Shape("projection",
+                "SELECT id, status FROM " + table + bounded,
+                "SELECT id, status FROM " + table, "id"),
+            new Shape("equality filter",
+                "SELECT id FROM " + table + bounded + " WHERE status = 'NEW'",
+                "SELECT id FROM " + table + " WHERE status = 'NEW'", "id"),
+            new Shape("filter that matches nothing",
+                "SELECT id FROM " + table + bounded + " WHERE status = 'ABSENT'",
+                "SELECT id FROM " + table + " WHERE status = 'ABSENT'", "id"),
+            new Shape("row cap",
+                "SELECT id FROM " + table + bounded + " LIMIT 2",
+                "SELECT id FROM " + table + " LIMIT 2", "id"),
+            // Qualifiée par le nom de la table plutôt que par un alias : le hint se pose entre le
+            // nom et l'alias, et la position exacte n'est pas ce que ce cas cherche à mesurer.
+            new Shape("qualified column",
+                "SELECT " + table + ".id FROM " + table + bounded + " WHERE " + table + ".status = 'NEW'",
+                "SELECT " + table + ".id FROM " + table + " WHERE " + table + ".status = 'NEW'", "id"));
+
+        for (Shape shape : shapes) {
+            QueryResult planner = flink.executeSql(QueryRequest.sql(
+                shape.plannerSql(), 50, 30_000L, "earliest-offset"));
+            QueryResult direct = flink.executeSql(QueryRequest.directSql(
+                shape.directSql(), 50, 30_000L, "earliest-offset"));
+
+            assertNull(planner.error(), shape.label() + " (planner): " + planner.error());
+            assertNull(direct.error(), shape.label() + " (direct): " + direct.error());
+            assertEquals("FLINK", planner.engine(), shape.label() + ": the planner must answer this side");
+            assertEquals("KAFKA_DIRECT", direct.engine(), shape.label() + ": directRead must not consult the planner");
+            assertEquals(values(planner, shape.column()), values(direct, shape.column()),
+                shape.label() + ": the two engines must agree — planner=" + planner.rows()
+                    + " direct=" + direct.rows());
+        }
+
+        // Et l'agrégat, dont la valeur se lit à la dernière ligne d'un changelog côté planner et à
+        // l'unique ligne côté lecteur direct.
+        QueryResult plannerCount = flink.executeSql(QueryRequest.sql(
+            "SELECT COUNT(*) AS metric_value FROM " + table + bounded, 10_000, 30_000L, "earliest-offset"));
+        QueryResult directCount = flink.executeSql(QueryRequest.directSql(
+            "SELECT COUNT(*) AS metric_value FROM " + table, 10_000, 30_000L, "earliest-offset"));
+        assertEquals(lastMetricValue(plannerCount), lastMetricValue(directCount),
+            "COUNT(*) must be the same number whichever engine counted it");
+    }
+
+    /** The values of one column, as strings and sorted: neither type nor order has to match. */
+    private static List<String> values(QueryResult result, String column) {
+        return result.rows().stream()
+            .map(row -> String.valueOf(row.get(column)))
+            .sorted()
+            .toList();
+    }
+
+    /**
      * The count a metric actually publishes, through the reader the template now asks for by name.
      *
      * <p>A single-table read goes to the direct reader rather than the planner (D2/D3), so this is

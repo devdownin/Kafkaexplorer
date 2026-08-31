@@ -2257,6 +2257,13 @@ public class FlinkSqlService {
         // capturé hors littéral est le texte d'origine. Sans cela, `WHERE note = 'from ailleurs'`
         // choisissait la mauvaise table et `WHERE note = 'limit 1'` tronquait la lecture.
         String scan = SqlStatements.outsideLiterals(sql);
+        /*
+         * L'instruction est analysée une fois, et ce qu'en dit le parseur prime sur ce qu'en
+         * disent les motifs : quelles sources, quels alias, quel plafond, quelle projection,
+         * quelles égalités. Chaque motif reste dessous et répond quand la grammaire a refusé —
+         * c'est-à-dire sur une requête que le moteur refusera de toute façon.
+         */
+        Optional<SqlAst.Read> ast = SqlAst.read(sql);
         // Extract table name from FROM clause. Le motif est celui de `FROM_TABLE`, partagé plutôt
         // que recopié : la copie locale n'admettait pas le guillemet double que l'autre acceptait.
         Matcher fromMatcher = FROM_TABLE.matcher(scan);
@@ -2266,8 +2273,12 @@ public class FlinkSqlService {
         }
         String rawTableRef = fromMatcher.group(1);
         String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
-        // Le nom de la table et son alias : ce par quoi une colonne peut être qualifiée.
-        Set<String> qualifiers = tableQualifiers(scan, rawTableRef);
+        // Le nom de la table et son alias : ce par quoi une colonne peut être qualifiée. Le
+        // parseur les donne exactement — y compris `AS` implicite et nom entre accents graves —
+        // là où le motif les devine.
+        Set<String> qualifiers = ast.isPresent()
+            ? new LinkedHashSet<>(SqlAst.qualifiers(ast.get()))
+            : tableQualifiers(scan, rawTableRef);
 
         // Detect TUMBLE / HOP / CUMULATE / SESSION window functions — route to dedicated handler.
         // La règle est partagée avec `isSingleTableRead` : la copie locale omettait CUMULATE, si
@@ -2282,9 +2293,14 @@ public class FlinkSqlService {
 
         // Respect LIMIT from SQL if smaller than configured limit (skip for aggregates)
         if (!isAggregate) {
-            Matcher limitMatcher = LIMIT_CLAUSE.matcher(scan);
-            if (limitMatcher.find()) {
-                limit = Math.min(limit, Integer.parseInt(limitMatcher.group(1)));
+            OptionalInt parsedCap = ast.map(SqlAst.Read::rowCap).orElse(OptionalInt.empty());
+            if (parsedCap.isPresent()) {
+                limit = Math.min(limit, parsedCap.getAsInt());
+            } else {
+                Matcher limitMatcher = LIMIT_CLAUSE.matcher(scan);
+                if (limitMatcher.find()) {
+                    limit = Math.min(limit, Integer.parseInt(limitMatcher.group(1)));
+                }
             }
         }
 
@@ -2306,9 +2322,32 @@ public class FlinkSqlService {
         }
 
         // Parse selected columns and WHERE conditions from SQL (needed to size the fetch)
-        List<String> requestedCols = isAggregate ? Collections.emptyList() : extractSelectedColumns(sql);
-        Map<String, String> whereConds = extractSimpleWhere(sql);
-        List<String> whereWarnings = unsupportedWhereFragments(sql);
+        List<String> requestedCols = isAggregate ? Collections.emptyList() : selectedColumns(sql, ast);
+        Map<String, String> whereConds = simpleWhere(sql, ast);
+        List<String> whereWarnings = unsupportedPredicates(sql, ast);
+        /*
+         * Une expression que ce lecteur ne sait pas calculer est refusée, pas rendue vide.
+         *
+         * `JSON_VALUE(c, '$.a')` ou `amount * 1.2` étaient cherchés comme s'ils étaient des noms de
+         * champ : introuvables, donc une colonne de `null` — une réponse, avec la bonne en-tête et
+         * la mauvaise valeur. Seul le planner sait les évaluer, et le dire est la seule réponse
+         * honnête ; la branche agrégat, elle, a son propre calcul et n'est pas concernée.
+         */
+        if (!isAggregate && ast.isPresent()) {
+            String uncomputable = ast.get().projection().stream()
+                .filter(item -> !item.plainColumn())
+                .map(SqlAst.Projected::path)
+                .findFirst().orElse(null);
+            if (uncomputable != null) {
+                return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                    System.currentTimeMillis() - startTime,
+                    "The direct Kafka reader cannot compute \"" + uncomputable + "\": it reads "
+                        + "fields out of the message and evaluates no expression. Only the Flink "
+                        + "planner computes it — retry when it is available, or project the "
+                        + "underlying column and compute outside the query.",
+                    false, "KAFKA_DIRECT");
+            }
+        }
 
         // For aggregates, read all available messages. For plain projections, a small
         // overshoot over the limit is enough — but when a WHERE clause filters rows,
@@ -2748,6 +2787,29 @@ public class FlinkSqlService {
 
     /** Package-private: driven directly by {@code FlinkSqlServiceTest}. */
     List<String> extractSelectedColumns(String sql) {
+        return selectedColumns(sql, SqlAst.read(sql));
+    }
+
+    /**
+     * Les colonnes projetées, sous la forme {@code source AS sortie} que la boucle de lecture sait
+     * relire.
+     *
+     * <p>Du parseur quand il a répondu, parce que le découpage lexical se fait sur les virgules et
+     * qu'un appel de fonction en contient : {@code SELECT JSON_VALUE(c, '$.a') AS x} devenait deux
+     * colonnes, {@code JSON_VALUE(c} et {@code '$.a') AS x}, dont aucune n'existe. L'arbre rend les
+     * éléments tels qu'ils sont écrits, alias compris, et dit lesquels sont de simples colonnes —
+     * ce dont l'appelant se sert pour refuser ce qu'il ne peut pas calculer.
+     */
+    private List<String> selectedColumns(String sql, Optional<SqlAst.Read> ast) {
+        if (ast.isPresent()) {
+            SqlAst.Read read = ast.get();
+            if (read.star()) return Collections.emptyList();
+            return read.projection().stream()
+                .map(item -> item.path().equals(item.output())
+                    ? item.path()
+                    : item.path() + " AS " + item.output())
+                .collect(Collectors.toList());
+        }
         Matcher m = SELECT_PROJECTION.matcher(sql.trim());
         if (!m.find()) return Collections.emptyList();
         String cols = m.group(1).trim();
@@ -2773,6 +2835,27 @@ public class FlinkSqlService {
 
     /** Package-private: driven directly by {@code FlinkSqlServiceTest}. */
     Map<String, String> extractSimpleWhere(String sql) {
+        return simpleWhere(sql, SqlAst.read(sql));
+    }
+
+    /**
+     * Les égalités du WHERE que ce lecteur sait appliquer.
+     *
+     * <p>Du parseur quand il a répondu, et c'est une correction en soi : le motif lisait
+     * {@code colonne = 'valeur'} <em>n'importe où</em> après le WHERE, donc il retenait une
+     * égalité placée sous un {@code OR} — {@code WHERE a = 'x' OR b = 'y'} filtrait sur {@code a}
+     * seul, ce qui est faux dans le sens qui perd des lignes — et il retenait aussi celles d'un
+     * {@code HAVING}, la borne de sa clause s'arrêtant plus loin que celle de son jumeau
+     * d'avertissement. L'arbre ne descend que les conjonctions, donc les deux disparaissent.
+     */
+    private Map<String, String> simpleWhere(String sql, Optional<SqlAst.Read> ast) {
+        if (ast.isPresent()) {
+            Map<String, String> parsed = new LinkedHashMap<>();
+            for (SqlAst.Condition condition : ast.get().equalities()) {
+                parsed.put(condition.column(), condition.value());
+            }
+            return parsed;
+        }
         Map<String, String> conditions = new LinkedHashMap<>();
         // Les bornes de la clause se cherchent hors littéraux — un `WHERE` ou un `LIMIT` cité dans
         // une valeur les déplaçait — et le contenu se découpe dans le texte d'origine, puisque
@@ -2800,6 +2883,25 @@ public class FlinkSqlService {
      * wrong answer.
      */
     List<String> unsupportedWhereFragments(String sql) {
+        return unsupportedPredicates(sql, SqlAst.read(sql));
+    }
+
+    /**
+     * Ce que le WHERE demande et que ce lecteur n'a pas appliqué.
+     *
+     * <p>Une seule extraction pour les deux réponses quand le parseur a répondu : ce qui n'est pas
+     * devenu une égalité <em>est</em> ce qui est signalé, par construction. Les deux motifs
+     * s'accordaient mal — l'un lisait la clause jusqu'au {@code LIMIT}, l'autre s'arrêtait au
+     * {@code GROUP BY} — si bien qu'une condition pouvait être appliquée sans être signalée.
+     */
+    private List<String> unsupportedPredicates(String sql, Optional<SqlAst.Read> ast) {
+        if (ast.isPresent()) {
+            List<String> others = ast.get().otherPredicates();
+            if (others.isEmpty()) return List.of();
+            return List.of("The direct engine applied only the \"column = 'value'\" conditions of this "
+                + "WHERE clause. Ignored: \"" + String.join(" / ", others) + "\" — rows that do not "
+                + "satisfy it may appear in the result.");
+        }
         Matcher wm = WHERE_WARNING_BLOCK.matcher(SqlStatements.outsideLiterals(sql));
         if (!wm.find()) {
             return List.of();

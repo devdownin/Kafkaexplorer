@@ -353,6 +353,23 @@ class FlinkSqlServiceStatementKindsTest {
         assertTrue(refused.error().contains("Cross joins are not allowed"), refused.error());
     }
 
+    /**
+     * {@code FROM a, b} est une jointure croisée, et rien ne la voyait passer.
+     *
+     * <p>Le garde cherchait « CROSS JOIN » dans le texte — que cette écriture ne contient pas — et
+     * l'heuristique sur le plan ne se déclenchait que si le mot JOIN y apparaissait sans ON ni
+     * CONDITION, ce qui n'est le cas d'aucun plan réel. Le paramètre existe pour interdire le
+     * produit cartésien à un opérateur ; il l'interdisait sous une seule de ses deux écritures.
+     * Le parseur les nomme pareil.
+     */
+    @Test
+    void aCommaJoinIsACrossJoinToo() {
+        QueryResult refused = run("SELECT o.order_id, c.name FROM k_orders o, k_customers c");
+
+        assertNotNull(refused.error(), "a comma join is a cross join and must be refused");
+        assertTrue(refused.error().contains("Cross joins are not allowed"), refused.error());
+    }
+
     // ── Ce que la whitelist refuse, famille par famille ───────────────────────────────
 
     /**
