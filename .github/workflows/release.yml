@@ -411,8 +411,9 @@ jobs:
               || { echo "::error::$want is missing from the published image index"; exit 1; }
           done
 
-      # The pin of the hub stack goes stale the instant this job publishes, and this is the
-      # only place that knows a new version exists.
+      # Two things go stale the instant this job publishes, and this is the only moment
+      # anything knows a new version exists: the hub stack's Explorer pin, and the changelog's
+      # `[Unreleased]` heading. One branch closes both.
       #
       # `compose/spectra-hub.yml` and `compose/image.yml` name the Explorer image by hand
       # (`${EXPLORER_IMAGE_TAG:-<version>}`), because that stack builds nothing and exists to
@@ -421,6 +422,13 @@ jobs:
       # release notices: it is that the *next* pull request touching a file `hub-changes`
       # gates on fails on `check-image-pins.py --published`, a check about something it did
       # not change. That happened twice in one day, on two unrelated branches.
+      #
+      # `CHANGELOG.md` had the same shape of hole with none of the alarm. Nothing closed
+      # `[Unreleased]` at release time and no check reads it, so entries piled into a section
+      # that claimed they had not shipped — thirty releases of them, `v1.7.1` through
+      # `v1.9.11`, the file's newest version heading eight weeks behind its newest tag. A
+      # stale pin is caught by the next pull request; a stale changelog is caught by nobody,
+      # which is exactly why it ran the longer.
       #
       # A pull request rather than a push to `main`: every entry on `main` is a reviewed merge
       # commit, and a bot commit landing straight on the default branch would be neither. It
@@ -432,9 +440,10 @@ jobs:
       # Written with `git` and `gh` (both present on the runner) rather than a third-party
       # action: this is the release path, and it already holds `contents: write` and a
       # registry login. One fewer external action with write scope in it is worth ten lines.
-      - name: Open a pull request bumping the hub stack's Explorer pin
+      - name: Open a pull request catching the repository up to the release
         # Stable releases only — the same rule that gates `latest`. A pre-release must not
-        # move the pin of the stack people actually run.
+        # move the pin of the stack people actually run, and its entries belong to the stable
+        # release that eventually carries them, not to a heading of their own.
         if: ${{ !contains(needs.guard.outputs.version, '-') }}
         # Best-effort, and deliberately so: the image is published by the time this runs. A
         # release must never be reported as failed because a follow-up could not be opened —
@@ -444,13 +453,24 @@ jobs:
           VERSION: ${{ needs.guard.outputs.version }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Empty on a tag push, which has no release payload; the fallback below is then the
+          # run's own date, and the two coincide because this job runs on publication.
+          PUBLISHED_AT: ${{ github.event.release.published_at }}
+          # RELEASE_TAG is not repeated here on purpose: it is the workflow-level `env:`,
+          # merged into every step, and restating its expression is the second copy this
+          # repository keeps removing. The changelog script below reads it from the
+          # environment, so it is named here only to say where it comes from.
         run: |
           set -euo pipefail
           # Branch from the current default branch, not from the tagged commit: the tag may
           # be behind by the time this runs, and a pull request whose base has moved shows a
           # diff nobody asked for.
           git fetch --depth 1 origin "$DEFAULT_BRANCH"
-          git switch -c "chore/bump-explorer-pin-${VERSION}" FETCH_HEAD
+          git switch -c "chore/release-followup-${VERSION}" FETCH_HEAD
+
+          release_date="${PUBLISHED_AT:0:10}"
+          [ -n "$release_date" ] || release_date="$(date -u +%F)"
+          export RELEASE_DATE="$release_date"
 
           # Both halves move together, as the check's own message says. Edited in Python
           # rather than sed: the pattern contains `${…}`, and getting one layer of shell
@@ -463,44 +483,113 @@ jobs:
           # asserts they agree, so a bump applied to only one fails the next pull request
           # instead of quietly pairing an old Explorer with a current everything-else.
           # Discovered rather than listed, so a third file needs no edit here.
-          bumped = []
+          # `carried` and `bumped` are counted apart, and the difference is the whole point:
+          # a file that carries the pin and already names this version is a re-run, which is
+          # normal and must fall through to the "nothing to open" exit below. Only *nobody*
+          # carrying the pattern means it was renamed. Conflating the two — raising whenever
+          # nothing changed — made a re-published release die on "has it been renamed?", a
+          # confident wrong sentence about a tree that is perfectly correct, and it now takes
+          # the changelog down with it rather than just the pin.
+          carried, bumped = [], []
           for compose in [pathlib.Path("docker-compose.yml"),
                           *sorted(pathlib.Path("compose").glob("*.yml"))]:
               before = compose.read_text()
-              after = re.sub(
+              after, hits = re.subn(
                   r"(kafkaexplorer:\$\{EXPLORER_IMAGE_TAG:-)[^}]+(\})",
                   lambda m: m.group(1) + version + m.group(2),
                   before)
-              if after != before:
-                  compose.write_text(after)
-                  bumped.append(str(compose))
-          if not bumped:
+              if hits:
+                  carried.append(str(compose))
+                  if after != before:
+                      compose.write_text(after)
+                      bumped.append(str(compose))
+          if not carried:
               raise SystemExit("no compose file carries the Explorer pin — has it been renamed?")
-          print("bumped: " + ", ".join(bumped))
+          print("bumped: " + (", ".join(bumped) if bumped
+                              else f"none — every pin already names {version}"))
           env = pathlib.Path(".env.example")
           env.write_text(re.sub(
               r"(?m)^EXPLORER_IMAGE_TAG=.*$", f"EXPLORER_IMAGE_TAG={version}", env.read_text()))
           PY
 
+          # The changelog is closed in its own process, and a failure here is reported without
+          # taking the pin bump down with it: the pin is what decides which image people run,
+          # so a changelog whose shape has drifted must not be able to block it. The `::error::`
+          # at the end of the step is what keeps that from being a silence.
+          changelog_ok=1
+          python3 - <<'PY' || changelog_ok=0
+          import os, pathlib, re, sys
+          version, tag = os.environ["VERSION"], os.environ["RELEASE_TAG"]
+          date = os.environ["RELEASE_DATE"]
+          path = pathlib.Path("CHANGELOG.md")
+          text = path.read_text()
+
+          # Idempotent: a re-run, or a release whose changelog was closed by hand, changes
+          # nothing rather than filing the version twice.
+          if re.search(rf"(?m)^## \[{re.escape(version)}\]", text):
+              print(f"CHANGELOG.md already carries a [{version}] section — nothing to close.")
+              sys.exit(0)
+
+          lines = text.split("\n")
+          head = next((i for i, l in enumerate(lines) if l.startswith("## [Unreleased]")), None)
+          if head is None:
+              sys.exit("CHANGELOG.md has no '## [Unreleased]' heading to close.")
+          end = next((i for i in range(head + 1, len(lines))
+                      if lines[i].startswith("## [")), len(lines))
+
+          if any(l.startswith("- ") for l in lines[head + 1:end]):
+              # Rename the section to the version, and open an empty one above it.
+              lines[head] = f"## [{version}] — {date}"
+              lines[head:head] = ["## [Unreleased]", "", "Nothing yet.", ""]
+              print(f"closed [Unreleased] as [{version}]")
+          else:
+              # A release that recorded nothing still gets a heading: an absent version reads
+              # as a lost one. Same wording the reconstructed sections use.
+              notes = (f"https://github.com/{os.environ['GITHUB_REPOSITORY']}"
+                       f"/releases/tag/{tag}")
+              lines[end:end] = [f"## [{version}] — {date}", "",
+                                "Released from `main` with no entry recorded here; see "
+                                f"[the release notes]({notes}).", ""]
+              print(f"[Unreleased] was empty — filed [{version}] as a release with no entry")
+
+          text = "\n".join(lines)
+
+          # The link references at the foot carry the previous tag already, so the comparison
+          # links are derived from the file rather than from `git describe` — which would need
+          # the tag history this shallow clone deliberately does not fetch.
+          ref = re.search(
+              r"(?m)^\[Unreleased\]: (?P<base>\S+)/compare/(?P<prev>\S+?)\.\.\.HEAD[ \t]*$", text)
+          if ref is None:
+              sys.exit("CHANGELOG.md has no '[Unreleased]: …/compare/<tag>...HEAD' reference to move.")
+          if ref.group("prev") != tag:
+              text = (text[:ref.start()]
+                      + f"[Unreleased]: {ref.group('base')}/compare/{tag}...HEAD\n"
+                      + f"[{version}]: {ref.group('base')}/compare/{ref.group('prev')}...{tag}"
+                      + text[ref.end():])
+          path.write_text(text)
+          PY
+
           if git diff --quiet; then
-            echo "The pin already names ${VERSION} — nothing to open."
+            echo "Nothing to open — the pin and the changelog both already name ${VERSION}."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "Bump the hub stack's Explorer pin to ${VERSION}"
-          git push -u origin "chore/bump-explorer-pin-${VERSION}"
+          git commit -am "Catch the repository up to ${VERSION}: stack pin and changelog"
+          git push -u origin "chore/release-followup-${VERSION}"
 
           if ! gh pr create \
             --base "$DEFAULT_BRANCH" \
-            --title "Bump the hub stack's Explorer pin to ${VERSION}" \
+            --title "Catch the repository up to ${VERSION}" \
             --body "$(printf '%s\n' \
-              "\`v${VERSION}\` is published, so \`compose/spectra-hub.yml\`, \`compose/image.yml\` and \`.env.example\` now name a release behind it — the hub stack builds nothing and pulls what is published, so it would pair an old Explorer with a current SpectraLLM." \
+              "\`v${VERSION}\` is published. Two files in the tree still describe the release before it, and this is the only moment anything knows the new one exists." \
               "" \
-              "Opened by \`release.yml\` at publication time, because that is the only moment anything knows a new version exists: the hand-written \`\${EXPLORER_IMAGE_TAG:-…}\` default is invisible to Dependabot, and left alone it is discovered by the next unrelated pull request failing \`check-image-pins.py --published\`." \
+              "**The stack pin.** \`compose/spectra-hub.yml\`, \`compose/image.yml\` and \`.env.example\` named a release behind — the hub stack builds nothing and pulls what is published, so it would pair an old Explorer with a current SpectraLLM. The hand-written \`\${EXPLORER_IMAGE_TAG:-…}\` default is invisible to Dependabot, and left alone it is discovered by the next unrelated pull request failing \`check-image-pins.py --published\`." \
               "" \
-              "This pull request touches the hub files, so \`hub-changes\` runs \`spectra-hub-stack\` and the new value is checked against the registry here before it is merged." \
+              "**The changelog.** \`[Unreleased]\` is closed as \`[${VERSION}]\` and a fresh empty section opened above it, with the comparison links moved to match. Nothing else does this, and nothing checks it: that is how thirty releases came to sit in a section claiming they had not shipped." \
+              "" \
+              "This pull request touches the hub files, so \`hub-changes\` runs \`spectra-hub-stack\` and the new pin is checked against the registry here before it is merged." \
               "" \
               "---" \
               "_Generated by [Claude Code](https://claude.ai/code)_")"; then
@@ -519,7 +608,15 @@ jobs:
             # release is never reported as failed. What changes is only that the step stops
             # claiming it did something it did not do — the repository's own rule, that a
             # measurement which could not be taken is not a zero, applied to a step's own verdict.
-            echo "::error::The pin bump branch was pushed but no pull request could be opened. If this is a permission refusal, enable Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests'; the branch chore/bump-explorer-pin-${VERSION} is there and can be opened by hand."
+            echo "::error::The release follow-up branch was pushed but no pull request could be opened. If this is a permission refusal, enable Settings → Actions → General → 'Allow GitHub Actions to create and approve pull requests'; the branch chore/release-followup-${VERSION} is there and can be opened by hand."
+            exit 1
+          fi
+
+          if [ "$changelog_ok" -eq 0 ]; then
+            # The pull request is open with the pin bump in it, so the release is caught up on
+            # the half that decides which image people run. This says the other half was not,
+            # rather than letting a green step imply it was.
+            echo "::error::The Explorer pin was bumped and the pull request opened, but CHANGELOG.md could not be closed — see the Python failure above. Close [Unreleased] as [${VERSION}] by hand on chore/release-followup-${VERSION}; CONTRIBUTING.md documents the three steps."
             exit 1
           fi
 
