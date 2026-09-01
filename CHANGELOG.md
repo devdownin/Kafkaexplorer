@@ -11,6 +11,28 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A busy Flink runtime is reported instead of being answered by the other engine.** The
+  coordinator serialises access to the runtime, so a long DDL, a submission or a job being
+  cancelled makes every concurrent caller busy for as long as that lasts. That wait was classified
+  as an engine failure, which sent the SELECT to the direct Kafka reader — a reader that knows only
+  Kafka topics, so asked about a table sitting in the Flink catalogue it answered `Table 'x' not
+  found. No matching Kafka topic exists.`: a confident wrong answer about a name that is perfectly
+  correct, on a query that succeeds unchanged a second later. It is now its own classification
+  (`ENGINE_BUSY`), the query ends with the coordinator's own sentence — the operation, the budget,
+  and what was holding the runtime — plus the fact that running it again is the right response, and
+  **it no longer counts toward the SELECT circuit breaker**: three waits used to take the planner
+  out of service for ten minutes, which is what three metrics refreshing together produce every
+  thirty seconds.
+
+- **A pull request stacked on another branch is built.** `ci.yml`, `codeql.yml` and `security.yml`
+  filtered their `pull_request` trigger to `branches: [ "main" ]`, so a pull request whose base was
+  another branch ran nothing at all — no build, no suite, no CodeQL, no dependency review. Three
+  such pull requests were merged that way and `main` went red on ten tests the moment they met,
+  none of which any run had ever executed. The filter is gone; `push` still names main alone, so
+  nothing builds twice.
+
 ### Added
 
 - **A Flink job's own record is on screen.** The store keeps a `statusDetail`, an `errorMessage`

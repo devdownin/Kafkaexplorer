@@ -32,12 +32,34 @@ public final class SqlErrorClassifier {
         /** The statement itself is invalid — syntax, unknown object, bad types. Report, don't retry. */
         USER_ERROR,
         /** The engine failed on a plausible statement — fall back and keep the query working. */
-        ENGINE_ERROR
+        ENGINE_ERROR,
+        /**
+         * The engine was not free, which is neither of the other two.
+         *
+         * <p>Read as an {@link #ENGINE_ERROR} — as it was — a busy runtime falls back to the direct
+         * Kafka reader, and that reader knows only Kafka topics: asked about a table sitting in the
+         * catalogue it answers <em>"Table 'x' not found. No matching Kafka topic exists."</em>, a
+         * confident sentence about a name that is perfectly correct. That is the substitution this
+         * classifier exists to prevent — another engine's opinion of a query it was never able to
+         * run — and it is the same argument already written above for an unbounded {@code ORDER BY}.
+         *
+         * <p>It is also the one engine failure that repairs itself between two queries: the
+         * coordinator serialises access to the runtime, so a long DDL or a job being cancelled
+         * makes every concurrent caller busy for as long as it takes and no longer. Counted toward
+         * the circuit breaker, three such moments took the planner out of service for ten minutes
+         * — the tidy version of the same mistake, since nothing about the planner was wrong.
+         */
+        ENGINE_BUSY
     }
 
     public record Classification(Kind kind, String message) {
         public boolean isUserError() {
             return kind == Kind.USER_ERROR;
+        }
+
+        /** The engine was busy: report the wait, do not fall back, and do not count it. */
+        public boolean isEngineBusy() {
+            return kind == Kind.ENGINE_BUSY;
         }
     }
 
@@ -123,12 +145,26 @@ public final class SqlErrorClassifier {
             + "|StackOverflowError"
             + "|OutOfMemoryError"
             + "|could not (?:be resolved|instantiate|initialize)"
-            + "|failed to (?:deserialize|submit) the job"
-            // Le runtime était occupé : l'instruction est bonne, le moteur n'était pas libre.
-            // C'est un défaut moteur, donc un SELECT doit se replier sur le lecteur direct plutôt
-            // que d'être renvoyé à l'utilisateur comme une requête invalide.
-            + "|Flink runtime was busy",
+            + "|failed to (?:deserialize|submit) the job",
         Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Le runtime n'était pas libre — voir {@link Kind#ENGINE_BUSY}.
+     *
+     * <p>Sa propre catégorie et non plus une ligne de {@link #ENGINE_ERROR_TEXT} : l'instruction
+     * est bonne, le moteur n'est pas cassé, et il le sera encore moins à la requête suivante. La
+     * phrase est celle que {@code FlinkRuntimeCoordinator.busy} compose, et elle nomme déjà
+     * l'opération, le budget et ce qui tenait le runtime — c'est ce qui rend le refus actionnable
+     * là où un repli silencieux ne disait rien du tout.
+     */
+    private static final Pattern RUNTIME_BUSY_TEXT = Pattern.compile(
+        "Flink runtime was busy|FlinkRuntimeBusyException",
+        Pattern.CASE_INSENSITIVE);
+
+    /** Whether this failure is "the engine was not free", in the coordinator's own wording. */
+    public static boolean mentionsABusyRuntime(String rawMessage) {
+        return rawMessage != null && RUNTIME_BUSY_TEXT.matcher(rawMessage).find();
+    }
 
     /** Purely syntactic rejections — the parser never reached name resolution. */
     private static final Pattern SYNTAX_ERROR_TEXT = Pattern.compile(
@@ -144,6 +180,10 @@ public final class SqlErrorClassifier {
      */
     public static boolean isSyntaxError(Throwable error) {
         String message = explain(error);
+        // `RUNTIME_BUSY_TEXT` est cité ici parce qu'il a quitté `ENGINE_ERROR_TEXT` : le veto
+        // portait sur les deux quand ils n'étaient qu'un motif, et le perdre en silence est
+        // exactement la façon dont une extraction de constante change un comportement.
+        if (RUNTIME_BUSY_TEXT.matcher(message).find()) return false;
         return !ENGINE_ERROR_TEXT.matcher(message).find() && SYNTAX_ERROR_TEXT.matcher(message).find();
     }
 
@@ -222,6 +262,12 @@ public final class SqlErrorClassifier {
         String message = rawMessage == null ? "" : rawMessage.trim();
         if (message.isEmpty()) {
             return new Classification(Kind.ENGINE_ERROR, "The query engine failed without reporting a reason.");
+        }
+        // Avant tout le reste : la phrase du coordinateur emboîte l'opération et l'appelant, donc
+        // elle peut contenir le nom d'une table ou d'une règle qui ferait basculer les motifs
+        // suivants d'un côté ou de l'autre. Ce qu'elle décrit ne dépend pas de son contenu.
+        if (RUNTIME_BUSY_TEXT.matcher(message).find()) {
+            return new Classification(Kind.ENGINE_BUSY, message);
         }
         if (ENGINE_ERROR_TEXT.matcher(message).find()) {
             return new Classification(Kind.ENGINE_ERROR, message);

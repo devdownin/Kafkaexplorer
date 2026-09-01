@@ -12,6 +12,7 @@ import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -160,6 +161,28 @@ class FlinkSqlServiceTest {
         // a toujours servie, et qui n'échoue que là où l'ordre d'exécution place trois pannes
         // avant lui.
         service.resetFlinkSelectLatchForTest();
+    }
+
+    /**
+     * Le cas qui laisse le runtime occupé échoue lui-même, au lieu de faire échouer son voisin.
+     *
+     * <p>C'est la contrepartie de {@code resetMocks}, et elle est née du même incident. Une requête
+     * dont le budget expire fait annuler son job, et le MiniCluster met un instant à suivre : tant
+     * qu'il ne l'a pas fait, la mutation en cours tient le verrou d'écriture du coordinateur, et le
+     * cas <em>suivant</em> reçoit « The Flink runtime was busy ». Le symptôme atterrissait donc sur
+     * un innocent — {@code xmlExtractUdfIsRegisteredAndParsesXml} répondant « Table 'xml_messages'
+     * not found. No matching Kafka topic exists. », la phrase de l'autre moteur sur une requête que
+     * le planner a toujours servie — et seulement là où l'ordre d'exécution l'a placé après le
+     * coupable, c'est-à-dire en intégration continue et nulle part ailleurs. Trois tours de
+     * diagnostic pour une cause unique.
+     *
+     * <p>Attendre <em>ici</em> plutôt que dans les deux cas concernés énonce la règle pour toute la
+     * classe : un cas rend le runtime avant de finir. Ceux qui n'ont rien lancé passent sans coût —
+     * la première tentative aboutit immédiatement — et un cas ajouté demain n'a rien à penser.
+     */
+    @AfterEach
+    void theRuntimeIsHandedBack() {
+        awaitRuntimeIsFree();
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
@@ -441,15 +464,6 @@ class FlinkSqlServiceTest {
                 "(distinguishes timeout from a successful but empty SELECT)");
         assertTrue(elapsed < 10_000,
                 "A timed-out query must return promptly, but took " + elapsed + "ms");
-
-        // Et le runtime est rendu avant de sortir — voir awaitRuntimeIsFree().
-        //
-        // Ce cas et la fenêtre que le planner ne peut pas finir sont les deux seuls de la classe à
-        // laisser derrière eux un job sur une source qui ne s'arrête jamais. C'est ce qui a fait
-        // échouer `xmlExtractUdfIsRegisteredAndParsesXml` en intégration continue et nulle part
-        // ailleurs : il reçoit « Table 'xml_messages' not found. No matching Kafka topic exists. »,
-        // la phrase du lecteur direct, sur une requête que le planner a toujours servie.
-        awaitRuntimeIsFree();
     }
 
     // ──────────────────────────────────────────────────────────────────────────────
@@ -1106,22 +1120,70 @@ class FlinkSqlServiceTest {
                 "the caveat must name the way out, got: " + caveat);
         assertFalse(caveat.contains("fewer messages than the limit"),
                 "the generic timeout sentence sends the reader after the wrong thing, got: " + caveat);
+    }
 
-        // Et le runtime est rendu avant de sortir.
-        //
-        // Ce cas est le seul de la classe à laisser derrière lui un job sur une source qui ne
-        // finit pas : le budget de 200 ms expire, `cancelJobInternal` demande l'annulation, et le
-        // MiniCluster met un instant à la suivre. Tant qu'il ne l'a pas suivie, la mutation en
-        // cours tient le verrou d'écriture du coordinateur, et le cas suivant — quel qu'il soit —
-        // reçoit « The Flink runtime was busy ». C'est une panne *moteur* pour
-        // `SqlErrorClassifier`, donc un repli silencieux sur le lecteur direct, et trois de ces
-        // replis latchent le disjoncteur pour tout le reste de la classe. C'est ce qui a fait
-        // échouer `xmlExtractUdfIsRegisteredAndParsesXml`, une requête que le planner a toujours
-        // servie, sur une intégration continue où l'ordre d'exécution n'est pas celui d'ici.
-        //
-        // Attendre est donc l'assertion, pas une précaution : ce test n'a le droit de rendre la
-        // main qu'une fois le runtime de nouveau libre.
-        awaitRuntimeIsFree();
+    // ──────────────────────────────────────────────────────────────────────────────
+    // Un runtime occupé
+    // ──────────────────────────────────────────────────────────────────────────────
+
+    /** La phrase exacte que compose {@code FlinkRuntimeCoordinator.busy}. */
+    private static final String BUSY_MESSAGE =
+        "The Flink runtime was busy: MUTATION operation 'execute-sql-select' gave up after 300 ms. "
+            + "Currently held by MUTATION 'register-source-table' (thread flink-runtime-mutation-42), "
+            + "running for 1200 ms.";
+
+    /**
+     * Un runtime occupé est rapporté, pas répondu par l'autre moteur.
+     *
+     * <p>C'est la substitution que {@code SqlErrorClassifier} existe pour empêcher, et c'était ici
+     * la plus trompeuse des trois : le lecteur direct ne connaît que des topics Kafka, donc
+     * interrogé sur une table du catalogue il répondait « No matching Kafka topic exists » — une
+     * phrase assurée à propos d'un nom parfaitement correct, sur une requête qui réussit à l'essai
+     * suivant.
+     */
+    @Test
+    void aBusyRuntimeIsReportedRatherThanAnsweredByTheDirectReader() {
+        QueryResult refused = service.refuseIfRuntimeBusy(BUSY_MESSAGE, System.currentTimeMillis());
+
+        assertNotNull(refused, "un runtime occupé ne doit pas retomber sur le chemin de repli");
+        assertEquals("FLINK", refused.engine(),
+                "l'autre moteur n'a pas d'avis à donner sur une requête qu'il n'a pas exécutée");
+        assertTrue(refused.rows().isEmpty(), "aucune ligne ne doit être rendue : rien n'a été lu");
+        assertNotNull(refused.error());
+        assertTrue(refused.error().contains("Currently held by"),
+                "ce qui tenait le runtime est la seule chose actionnable ici : " + refused.error());
+        assertTrue(refused.error().contains("Run it again"),
+                "le refus doit dire que réessayer est la bonne réponse : " + refused.error());
+        assertFalse(refused.error().contains("No matching Kafka topic exists"),
+                "la phrase du lecteur direct est précisément ce qu'on refuse de rendre ici");
+    }
+
+    /** Une vraie panne moteur continue de se replier : ce refus ne vaut que pour l'occupation. */
+    @Test
+    void anEngineFailureThatIsNotAWaitStillFallsBack() {
+        assertNull(service.refuseIfRuntimeBusy(
+                "java.lang.NullPointerException: metadataHandlerProvider", System.currentTimeMillis()),
+                "le défaut historique qui justifie le repli doit continuer de se replier");
+        assertNull(service.refuseIfRuntimeBusy(
+                "Object 'ordrs' not found", System.currentTimeMillis()),
+                "une faute de frappe n'est pas une attente");
+    }
+
+    /**
+     * Une attente ne compte pas pour le disjoncteur, quel qu'en soit le nombre.
+     *
+     * <p>Elle comptait, donc trois instants d'occupation — trois métriques qui se rafraîchissent
+     * ensemble, ce qui arrive toutes les trente secondes — coupaient le planner pour dix minutes,
+     * alors que rien n'allait mal chez lui.
+     */
+    @Test
+    void aBusyRuntimeNeverLatchesTheCircuitBreaker() {
+        for (int attempt = 0; attempt < 10; attempt++) {
+            assertNotNull(service.refuseIfRuntimeBusy(BUSY_MESSAGE, System.currentTimeMillis()));
+        }
+
+        assertFalse(service.isFlinkSelectDisabled(),
+                "dix attentes ne disent rien de la santé du planner et ne doivent pas le couper");
     }
 
     /**
@@ -1134,8 +1196,8 @@ class FlinkSqlServiceTest {
      * auraient latché le disjoncteur qu'on cherche justement à protéger, pour dix minutes.
      *
      * <p>Bornée et non endormie : ce qui est attendu est un état observable, pas une durée choisie
-     * au hasard. Un échec ici est une vraie information — le runtime n'est pas revenu, et tout ce
-     * qui suivrait serait mesuré sur un moteur absent.
+     * au hasard. Un échec ici est une vraie information — le runtime n'est pas revenu, et le nom du
+     * cas qui échoue est celui qui l'a retenu.
      */
     private void awaitRuntimeIsFree() {
         for (int attempt = 0; attempt < 60; attempt++) {

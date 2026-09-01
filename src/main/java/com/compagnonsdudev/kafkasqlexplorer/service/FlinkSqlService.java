@@ -1280,6 +1280,8 @@ public class FlinkSqlService {
                                 flinkSelectFailures.set(0);
                                 engineFailure = noTimeAttribute;
                             } else {
+                                QueryResult busy = refuseIfRuntimeBusy(flinkResult.error(), startTime);
+                                if (busy != null) return busy;
                                 QueryResult rejected = rejectIfUserError(
                                     flinkResult.error(), sqlToExecute, startTime, autoReg.deferredToDirectReader());
                                 if (rejected != null) return rejected;
@@ -1294,6 +1296,8 @@ public class FlinkSqlService {
                             flinkSelectFailures.set(0);
                             engineFailure = noTimeAttribute;
                         } else {
+                            QueryResult busy = refuseIfRuntimeBusy(explained, startTime);
+                            if (busy != null) return busy;
                             QueryResult rejected = rejectIfUserError(
                                 explained, sqlToExecute, startTime, autoReg.deferredToDirectReader());
                             if (rejected != null) return rejected;
@@ -1535,6 +1539,53 @@ public class FlinkSqlService {
      * not count toward the circuit breaker either, or three typos would disable the Flink planner
      * for the rest of the process.
      */
+    /**
+     * Un runtime occupé n'est pas un moteur cassé : on le dit, on ne se replie pas, on ne compte pas.
+     *
+     * <p>Le coordinateur sérialise l'accès au runtime Flink, donc une DDL longue, une soumission ou
+     * un job en cours d'annulation rendent occupé tout appelant simultané — le temps que ça dure, et
+     * pas une seconde de plus. Traité comme une panne moteur, ce moment déclenchait un repli sur le
+     * lecteur direct, qui ne connaît que des topics Kafka : interrogé sur une table du catalogue, il
+     * répondait <em>« Table 'x' not found. No matching Kafka topic exists. »</em>, une phrase
+     * assurée à propos d'un nom parfaitement correct. C'est la substitution que
+     * {@code SqlErrorClassifier} existe pour empêcher, et elle était ici la plus trompeuse des
+     * trois, puisque la même requête réussit à l'essai suivant.
+     *
+     * <p><strong>Le compteur est remis à zéro</strong>, comme pour un délai dépassé et pour la même
+     * raison : ce qui vient de se produire ne dit rien de la santé du planner. Il était compté, donc
+     * trois instants d'occupation — trois métriques qui se rafraîchissent en même temps, ce qui
+     * arrive toutes les trente secondes — coupaient le planner pour dix minutes, sur une boucle qui
+     * n'a par ailleurs aucun symptôme.
+     *
+     * <p>Le message du coordinateur est rendu tel quel : il nomme déjà l'opération, le budget et ce
+     * qui tenait le runtime, ce qui est exactement ce qu'il faut pour agir. La phrase ajoutée dit la
+     * seule chose qu'il ne dit pas — que réessayer est la bonne réponse.
+     *
+     * <p><em>Portée</em> : seul le chemin du planner est concerné, et c'est vérifié plutôt que
+     * supposé. Un runtime occupé pendant l'auto-enregistrement remonte dans le {@code catch}
+     * extérieur de {@code executeSql}, qui rend déjà l'erreur sans repli ni comptage ; c'est le
+     * seul autre endroit où l'exception du coordinateur peut naître sur cette requête.
+     *
+     * <p>Visible du paquet pour être exercée directement, comme {@code tripFlinkSelectAt}. Le
+     * chemin complet ne se laisse pas tester à un coût raisonnable : tenir le runtime occupé bloque
+     * aussi le {@code listTables()} de l'auto-enregistrement, dont l'attente est celle du
+     * coordinateur (trente secondes) et non le budget de la requête — donc un tel test mesurerait
+     * cette autre branche, pendant une demi-minute, et pas celle-ci.
+     */
+    QueryResult refuseIfRuntimeBusy(String rawError, long startTime) {
+        if (!SqlErrorClassifier.classify(rawError).isEngineBusy()) return null;
+        flinkSelectFailures.set(0);
+        log.warn("Flink SELECT found the runtime busy — reporting the wait rather than falling back: {}",
+            LogSafe.text(rawError));
+        return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+            System.currentTimeMillis() - startTime,
+            SqlErrorClassifier.readable(rawError)
+                + " The statement was not run and nothing else answered it: the direct Kafka reader "
+                + "supports neither JOIN nor subqueries and would have reported this table as a "
+                + "missing topic. Run it again — this clears on its own.",
+            false, "FLINK");
+    }
+
     private QueryResult rejectIfUserError(String rawError, String sql, long startTime, boolean deferredToDirectReader) {
         SqlErrorClassifier.Classification classification = SqlErrorClassifier.classify(rawError);
         if (!classification.isUserError()) return null;
