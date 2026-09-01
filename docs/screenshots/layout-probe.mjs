@@ -74,8 +74,9 @@ const PAGES = [
  * Un état est mesuré **sur la page déjà chargée**, pas sur une nouvelle : un geste coûte
  * quelques centaines de millisecondes là où une navigation en coûte deux à quatre mille, et
  * `--check` tourne à chaque pull request — c'est ce qui rend l'ajout gratuit plutôt que de le
- * faire passer le budget de temps du job, la raison pour laquelle `CHECK_VIEWPORTS` a déjà dû
- * abandonner la tablette.
+ * faire passer le budget de temps du job. (Ce budget avait aussi coûté sa tablette à
+ * `CHECK_VIEWPORTS` ; il a été mesuré depuis et elle est revenue — voir le commentaire de cette
+ * constante.)
  *
  * `viewports` dit où l'état est atteignable, et ce n'est pas une commodité : un état qui ne
  * s'ouvre **pas** dans les largeurs qu'il déclare est un échec de `--check`, pas un silence.
@@ -283,7 +284,22 @@ const TARGET_BUDGET = {
  * phone). Tablet is a third reading of numbers that, as the table in MOBILE-LAYOUT-SCOPE.md says,
  * barely move — so it costs a third of the runtime to confirm what the extremes already bound.
  */
-const CHECK_VIEWPORTS = ['phone', 'desktop'];
+/*
+ * Les trois largeurs sont gardées, tablette comprise — elle avait été retirée pour tenir le budget
+ * de temps du job, et cette raison ne tient plus : mesuré sur le run CI du 2026-08-31, le job
+ * « Capture the documentation screenshots » consomme **3 min 36 s** de ses **25 minutes** de
+ * `timeout-minutes`, dont 65 s pour cette sonde. Une troisième largeur y ajoute une trentaine de
+ * secondes.
+ *
+ * Ce qu'elle rapporte n'est pas théorique : 768 px est exactement le point de rupture `md`, et la
+ * ligne `topic-explorer` corrigée le même jour rendait 2 `unreachable` **en tablette comme en
+ * desktop**. Une régression qui n'aurait touché que cette largeur-là n'était gardée par rien,
+ * alors que `--detail` la mesurait déjà — la sonde voyait, le gardien ne regardait pas.
+ *
+ * Aucun budget n'a eu à bouger pour l'ajouter : les dix pages et états mesurés en tablette
+ * tiennent tous sous les plafonds déjà en place.
+ */
+const CHECK_VIEWPORTS = ['phone', 'tablet', 'desktop'];
 
 const VIEWPORTS = [
   { name: 'phone', width: 390, height: 844 },   // iPhone 14 class

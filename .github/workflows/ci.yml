@@ -1069,6 +1069,14 @@ jobs:
       #                     which TypeScript believes without checking: when an endpoint started
       #                     returning records instead of strings nothing failed to compile and the
       #                     Compare page died at runtime, months later.
+      #   check-fixtures    the screenshot fixtures against the frontend interfaces they claim to
+      #                     satisfy. docs/screenshots/README.md named this failure mode itself and
+      #                     nothing checked it: fixtures.mjs is untyped JavaScript, so a field
+      #                     renamed in api/types.ts leaves the stub answering the old name and the
+      #                     page renders the gap as an empty panel — which then ships as a
+      #                     screenshot AND is what layout-probe measures its budgets against. Its
+      #                     first run found nine, of which one was visible: metrics.png carried a
+      #                     "Measure a process" prompt because the stub omitted `processMeasured`.
       #   check-notes-parity CLAUDE.md is the map, docs/notes/ holds the rationale, and neither
       #                     repeats the other. CLAUDE.md says exactly that in its own second
       #                     paragraph and #316 split it on that rule, 505 KB to 21 KB — then it

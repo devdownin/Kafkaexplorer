@@ -38,8 +38,6 @@ const API = [
   [m => m === '/api/cluster', () => F.cluster],
   [m => m === '/api/cluster/configs', () => ({ configs: {} })],
   [m => m === '/api/query/init', () => F.queryInit],
-  [m => m === '/api/query/jobs', () => F.dashboard.jobs],
-  [m => m.startsWith('/api/query/jobs/'), () => F.flinkJobDetails],
   [m => m === '/api/query/run-sync', () => F.queryResult],
   [m => m === '/api/query/validate', () => ({ valid: true })],
   [m => m.startsWith('/api/query/schema/'), () => F.topicDetail.schema],
