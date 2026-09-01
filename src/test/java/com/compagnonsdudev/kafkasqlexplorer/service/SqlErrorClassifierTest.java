@@ -265,4 +265,47 @@ class SqlErrorClassifierTest {
         assertFalse(SqlErrorClassifier.isSyntaxError(new RuntimeException("Object 'orders' not found")));
         assertFalse(SqlErrorClassifier.isSyntaxError(new NullPointerException()));
     }
+
+    /**
+     * Un runtime occupé a sa propre catégorie, et ce n'est ni une faute de l'utilisateur ni une
+     * panne.
+     *
+     * <p>Il était rangé avec les pannes moteur, donc un SELECT se repliait sur le lecteur direct —
+     * qui ne connaît que des topics Kafka et répondait « No matching Kafka topic exists » sur une
+     * table du catalogue — et trois de ces instants coupaient le planner pour dix minutes.
+     */
+    @Test
+    void aBusyRuntimeIsItsOwnKind() {
+        var c = SqlErrorClassifier.classify(
+            "The Flink runtime was busy: MUTATION operation 'execute-sql-select' gave up after 300 ms. "
+                + "Currently held by MUTATION 'register-source-table' (thread flink-runtime-mutation-42), "
+                + "running for 1200 ms.");
+
+        assertEquals(SqlErrorClassifier.Kind.ENGINE_BUSY, c.kind());
+        assertTrue(c.isEngineBusy());
+        assertFalse(c.isUserError(), "l'instruction est bonne : le moteur n'était pas libre");
+    }
+
+    /**
+     * Et elle l'emporte sur ce que la phrase du coordinateur contient par ailleurs.
+     *
+     * <p>Ce message emboîte le nom de l'opération et celui de l'appelant, donc il peut très bien
+     * citer une table ou une règle — ce qui ferait basculer les motifs suivants d'un côté ou de
+     * l'autre. Ce qu'il décrit ne dépend pas de son contenu.
+     */
+    @Test
+    void aBusyRuntimeOutranksWhatItsMessageHappensToQuote() {
+        assertTrue(SqlErrorClassifier.classify(
+            "The Flink runtime was busy: MUTATION operation 'execute-sql-select' gave up after 300 ms. "
+                + "Currently held by MUTATION 'register-source-table' running for 1200 ms "
+                + "(Object 'orders' not found)").isEngineBusy());
+    }
+
+    /** Une attente n'est pas une faute de syntaxe : le pré-vol ne doit pas la rejeter comme telle. */
+    @Test
+    void aBusyRuntimeIsNotASyntaxError() {
+        assertFalse(SqlErrorClassifier.isSyntaxError(
+            new IllegalStateException("The Flink runtime was busy: MUTATION operation "
+                + "'sql-validator-explain' gave up after 30000 ms.")));
+    }
 }

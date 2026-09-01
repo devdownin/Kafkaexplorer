@@ -9,8 +9,10 @@ name: Security
 on:
   push:
     branches: [ "main" ]
+  # No base filter, for the reason written out in `ci.yml`: with `branches: [ "main" ]`
+  # a pull request stacked on another branch matched nothing and was reviewed with no
+  # analysis at all. `push` still names main alone, so nothing builds twice.
   pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:

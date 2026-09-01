@@ -12,6 +12,7 @@ import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.EnvironmentSettings;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -519,14 +520,6 @@ class FlinkSqlServiceInsertVariantsTest {
      */
     @Test
     void pastTheCapASubmissionIsRefusedWithItsCount() {
-        // Le registre est vidé avant de compter.
-        //
-        // `cancelQuery` demande l'annulation et laisse l'entrée : c'est le balayage de
-        // `getHeldJobs()` qui la retire, une fois le job réellement terminé. Un job annulé par le
-        // cas précédent peut donc encore être compté ici, et c'est alors la *première* soumission
-        // qui se fait refuser — un échec qui ne dit rien de ce que ce cas mesure, et qui dépend de
-        // l'ordre d'exécution. Ce que ce test veut établir commence à registre vide.
-        awaitNoHeldJob();
         config.setMaxConcurrentJobs(1);
         try {
             FlinkJobSummary first = service.submitJob(QueryRequest.sql(
@@ -570,9 +563,29 @@ class FlinkSqlServiceInsertVariantsTest {
                 "une table non résolue est attendue à ce stade — la source n'est pas encore enregistrée");
     }
 
+    /**
+     * Le cas qui laisse un job derrière lui échoue lui-même, au lieu de fausser son voisin.
+     *
+     * <p>{@code pastTheCapASubmissionIsRefusedWithItsCount} compte les jobs tenus, donc un job
+     * qu'un autre cas a annulé sans que le registre l'ait encore balayé se compte avec les siens —
+     * et c'est alors la <em>première</em> soumission qui se fait refuser, un échec qui ne dit rien
+     * de ce que ce cas mesure et qui dépend de l'ordre d'exécution. Attendre ici plutôt qu'au début
+     * de ce cas-là énonce la règle pour toute la classe et nomme le coupable plutôt que sa victime.
+     */
+    @AfterEach
+    void noJobIsLeftHeld() {
+        awaitNoHeldJob();
+    }
+
     // ── Outils ────────────────────────────────────────────────────────────────────────
 
-    /** Attend, borné, que plus aucun job continu ne soit tenu — voir le cas du plafond. */
+    /**
+     * Boucle bornée jusqu'à ce que le registre ne tienne plus aucun job continu.
+     *
+     * <p>{@code cancelQuery} demande l'annulation et <em>laisse</em> l'entrée : c'est le balayage de
+     * {@code getHeldJobs()} qui la retire, une fois le job réellement terminé. Ce qui est attendu
+     * est donc un état observable, pas une durée choisie au hasard.
+     */
     private void awaitNoHeldJob() {
         for (int attempt = 0; attempt < 40; attempt++) {
             long held = service.getHeldJobs().values().stream()
@@ -586,7 +599,7 @@ class FlinkSqlServiceInsertVariantsTest {
                 break;
             }
         }
-        fail("a cancelled job never left the registry, so the cap cannot be measured");
+        fail("a cancelled job never left the registry — the next case would measure this one's leftovers");
     }
 
     /** Soumet, exige un job réel, puis rend la main au MiniCluster. */

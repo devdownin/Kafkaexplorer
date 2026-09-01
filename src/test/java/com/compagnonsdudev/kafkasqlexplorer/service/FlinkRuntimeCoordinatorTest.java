@@ -215,12 +215,21 @@ class FlinkRuntimeCoordinatorTest {
         assertTrue(FlinkRuntimeCoordinator.DEFAULT_WAIT_MS <= 60_000);
     }
 
-    /** A busy runtime is an engine fault, so a SELECT keeps its fallback to the direct reader. */
+    /**
+     * La phrase que compose ce coordinateur est reconnue par le classifieur, et pour ce qu'elle est.
+     *
+     * <p>Elle était rangée avec les pannes moteur, donc un SELECT se repliait sur le lecteur
+     * direct — qui ne connaît que des topics Kafka et répondait « No matching Kafka topic exists »
+     * sur une table du catalogue, une phrase assurée à propos d'un nom parfaitement correct. C'est
+     * pourtant la seule panne moteur qui se répare toute seule entre deux requêtes : ce qui tient
+     * le runtime le rend.
+     */
     @Test
-    void aBusyRuntimeIsClassifiedAsAnEngineFailure() {
+    void aBusyRuntimeIsClassifiedAsAWaitRatherThanAFailure() {
         String message = new FlinkRuntimeCoordinator.FlinkRuntimeBusyException(
             "The Flink runtime was busy: MUTATION operation 'execute-sql-select' gave up after 10000 ms.")
             .getMessage();
+        assertTrue(SqlErrorClassifier.classify(message).isEngineBusy());
         assertFalse(SqlErrorClassifier.classify(message).isUserError());
     }
 

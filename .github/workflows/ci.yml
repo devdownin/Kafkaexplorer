@@ -6,11 +6,20 @@ name: CI & Deployment
 # them because `github.ref` differs between the two (refs/heads/<branch> against
 # refs/pull/<n>/merge), putting them in separate groups. Branch work is covered by
 # its pull request; use workflow_dispatch to build a branch before opening one.
+#
+# `pull_request` carries no base filter, and that is the correction rather than a
+# widening. It read `branches: [ "main" ]`, so a pull request **stacked on another
+# branch** — the shape this repository uses whenever a series is reviewed in
+# pieces — matched nothing and got no verdict at all. Three such pull requests
+# were merged that way and `main` went red on ten tests at once, none of which any
+# run had ever executed; the only way to build one was to remember to fire
+# workflow_dispatch by hand, which is a gate that depends on somebody remembering.
+# It costs no double build: `push` still names main alone, so a stacked branch
+# fires the pull_request event and nothing else.
 on:
   push:
     branches: [ "main" ]
   pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
