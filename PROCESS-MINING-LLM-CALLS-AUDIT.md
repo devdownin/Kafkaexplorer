@@ -428,9 +428,10 @@ tree actually configures:
 
 Nothing in the tree sets `OLLAMA`, except `LlmStructuredOutputTest`, which uses it as the stub
 provider. So the enum value that exists to make `AUTO` say yes is set by no stack, no script and no
-documented recipe — while `docs/DOCKERHUB.md:256` and `CHANGELOG.md:464` both tell an operator to
-use `CLAUDE_PROVIDER=OLLAMA` to keep everything in-house. Two instructions for one thing, and the
-one every shipped artefact follows is the one that silently turns constrained decoding **off**.
+documented recipe — while `docs/DOCKERHUB.md:256` and the `CHANGELOG.md` entry for the OpenRouter
+default (under `[1.8.10]`) both tell an operator to use `CLAUDE_PROVIDER=OLLAMA` to keep everything
+in-house. Two instructions for one thing, and the one every shipped artefact follows is the one that
+silently turns constrained decoding **off**.
 
 It is off exactly where the schema work says it matters most — *"It matters most on the small
 models this application is routinely pointed at"* — the stack in question serving `qwen2.5-coder:7b`

@@ -220,6 +220,35 @@ builds against the real Confluent jars.
 More architectural context — the load-bearing decisions and the traps they came from — lives in
 [`CLAUDE.md`](CLAUDE.md).
 
+### The changelog
+
+A change a user could notice gets an entry in [`CHANGELOG.md`](CHANGELOG.md), under `## [Unreleased]`,
+in the `Added` / `Changed` / `Fixed` / `Removed` / `Security` group it belongs to. Write it the way the
+entries around it are written: what was wrong, what it cost, and what happens now — a reader arriving
+from a release page has none of the pull request's context.
+
+**A release closes that section, and `release.yml` now opens the pull request that does it** —
+alongside the Explorer pin bump, on the same branch, since both go stale at the same instant and
+for the same reason. You review and merge it; you do not have to write it.
+
+It did not always, and what that cost is why the step exists: nothing closed `[Unreleased]` and no
+check reads it, so entries piled into a section claiming they had not shipped — thirty releases of
+them, `v1.7.1` through `v1.9.11`, the file's newest version heading eight weeks behind its newest
+tag. A stale image pin is caught by the next pull request that trips `check-image-pins.py`; a stale
+changelog was caught by nobody, which is why it ran the longer.
+
+If you ever need to do it by hand — the step is `continue-on-error`, so a refused `gh pr create`
+leaves the branch without a pull request:
+
+1. Rename `## [Unreleased]` to `## [X.Y.Z] — YYYY-MM-DD`, using the release's own date.
+2. Open a fresh `## [Unreleased]` above it, reading `Nothing yet.`
+3. Update the link references at the foot of the file: point `[Unreleased]` at a comparison from
+   the new tag to `HEAD`, and add an `[X.Y.Z]` reference comparing the previous tag to the new one.
+
+A release that genuinely changed nothing a user can see still gets a heading, saying so and linking
+to its release notes — an absent version reads as a lost one. The step writes that heading itself
+when `[Unreleased]` is empty.
+
 ### Licence headers
 
 Every Java, TypeScript and TSX source file starts with:
