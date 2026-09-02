@@ -169,7 +169,7 @@ jobs:
           subject-path: 'target/*.jar'
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           files: |
             target/*.jar
@@ -626,7 +626,7 @@ jobs:
       # not a property); the digest is the only immutable reference, and docs/DOCKERHUB.md
       # points at these notes for it.
       - name: Append the image digest to the Release notes
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           append_body: true
           body: |
