@@ -106,11 +106,52 @@ public final class SqlAst {
     }
 
     /**
+     * Analyses déjà faites, retenues sur le texte de l'instruction.
+     *
+     * <p>{@link #read} est une fonction pure du texte — la configuration du parseur est une
+     * constante — et {@link Read} est immuable (chaque liste passe par {@code List.copyOf}), donc
+     * une analyse peut être rendue plusieurs fois sans risque. C'est ce qui manquait : une seule
+     * lecture SQL de l'éditeur repasse par ici de trois à six fois, sur exactement la même chaîne
+     * — le garde des jointures croisées, l'auto-enregistrement des sources, la reconnaissance de
+     * la table primaire (jusqu'à trois conditions distinctes), la forme demandée par
+     * {@code MetricService}, puis le lecteur direct. Chacune construisait un {@code SqlParser}
+     * neuf et relisait toute l'instruction. Les métriques y repassent en plus toutes les trente
+     * secondes avec un SQL identique.
+     *
+     * <p>Borné des deux côtés, et vidé plutôt que trié : ce n'est pas un cache métier, seulement
+     * un moyen de ne pas refaire le même travail dans la même requête, donc perdre le contenu
+     * coûte une analyse et rien d'autre. Un {@code ConcurrentHashMap} suffit — les valeurs sont
+     * immuables, et deux threads qui analysent la même instruction en même temps arrivent au même
+     * résultat.
+     */
+    private static final int CACHE_MAX_ENTRIES = 128;
+    /** Au-delà, l'instruction n'est pas retenue : c'est la taille de la clé qui borne la mémoire. */
+    private static final int CACHE_MAX_SQL_CHARS = 4_000;
+    private static final java.util.concurrent.ConcurrentHashMap<String, Optional<Read>> CACHE =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
      * L'instruction analysée, ou {@code Optional.empty()} quand la grammaire l'a refusée ou que ce
      * n'est pas une lecture simple (un {@code INSERT}, une union, un {@code EXPLAIN}).
+     *
+     * <p>Mémoïsée sur le texte — voir {@link #CACHE}. Un refus est retenu comme une réussite :
+     * c'est le cas le plus fréquent sur ce chemin (un {@code INSERT}, un {@code CREATE TABLE}) et
+     * il coûte exactement la même analyse.
      */
     public static Optional<Read> read(String sql) {
         if (sql == null || sql.isBlank()) return Optional.empty();
+        if (sql.length() > CACHE_MAX_SQL_CHARS) return parse(sql);
+        Optional<Read> known = CACHE.get(sql);
+        if (known != null) return known;
+        Optional<Read> parsed = parse(sql);
+        // Vidé d'un coup au plafond : une éviction ordonnée demanderait un verrou, pour un cache
+        // dont perdre le contenu ne coûte qu'une analyse.
+        if (CACHE.size() >= CACHE_MAX_ENTRIES) CACHE.clear();
+        CACHE.put(sql, parsed);
+        return parsed;
+    }
+
+    private static Optional<Read> parse(String sql) {
         SqlNode statement;
         try {
             statement = SqlParser.create(sql, parserConfig()).parseStmt();

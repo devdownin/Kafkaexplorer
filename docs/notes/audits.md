@@ -290,6 +290,31 @@ was asked for — reliability, ergonomics, optimisation, UI quality. All finding
 codebase; the report also carries a "constaté, non traité" section (the absence of a mobile
 layout, and two statements of identical text being indistinguishable to `resolveOrigin`).
 
+**A second pass (S1–S7) sits under it**, and two of its seven items are the first pass's own
+corrections re-opened by work that landed afterwards — which is the reason to read it before
+touching either path again. The pre-flight `POST /api/query/validate` was added *above*
+`executingRef`, the synchronous guard against two runs at once, so the flag was raised only after an
+`await` that costs a whole Flink planner pass under the runtime's read lock: the window R2 closed
+was a round trip wide and reachable with two mouse clicks. And the accessibility pass converted two
+of the sidebar's three lists, leaving the saved queries mouse-only. The other five: a refusal never
+recorded *what* it refused, so `resolveOrigin` had nothing to locate and the position of a syntax
+error was dropped on a first run and mapped onto the previous statement afterwards; that same
+endpoint handed `SqlQueryValidator` the **raw** body where every other caller hands it
+`FlinkSqlService.prepareSql`'s output, so a double-quoted identifier was refused as a typo, a
+`CROSS JOIN` written in a comment was refused as a join, and a statement opening on a comment was
+validated by nothing — the preparation now happens inside `validate`, where no caller can forget it;
+the engine badge asserted `Kafka Direct` while a query was still running and on results that name no
+engine, which is the one indicator whose entire job is to say which engine answered; `SqlAst.read`
+re-parsed the identical statement three to six times per query and is memoised on the text (it is
+pure, and `Read` is immutable); and `SchemaBrowser` was reconciling every table and every topic on
+each keystroke — `ResultsGrid`'s defect in the bigger list — which `React.memo` could not fix alone
+because half its handlers read the active tab, hence `useStableCallback`. What is recorded and not
+fixed: the pre-flight is a **second** `explainSql` on the same statement and buys no earlier
+rejection than `run-sync` already gives, but removing it deletes the only caller of an endpoint and
+its checked API type, so it is argued on its own; `pages/sqlScope.ts` strips comments before
+literals (bounded to autocompletion, never to what is sent); a selected statement travels with its
+trailing `;`; and "Stale — rerun" runs the statement under the cursor rather than the one on screen.
+
 `MOBILE-LAYOUT-SCOPE.md` scopes the one item that audit left open — the absence of a mobile
 layout — with measurements taken by `docs/screenshots/layout-probe.mjs`, the product decision the
 work depends on, and sized work items for each answer. **The product question is answered — the

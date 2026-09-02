@@ -548,3 +548,174 @@ just made, not a history — which is stated in the tooltip rather than left to 
   first, so reopening the second one's error after an edit can map its position onto the first.
   Distinguishing them means tracking each statement's identity across edits — a document model the
   page does not have — for a case where both statements are the same text anyway.
+
+---
+
+# SQL Editor — audit, second pass (2026-09)
+
+Same scope as the first pass — `pages/QueryWorkbench.tsx`, its pure modules, `components/query/`,
+and the endpoints behind them (`QueryController`, `SqlQueryValidator`, `FlinkSqlService.executeSql`)
+— re-read a year of changes later, for bugs and for what the editor costs the engine.
+
+Six items, all fixed here. Two of them are the first pass's own corrections re-opened by work that
+landed after it, which is the pattern worth naming: the pre-flight `POST /api/query/validate` was
+added *above* a guard that assumed nothing awaited before it, and the accessibility pass converted
+two of the sidebar's three lists. Each fix carries a test that was verified to fail against the
+revision it describes.
+
+One item is recorded and not fixed, at the end.
+
+---
+
+## S1 — two queries could run at once again, because the pre-flight is an `await` *(fixed)*
+
+R2 of the first pass introduced `executingRef`, a synchronous mirror of `executing`, because ⌘↵
+calls the run path directly and a React state is not yet updated when two keystrokes land in one
+tick. What re-opened it is that the flag was raised **after** the pre-flight:
+
+```ts
+if (validatedSqlRef.current !== sqlToRun) { await axios.post('/api/query/validate', …); }
+…
+executingRef.current = true;
+setExecuting(true);
+```
+
+That `await` is not a tick. `POST /api/query/validate` runs `tableEnv.explainSql` — a complete Flink
+planner pass, taken under the runtime's read lock, so it also queues behind whatever else holds the
+runtime. For the whole of it the screen was in its resting state: the Run button enabled and reading
+“Run query”, no spinner, no Stop, `executingRef` false. So the window the guard exists to close was
+a round trip wide, and reachable with the mouse alone — two clicks, two queries, the second
+overwriting `abortRef` and `runningQueryIdRef`, so Stop no longer cancelled the first and the first
+query's `finally` flipped the screen to “Complete” with the other still in flight. Exactly R2, by a
+different road.
+
+The state is raised before the pre-flight now, and the `AbortController` is created before it and
+its signal passed to that request too — so Stop pressed during the wait aborts the request that is
+actually in flight, instead of finding an executing screen with nothing to stop. A cancel raised
+there returns `cancelled` rather than falling into the `catch` that said *let execution handle it*,
+which would have sent to the engine the query that had just been stopped.
+
+## S2 — a syntax error caught before execution lost its position *(fixed)*
+
+M9 replaced the frozen error origin with one derived from the current text: `resolveOrigin(sql,
+ranSql)` locates, in the document as it is now, the SQL that ran, and `queryError` **removes the
+position** when it cannot — pointing at a line would otherwise designate something other than what
+the engine is talking about.
+
+`refuse()` — the pre-flight and mode refusals — never set `ranSql`. Two consequences, and the
+common one is the worse:
+
+- On the first run of a tab `ranSql` is `null`, so `runOrigin` is `null`, so the position was
+  dropped. On the one error that always carries a line and a column — the parser's — there was
+  neither a Monaco marker nor a “Jump to line”.
+- After any earlier run, `ranSql` still held the **previous** statement, so the refusal's position
+  was mapped through that statement's origin: a marker in the right file, on the wrong statement.
+
+`refuse` now records what it refused. `executionMs` goes with it, for the same reason: a refusal
+that leaves the previous query's duration on screen reports an execution time for an execution that
+did not happen.
+
+## S3 — `POST /api/query/validate` examined a different statement than the one that would run *(fixed)*
+
+Every other caller hands `SqlQueryValidator` the prepared statement — `FlinkSqlService.prepareSql`:
+double-quoted identifiers normalised to backticks, comments stripped, edges trimmed. The controller
+handed it the request body verbatim. The editor calls that endpoint before every Run, so the gap was
+on the busiest path of the page, and it showed in three directions:
+
+- **A double-quoted identifier was refused.** `SELECT * FROM "orders"` is the form
+  `normalizeIdentifierQuotes` exists to accept; passed raw to `explainSql` it is a parse error,
+  which `SqlErrorClassifier.isSyntaxError` correctly recognises and the endpoint returns as a
+  rejection. The editor therefore refused to run a query the engine runs fine — and refused it as
+  the user's typo.
+- **A keyword in a comment was read as SQL.** `SqlStatements.outsideLiterals` neutralises string
+  literals, which is the rule this repository applies everywhere, but not comments — stripping those
+  is the caller's job. So `-- surtout pas de CROSS JOIN ici` above a query tripped the cross-join
+  guard, and the query was refused for a line that is not SQL.
+- **And a statement whose first line is a comment was validated by nothing at all.** The
+  classification is a `startsWith` on the body; a leading comment fails it, so `validate` returned
+  early — a pre-flight that accepts in silence, on the shape the DDL preview and every commented
+  query have.
+
+The preparation moved **into `validate`** rather than into the controller. It is idempotent, so the
+callers that prepared already are unchanged, and a caller can no longer forget: one definition, not
+a convention. `SqlQueryValidatorTest` is the first test this class has had.
+
+## S4 — the engine badge named an engine before one had answered *(fixed)*
+
+`{(results?.engine || results || executing) && <Badge>{results?.engine ?? 'Kafka Direct'}</Badge>}`.
+Which of the two engines answers is decided per query, inside `executeSql`, so before the result
+there is no answer to give — and on an error result there is none either, `engine` being null on
+those paths. The badge asserted “Kafka Direct” in both cases. That is the one indicator whose whole
+job is to say which engine ran the query, and reading it wrong changes what the rows mean (no
+multi-topic JOIN, a scan ceiling, a different notion of the read mode). It now says `Engine…` while
+a query is in flight and renders nothing when the result names none.
+
+## S5 — the third list in the sidebar was still a `<div onClick>` *(fixed)*
+
+The first pass's accessibility section converted the Flink tables and the Kafka topics — "the entire
+schema browser was keyboard-dead" — and left the saved queries below them. Reopening a saved query
+was still mouse-only: no tab stop, no role, no announced name. It is a `<button>` with an
+`aria-label` naming the query, like its two neighbours.
+
+## S6 — the editor made the engine parse the same statement three to six times *(fixed)*
+
+`SqlAst.read` builds a fresh Calcite `SqlParser` and reads the whole statement. One editor SELECT
+goes through it repeatedly, on the identical string: the cross-join guard, `extractSourceTables`
+during auto-registration, `extractPrimaryTable` (up to three separate conditions on the SELECT
+path), `MetricService.isSingleTableRead` when a read mode is named, and finally the direct reader.
+The pre-flight adds its own. Nothing shared the result, because nothing owned it.
+
+It is a pure function of the text — the parser config is a constant — and `Read` is immutable, every
+list built through `List.copyOf`, so an analysis can be handed out twice. `SqlAst.read` memoises on
+the statement, bounded at 128 entries and 4 000 characters and cleared wholesale at the ceiling: it
+is not a business cache, only a way of not redoing the same work inside one request, so losing it
+costs one parse. The metric refresh loop benefits too, coming back every thirty seconds with SQL
+that has not changed.
+
+## S7 — the schema browser was re-rendered on every keystroke *(fixed)*
+
+The same defect `ResultsGrid` was memoised for, in the larger of the two lists. Typing calls
+`updateSql`, which calls `setTabs`, which re-renders the page; `SchemaBrowser` was neither memoised
+nor given stable props, and it renders **every** Flink table and **every** Kafka topic —
+`ScrollList` bounds the height, it does not virtualise. On a three-hundred-topic cluster that is a
+few thousand React elements reconciled per character typed, for a subtree that cannot have changed.
+
+`React.memo` alone would have done nothing: half the handlers read the active tab, which is what
+changes at every character, so `useCallback` cannot stabilise them either. `useStableCallback`
+(`src/useStableCallback.ts`, the `useEvent` pattern — the current function in a ref rewritten in
+`useInsertionEffect`, a fixed wrapper handed out) gives the page stable handlers with no dependency
+list to keep and no stale closure to capture.
+
+---
+
+## Constaté, non traité
+
+- **Each Run still costs two full Flink planner passes.** `POST /api/query/validate` runs
+  `explainSql`, and `executeSql` then calls the same validator again on the same statement. The
+  stated reason for the pre-flight — rejecting a typo "before the query opens the least Kafka
+  consumer" — is already met by the second call: `executeSql` validates *before* auto-registration
+  and before any broker access, and returns the same parser message, with its position, which
+  `describeQueryError` unwraps from its `SQL Validation Error:` prefix and classifies identically.
+  So the round trip buys no earlier rejection; what it costs is a second pass under the runtime's
+  read lock, on the single embedded runtime that also serves the metric refresh loop — and it is
+  what opened S1. Removing it means deleting the endpoint's only caller, and therefore deciding the
+  fate of `POST /api/query/validate`, `SqlValidationResponse` and their checked API type; that is a
+  deletion to argue on its own rather than a line to flip inside an audit, and S1 has removed the
+  harm in the meantime. The measurement that would settle it is the wall time of the two passes on
+  the demo cluster, which nothing takes today.
+- **`stripSqlNoise` (`pages/sqlScope.ts`) strips comments before literals**, so a `--` inside a
+  string value truncates the rest of the line before the FROM/JOIN scan runs. The backend has the
+  single-pass answer for exactly this (`SqlStatements.outsideLiterals`) and the frontend has no
+  equivalent. What it costs is bounded to the autocompletion scope and the window assistant's table
+  guess — never to what is sent to the engine, `splitStatements` and `planRun` doing their own
+  proper scan — so it is recorded rather than fixed here.
+- **A selected statement is sent with its trailing `;`.** `planRun` returns the selection verbatim
+  when it splits to one statement, rather than the statement `splitStatements` found inside it.
+  Flink accepts the semicolon (`FlinkSqlServiceInsertVariantsTest` pins that), so nothing fails; the
+  only visible effect is that `isResultStale` compares a string that no statement of the tab equals,
+  which on a multi-statement tab marks the result stale one edit early.
+- **“Stale — rerun” runs the statement under the cursor**, not the one that produced the rows on
+  screen. They are the same in the ordinary case — the result goes stale because that statement was
+  edited, and the cursor is in it — and telling them apart means tracking a statement's identity
+  across edits, which is the document model `resolveOrigin` was already left without in the first
+  pass.

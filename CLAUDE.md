@@ -639,6 +639,20 @@ was asked for — reliability, ergonomics, optimisation, UI quality. All finding
 codebase; the report also carries a "constaté, non traité" section (the absence of a mobile
 layout, and two statements of identical text being indistinguishable to `resolveOrigin`).
 
+It has **a second pass, S1–S7, all fixed**, and the thing worth carrying away from it is that two of
+the seven were the first pass's own corrections undone by later work — a guard against concurrent
+runs that a newly inserted `await` stepped over, and one of three sibling lists that an
+accessibility pass did not reach. So a correction here is not durable by being written; the two
+that lasted are the ones a test pins, and every item of that pass carries one verified to fail
+against the revision it describes. The rest, in one line each: a pre-flight refusal that did not say
+which statement it refused, so the editor could not place the error; `SqlQueryValidator` reading the
+raw request body where the engine reads a prepared statement, which made the editor refuse queries
+Flink accepts and accept queries it never checked; a badge naming an engine before either had
+answered; a Calcite parse repeated three to six times per query on the same string; and the schema
+browser rebuilding every table and topic on each keystroke. `docs/notes/audits.md` carries what each
+one cost, and the four items recorded rather than fixed — chief among them that a Run still pays two
+full Flink planner passes for one statement.
+
 `MOBILE-LAYOUT-SCOPE.md` scopes the one item that audit left open — the absence of a mobile
 layout — with measurements taken by `docs/screenshots/layout-probe.mjs`, the product decision the
 work depends on, and sized work items for each answer. **The product question is answered — the

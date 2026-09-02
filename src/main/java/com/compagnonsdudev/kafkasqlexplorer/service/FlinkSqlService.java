@@ -337,7 +337,7 @@ public class FlinkSqlService {
      * This method converts double-quoted identifiers to backtick-quoted ones while
      * leaving single-quoted string literals untouched.
      */
-    private String normalizeIdentifierQuotes(String sql) {
+    private static String normalizeIdentifierQuotes(String sql) {
         if (sql == null || !sql.contains("\"")) return sql;
         StringBuilder sb = new StringBuilder(sql.length());
         boolean inSingleQuote = false;
@@ -861,8 +861,27 @@ public class FlinkSqlService {
         return "INSERT".equals(statementType) || "STATEMENT_SET".equals(statementType);
     }
 
-    private String prepareSql(String sql) {
-        return stripSqlComments(normalizeIdentifierQuotes(sql.trim()));
+    /**
+     * L'instruction telle que ce moteur la traite : guillemets doubles ramenés en accents graves,
+     * commentaires retirés, bords rognés.
+     *
+     * <p>Publique et statique parce qu'elle n'appartient pas à ce fichier seul :
+     * {@link SqlQueryValidator} l'applique désormais lui-même, et il le fait parce que
+     * {@code POST /api/query/validate} lui passait le corps de la requête <em>brut</em> là où tous
+     * les autres appelants lui passent ce texte-ci. Deux instructions différentes étaient donc
+     * examinées pour une seule exécution, et l'écart se voyait dans les deux sens : un identifiant
+     * entre guillemets doubles — la forme que {@link #normalizeIdentifierQuotes} existe pour
+     * accepter — était refusé au pré-vol comme une faute de syntaxe, et un mot-clé écrit dans un
+     * commentaire était lu comme du SQL, {@code outsideLiterals} neutralisant les littéraux mais
+     * pas les commentaires.
+     *
+     * <p>Idempotente, ce qui est ce qui permet à l'appelant qui préparait déjà de continuer à le
+     * faire : après un premier passage il ne reste aucun guillemet double à convertir, et aucun
+     * commentaire à retirer.
+     */
+    public static String prepareSql(String sql) {
+        if (sql == null) return null;
+        return stripComments(normalizeIdentifierQuotes(sql.trim())).trim();
     }
 
     /**

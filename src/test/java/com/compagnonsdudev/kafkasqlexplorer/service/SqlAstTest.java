@@ -162,4 +162,30 @@ class SqlAstTest {
         assertTimeoutPreemptively(java.time.Duration.ofSeconds(5),
             () -> assertTrue(SqlAst.read(bomb).isEmpty()));
     }
+
+    /**
+     * L'analyse est mémoïsée, et ce qui est rendu deux fois est la <em>même</em> réponse.
+     *
+     * <p>Le cache est ce qui permet aux six appels d'une seule lecture SQL de ne coûter qu'une
+     * analyse ; il n'est sûr que parce que {@link SqlAst.Read} est immuable, donc partageable. Le
+     * pin est l'identité de l'objet : si une évolution rendait ce record mutable, ou reconstruisait
+     * ses listes en dehors de {@code List.copyOf}, c'est ici qu'il faudrait s'en apercevoir plutôt
+     * que dans un appelant qui aurait modifié la réponse d'un autre.
+     */
+    @Test
+    void theSameStatementIsAnalysedOnce() {
+        String sql = "SELECT o.id FROM demo_orders o WHERE o.state = 'NEW' LIMIT 12";
+        SqlAst.Read first = read(sql);
+        assertSame(first, SqlAst.read(sql).orElseThrow());
+        // Une chaîne égale mais non identique répond pareil : la clé est le texte, pas la référence.
+        assertSame(first, SqlAst.read(new String(sql.toCharArray())).orElseThrow());
+
+        // Un refus est retenu comme une réussite — c'est le cas fréquent sur ce chemin.
+        assertTrue(SqlAst.read("INSERT INTO s SELECT id FROM t").isEmpty());
+        assertTrue(SqlAst.read("INSERT INTO s SELECT id FROM t").isEmpty());
+
+        // Et deux instructions différentes ne se confondent pas.
+        assertEquals(List.of("a"), SqlAst.tableNames(read("SELECT id FROM a")));
+        assertEquals(List.of("b"), SqlAst.tableNames(read("SELECT id FROM b")));
+    }
 }

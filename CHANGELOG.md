@@ -20,7 +20,50 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **Two queries could be started at once from the SQL editor again.** The guard against it is a
+  synchronous flag, because ⌘↵ bypasses the disabled Run button; it was raised only *after* the
+  pre-flight `POST /api/query/validate`, which runs a whole Flink planner pass under the runtime's
+  read lock. For the length of that round trip the screen sat in its resting state — Run enabled and
+  reading "Run query", no spinner, no Stop — so two clicks started two queries, the second
+  overwriting the first's cancellation handle: Stop no longer reached the first, and the first
+  query's completion flipped the screen to "Complete" with the other still in flight. The editor now
+  enters its running state before the pre-flight, and Stop pressed during it aborts the request that
+  is actually in flight.
+- **A syntax error caught before execution had no position in the editor.** Error positions are
+  mapped back into the document by locating, in the current text, the SQL that ran — and a refusal
+  never recorded what it had refused. On a tab's first run there was nothing to locate, so the
+  position was dropped: no marker, no "Jump to line", on the one error that always carries a line
+  and a column. After an earlier run it was worse, the position being mapped through the *previous*
+  statement and so underlined in the wrong one.
+- **`POST /api/query/validate` checked a different statement than the one that would run.** Every
+  other caller hands the validator a prepared statement (double-quoted identifiers normalised to
+  backticks, comments stripped); this endpoint handed it the raw request body, and the editor calls
+  it before every Run. So `SELECT * FROM "orders"` — the form the normalisation exists to accept —
+  was refused as the user's typo, a `-- pas de CROSS JOIN ici` above a query tripped the cross-join
+  guard on a line that is not SQL, and a statement opening on a comment was validated by nothing at
+  all. The preparation moved inside the validator, where no caller can forget it.
+- **The engine badge named an engine before either had answered.** Which of the two engines runs a
+  query is decided per query, so there is no answer before the result — and none on an error result,
+  which carries no engine. The badge asserted "Kafka Direct" in both cases, on the one indicator
+  whose entire job is to say which engine produced the rows.
+- **A saved query could not be opened from the keyboard.** The accessibility pass over the schema
+  browser converted the Flink tables and the Kafka topics and left the third list below them.
+
+### Changed
+
+- **A statement is parsed once per query instead of three to six times.** Deciding what a statement
+  is — its sources, its shape, its row cap — goes through Calcite, and a single editor SELECT asked
+  the same question of the same string from the cross-join guard, auto-registration, the primary
+  table lookup (up to three separate conditions), the read-mode routing and the direct reader.
+  The analysis is a pure function of the text and its result is immutable, so it is now memoised on
+  the statement, bounded and cleared wholesale at its ceiling. The metric refresh loop benefits too,
+  coming back every thirty seconds with SQL that has not changed.
+- **Typing in the SQL editor no longer re-renders the whole schema browser.** Each character
+  re-renders the page, and that column renders every Flink table and every Kafka topic — a few
+  thousand elements reconciled per keystroke on a large cluster, for a subtree that cannot have
+  changed. It is memoised, with stable handlers so the memoisation actually holds.
 
 ## [1.9.11] — 2026-09-01
 
