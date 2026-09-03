@@ -862,3 +862,127 @@ describe('QueryWorkbench — an INSERT is refused with its cause', () => {
       '/api/query/run-sync', expect.anything(), expect.anything());
   });
 });
+
+/*
+ * Le pré-vol `/api/query/validate` est un aller-retour HTTP, et le serveur en fait une passe
+ * complète du planner Flink sous le verrou de lecture du runtime. Tant que l'écran ne passait en
+ * « exécution » qu'*après* lui, cette attente était un trou dans la garde contre deux exécutions
+ * simultanées — celle-là même que `executingRef` avait été introduit pour fermer.
+ */
+describe('QueryWorkbench — the pre-flight is part of the run', () => {
+  /** Un pré-vol qu'on relâche à la main, pour tenir l'écran dans cette fenêtre. */
+  const pendingPreflight = () => {
+    let release: (v: unknown) => void = () => {};
+    post.mockImplementation((url: string) => {
+      if (url === '/api/query/validate') return new Promise(resolve => { release = resolve; });
+      return Promise.resolve({
+        data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT' },
+      });
+    });
+    return { release: () => release({ data: { valid: true } }) };
+  };
+
+  it('says it is running while the pre-flight is in flight, and refuses a second start', async () => {
+    const preflight = pendingPreflight();
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1 FROM t');
+
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+
+    const running = await screen.findByRole('button', { name: /Running…/ });
+    expect(running).toBeDisabled();
+    // Un second geste pendant l'attente ne repart pas : ni un second pré-vol, ni une requête.
+    await userEvent.click(running);
+    expect(post.mock.calls.filter(c => c[0] === '/api/query/validate')).toHaveLength(1);
+
+    preflight.release();
+    await waitFor(() =>
+      expect(post.mock.calls.filter(c => c[0] === '/api/query/run-sync')).toHaveLength(1));
+  });
+
+  it('offers Stop while the pre-flight is in flight', async () => {
+    pendingPreflight();
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1 FROM t');
+
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findByRole('button', { name: /Stop/ })).toBeInTheDocument();
+  });
+
+  /*
+   * Les positions du moteur sont relatives au fragment envoyé : `resolveOrigin` les ramène dans le
+   * repère du document en y retrouvant le SQL qui a tourné. Un refus pré-vol n'en désignait aucun,
+   * donc l'origine valait `null` et la position était **retirée** — sur la seule erreur qui en
+   * porte toujours une.
+   */
+  it('keeps the position of a syntax error caught before execution', async () => {
+    post.mockImplementation((url: string) => (url === '/api/query/validate'
+      ? Promise.resolve({
+        data: { valid: false, error: 'SQL parse failed. Encountered "FROM" at line 1, column 8.' },
+      })
+      : Promise.resolve({ data: { columns: [], rows: [], error: null } })));
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT FROM t');
+
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+
+    expect(await screen.findByText('Syntax error')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Jump to line 1:8/ })).toBeInTheDocument();
+    expect(post.mock.calls.some(c => c[0] === '/api/query/run-sync')).toBe(false);
+  });
+});
+
+/*
+ * Quel moteur a répondu est décidé requête par requête : la réponse n'existe pas avant le
+ * résultat. La puce l'affirmait quand même — `results?.engine ?? 'Kafka Direct'` — donc pendant
+ * l'exécution et sur une erreur qui ne porte aucun moteur.
+ */
+describe('QueryWorkbench — the engine badge', () => {
+  it('names no engine on a result that carries none', async () => {
+    post.mockImplementation((url: string) => (url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: { columns: [], rows: [], error: "Object 'a' not found", engine: null } })));
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1 FROM a');
+
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+
+    expect(await screen.findByText(/Unknown table/)).toBeInTheDocument();
+    expect(screen.queryByText('Kafka Direct')).not.toBeInTheDocument();
+  });
+
+  it('names the engine the result reports', async () => {
+    post.mockImplementation((url: string) => (url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'FLINK' } })));
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT 1 FROM a');
+
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findByText('FLINK')).toBeInTheDocument();
+  });
+});
+
+/*
+ * La passe d'accessibilité avait converti les tables et les topics en vrais boutons et laissé la
+ * troisième liste de la même colonne en `<div onClick>` : rouvrir une requête sauvegardée restait
+ * impossible sans souris.
+ */
+describe('QueryWorkbench — saved queries', () => {
+  it('opens one from the keyboard', async () => {
+    localStorage.setItem('kse:saved-queries', JSON.stringify(
+      [{ id: 's1', name: 'Daily count', sql: 'SELECT COUNT(*) AS metric_value FROM t', savedAt: 0 }]));
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+
+    const entry = await screen.findByRole('button', { name: 'Open the saved query Daily count' });
+    await userEvent.click(entry);
+
+    await waitFor(() => expect(editor().value).toBe('SELECT COUNT(*) AS metric_value FROM t'));
+  });
+});

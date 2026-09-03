@@ -110,8 +110,17 @@ export interface SchemaBrowserProps {
  * Il rend ce que la page lui donne et ne décide rien : c'est la page qui charge le catalogue, ouvre
  * le SQL et gère la disposition. Les entrées sont de vrais `<button>` — elles étaient des
  * `<div onClick>`, donc toute cette colonne était inatteignable au clavier.
+ *
+ * **Mémoïsé**, pour la raison exacte qui avait déjà valu à `ResultsGrid` de l'être : chaque frappe
+ * dans l'éditeur appelle `updateSql`, donc `setTabs`, donc re-rend la page entière — et cette
+ * colonne rend *toutes* les tables et *tous* les topics, `ScrollList` bornant la hauteur mais
+ * montant chaque enfant. Sur un cluster de trois cents topics, cela fait quelques milliers
+ * d'éléments React réconciliés par caractère tapé, pour un rendu identique tant que ni le
+ * catalogue, ni les schémas dépliés, ni les requêtes sauvegardées n'ont bougé. La page fait sa
+ * moitié du travail : elle passe des gestionnaires d'identité stable (`useStableCallback`), sans
+ * quoi la comparaison de `React.memo` échouerait sur une lambda neuve à chaque rendu.
  */
-export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(function SchemaBrowser({
+const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(function SchemaBrowser({
   schema, schemaLoading, onRefresh, width, onResizeStart, onResizeKey, widthMin, widthMax,
   expandedTables, tableSchemas, onToggleTable, onSelectFrom, onDropTable, onPreviewDdl, actionLabelFor,
   savedQueries, onLoadSaved, onDeleteSaved,
@@ -321,10 +330,19 @@ export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(f
             <ScrollList count={savedQueries.length} className="space-y-1">
               {savedQueries.map(q => (
                 <div key={q.id} className="flex items-center gap-1 py-1 px-2 rounded hover:bg-primary/5 transition-colors group/saved">
-                  <div onClick={() => onLoadSaved(q)} className="flex-1 min-w-0 cursor-pointer">
-                    <p className="text-xs text-on-surface truncate font-medium">{q.name}</p>
-                    <p className="text-[10px] text-outline">{new Date(q.savedAt).toLocaleDateString()}</p>
-                  </div>
+                  {/* Un `<button>`, comme les tables et les topics au-dessus. C'était le dernier
+                      `<div onClick>` de cette colonne : la passe d'accessibilité avait converti
+                      les deux listes voisines et laissé celle-ci, donc rouvrir une requête
+                      sauvegardée restait impossible sans souris — sans arrêt de tabulation, sans
+                      rôle, et sans nom annoncé. */}
+                  <button type="button" onClick={() => onLoadSaved(q)}
+                    aria-label={`Open the saved query ${q.name}`}
+                    className="flex-1 min-w-0 text-left rounded">
+                    {/* `<span>` et non `<p>` : le contenu d'un bouton est du contenu de phrase,
+                        et un paragraphe n'en est pas. */}
+                    <span className="block text-xs text-on-surface truncate font-medium">{q.name}</span>
+                    <span className="block text-[10px] text-outline">{new Date(q.savedAt).toLocaleDateString()}</span>
+                  </button>
                   <button type="button" onClick={() => onDeleteSaved(q.id)}
                     className="opacity-0 group-hover/saved:opacity-100 text-outline hover:text-error transition-all shrink-0" title="Delete" aria-label="Delete this saved query">
                     <span className="material-symbols-outlined text-sm">delete</span>
@@ -350,3 +368,5 @@ export const SchemaBrowser = React.forwardRef<HTMLElement, SchemaBrowserProps>(f
     </aside>
   );
 });
+
+export const SchemaBrowser = React.memo(SchemaBrowserView);

@@ -24,8 +24,36 @@ public class SqlQueryValidator {
         this.runtimeCoordinator = runtimeCoordinator;
     }
 
-    public void validate(String sql) {
-        if (sql == null || sql.trim().isEmpty()) return;
+    /**
+     * Applique les gardes de cet environnement à une instruction.
+     *
+     * <p>L'instruction est <strong>préparée ici</strong> — guillemets doubles ramenés en accents
+     * graves, commentaires retirés — et ce n'est pas une commodité. {@code executeSql} et
+     * {@code submitJob} passaient déjà ce texte-là ; {@code POST /api/query/validate}, que
+     * l'éditeur SQL appelle avant chaque Run, passait le corps de la requête <em>brut</em>. Le
+     * pré-vol examinait donc une autre instruction que celle qui allait être exécutée, et l'écart
+     * se voyait dans les deux sens :
+     *
+     * <ul>
+     *   <li>{@code SELECT * FROM "orders"} — la forme que {@code normalizeIdentifierQuotes} existe
+     *       précisément pour accepter — était refusée au pré-vol comme une faute de syntaxe, donc
+     *       l'éditeur refusait de lancer une requête que le moteur exécute très bien ;</li>
+     *   <li>{@code outsideLiterals} neutralise les littéraux mais pas les commentaires, si bien
+     *       qu'un {@code -- pas de CROSS JOIN ici} faisait tomber la garde des jointures croisées
+     *       sur un mot écrit dans un commentaire ;</li>
+     *   <li>et à l'inverse, une instruction dont la première ligne est un commentaire échouait au
+     *       {@code startsWith("SELECT")} plus bas, donc n'était validée par rien — un pré-vol qui
+     *       accepte en silence.</li>
+     * </ul>
+     *
+     * <p>Préparer ici plutôt que chez l'appelant est ce qui empêche l'écart de revenir : la
+     * préparation est idempotente, donc les appelants qui la faisaient déjà ne changent pas de
+     * comportement, et un nouvel appelant ne peut plus l'oublier.
+     */
+    public void validate(String rawSql) {
+        if (rawSql == null || rawSql.trim().isEmpty()) return;
+        String sql = FlinkSqlService.prepareSql(rawSql);
+        if (sql == null || sql.isEmpty()) return;
         // Hors littéraux, comme toute lecture lexicale de ce dépôt : `WHERE msg = 'CROSS JOIN'`
         // est une valeur, pas une jointure, et cette instruction était refusée pour le contenu
         // d'une chaîne — un faux positif sur une requête que rien n'interdisait.

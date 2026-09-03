@@ -41,6 +41,7 @@ import { DdlPreviewModal } from '../components/query/DdlPreviewModal';
 import { NarrowWindowNotice } from '../components/query/NarrowWindowNotice';
 import { RowDetail } from '../components/query/RowDetail';
 import { randomId } from '../randomId';
+import { useStableCallback } from '../useStableCallback';
 import { copyText } from '../clipboard';
 import { useCatalog } from '../catalogStore';
 import type {
@@ -1074,10 +1075,26 @@ const QueryWorkbench: React.FC = () => {
   const executeStatement = async (sqlToRun: string): Promise<StatementOutcome> => {
     const statementType = detectStatementType(sqlToRun);
 
-    /** Refus avant exécution : rien n'est parti au moteur, et le panneau porte la raison. */
-    const refuse = (error: QueryErrorInfo): StatementOutcome => {
+    /**
+     * Refus avant exécution : rien n'est parti au moteur, et le panneau porte la raison.
+     *
+     * Il **dit ce qu'il a refusé** (`setRanSql`), et c'est la correction d'un défaut : les
+     * positions d'erreur sont ramenées dans le repère du document par `resolveOrigin`, qui cherche
+     * dans le texte courant le SQL qui a tourné. Un refus n'en désignait aucun, donc `runOrigin`
+     * valait `null` et `queryError` **retirait la position** — sur la seule erreur qui en porte
+     * toujours une, la faute de syntaxe trouvée au pré-vol : ni marqueur Monaco, ni « Jump to
+     * line ». Pire après une exécution réussie : `ranSql` portait encore l'instruction
+     * *précédente*, et la position du refus était calée sur elle — donc soulignée au mauvais
+     * endroit, dans une autre instruction de l'onglet.
+     *
+     * `executionMs` suit la même règle : un refus qui laisse la durée de la requête d'avant fait
+     * lire un temps d'exécution pour une exécution qui n'a pas eu lieu.
+     */
+    const refuse = (error: QueryErrorInfo, ms = 0): StatementOutcome => {
       setResults(null); setPanelError(error);
-      return { status: 'failed', ms: 0, result: null, error };
+      setRanSql(sqlToRun);
+      setExecutionMs(ms || null);
+      return { status: 'failed', ms, result: null, error };
     };
 
     /*
@@ -1098,27 +1115,6 @@ const QueryWorkbench: React.FC = () => {
       });
     }
 
-    /*
-     * Pré-vol : `/api/query/validate` refuse une faute de syntaxe avant que la requête n'ouvre
-     * le moindre consommateur Kafka. Ce contrôle n'est pas gratuit — il exécute `explainSql`,
-     * donc une passe complète du planner Flink sous le verrou de lecture du runtime, avant
-     * l'exécution qui en fera une seconde. On ne le repaie donc pas pour un SQL déjà validé tel
-     * quel : relancer la même requête après avoir changé le plafond de lignes ou l'offset est le
-     * geste le plus courant de cet écran, et il n'a aucune syntaxe nouvelle à vérifier.
-     */
-    if (validatedSqlRef.current !== sqlToRun) {
-      try {
-        const vRes = await axios.post<SqlValidationResponse>('/api/query/validate', { sql: sqlToRun });
-        if (!vRes.data.valid) {
-          // Rejet avant exécution : le backend renvoie déjà le texte du parser (avec sa
-          // ligne/colonne quand il en a une), on le classe comme n'importe quelle erreur.
-          validatedSqlRef.current = null;
-          return refuse(describeQueryError(vRes.data.error ?? 'SQL validation failed'));
-        }
-        validatedSqlRef.current = sqlToRun;
-      } catch { /* let execution handle it */ }
-    }
-
     // L'identifiant et le contrôleur sont créés *avant* de passer l'écran en « exécution ».
     // Dans l'autre ordre, une exception ici laissait `executing` à true sans jamais
     // atteindre le `finally` : la requête n'aboutissait pas et Stop n'avait ni contrôleur
@@ -1129,12 +1125,61 @@ const QueryWorkbench: React.FC = () => {
     const controller = new AbortController();
     runningQueryIdRef.current = queryId;
     abortRef.current = controller;
+    /*
+     * L'écran passe en « exécution » **avant le pré-vol**, et c'est la réparation d'un trou dans
+     * la garde contre deux exécutions simultanées.
+     *
+     * `executingRef` existe parce que ⌘↵ appelle `runBatch` directement et que l'état React n'est
+     * pas encore à jour quand deux frappes tombent dans le même tick. Mais il n'était levé
+     * qu'après le pré-vol — un aller-retour HTTP dont le serveur fait une passe complète du
+     * planner Flink sous le verrou de lecture du runtime, donc une fenêtre qui se compte en
+     * centaines de millisecondes et non en ticks. Pendant tout ce temps le bouton Run restait
+     * actif et annonçait « Run query », aucun Stop n'était rendu, et un second Run partait : les
+     * deux requêtes écrasaient tour à tour `abortRef` et `runningQueryIdRef`, si bien que Stop
+     * n'annulait plus la première et que le `finally` de celle-ci repassait l'écran en
+     * « Complete » alors que l'autre était toujours en vol. C'est exactement le défaut que
+     * `executingRef` avait été introduit pour fermer, rouvert par le pré-vol ajouté au-dessus.
+     *
+     * Le contrôleur est partagé avec le pré-vol : Stop pressé pendant celui-ci abandonne la bonne
+     * requête, au lieu de trouver un écran « en exécution » sans rien à arrêter.
+     */
     executingRef.current = true;
     setExecuting(true); setResults(null); setSortCol(null); setDetailIndex(null);
     // Ce qui a réellement été exécuté — c'est lui, et non le contenu courant de l'onglet, qui dit
     // si les lignes affichées répondent encore au texte sous les yeux.
     setRanSql(sqlToRun);
     try {
+      /*
+       * Pré-vol : `/api/query/validate` refuse une faute de syntaxe avant que la requête n'ouvre
+       * le moindre consommateur Kafka. Ce contrôle n'est pas gratuit — il exécute `explainSql`,
+       * donc une passe complète du planner Flink sous le verrou de lecture du runtime, avant
+       * l'exécution qui en fera une seconde. On ne le repaie donc pas pour un SQL déjà validé tel
+       * quel : relancer la même requête après avoir changé le plafond de lignes ou l'offset est le
+       * geste le plus courant de cet écran, et il n'a aucune syntaxe nouvelle à vérifier.
+       */
+      if (validatedSqlRef.current !== sqlToRun) {
+        try {
+          const vRes = await axios.post<SqlValidationResponse>('/api/query/validate',
+            { sql: sqlToRun }, { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
+          if (!vRes.data.valid) {
+            // Rejet avant exécution : le backend renvoie déjà le texte du parser (avec sa
+            // ligne/colonne quand il en a une), on le classe comme n'importe quelle erreur.
+            validatedSqlRef.current = null;
+            return refuse(describeQueryError(vRes.data.error ?? 'SQL validation failed'),
+              Date.now() - start);
+          }
+          validatedSqlRef.current = sqlToRun;
+        } catch (e) {
+          // Un abandon demandé pendant le pré-vol arrête la requête pour de bon : le laisser
+          // tomber dans « let execution handle it » lancerait au moteur celle qu'on vient
+          // d'arrêter, ce qui est le contraire de ce que Stop annonce.
+          if (axios.isCancel(e)) {
+            setResults(null);
+            return { status: 'cancelled', ms: Date.now() - start, result: null, error: null };
+          }
+          /* let execution handle it */
+        }
+      }
       const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
       const limit = maxRows;
       const response = await axios.post<QueryResult>('/api/query/run-sync',
@@ -1490,6 +1535,52 @@ const QueryWorkbench: React.FC = () => {
     if (where === 'new') toast(`Opened ${table} in a new tab`, 'success');
   }, [openSql, maxRows, toast]);
 
+  /*
+   * Les gestionnaires que la barre latérale reçoit, d'identité **stable**.
+   *
+   * `SchemaBrowser` est mémoïsé (voir son en-tête) parce qu'il rend toutes les tables et tous les
+   * topics du catalogue, et qu'une frappe dans l'éditeur re-rend cette page. Une lambda écrite
+   * dans le JSX est neuve à chaque rendu, donc la comparaison de `React.memo` échouerait
+   * systématiquement et la mémoïsation ne servirait à rien ; `useCallback` n'y suffirait pas non
+   * plus pour la moitié d'entre eux, qui lisent l'onglet actif — c'est-à-dire ce qui change à
+   * chaque caractère. `useStableCallback` rend une enveloppe fixe qui appelle toujours la dernière
+   * version, donc sans valeur périmée à capturer.
+   */
+  const refreshSchema = useStableCallback(() => { void fetchSchema(); });
+  const resizeSidebarStart = useStableCallback(
+    (e: React.PointerEvent) => startDrag('sidebar', 'col-resize', e));
+  const resizeSidebarKey = useStableCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowLeft') { setSidebarWidth(w => w - 16); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { setSidebarWidth(w => w + 16); e.preventDefault(); }
+    if (e.key === 'Home') { setSidebarWidth(DEFAULT_LAYOUT.sidebarWidth); e.preventDefault(); }
+  });
+  const toggleTableStable = useStableCallback((table: string) => { void toggleTable(table); });
+  const selectFromStable = useStableCallback((table: string) => openSelectFor(table));
+  const dropTableStable = useStableCallback((table: string) => { void dropTable(table); });
+  const previewDdlStable = useStableCallback((topic: string) => { void fetchDdlPreview(topic); });
+  const loadSavedStable = useStableCallback((q: SavedQuery) => loadSavedQuery(q));
+  const deleteSavedStable = useStableCallback((id: string) => { void deleteSavedQuery(id); });
+  const saveOpenStable = useStableCallback(
+    () => { setSaveInputVisible(true); setSaveInputName(activeTab.name); });
+  const saveCancelStable = useStableCallback(() => setSaveInputVisible(false));
+  const saveConfirmStable = useStableCallback(() => { void saveQuery(); });
+  const sidebar = useMemo(() => ({
+    refresh: refreshSchema,
+    resizeStart: resizeSidebarStart,
+    resizeKey: resizeSidebarKey,
+    toggleTable: toggleTableStable,
+    selectFrom: selectFromStable,
+    dropTable: dropTableStable,
+    previewDdl: previewDdlStable,
+    loadSaved: loadSavedStable,
+    deleteSaved: deleteSavedStable,
+    saveOpen: saveOpenStable,
+    saveCancel: saveCancelStable,
+    saveConfirm: saveConfirmStable,
+  }), [refreshSchema, resizeSidebarStart, resizeSidebarKey, toggleTableStable, selectFromStable,
+    dropTableStable, previewDdlStable, loadSavedStable, deleteSavedStable, saveOpenStable,
+    saveCancelStable, saveConfirmStable]);
+
   /**
    * Remplace *tout* le texte de l'onglet actif — utilisé par l'assistant de fenêtrage.
    *
@@ -1603,36 +1694,35 @@ const QueryWorkbench: React.FC = () => {
         />
       )}
 
+      {/* Toutes les fonctions passées ici ont une identité stable (`sidebar`, plus haut), sans quoi
+          le `React.memo` de ce composant ne tiendrait pas : une lambda écrite dans le JSX est
+          neuve à chaque rendu, donc à chaque frappe. */}
       <SchemaBrowser
         ref={asideRef}
         schema={schema}
         schemaLoading={schemaLoading}
-        onRefresh={fetchSchema}
+        onRefresh={sidebar.refresh}
         width={sidebarWidth}
         widthMin={SIDEBAR_MIN}
         widthMax={SIDEBAR_MAX}
-        onResizeStart={e => startDrag('sidebar', 'col-resize', e)}
-        onResizeKey={e => {
-          if (e.key === 'ArrowLeft') { setSidebarWidth(w => w - 16); e.preventDefault(); }
-          if (e.key === 'ArrowRight') { setSidebarWidth(w => w + 16); e.preventDefault(); }
-          if (e.key === 'Home') { setSidebarWidth(DEFAULT_LAYOUT.sidebarWidth); e.preventDefault(); }
-        }}
-        actionLabelFor={target => sidebarActionLabel(target)}
+        onResizeStart={sidebar.resizeStart}
+        onResizeKey={sidebar.resizeKey}
+        actionLabelFor={sidebarActionLabel}
         expandedTables={expandedTables}
         tableSchemas={tableSchemas}
-        onToggleTable={toggleTable}
-        onSelectFrom={openSelectFor}
-        onDropTable={table => void dropTable(table)}
-        onPreviewDdl={fetchDdlPreview}
+        onToggleTable={sidebar.toggleTable}
+        onSelectFrom={sidebar.selectFrom}
+        onDropTable={sidebar.dropTable}
+        onPreviewDdl={sidebar.previewDdl}
         savedQueries={savedQueries}
-        onLoadSaved={loadSavedQuery}
-        onDeleteSaved={id => void deleteSavedQuery(id)}
+        onLoadSaved={sidebar.loadSaved}
+        onDeleteSaved={sidebar.deleteSaved}
         saveInputVisible={saveInputVisible}
         saveInputName={saveInputName}
         onSaveInputChange={setSaveInputName}
-        onSaveOpen={() => { setSaveInputVisible(true); setSaveInputName(activeTab.name); }}
-        onSaveCancel={() => setSaveInputVisible(false)}
-        onSaveConfirm={() => void saveQuery()}
+        onSaveOpen={sidebar.saveOpen}
+        onSaveCancel={sidebar.saveCancel}
+        onSaveConfirm={sidebar.saveConfirm}
         activeTabName={activeTab.name}
       />
 
@@ -1938,15 +2028,25 @@ const QueryWorkbench: React.FC = () => {
                     )}
                   </span>
                 </div>
-                {(results?.engine || results || executing) && (
+                {/* Le moteur qui a répondu — **jamais avant qu'il ait répondu**.
+                    La condition était `results?.engine || results || executing` et la valeur
+                    `results?.engine ?? 'Kafka Direct'` : pendant l'exécution, et sur un résultat
+                    d'erreur qui ne porte aucun moteur, l'écran affirmait donc « Kafka Direct ».
+                    C'est une supposition, et sur le seul indicateur dont le rôle est de dire
+                    lequel des deux moteurs a répondu — l'aiguillage se décidant par requête, la
+                    réponse n'existe pas avant le résultat. Tant qu'elle n'existe pas, la puce le
+                    dit au lieu d'en inventer une. */}
+                {(results?.engine || executing) && (
                   <Tooltip content={
-                    (results?.engine ?? 'KAFKA_DIRECT') === 'KAFKA_DIRECT'
-                      ? 'Kafka Direct: a bounded scan over Kafka messages. It supports SELECT, WHERE, aggregates and TUMBLE windows — but no multi-topic JOIN, which is the limit worth knowing before reading these rows.'
-                      : 'Flink: executed by the embedded Flink SQL engine (EXPLAIN / DDL).'
+                    !results?.engine
+                      ? 'Which engine answers is decided per query — the Flink planner when it can, the direct Kafka reader otherwise. The badge names it once the result is in.'
+                      : results.engine === 'KAFKA_DIRECT'
+                        ? 'Kafka Direct: a bounded scan over Kafka messages. It supports SELECT, WHERE, aggregates and TUMBLE windows — but no multi-topic JOIN, which is the limit worth knowing before reading these rows.'
+                        : 'Flink: executed by the embedded Flink SQL engine (EXPLAIN / DDL).'
                   }>
                   <span tabIndex={0} className="rounded">
-                    <Badge tone={(results?.engine ?? 'KAFKA_DIRECT') === 'KAFKA_DIRECT' ? 'primary' : 'secondary'}>
-                      {results?.engine ?? 'Kafka Direct'}
+                    <Badge tone={!results?.engine ? 'neutral' : results.engine === 'KAFKA_DIRECT' ? 'primary' : 'secondary'}>
+                      {results?.engine ?? 'Engine…'}
                     </Badge>
                   </span>
                   </Tooltip>
