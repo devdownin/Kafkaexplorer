@@ -354,7 +354,7 @@ it is obvious from the code that remains.
 - **Never put a real key in a Spring fallback**: `${ANTHROPIC_API_KEY:sk-ant-...}` commits it.
   Use an empty fallback, `${ANTHROPIC_API_KEY:}`.
 
-## Claude API Java SDK (anthropic-java 2.57.0)
+## Claude API Java SDK (anthropic-java 2.59.0)
 
 The version is read from `pom.xml` rather than restated here from memory: this heading carried
 `2.16.1` for a long while, which is what `check-config-table.py`'s `VERSION_CLAIMS` pass now
