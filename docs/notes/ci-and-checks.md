@@ -116,6 +116,15 @@ and `pull_request_template.md`.
 - **`CODEOWNERS` requests reviews, it does not require them.** Requiring them is a branch
   protection rule on `main` ("Require review from Code Owners"), which lives in the repository
   settings and is the thing that turns the file into a gate.
+- **`CHANGELOG.md` is closed by the release, not by hand.** `release.yml`'s follow-up step renames
+  `[Unreleased]` to the version and opens a fresh one, on the same pull request as the Explorer pin
+  bump — both go stale at the instant the `docker` job publishes. Before that step existed nothing
+  did it and nothing checked it, so thirty releases' worth of entries sat in a section asserting
+  they had not shipped, `v1.7.1` through `v1.9.11`; those sections were reconstructed by first
+  appearance across the tags, which is exact because entries were only ever appended. The contrast
+  with the pin is the lesson worth keeping: a stale pin eventually reddens an unrelated pull
+  request, a stale changelog reddens nothing, and the one with no backstop is the one that ran for
+  eight weeks. `docs/notes/docker-and-stacks.md` carries the step's guarantees.
 
 Three workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
 
