@@ -335,9 +335,8 @@ It applies to `src/main/java`, `src/test/java` and every `.ts` / `.tsx` under
 `scorecard.yml`, `image-pins.yml`), the keyless JAR signing, and what `.gitattributes` and
 `.editorconfig` are for. Two rules bind whether or not that note has been read:
 
-- **Every action is pinned to a commit SHA**, with the version in a trailing comment
-  (`actions/checkout@3d3c42e… # v7`). A tag is mutable, and several of these actions run with
-  credentials or write scope. When adding an action, pin it the same way rather than reaching for
-  the tag.
+- **Never reference an action by tag.** A new one is pinned like its neighbours — full commit
+  SHA, version in a trailing comment — because a tag can be moved under a workflow that holds
+  write scope. `docs/notes/ci-and-checks.md` names which ones and who keeps the pins current.
 - **`CONTRIBUTING.md` names `mvn verify`, never `mvn test`** — the latter runs neither ESLint nor
   Vitest, so a contributor following it is green locally and red in CI.
