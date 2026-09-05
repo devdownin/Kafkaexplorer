@@ -194,68 +194,33 @@ parser/       JSON, XML and Avro (via Confluent Schema Registry) schema inferenc
 
 ### Frontend
 
+`docs/notes/frontend.md` carries the app shell, the design system, the graph viewport and the
+rationale for each page. Four rules bind before that note has been read:
 
-**The three SVG graphs share one viewport** — `components/graph/useGraphViewport.ts`, used by
-`Lineage`, `StreamFlow` and `DataModel`. They carried the same implementation copied three times:
-the same `isPanning` / `lastPos` refs, the same three pointer handlers line-for-line, the same
-non-passive `wheel` listener, the same keyboard step. That is exactly the shape that lets a fix
-land on one page and not the other two, and it had already happened here — the move to *pointer*
-events, without which a tablet cannot pan a graph at all, had to be made three times.
-
-The split is **mechanics in the hook, policy in the pages**. The hook owns the transform state,
-the gestures, the wheel zoom and the viewport measurement, and exposes `panBy` / `zoomAround` /
-`zoomFromCenter` so a page's keyboard handler is a few lines. What stays in each page is what
-genuinely differs: what `0` recadres (a fit for Stream Flow and Data Model, a fixed origin for
-Lineage), what `Escape` deselects, and which node a table selection brings into view. Absorbing
-those through three more callbacks would have made the hook harder to read than the forty lines
-it replaces.
-
-Three things are parameters rather than constants because the pages really disagree: the scale
-bounds (Data Model goes to 0.1–3, the other two 0.15–4 — a hundred entities need the lower
-floor), the initial transform, and whether a press on a `[data-node]` starts a pan. `viewAdjusted`
-is the hook's, with `markFitted()` / `markAdjusted()` as the pair of verbs: `panBy` and
-`zoomAround` raise it themselves, and a page that sets its own transform — centring on an entity —
-says so, because Data Model's automatic refit on a resize must not undo a framing the operator
-chose.
-
-**`svgRef` is a callback ref, not an object ref, and that is load-bearing.** Stream Flow and Data
-Model render their canvas only once a result has arrived, so an effect keyed on anything else runs
-once with `ref.current` still null and never runs again — which is exactly how the `wheel` listener
-stopped attaching on two of the three graphs when this hook was extracted. Each page used to work
-around it with its own dependency (`[hasResult, nodes.length]`, `[zoomAround, model]`) under a
-comment reading "re-attach after the SVG mounts"; sharing the code dropped the dependency and the
-defect came back. A callback ref makes the mount observable, so the question no longer reaches the
-caller — and pages read the element as `canvas` rather than `svgRef.current`.
-
-Only `zoomTransform` is unit-tested; the rest is pointer plumbing over geometry jsdom does not
-have, where a test would assert that mocks were called rather than that a graph pans. What covers
-it instead is **`docs/screenshots/graph-gestures.mjs`**, run by CI in the screenshot job: real
-pointer, wheel and keyboard events against the compiled SPA in Chromium, asserting that the pan
-follows the pointer, that the zoom stays anchored under the cursor, that the keyboard reaches the
-graph and that `touch-action` is neutralised. It is what found the wheel defect above.
-
-**Form conventions** — build every form out of these; hand-rolled `<input className="…">` blocks drift from the tokens and skip the accessibility wiring.
-- `PasswordInput` adds a reveal toggle and `autoComplete="new-password"`. Secrets typed blind fail at connection time with nothing to diagnose.
-- Wrap in a real `<form onSubmit>` so Enter submits from any field. `Button` defaults to `type="button"` for that reason — submit buttons declare `type="submit"` explicitly.
-
-**Routes / pages** (`pages/`):
-- `QueryController` — `/api/query/**`. Every endpoint here answers with a *reason* rather than a bare status: `ddl-preview` through `SqlErrorClassifier.explain()`, `init` with `kafkaError` / `flinkError` instead of two empty catches, `cancel` with what it actually achieved, `submitJob` with an `ApiError` split 400/500 on the classifier. `docs/notes/frontend.md` has the defect behind each.
-
-
-  **What Job mode left behind, and what became of each.** #323 removed the `SubmittedJobPanel` and its wiring along with the feature — five pieces of state, a polling effect, a Stop handler, all referencing an `executionMode` that no longer existed, which is why the SPA had stopped type-checking on `main`. #325 then removed the three pieces that still compiled and simply had no caller — `GET /api/query/sink-ddl` (with `DdlGeneratorService.sinkColumns`), `insertTargetAndSource`, `flinkJobHistory.isJobTerminal` — plus the shipped-but-unread `explorer.inference-poll-timeout-ms`, and added `docs/check-config-yaml.py` so a settable, inert `explorer.*` key fails the build instead of sitting there. **The last of it was the Dashboard's own "Flink SQL Jobs" table**, which had a caller and was the reason the three job reads and the persistence behind them survived two clean-ups: without a submission it no longer listed jobs but the synchronous reads `FlinkJobStore` recorded on the way past, all finished, one per Run and ~2 900 a day per planner-answered metric — a panel of running jobs that never shows one, which is misleading rather than merely reduced. It went, and `GET /api/query/jobs`, `GET /api/query/jobs/{queryId}`, `POST /api/query/jobs/{queryId}/cancel`, `FlinkJobService`, `FlinkJobStore`, `FlinkManagedJobDetails`, `FlinkJobHistoryEntry` and two `explorer.*` keys with it. The one kept is `FlinkSqlService.submitJob` with the `explorer.max-concurrent-jobs` cap that guards it: unreachable over HTTP, and not dead code — it is where `FlinkSqlServiceInsertVariantsTest` establishes what an INSERT means here. What survives in the browser is the rule the two mode guards served: an `INSERT` is refused there, **with its cause**, rather than sent to the engine to be answered by the whitelist. `docs/notes/frontend.md` carries the reasoning for each.
-
-
-  See `SQL-EDITOR-AUDIT.md` for the full review, including what was deliberately left open.
-- `Compare` (`/compare`) — side-by-side topic comparison
-
-
-- `Help` (`/help`) — the SQL guide, written as a course rather than a reference card, with every example runnable against what `setup-demo.sh` seeds and opened through the same `?sql=` link a colleague would paste. The content lives in `pages/helpContent.ts` so tests can keep it executable; see `docs/notes/frontend.md`.
-
-
-**A pure module never differs from its page component by case alone.** a lower-case `compare` module sitting beside `pages/Compare.tsx` is one file name on a case-insensitive filesystem: the two collide in the module graph, and what comes back is a `Compare` module whose `default` is `undefined` — React's "Element type is invalid". Measured on Windows: **110 of 1 558 Vitest cases failed**, five whole page suites among them (`Compare`, `DataModel`, `Help`, `QueryWorkbench`, `StreamFlow` — exactly the five pairs), while CI on Linux stayed green. So `mvn verify`, the one command this file calls "the only command that runs everything", could not be trusted on the machine where the code is written. The pure halves are `compareMessages` / `dataModelGraph` / `helpContent` / `queryWorkbenchLogic` / `streamFlowLogic`; the names are uniform rather than precious, and what matters is the rule, not the words. Most pure modules here were never affected — `queryError.ts`, `sqlScope.ts`, `metricScope.ts`, `topicActivity.ts` are named for what they hold rather than for their page, which is the habit that avoids this by construction.
-
-
-Dev server proxy: Vite forwards `/api/*` to `http://localhost:8080` (configured in `vite.config.ts`).
+- **The three SVG graphs share one viewport** — `components/graph/useGraphViewport.ts`, used by
+  `Lineage`, `StreamFlow` and `DataModel`. Never re-implement panning or zooming in a page: the
+  hook owns the transform, the gestures and the wheel listener, and a page keeps only what
+  genuinely differs (what `0` recadres, what `Escape` deselects, which node a selection reveals).
+  It exists because that code sat in three files and the move to pointer events, without which a
+  tablet cannot pan at all, had to be made three times.
+- **`svgRef` is a callback ref, not an object ref, and that is load-bearing.** Two of the three
+  pages render their canvas only once a result has arrived, so an effect keyed on anything else
+  runs once against a null ref and never again — which is how the `wheel` listener stopped
+  attaching on two graphs when the hook was extracted.
+- **Build every form out of the shared controls.** `PasswordInput` adds a reveal toggle and
+  `autoComplete="new-password"`, because a secret typed blind fails at connection time with
+  nothing to diagnose; wrap the fields in a real `<form onSubmit>` so Enter submits from any of
+  them, which is why `Button` defaults to `type="button"` and a submit button says so explicitly.
+  A hand-rolled `<input className="…">` drifts from the tokens and skips the accessibility wiring.
+- **A pure module never differs from its page component by case alone.** A lower-case `compare`
+  module beside `pages/Compare.tsx` is one file name on a case-insensitive filesystem: the two
+  collide in the module graph and the import resolves to `undefined` — React's "Element type is
+  invalid". Measured on Windows, **110 of 1 558 Vitest cases failed** across the five affected
+  page suites while CI on Linux stayed green, so `mvn verify` could not be trusted on the machine
+  where the code is written. The pure halves are `compareMessages`, `dataModelGraph`,
+  `helpContent`, `queryWorkbenchLogic` and `streamFlowLogic`; better still, name a module for what
+  it holds — `queryError.ts`, `sqlScope.ts`, `metricScope.ts`, `topicActivity.ts` — which avoids
+  the collision by construction.
 
 ### Configuration
 
@@ -283,56 +248,27 @@ out, with what each cost, in `docs/notes/configuration-and-routing.md`.
 
 ## Testing
 
-Tests use JUnit 5 + Mockito. Unit tests mock Kafka and Flink — no broker needed. Integration tests (`ApplicationContextTest`) use `@SpringBootTest` with `DynamicPropertySource` to inject test config.
-
+JUnit 5 + Mockito. Unit tests mock Kafka and Flink, so no broker is needed; the integration test
+(`ApplicationContextTest`) uses `@SpringBootTest` with `DynamicPropertySource`, and
 `AuditServiceTest` overrides `persistAuditHistory()` to skip real Kafka writes.
+`docs/notes/ci-and-checks.md` carries the strategy and what each hard-won case cost to find.
+Three rules bind before that note is read:
 
-**Shared-runtime state is reset between cases, and the culprit is the one that fails.** The two `FlinkSqlService` classes that drive a real MiniCluster hold it for the whole class, so a case that leaves a cancelled job behind makes the *next* one — any of them — read `The Flink runtime was busy`, and the symptom lands on an innocent. An `@AfterEach` in each waits for the runtime to be free again, or for the job registry to empty; `@BeforeEach` clears the SELECT circuit breaker beside the mocks, that latch having the lifetime of the process by design. `docs/notes/ci-and-checks.md` carries what it cost to find.
-
-**The Process Mining eval has two halves, and only one of them is a unit test** (`eval/`). Nothing
-measured whether the prompt work does what it claims, and that failure mode is silent by
-construction: a plausible answer about an invented pipeline reads exactly like a correct one. The
-way to tell them apart is a dataset whose right answer is known, and `setup-demo.sh` seeds one.
-`DemoPipelineFixture` loads it from `src/test/resources/eval/demo-order-pipeline.json`, which holds
-**records rather than digests** — a digest is what this application computes, so committing one
-would let the fixture and the digester drift together and agree with each other about a payload
-neither had read. It is also **not captured from a live cluster**: a capture is a snapshot nobody
-can regenerate without a broker, so it is written from the seeder and resolved against it by
-`docs/check-eval-fixture.py` (every topic, every order id, every redelivery, the two corrupt
-payloads verbatim, and the assertion that the payments and shipments still carry no order id in
-their bodies). `ProcessModelEvalTest` asserts the aggregate exactly and runs in `mvn verify`;
-`LlmAnalysisEvalTest` calls a real model, asserts loosely, carries `@Tag("llm-eval")` — excluded by
-surefire's `excludedGroups` **and** by `verify-offline.sh`'s `--exclude-tag`, since it costs money
-and needs the network — and **skips rather than fails** when nothing is configured, a test that goes
-red for want of an API key being one people learn to ignore. Writing it is what found the
-truncated-record defect described under `ProcessModelBuilder`.
-
-**It also carries the first half of the bilingual-prompt experiment** (`theShippedPromptHoldsItsFormat`,
-`-Dllm.eval.runs`, default 3): the system prompt is English and the user prompt's headings are
-French, small models are reputed to hold a format less well across a language switch, and nothing
-had measured that *on this prompt*. It measures the shipped prompt and reports the rate — a parse
-failure, an answer that parsed with no flowchart, and an unreachable endpoint being three different
-answers. An English variant is deliberately **not** shipped to compare against: a second production
-prompt is a second surface to keep in step for ever, built on a belief, and a prompt that holds the
-format every time on the model under test answers the suspicion without one. Only a run showing
-failures justifies building it, and it would then be justified by a number.
-
-
-**The metric templates' scan bounds are asked here too, and that question has now been answered twice — the second time correctly.** A mock cannot refuse a setting it has never heard of, so `MetricService`'s bounded-scan option had been added on a reading of the connector's documentation, and the first real-broker run appeared to refuse it. That verdict was confounded, in two ways neither visible from the test: the hint never reached the planner (`stripSqlComments` erased it — a Calcite hint is comment-shaped, and the engine's own log printed the query without it), and the key actually refused in the same `WITH (…)` was `json.ignore-parse-errors` written without its `value.` prefix, the exception listing every unconsumed option together so the blame fell on the one just added. With both fixed, `thisConnectorBoundsAScanWhenAsked` measures the opposite: the count runs through the planner and its source tasks reach `FINISHED`, which an unbounded source never does. The unbounded half of the same case is what keeps that conclusive rather than tautological — without the option the identical query spends its budget and falls back. **`MetricService` still sends the startup mode alone, deliberately**: what bounds a metric's read changes what the metric *measures*, and that is a change to argue on its own rather than a line to flip. The sibling case pins the path a count-delta side really takes — `directSql` to the direct reader, one row rather than a changelog, a number that had to come out of the broker — and it is why the wrong option was survivable: the count was right all along, by the other route. Both build their own local Flink cluster on demand rather than as a field, since the rest of the class talks to the broker directly and should not pay for one.
-
-
-`InternalTopicProvisionerTest` and the new cases in `FieldMappingStoreTest`, `MetricServiceTest`,
-`AuditServiceTest`, `StreamFlowServiceTest` and `ExplorerGroupCleanupServiceTest` cover the
-application's own resources on the cluster — the topics it writes and the groups it leaves — and
-what they mostly pin is what those must *not* do: create anything of the user's, alter a topic
-nobody asked to have altered, audit or trace themselves, or delete on a broker that never answered.
-The two that describe a real defect were verified to fail against the revision they describe:
-`aPrefetchPositionAtTheLogEndDoesNotEndTheRestore` (which needs a `MockConsumer` that lies the way a
-real client lies, reporting the log end while handing over nothing — `MockConsumer` otherwise
-advances its position only on delivered records and could never reproduce it) and
-`anEvictedMappingIsTombstonedSoTheTopicFollowsTheSameBound`.
-
-Test classes are in `src/test/java/com/compagnonsdudev/kafkasqlexplorer/`.
+- **A case that drives the real MiniCluster must hand it back.** The two `FlinkSqlService` test
+  classes hold one runtime for the whole class, so a case that leaves a job cancelling makes the
+  *next* one — any of them — read `The Flink runtime was busy`, and the symptom lands on an
+  innocent. Each has an `@AfterEach` that waits, bounded, for the runtime to come free or the job
+  registry to empty; `@BeforeEach` clears the SELECT circuit breaker beside the mocks, that latch
+  having the lifetime of the process by design.
+- **`@Tag("llm-eval")` stays out of the default build.** `LlmAnalysisEvalTest` calls a real model,
+  so it is excluded by surefire's `excludedGroups` **and** by `verify-offline.sh`'s
+  `--exclude-tag`, and it **skips rather than fails** when nothing is configured — a test that
+  goes red for want of an API key is one people learn to ignore. `ProcessModelEvalTest` asserts
+  the aggregate exactly and does run in `mvn verify`.
+- **The eval fixture is written from the seeder, never captured from a cluster**, and it holds
+  records rather than digests: a committed digest is what this application computes, so the
+  fixture and the digester would drift together and agree about a payload neither had read.
+  `docs/check-eval-fixture.py` resolves it against `setup-demo.sh`, so the two are edited together.
 
 ## Audits and scope documents
 
