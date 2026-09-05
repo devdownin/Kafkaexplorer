@@ -24,4 +24,4 @@
 services:
   explorer:
     build: !reset null
-    image: ${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}/kafkaexplorer:${EXPLORER_IMAGE_TAG:-1.9.12}
+    image: ${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}/kafkaexplorer:${EXPLORER_IMAGE_TAG:-1.9.13}
