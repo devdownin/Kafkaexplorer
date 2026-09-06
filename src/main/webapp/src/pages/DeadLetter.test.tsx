@@ -71,11 +71,39 @@ const ACTIVITY = {
 
 let activityParams: Record<string, unknown> | undefined;
 
+const SAMPLES = {
+  topic: { name: 'orders.DLQ', partitions: 1, minOffsets: {}, maxOffsets: {} },
+  format: 'JSON',
+  schema: {},
+  ddl: null,
+  samples: [
+    { partition: 0, offset: 1, timestamp: 1, key: 'A', headers: { 'original-topic': 'orders' },
+      value: '{"failure_reason":"Inventory service timed out"}', valueBytes: 0, truncated: false },
+    { partition: 0, offset: 2, timestamp: 2, key: 'B', headers: { 'original-topic': 'orders' },
+      value: '{"failure_reason":"Inventory service timed out"}', valueBytes: 0, truncated: false },
+    { partition: 0, offset: 3, timestamp: 3, key: 'C', headers: { 'original-topic': 'orders' },
+      value: '{"failure_reason":"Schema mismatch"}', valueBytes: 0, truncated: false },
+  ],
+};
+
+const CONSUMERS = {
+  topic: 'orders.DLQ', groups: [], groupsExamined: 4, groupsEligible: 0, groupsInCluster: 4,
+  truncated: false, available: true, warnings: [],
+};
+
+let detailUrls: string[] = [];
+
 function stubApi(options: { topics?: unknown; activity?: unknown; activityFails?: boolean } = {}) {
   activityParams = undefined;
+  detailUrls = [];
   mockedAxios.get.mockImplementation((url: string, config?: AxiosRequestConfig) => {
     if (url === '/api/dashboard') {
       return Promise.resolve({ status: 200, data: options.topics ?? DASHBOARD });
+    }
+    if (url.endsWith('/consumers')) return Promise.resolve({ status: 200, data: CONSUMERS });
+    if (url.startsWith('/api/topic/')) {
+      detailUrls.push(url);
+      return Promise.resolve({ status: 200, data: SAMPLES });
     }
     if (url === '/api/dashboard/activity') {
       activityParams = config?.params as Record<string, unknown> | undefined;
@@ -229,6 +257,42 @@ describe('DeadLetter', () => {
     await renderPage();
     await waitFor(() =>
       expect(screen.getByText(/Updated just now · refreshing every 5 s/)).toBeInTheDocument());
+  });
+
+  it('reads a queue only when its row is opened, and says what the sample is', async () => {
+    stubApi();
+    await renderPage();
+    await waitFor(() => expect(screen.getByText('receiving')).toBeInTheDocument());
+    // Rien n'est lu tant que personne n'a ouvert : les deux lectures du panneau coûtent autre
+    // chose que les offsets des courbes, et soixante lignes les paieraient pour rien.
+    expect(detailUrls).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: /Show what is arriving in orders\.DLQ/ }));
+    await waitFor(() => expect(detailUrls).toHaveLength(1));
+
+    // La portée est dans la phrase : trois derniers enregistrements, pas la fenêtre des courbes.
+    await waitFor(() =>
+      expect(screen.getByText(/3 most recent records, grouped by failure_reason/)).toBeInTheDocument());
+    expect(screen.getByText(/not a distribution over the window/)).toBeInTheDocument();
+    expect(screen.getByText('Inventory service timed out')).toBeInTheDocument();
+  });
+
+  it('offers the alert only where a source can divide the rate', async () => {
+    stubApi();
+    await renderPage();
+    await waitFor(() => expect(screen.getByText('receiving')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /Show what is arriving in orders\.DLQ/ }));
+    const paired = await screen.findByRole('button', { name: 'Alert on this rate' });
+    expect(paired).toBeEnabled();
+    // La file d'`orders` est appariée : le lien porte les deux moitiés que l'éditeur attend.
+    expect(paired.closest('a')).toHaveAttribute(
+      'href', '/metrics?fromQueue=orders.DLQ&againstSource=orders');
+
+    fireEvent.click(screen.getByRole('button', { name: /Hide what is arriving in orders\.DLQ/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Show what is arriving in lonely-dlt/ }));
+    // Sans source, il n'y a rien à diviser : désactivé et expliqué, jamais caché.
+    expect(await screen.findByRole('button', { name: 'Alert on this rate' })).toBeDisabled();
   });
 
   it('passes the server own warnings through rather than swallowing them', async () => {

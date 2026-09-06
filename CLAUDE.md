@@ -252,7 +252,10 @@ graph and that `touch-action` is neutralised. It is what found the wheel defect 
   See `SQL-EDITOR-AUDIT.md` for the full review, including what was deliberately left open.
 - `Compare` (`/compare`) — side-by-side topic comparison
 - `DeadLetter` (`/dead-letter`) — the DLQ / DLT / retry topics, two curves each: arrivals, and
-  those same buckets over what the paired source produced. Pairing is derived from the name and
+  those same buckets over what the paired source produced; opening a row groups the queue's last
+  records by a field to say *what* is failing, mounts the Topic Explorer's consumers panel to say
+  who drains it, and offers the same rate as a metric draft (`pages/metricFromQueue.ts`, `RATIO`
+  over offsets, no threshold invented). Pairing is derived from the name and
   always confronted with the catalogue — exactly where the convention allows, otherwise by the one
   non-queue topic under the prefix, which the row labels as inferred, and not at all when several
   answer. Where a bucket's denominator is zero the second curve is drawn as a hole, since a rate of

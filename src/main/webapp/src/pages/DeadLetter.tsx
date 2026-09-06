@@ -11,6 +11,7 @@ import {
 } from '../components/ui';
 import Sparkline from '../components/dashboard/Sparkline';
 import ShareSparkline from '../components/deadletter/ShareSparkline';
+import QueueDetailPanel from '../components/deadletter/QueueDetailPanel';
 import type { DashboardResponse, TopicActivity, TopicActivityResponse } from '../api/types';
 import { describeApiError } from './queryError';
 import {
@@ -95,6 +96,12 @@ const DeadLetter: React.FC = () => {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [refresh, setRefresh] = useState<RefreshChoice>(readRefreshChoice);
+  /*
+   * La file ouverte, une seule à la fois. Ses deux lectures — un balayage des groupes du cluster,
+   * un échantillon de la file — coûtent autre chose que les offsets des courbes, et deux panneaux
+   * ouverts doubleraient ce coût pour une comparaison que personne n'a demandée.
+   */
+  const [opened, setOpened] = useState<string | null>(null);
   /** L'instant de la dernière réponse : c'est lui qui date les chiffres, pas le rendu. */
   const [fetchedAt, setFetchedAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
@@ -465,6 +472,8 @@ const DeadLetter: React.FC = () => {
                     size={sizes[row.topic]}
                     loading={seriesLoading}
                     scale={scale}
+                    opened={opened === row.topic}
+                    onToggle={() => setOpened(current => (current === row.topic ? null : row.topic))}
                   />
                 ))}
               </TableBody>
@@ -529,15 +538,40 @@ interface QueueRowProps {
   size?: number;
   loading: boolean;
   scale: ActivityScale;
+  opened: boolean;
+  onToggle: () => void;
 }
 
-const QueueRow: React.FC<QueueRowProps> = ({ row, activity, share, size, loading, scale }) => {
+const QueueRow: React.FC<QueueRowProps> = ({
+  row, activity, share, size, loading, scale, opened, onToggle,
+}) => {
   const verdict = assessQueue(activity, row.kind);
   const pairing = describePairing(row.pairing);
   const source = row.pairing.source;
+  const panelId = `queue-detail-${row.topic}`;
   return (
+    <>
     <TableRow>
       <Td>
+        <div className="flex items-start gap-1.5">
+          {/*
+            * Le dépliant est un bouton propre plutôt qu'un clic sur la ligne : la ligne porte déjà
+            * trois destinations (le topic, sa source, un bucket de chaque courbe), et une ligne
+            * cliquable par-dessus tout ça rend imprévisible ce que fait un clic.
+            */}
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={opened}
+            aria-controls={panelId}
+            aria-label={`${opened ? 'Hide' : 'Show'} what is arriving in ${row.topic} and who drains it`}
+            className="inline-flex items-center justify-center min-w-6 min-h-6 -ml-1 rounded text-outline hover:text-on-surface transition-colors"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined text-[18px]">
+              {opened ? 'expand_more' : 'chevron_right'}
+            </span>
+          </button>
+          <div className="min-w-0">
         <Link to={`/topic/${encodeURIComponent(row.topic)}`} className="text-on-surface hover:text-primary transition-colors">
           {row.topic}
         </Link>
@@ -559,6 +593,8 @@ const QueueRow: React.FC<QueueRowProps> = ({ row, activity, share, size, loading
               <span className="text-[11px] text-outline">{pairing.label}</span>
             )}
           </Tooltip>
+        </div>
+          </div>
         </div>
       </Td>
       <Td>
@@ -582,6 +618,16 @@ const QueueRow: React.FC<QueueRowProps> = ({ row, activity, share, size, loading
         {size === undefined ? '—' : size.toLocaleString()}
       </Td>
     </TableRow>
+    {opened && (
+      <TableRow>
+        {/* Monté seulement à l'ouverture : c'est le montage qui déclenche les deux lectures, donc
+            un panneau simplement masqué les paierait quand même. */}
+        <Td colSpan={5} className="p-0" id={panelId}>
+          <QueueDetailPanel topic={row.topic} source={source} />
+        </Td>
+      </TableRow>
+    )}
+    </>
   );
 };
 

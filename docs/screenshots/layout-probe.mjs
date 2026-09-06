@@ -166,6 +166,27 @@ const STATES = {
       close: ESCAPE,
     },
   ],
+  'dead-letter': [
+    {
+      /*
+       * La ligne dépliée : le regroupement des derniers enregistrements et le panneau des
+       * consommateurs. Deux surfaces qu'aucune URL n'atteint, donc invisibles à la mesure de la
+       * page au repos — exactement la classe que `STATES` a été ajouté pour couvrir. Elle se
+       * déclare à toutes les largeurs parce qu'elle n'a pas de seuil : le dépliant est dans la
+       * première colonne du tableau, qui existe partout.
+       */
+      name: 'open',
+      viewports: ['phone', 'tablet', 'desktop'],
+      open: async page => {
+        await page.getByRole('button', { name: /Show what is arriving in/ }).first().click();
+        await page.getByText(/most recent record/).first().waitFor({ timeout: 5000 });
+      },
+      close: async page => {
+        await page.getByRole('button', { name: /Hide what is arriving in/ }).first().click();
+        await page.waitForTimeout(200);
+      },
+    },
+  ],
 };
 
 /** Le nom sous lequel un état est rapporté et budgété : `metrics·topic-list`. */
@@ -223,6 +244,7 @@ const UNREACHABLE_BUDGET = {
   'data-model': 0,
   'audit': 0,
   'dead-letter': 0,
+  'dead-letter·open': 0,
   'metrics': 0,
   'metrics·editor': 2,
   'cluster': 2,
@@ -267,6 +289,10 @@ const TARGET_BUDGET = {
    * vues denses, une décision de densité d'information plutôt qu'un correctif d'accessibilité.
    */
   'dead-letter': 6,
+  /* La ligne dépliée n'ajoute aucune cible sous 24 px : ses six contrôles — le sélecteur de
+     champ, le bouton d'alerte, ceux du panneau des consommateurs — sont tous des contrôles de
+     taille pleine. Le compte est celui de la page, et c'est ce qu'il fallait vérifier. */
+  'dead-letter·open': 6,
   'sql-editor': 42,
   'sql-editor·confirm': 39,
   /*

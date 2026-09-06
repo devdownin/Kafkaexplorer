@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import Editor, { useMonaco } from '@monaco-editor/react';
 import '../monaco-setup';
@@ -30,6 +30,7 @@ import { TemplateParamsEditor } from '../components/metrics/TemplateParamsEditor
 import { readFlowChains } from './flowChains';
 import { latestProcessModel, modelRoute, readMetricPriorities } from './processModelEvidence';
 import { highlightPriorities, newerAuditNote, suggestionToDraft } from './metricSuggestions';
+import { queueMetricDraft, readQueueDraft } from './metricFromQueue';
 import { describeMeasurement, describeMetricScope, describeRefreshCost, scopeNoteOf } from './metricScope';
 // La logique pure de cette page vit dans `metricsEditor.ts` — déplacée, pas réécrite.
 import {
@@ -125,6 +126,7 @@ const Metrics: React.FC = () => {
   const { toast } = useToast();
   const confirm = useConfirm();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [metrics, setMetrics]           = useState<MetricConfig[]>([]);
   const [metadata, setMetadata]         = useState<TableMetadata>({});
   // Le catalogue partagé (alimenté par le sondage /api/dashboard de Layout) évite une
@@ -389,6 +391,40 @@ const Metrics: React.FC = () => {
   }, [fetchAuditHistory]);
 
   const newerAudit = useMemo(() => newerAuditNote(suggestions, auditHistory), [suggestions, auditHistory]);
+
+  /*
+   * Une file d'échec ouvre l'éditeur pré-rempli, depuis `/dead-letter`.
+   *
+   * Par la query string, comme tout état partageable de cette application, et **une seule fois** :
+   * les paramètres sont retirés de l'URL dès qu'ils ont été lus, sans quoi fermer la modale puis
+   * recharger la page la rouvrirait, et l'écran serait impossible à quitter sans éditer l'adresse.
+   * `replace` plutôt qu'un push, pour que « Précédent » remonte à la file et non à la même page
+   * sans ses paramètres.
+   *
+   * Rien n'est créé : c'est la règle du panneau de propositions, et pour la même raison.
+   */
+  useEffect(() => {
+    const draft = readQueueDraft(searchParams);
+    if (!draft) return;
+    const openFromUrl = () => {
+      setEditingMetric({ ...EMPTY_METRIC, ...queueMetricDraft(draft) });
+      setSelectedTopic(draft.queue);
+      setNameIsAuto(false);
+      setEditorTab('metric');
+      setPreviewResult(null);
+      setSaveError(null);
+      setIsModalOpen(true);
+      setSearchParams(params => {
+        const next = new URLSearchParams(params);
+        next.delete('fromQueue');
+        next.delete('againstSource');
+        return next;
+      }, { replace: true });
+    };
+    /* Les affectations d'état vivent dans `openFromUrl` plutôt qu'au corps de l'effet : c'est
+       ce que `react-hooks/set-state-in-effect` demande, et ça évite une exception à la règle. */
+    openFromUrl();
+  }, [searchParams, setSearchParams]);
 
   const openSuggestion = (suggestion: MetricSuggestion) => {
     const draft = suggestionToDraft(suggestion);

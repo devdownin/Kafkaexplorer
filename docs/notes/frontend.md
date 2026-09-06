@@ -291,11 +291,54 @@ deux pages côte à côte. Dans `components/ui/`, il porte `min-w-6 min-h-6`, et
 l'extraction vaut : sans qu'une ligne du tableau de bord ait été retouchée, ses cibles sous 24 px
 tombent de 5 à 1 et celles de sa palette de commandes de 6 à 2.
 
-L'écran ne demande **pas** qui draine ces files, et c'est une omission délibérée :
-`GET /api/topic/{name}/consumers` balaie les groupes du cluster topic par topic, ce qui est un coût
-tout autre que les deux lectures d'offsets d'ici. Le lien vers l'explorateur de topic, qui porte
-déjà ce panneau, est la réponse tant que personne n'a mesuré ce que coûterait la version
-automatique.
+### La ligne dépliée : de quoi, et par qui
+
+Les deux courbes répondent « ça se remplit » et « à quel taux ». Ce qu'elles ne peuvent pas dire est
+ce sur quoi on agit, et la ligne s'ouvre sur les deux.
+
+**De quoi.** `deadLetterReasons.ts` regroupe les derniers enregistrements par la valeur d'un champ.
+Trois règles, et toutes viennent de ce qu'un échantillon n'est pas une mesure. C'est **vingt
+enregistrements au plus** (`GET /api/topic/{name}`, `latest-offset`), donc la phrase dit « les N
+derniers » et jamais « 40 % des échecs » — vingt, ce n'est pas la fenêtre que les courbes couvrent,
+et les deux portées cohabitent sur le même écran. Le champ est **proposé, jamais deviné en
+silence** : les conventions divergent (`failure_reason` dans le corps, `exception` ou
+`original-topic` en en-tête), le classement met devant ce dont le nom promet une cause, puis ce qui
+*sépare* l'échantillon — mesuré sur une capture, un `event-type` constant gagnait et affichait
+« order.shipped 100 % », exact et sans information — et l'opérateur peut en choisir un autre. Enfin
+un champ **absent** d'un enregistrement compte comme absent, sous son propre libellé et dans le
+dénominateur : sinon un champ porté par deux messages sur vingt donnerait « 100 % de timeouts »,
+c'est-à-dire un décompte juste sur un dénominateur faux, qui est la manière la plus courante de
+mentir avec des chiffres exacts.
+
+**Par qui.** `TopicConsumersPanel`, celui de l'explorateur de topics, monté tel quel — il sépare
+déjà un groupe en retard, un groupe sans membre assigné et un groupe qui ne lit qu'une partie des
+partitions, ce qui est exactement la question ici : une file qui reçoit dix messages par heure et
+qu'un consommateur draine est saine, la même sans membre est une fuite. Le monter a révélé un
+défaut du serveur de capture, pas de l'application : son bouchon omettait `available`, donc le
+panneau lisait `undefined` et affirmait « les groupes n'ont pas pu être lus » là où la vérité était
+« personne ne lit ce topic » — l'inversion précise que ce panneau existe pour éviter. Personne ne
+l'avait vu parce qu'aucune capture n'ouvrait cet onglet. Le bouchon est devenu une fixture nommée,
+donc vérifiée par `check-fixtures.py` dans les deux sens.
+
+**Les deux sont lus à l'ouverture, jamais avec le tableau** — un balayage des groupes et un
+échantillon, contre des offsets pour les courbes — et le panneau est *monté* à l'ouverture plutôt
+que masqué, sinon les lectures se paieraient quand même. Une seule ligne ouverte à la fois, pour la
+même raison. Le dépliant est un bouton propre et non un clic sur la ligne : celle-ci porte déjà
+quatre destinations, et une ligne cliquable par-dessus rend imprévisible ce que fait un clic.
+
+### De la file à l'alerte
+
+`metricFromQueue.ts` ferme la boucle détection → alerte, qui manquait : l'écran repérait la file qui
+se remplit puis laissait réécrire à la main, sur `/metrics`, le rapport qu'on venait de lire. La
+métrique proposée **est** la seconde courbe — `TOPIC_COUNT_DELTA` en `RATIO`, la file à gauche
+parce que `RATIO` divise la gauche par la droite, `countBy: OFFSETS` et `window:
+SINCE_LAST_REFRESH` repris de ce que `MetricSuggestionService` écrit pour ses propres cartes
+d'écart plutôt que rechoisis ici. Elle passe par la query string comme tout état partageable de
+cette application, se lit une fois puis se retire de l'URL (sans quoi fermer la modale et recharger
+la rouvrirait), et **ne pose aucun seuil** : les cartes proposées ailleurs posent des seuils qui
+sont des multiples de quelque chose de mesuré et le disent, or rien ici ne l'a été. Sans source
+appariée le bouton est désactivé et l'explique, plutôt que caché — une commande qui disparaît sans
+un mot se lit comme une fonctionnalité absente.
 
 ## TopicExplorer — Sélection interactive de champs
 

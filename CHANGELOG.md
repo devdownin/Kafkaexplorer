@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The screenshot stub said the consumer groups could not be read** where the truth was that
+  nobody consumes the topic — it omitted `available` from its `TopicConsumers` reply, so the panel
+  read `undefined` and reported a failed read. Exactly the distinction that panel exists to draw,
+  inverted by a missing field. Nothing had shown it because no capture opened that tab. The stub is
+  now a named fixture, so `check-fixtures.py` compares its keys against the interface both ways.
+
 ### Changed
 
 - **The dashboard's sortable headers are now 24 px tall** (WCAG 2.5.8), which they were not, at 18.
@@ -46,6 +54,24 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   cadences and its 30 s floor, and the page states when its figures were read. Both curves are
   keyboard-reachable and open different buckets — the worst arrivals and the worst *rate* are
   rarely the same hour.
+
+  **Opening a row answers the two questions the curves cannot.** *What is arriving* groups the
+  queue's most recent records by a field — `failure_reason` in the body, `exception` or
+  `original-topic` in a header, whichever the producer's convention uses — which is what separates
+  a service outage from a batch of malformed messages. It is a sample and says so: twenty records
+  is not the window the curves cover, and a field absent from a record is counted as absent rather
+  than dropped, so two carriers out of twenty read as 10 % and never as 100 %. *Who drains it*
+  mounts the Topic Explorer's own consumers panel, because a queue taking ten messages an hour with
+  a consumer behind it is healthy and the same queue with no assigned member is a leak. Both are
+  read on open, never with the table: they cost a group sweep and a sample where the curves cost
+  offsets.
+
+  **And a queue can become an alert in one click.** "Alert on this rate" opens the metric editor
+  pre-filled with exactly the second curve — `TOPIC_COUNT_DELTA` in `RATIO`, queue over source,
+  counted from offsets since the previous refresh, the parameters `MetricSuggestionService` already
+  uses for its own gap cards. No threshold is proposed: nothing here was measured over time, and a
+  round number invented at this point is what the suggestion panel refuses to write. Nothing is
+  created either — the editor opens, the operator previews and saves.
 
   Neither costs a new measurement: both series come from the existing
   `GET /api/dashboard/activity`, the queue and its source travelling in the same call.

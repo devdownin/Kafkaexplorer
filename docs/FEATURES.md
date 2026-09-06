@@ -193,4 +193,17 @@ them (dead letters first, retries after), sorts by volume, and says so in their 
   there is one definition of "this is climbing"; what differs is the conclusion drawn from it. A
   topic the broker could not answer for is *not measured*, never *quiet*.
 
+- **Opening a row says what is failing, and who is fixing it.** *What is arriving* groups the
+  queue's most recent records by a field — `failure_reason`, `exception`, `original-topic`,
+  whichever the producer writes — which is what separates a service outage from a batch of
+  malformed messages. It is a sample and says so: twenty records is not the window the curves
+  cover, and a record that does not carry the field is counted as not carrying it, so two out of
+  twenty read as 10 % rather than 100 %. *Who drains it* is the Topic Explorer's consumers panel:
+  a queue taking ten messages an hour with a consumer behind it is healthy, and the same queue with
+  no assigned member is a leak. Both are read when the row opens, never with the table.
+- **A queue becomes an alert in one click.** "Alert on this rate" opens the metric editor
+  pre-filled with the second curve itself — the queue over its source, counted from offsets since
+  the previous refresh. No threshold is proposed, because nothing here has been measured over time
+  and a round number would be an invention; and nothing is created until you preview and save.
+
 ![The Dead Letter & Retry page: three failure queues with their arrivals and the share of their source topic that represents, one of them reporting an ambiguous source rather than guessing](img/dead-letter.png)
