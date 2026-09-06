@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import ErrorBanner from '../components/ErrorBanner';
 import {
@@ -23,9 +23,12 @@ import {
   writeRefreshChoice, type RefreshChoice,
 } from './dashboardRefresh';
 import {
-  activityRequestTopics, assessQueue, describePairing, shareSeries, summarize, supervisionTopics,
-  type SupervisionTopic,
+  assessQueue, describePairing, escalationTargetOf, queueRequestTopics, shareSeries,
+  sourceRequestTopics, summarize, supervisionTopics, type SupervisionTopic,
 } from './deadLetterSupervision';
+import {
+  readScreenState, writeScreenState, type ScreenState, type SortDir, type SortKey,
+} from './deadLetterUrl';
 
 /**
  * Le titre de l'erreur, suivi de son message d'origine quand il ajoute quelque chose : le titre
@@ -41,6 +44,8 @@ const TIMEOUT_MS = 20000;
 const WINDOW_KEY = 'kse:dead-letter-window';
 
 /** La fenêtre par défaut est la journée : une file de rebut se lit sur un cycle d'exploitation. */
+const DEFAULT_WINDOW_ID = ACTIVITY_WINDOWS[1].id;
+
 function readWindow(): ActivityWindow {
   try {
     const stored = localStorage.getItem(WINDOW_KEY);
@@ -51,9 +56,6 @@ function readWindow(): ActivityWindow {
   }
   return ACTIVITY_WINDOWS[1];
 }
-
-type SortKey = 'name' | 'volume' | 'share' | 'size';
-type SortDir = 'asc' | 'desc';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 
@@ -88,11 +90,22 @@ const DeadLetter: React.FC = () => {
   const [activityKey, setActivityKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activityError, setActivityError] = useState<string | null>(null);
-  const [window_, setWindow] = useState<ActivityWindow>(readWindow);
+  /*
+   * L'état de l'écran vit dans l'URL, comme partout ailleurs dans cette application. Ce n'était pas
+   * le cas ici, et le coût tombait au pire moment : pendant un incident, « regarde `orders.DLQ`
+   * sur sept jours » ne pouvait pas s'envoyer en lien, il fallait décrire le chemin. Les réglages
+   * de *lecture* (l'échelle, la cadence) restent dans le stockage local — ce sont des préférences
+   * de la personne, pas de la situation qu'on partage.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const fromUrl = useMemo(() => readScreenState(searchParams), [searchParams]);
+
+  const [window_, setWindow] = useState<ActivityWindow>(() => fromUrl.window ?? readWindow());
   const [scale, setScale] = useState<ActivityScale>(readActivityScale);
-  const [sortKey, setSortKey] = useState<SortKey>('volume');
-  const [sortDir, setSortDir] = useState<SortDir>(NATURAL_DIR.volume);
-  const [filter, setFilter] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>(fromUrl.sortKey ?? 'volume');
+  const [sortDir, setSortDir] = useState<SortDir>(
+    fromUrl.sortDir ?? NATURAL_DIR[fromUrl.sortKey ?? 'volume']);
+  const [filter, setFilter] = useState(fromUrl.filter ?? '');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [refresh, setRefresh] = useState<RefreshChoice>(readRefreshChoice);
@@ -101,7 +114,7 @@ const DeadLetter: React.FC = () => {
    * un échantillon de la file — coûtent autre chose que les offsets des courbes, et deux panneaux
    * ouverts doubleraient ce coût pour une comparaison que personne n'a demandée.
    */
-  const [opened, setOpened] = useState<string | null>(null);
+  const [opened, setOpened] = useState<string | null>(fromUrl.opened ?? null);
   /** L'instant de la dernière réponse : c'est lui qui date les chiffres, pas le rendu. */
   const [fetchedAt, setFetchedAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
@@ -130,11 +143,18 @@ const DeadLetter: React.FC = () => {
   );
 
   /*
-   * Les séries. La liste part *par paires* — voir `activityRequestTopics` : le serveur coupe à
-   * `explorer.activity-max-topics` en gardant le début, et une liste groupée par nature perdrait
-   * toutes les sources d'un coup, c'est-à-dire la moitié de l'écran.
+   * **Deux demandes, et c'est le correctif d'un défaut d'échelle.** Files et sources partaient
+   * entrelacées dans un seul appel, ce qui doublait la liste ; le contrôleur coupe à
+   * `explorer.activity-max-topics` (100) en gardant le début, donc au-delà d'une cinquantaine de
+   * files la coupe mordait sur des lignes réelles. Elles n'avaient jamais de courbe, le tri par
+   * volume les classait au fond faute de mesure, et l'écran affirmait un classement qu'il n'avait
+   * pas mesuré.
+   *
+   * Les files seules tiennent maintenant jusqu'à cent, ce qui couvre les tuiles et le classement
+   * pour tout cluster réaliste ; les sources suivent dans un second appel, pour les lignes
+   * affichées seulement, puisque la seconde courbe n'est tracée que là.
    */
-  const requested = useMemo(() => activityRequestTopics(rows), [rows]);
+  const requested = useMemo(() => queueRequestTopics(rows), [rows]);
   const key = `${window_.id}|${requested.join(',')}`;
 
   useEffect(() => {
@@ -166,6 +186,26 @@ const DeadLetter: React.FC = () => {
   );
   const seriesLoading = requested.length > 0 && activityKey !== key;
 
+  /*
+   * Les séries de sources, accumulées et **jamais oubliées** tant que la fenêtre ne change pas.
+   * C'est ce cliquet qui rend le procédé stable : trier par taux change la page affichée, la page
+   * demande de nouvelles sources, et les sources changent le taux donc le tri. Comme la
+   * connaissance ne fait que croître, la boucle converge au lieu d'osciller entre deux pages.
+   */
+  const [sourceCache, setSourceCache] = useState<{ key: string; topics: Record<string, TopicActivity> }>(
+    () => ({ key: '', topics: {} }));
+  /*
+   * Le cache porte la question à laquelle il répond. Le vider dans un effet quand la fenêtre change
+   * marcherait aussi, mais poserait un état depuis un effet — ce que `react-hooks/set-state-in-effect`
+   * interdit ici à raison : une clé comparée au rendu dit la même chose sans rendu supplémentaire,
+   * et sans la fenêtre où le cache et la fenêtre se contredisent.
+   */
+  const sourceKey = `${window_.id}|${reloadToken}`;
+  const sourceSeries = useMemo(
+    () => (sourceCache.key === sourceKey ? sourceCache.topics : {}),
+    [sourceCache, sourceKey],
+  );
+
   const summary = useMemo(() => summarize(rows, series), [rows, series]);
   const sizes = useMemo(() => catalogue?.sizes ?? {}, [catalogue]);
 
@@ -173,10 +213,10 @@ const DeadLetter: React.FC = () => {
     const out: Record<string, ReturnType<typeof shareSeries>> = {};
     for (const row of rows) {
       const source = row.pairing.source;
-      out[row.topic] = shareSeries(series[row.topic], source ? series[source] : null);
+      out[row.topic] = shareSeries(series[row.topic], source ? sourceSeries[source] : null);
     }
     return out;
-  }, [rows, series]);
+  }, [rows, series, sourceSeries]);
 
   /*
    * Le tri par défaut est le volume, pas le nom : sur cet écran on cherche ce qui se remplit, et
@@ -228,6 +268,59 @@ const DeadLetter: React.FC = () => {
     [matching, page, pageSize],
   );
 
+  /*
+   * Le second appel : les sources des lignes **affichées**, et seulement celles qu'on n'a pas déjà.
+   * La seconde courbe n'est tracée que sur les lignes visibles, donc mesurer la source des autres
+   * paierait un aller-retour au broker pour un dessin que personne ne regarde.
+   */
+  const missingSources = useMemo(
+    () => sourceRequestTopics(pageRows, new Set(Object.keys(sourceSeries))),
+    [pageRows, sourceSeries],
+  );
+
+  useEffect(() => {
+    if (missingSources.length === 0) return;
+    const controller = new AbortController();
+    axios.get<TopicActivityResponse>('/api/dashboard/activity', {
+      params: {
+        topics: missingSources.join(','),
+        windowMs: window_.windowMs,
+        buckets: window_.buckets,
+      },
+      signal: controller.signal,
+      timeout: TIMEOUT_MS,
+    })
+      .then(response => setSourceCache(current => ({
+        key: sourceKey,
+        topics: current.key === sourceKey
+          ? { ...current.topics, ...response.data.topics }
+          : response.data.topics,
+      })))
+      .catch(e => {
+        if (axios.isCancel(e)) return;
+        /*
+         * Silencieux à dessein, et c'est le seul endroit de cet écran qui le soit : une source
+         * qu'on n'a pas pu lire est déjà dite par la seconde courbe elle-même, qui affiche « not
+         * comparable » avec la raison. Une bannière en plus ferait de l'échec d'un dessin
+         * secondaire un incident de page.
+         */
+      });
+    return () => controller.abort();
+  }, [missingSources, sourceKey, window_.windowMs, window_.buckets]);
+
+  /*
+   * L'escalade d'une reprise : la file morte qu'elle alimente, si le cluster en a une. Elle décide
+   * du ton du verdict — une reprise qui se remplit et dont la file morte reste vide fait son
+   * travail, l'annoncer en orange comme un rebut apprend à ignorer la couleur.
+   */
+  const escalationOf = useCallback(
+    (row: SupervisionTopic) => {
+      const target = escalationTargetOf(row, rows);
+      return target ? series[target] ?? null : null;
+    },
+    [rows, series],
+  );
+
   /** La bascule : la colonne active s'inverse, une autre prend son sens naturel. */
   const toggleSort = useCallback((key: SortKey) => {
     setSortKey(current => {
@@ -237,6 +330,27 @@ const DeadLetter: React.FC = () => {
     });
     setPage(0);
   }, []);
+
+  /*
+   * L'URL suit l'écran, en `replace` : chaque frappe dans le filtre pousserait sinon une entrée
+   * d'historique, et « Précédent » deviendrait un correcteur de saisie au lieu de ramener à la
+   * page d'où l'on vient.
+   */
+  useEffect(() => {
+    const wanted: ScreenState = {
+      window: window_,
+      filter,
+      sortKey,
+      sortDir,
+      opened: opened ?? undefined,
+    };
+    setSearchParams(
+      current => writeScreenState(current, wanted, {
+        window: DEFAULT_WINDOW_ID, sortKey: 'volume', sortDir: NATURAL_DIR.volume,
+      }),
+      { replace: true },
+    );
+  }, [window_, filter, sortKey, sortDir, opened, setSearchParams]);
 
   const changeWindow = useCallback((id: string) => {
     const found = ACTIVITY_WINDOWS.find(w => w.id === id);
@@ -468,6 +582,7 @@ const DeadLetter: React.FC = () => {
                     key={row.topic}
                     row={row}
                     activity={series[row.topic]}
+                    escalation={escalationOf(row)}
                     share={shares[row.topic]}
                     size={sizes[row.topic]}
                     loading={seriesLoading}
@@ -540,12 +655,14 @@ interface QueueRowProps {
   scale: ActivityScale;
   opened: boolean;
   onToggle: () => void;
+  /** La série de la file morte que cette reprise alimente, quand il y en a une. */
+  escalation?: TopicActivity | null;
 }
 
 const QueueRow: React.FC<QueueRowProps> = ({
-  row, activity, share, size, loading, scale, opened, onToggle,
+  row, activity, share, size, loading, scale, opened, onToggle, escalation,
 }) => {
-  const verdict = assessQueue(activity, row.kind);
+  const verdict = assessQueue(activity, row.kind, escalation);
   const pairing = describePairing(row.pairing);
   const source = row.pairing.source;
   const panelId = `queue-detail-${row.topic}`;

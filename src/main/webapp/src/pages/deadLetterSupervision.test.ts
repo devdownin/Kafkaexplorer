@@ -12,8 +12,9 @@
 import { describe, it, expect } from 'vitest';
 import type { TopicActivity } from '../api/types';
 import {
-  activityRequestTopics, assessQueue, describePairing, describeShare, formatPercent, resolveSource,
-  shareSeries, shareShape, SHARE_SCALE_FLOOR, sourceCandidates, summarize, supervisionTopics,
+  assessQueue, describePairing, describeShare, escalationTargetOf, formatPercent,
+  queueRequestTopics, resolveSource, shareSeries, shareShape, SHARE_SCALE_FLOOR, sourceCandidates,
+  sourceRequestTopics, summarize, supervisionTopics,
 } from './deadLetterSupervision';
 
 function activity(topic: string, counts: number[], extra: Partial<TopicActivity> = {}): TopicActivity {
@@ -134,15 +135,60 @@ describe('supervisionTopics', () => {
   });
 });
 
-describe('activityRequestTopics', () => {
-  it('interleaves each queue with its source so a truncation drops whole rows', () => {
+describe('queueRequestTopics / sourceRequestTopics', () => {
+  it('asks for the queues alone, so the server cap covers twice as many rows', () => {
+    /*
+     * Files et sources partaient entrelacées, ce qui doublait la liste : au-delà d'une
+     * cinquantaine de files la coupe du serveur mordait sur des lignes réelles, qui n'avaient
+     * alors jamais de courbe et que le tri par volume classait au fond faute de mesure.
+     */
     const rows = supervisionTopics(['a', 'a.DLQ', 'b', 'b.DLQ']);
-    expect(activityRequestTopics(rows)).toEqual(['a.DLQ', 'a', 'b.DLQ', 'b']);
+    expect(queueRequestTopics(rows)).toEqual(['a.DLQ', 'b.DLQ']);
   });
 
-  it('asks for a shared source once', () => {
-    const rows = supervisionTopics(['a', 'a.DLQ', 'a.retry.1']);
-    expect(activityRequestTopics(rows)).toEqual(['a.DLQ', 'a', 'a.retry.1']);
+  it('asks only for the sources of the rows on screen, and only once', () => {
+    const rows = supervisionTopics(['a', 'a.DLQ', 'b', 'b.DLQ', 'a.retry.1']);
+    const visible = rows.filter(r => r.topic !== 'b.DLQ');
+    expect(sourceRequestTopics(visible, new Set())).toEqual(['a']);
+    expect(sourceRequestTopics(visible, new Set(['a']))).toEqual([]);
+  });
+});
+
+describe('escalationTargetOf', () => {
+  const rows = supervisionTopics([
+    'orders', 'orders.retry.5m', 'orders.retry.5m.DLQ', 'payments.DLQ', 'payments']);
+
+  it('reads the pairing backwards to find where a retry gives up', () => {
+    const retry = rows.find(r => r.topic === 'orders.retry.5m')!;
+    expect(escalationTargetOf(retry, rows)).toBe('orders.retry.5m.DLQ');
+  });
+
+  it('is nothing for a dead-letter queue — it is already the end of the line', () => {
+    const dlq = rows.find(r => r.topic === 'payments.DLQ')!;
+    expect(escalationTargetOf(dlq, rows)).toBeNull();
+  });
+
+  it('finds the sibling dead letter of the same flow — the convention the demo actually uses', () => {
+    /*
+     * Spring Kafka écrit `orders.2.dlt` en frère de `orders.2.retry.5m`, pas en enfant : la règle
+     * du chaînage seule ne se déclenchait jamais sur le jeu que ce dépôt sème lui-même.
+     */
+    const demo = supervisionTopics([
+      'demo.orders.2.validated', 'demo.orders.2.retry.5m', 'demo.orders.2.dlt']);
+    const retry = demo.find(r => r.topic === 'demo.orders.2.retry.5m')!;
+    expect(escalationTargetOf(retry, demo)).toBe('demo.orders.2.dlt');
+  });
+
+  it('refuses to choose between two dead letters of the same flow', () => {
+    // L'inférence par le frère est plus faible que le chaînage : elle exige l'unicité.
+    const two = supervisionTopics(['a.validated', 'a.retry.1', 'a.dlt', 'a.dlq']);
+    const retry = two.find(r => r.topic === 'a.retry.1')!;
+    expect(escalationTargetOf(retry, two)).toBeNull();
+  });
+
+  it('is nothing for a retry the cluster gives no dead letter for', () => {
+    const alone = supervisionTopics(['orders', 'orders.retry.5m']);
+    expect(escalationTargetOf(alone[0], alone)).toBeNull();
   });
 });
 
@@ -231,6 +277,34 @@ describe('assessQueue', () => {
     const surging = assessQueue(activity('a.DLQ', [1, 1, 1, 1, 1, 40]), 'DLQ');
     expect(surging.state).toBe('surging');
     expect(surging.tone).toBe('error');
+  });
+
+  it('reads a retry that escalates nothing as doing its job, not as a loss', () => {
+    /*
+     * Une reprise n'est pas une file de rebut : elle se remplit *et* se vide, et c'est le
+     * fonctionnement nominal. L'annoncer en orange comme un rebut apprend à ignorer la couleur.
+     */
+    const busy = activity('orders.retry.5m', [3, 3, 3]);
+    const empty = activity('orders.retry.5m.DLQ', [0, 0, 0]);
+    const verdict = assessQueue(busy, 'RETRY', empty);
+    expect(verdict).toMatchObject({ label: 'retrying', tone: 'secondary' });
+    expect(verdict.detail).toContain('doing its job');
+  });
+
+  it('keeps the warning when the retry does escalate, and says how many', () => {
+    const busy = activity('orders.retry.5m', [3, 3, 3]);
+    const escalated = activity('orders.retry.5m.DLQ', [0, 1, 1]);
+    const verdict = assessQueue(busy, 'RETRY', escalated);
+    expect(verdict.tone).toBe('warning');
+    expect(verdict.detail).toContain('2 of them escalated to orders.retry.5m.DLQ');
+  });
+
+  it('does not soften a retry whose escalation could not be measured', () => {
+    // Ne pas savoir n'est pas une bonne nouvelle.
+    const busy = activity('orders.retry.5m', [3, 3, 3]);
+    const unreadable = activity('x.DLQ', [], { available: false, note: 'no leader.' });
+    expect(assessQueue(busy, 'RETRY', unreadable).tone).toBe('warning');
+    expect(assessQueue(busy, 'RETRY', null).tone).toBe('warning');
   });
 
   it('never turns an unread topic into a quiet one', () => {

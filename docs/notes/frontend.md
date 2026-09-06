@@ -291,6 +291,66 @@ deux pages côte à côte. Dans `components/ui/`, il porte `min-w-6 min-h-6`, et
 l'extraction vaut : sans qu'une ligne du tableau de bord ait été retouchée, ses cibles sous 24 px
 tombent de 5 à 1 et celles de sa palette de commandes de 6 à 2.
 
+### Deux demandes, parce qu'une seule mentait à grande échelle
+
+Les deux séries partaient dans un seul appel, la file et sa source entrelacées — l'entrelacement
+servait à ce que la coupe du serveur retire des lignes entières plutôt que toutes les sources d'un
+coup. Il restait que la liste faisait **deux fois** le nombre de lignes, et que le contrôleur coupe
+à `explorer.activity-max-topics` (100 par défaut) en gardant le début. Au-delà d'une cinquantaine
+de files, la coupe mordait donc sur des lignes réelles : elles n'avaient jamais de courbe, le tri
+par volume les classait au fond faute de mesure, et l'écran présentait « du plus rempli au moins
+rempli » comme un fait sur le cluster alors que ce n'était vrai que de la partie mesurée. C'est
+exactement ce que cette page refuse partout ailleurs, commis par sa propre mécanique de lecture.
+
+Les files partent seules (`queueRequestTopics`) : le même plafond couvre deux fois plus de lignes,
+ce qui suffit aux tuiles et au classement pour tout cluster réaliste. Les sources suivent dans un
+second appel (`sourceRequestTopics`), **pour les lignes affichées seulement**, puisque la seconde
+courbe n'est tracée que là. Ce qui a été lu n'est pas relu : le cache porte la fenêtre à laquelle il
+répond, et c'est ce cliquet qui rend le procédé stable — trier par taux change la page, la page
+demande des sources, les sources changent le taux donc le tri ; comme la connaissance ne fait que
+croître, la boucle converge au lieu d'osciller entre deux pages. L'échec du second appel est
+**silencieux**, seul endroit de l'écran qui le soit : une source illisible est déjà dite par la
+courbe elle-même, qui affiche « not comparable » avec la raison, et une bannière ferait de l'échec
+d'un dessin secondaire un incident de page.
+
+### L'état de l'écran vit dans l'URL
+
+`deadLetterUrl.ts`. Toutes les pages de cette application font circuler leur état par la query
+string — `capture.mjs` s'appuie explicitement là-dessus pour atteindre chaque écran sans cliquer —
+et celle-ci était la seule exception. Le coût tombait au pire moment : pendant un incident,
+« regarde `orders.DLQ` sur sept jours » ne pouvait pas s'envoyer, il fallait décrire le chemin, sur
+une page dont le tri par défaut dépend de mesures qui changent d'une minute à l'autre — « la
+troisième ligne » n'y désigne rien de stable.
+
+Trois décisions. Ce qui est **partagé** est la situation (fenêtre, filtre, tri, ligne ouverte) ;
+l'échelle de la courbe et la cadence de rafraîchissement restent locales, parce que ce sont des
+préférences de lecture et que les imposer à qui reçoit le lien changerait ses réglages sans le lui
+demander. Seul ce qui **s'écarte du défaut** est écrit, sinon la barre d'adresse se remplit de
+`?sort=volume&dir=desc&q=` dès l'ouverture pour une information nulle. Et une valeur inconnue est
+**ignorée**, jamais appliquée ni signalée : une URL est du texte qu'un tiers a pu tronquer, et un
+identifiant de fenêtre retiré d'une version à l'autre ne doit pas produire un écran vide — la même
+règle que `readActivityChoice` applique au stockage local.
+
+### Une reprise n'est pas une file de rebut
+
+Le bandeau dit que le trafic ici est une perte. C'est vrai d'un `.DLQ` et faux d'un `.retry` : une
+reprise qui se remplit *et se vide* est un système qui fait exactement son travail — le message a
+échoué une fois, il sera rejoué, et la plupart passeront. Ce qui est une perte, c'est ce qui **sort
+de la reprise par le bas**. Une reprise annoncée en orange comme un rebut apprend à ignorer la
+couleur, et une couleur qu'on ignore ne sert plus le jour où elle compte.
+
+`escalationTargetOf` trouve la file morte où cette reprise renonce, sans rien demander de plus au
+cluster : c'est l'appariement déjà calculé, lu dans l'autre sens. Deux règles, et la seconde vient
+d'une mesure. Le **chaînage** d'abord — `orders.retry.5m.DLQ` a pour source `orders.retry.5m` — le
+cas sûr, puisque le nom dit de quoi la file morte recueille les échecs. Puis la **sœur du même
+flux**, parce que la première seule ne se déclenchait jamais sur le jeu de démonstration : Spring
+Kafka nomme `orders.2.dlt` en frère de `orders.2.retry.5m`, pas en enfant, et les deux sont des
+sorties de `orders.2.validated`. Même leçon que pour l'appariement lui-même, une version plus loin —
+une règle juste sur la convention qu'on avait en tête et muette sur celle que les producteurs
+écrivent. L'inférence par la sœur exige l'**unicité** : deux files mortes sous la même source, et on
+ne sait pas laquelle recueille cette reprise. Une escalade qu'on n'a pas pu mesurer n'adoucit rien —
+ne pas savoir n'est pas une bonne nouvelle.
+
 ### La ligne dépliée : de quoi, et par qui
 
 Les deux courbes répondent « ça se remplit » et « à quel taux ». Ce qu'elles ne peuvent pas dire est

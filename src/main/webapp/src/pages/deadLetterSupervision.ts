@@ -208,20 +208,41 @@ export function supervisionTopics(topics: string[]): SupervisionTopic[] {
 }
 
 /**
- * Les topics à demander à `/api/dashboard/activity`, **par paires adjacentes**.
+ * Les files elles-mêmes, dans l'ordre de l'écran — la **première** des deux demandes.
  *
- * Ce n'est pas cosmétique. Le contrôleur coupe la liste à `explorer.activity-max-topics` en
- * gardant les premiers ; une liste qui grouperait toutes les files puis toutes les sources
- * perdrait, une fois coupée, *toutes* les sources d'un coup — donc la seconde courbe de chaque
- * ligne, sur un écran où elle est la moitié de l'intérêt. Paire par paire, la coupe retire des
- * lignes entières et le serveur les nomme dans ses `warnings`.
+ * Elles étaient demandées entrelacées avec leurs sources, ce qui doublait la liste, et le
+ * contrôleur coupe à `explorer.activity-max-topics` (100 par défaut) en gardant le début. Au-delà
+ * d'une cinquantaine de files, la coupe mordait donc sur des lignes réelles : elles n'avaient
+ * jamais de courbe, le tri par volume les classait au fond faute de mesure, et l'écran affirmait
+ * ainsi un classement « du plus rempli au moins rempli » qu'il n'avait pas mesuré — la chose
+ * précise que cette page refuse partout ailleurs.
+ *
+ * Séparer les deux demandes double la portée pour le même plafond : les files seules tiennent
+ * jusqu'à cent, ce qui couvre les tuiles du haut et le classement pour tout cluster réaliste. Les
+ * sources suivent, à part, et seulement pour ce qui est affiché — voir `sourceRequestTopics`.
  */
-export function activityRequestTopics(rows: SupervisionTopic[]): string[] {
+export function queueRequestTopics(rows: SupervisionTopic[]): string[] {
   const out: string[] = [];
-  for (const row of rows) {
-    if (!out.includes(row.topic)) out.push(row.topic);
+  for (const row of rows) if (!out.includes(row.topic)) out.push(row.topic);
+  return out;
+}
+
+/**
+ * Les sources à demander, **pour les lignes affichées seulement** et sans celles déjà connues.
+ *
+ * La seconde courbe n'est tracée que sur les lignes visibles, donc mesurer la source des autres
+ * serait payer un aller-retour au broker pour un dessin que personne ne regarde. Ce qui a déjà été
+ * lu n'est pas redemandé : la connaissance ne fait que croître au fil de la pagination, ce qui est
+ * ce qui rend le procédé stable — trier par taux change la page, la page demande des sources, les
+ * sources changent le tri, et sans ce cliquet la boucle pourrait osciller entre deux pages.
+ */
+export function sourceRequestTopics(
+  visible: SupervisionTopic[], known: ReadonlySet<string>,
+): string[] {
+  const out: string[] = [];
+  for (const row of visible) {
     const source = row.pairing.source;
-    if (source && !out.includes(source)) out.push(source);
+    if (source && !known.has(source) && !out.includes(source)) out.push(source);
   }
   return out;
 }
@@ -258,6 +279,47 @@ export function describePairing(pairing: SourcePairing): { label: string; detail
           : 'The name carries no source to derive, so there is nothing to compute a share against.',
       };
   }
+}
+
+/**
+ * La file morte dans laquelle cette reprise se déverse quand elle renonce, si le cluster en a une.
+ *
+ * **Une reprise n'est pas une file de rebut, et l'écran les traitait pareil.** Le bandeau dit que
+ * le trafic ici est une perte : c'est vrai d'un `.DLQ`, faux d'un `.retry`. Une reprise qui se
+ * remplit *et se vide* est un système qui fait exactement son travail — le message a échoué une
+ * fois, il sera rejoué, et la plupart passeront. Ce qui est une perte, c'est ce qui **sort** de la
+ * reprise par le bas : l'escalade vers la file morte.
+ *
+ * Elle se déduit de l'appariement déjà calculé, lu dans l'autre sens : `orders.retry.5m.DLQ` a
+ * pour source `orders.retry.5m`, donc c'est l'escalade de cette reprise. Rien n'est deviné et rien
+ * n'est demandé au cluster en plus.
+ */
+export function escalationTargetOf(
+  row: SupervisionTopic, rows: readonly SupervisionTopic[],
+): string | null {
+  if (row.kind !== 'RETRY') return null;
+
+  // Chaînage explicite : `orders.retry.5m.DLQ` a pour source `orders.retry.5m`. Le cas le plus
+  // sûr, puisque le nom de la file morte dit de quoi elle recueille les échecs.
+  const chained = rows.find(other => other.kind !== 'RETRY' && other.pairing.source === row.topic);
+  if (chained) return chained.topic;
+
+  /*
+   * **Sinon, la file morte qui sort du même flux.** Mesuré sur le jeu de démonstration, où la
+   * règle précédente seule ne se déclenchait jamais : Spring Kafka nomme `orders.2.dlt` en *frère*
+   * de `orders.2.retry.5m`, pas en enfant — les deux sont des sorties de `orders.2.validated`, et
+   * c'est l'appariement déjà calculé qui le dit. Même leçon que pour l'appariement lui-même : une
+   * règle juste sur la convention qu'on avait en tête et muette sur celle que les producteurs
+   * écrivent vraiment.
+   *
+   * L'inférence est plus faible que le chaînage, donc elle exige l'**unicité** : deux files mortes
+   * sous la même source, et on ne sait pas laquelle recueille cette reprise.
+   */
+  const source = row.pairing.source;
+  if (!source) return null;
+  const siblings = rows.filter(other =>
+    other.kind !== 'RETRY' && other.pairing.source === source);
+  return siblings.length === 1 ? siblings[0].topic : null;
 }
 
 // ── La part du trafic qui échoue ─────────────────────────────────────────────
@@ -482,7 +544,7 @@ export interface DeadLetterVerdict {
   state: DeadLetterState;
   /** Le libellé du badge. */
   label: string;
-  tone: 'neutral' | 'success' | 'warning' | 'error';
+  tone: 'neutral' | 'secondary' | 'success' | 'warning' | 'error';
   /** La phrase complète, pour l'infobulle et l'énoncé accessible. */
   detail: string;
 }
@@ -495,7 +557,15 @@ export interface DeadLetterVerdict {
  * elles dériveraient. Ce qui change est la conclusion qu'on en tire, pas la mesure.
  */
 export function assessQueue(
-  activity: TopicActivity | null | undefined, kind: DeadLetterKind,
+  activity: TopicActivity | null | undefined,
+  kind: DeadLetterKind,
+  /**
+   * Ce que l'escalade de cette reprise a reçu sur la même fenêtre, quand une escalade existe et
+   * qu'elle a pu être mesurée. `undefined` veut dire « pas d'escalade connue », ce qui n'est pas
+   * la même chose que `total: 0` — une reprise sans file morte identifiée n'est pas une reprise
+   * qui n'en perd aucun.
+   */
+  escalation?: TopicActivity | null,
 ): DeadLetterVerdict {
   const what = kind === 'RETRY' ? 'retries' : 'dead letters';
   if (!activity || !activity.available) {
@@ -515,20 +585,42 @@ export function assessQueue(
     };
   }
   const trend = detectTrend(activity);
+  /*
+   * Le ton d'une reprise se lit à son escalade, pas à son volume. Une reprise qui reçoit et dont
+   * la file morte reste vide a rattrapé ce qui lui est passé par les mains, ce qui est le
+   * fonctionnement nominal ; l'annoncer en orange comme un rebut apprend à ignorer la couleur, et
+   * une couleur qu'on ignore ne sert plus le jour où elle compte. Une escalade inconnue ne bénéficie
+   * pas de l'adoucissement : ne pas savoir n'est pas une bonne nouvelle.
+   */
+  const contained = kind === 'RETRY' && escalation?.available === true && escalation.total === 0;
+  const escalated = escalation?.available === true && escalation.total > 0
+    ? ` ${escalation.total.toLocaleString()} of them escalated to ${escalation.topic}.`
+    : '';
+
   if (trend && trend.direction === 'up') {
     return {
       state: 'surging',
       label: 'surging',
       tone: 'error',
       detail: `${activity.total.toLocaleString()} ${what} over the window, and the last bucket runs `
-        + `${Math.round(trend.ratio * 10) / 10}× the window's median — this is filling up right now.`,
+        + `${Math.round(trend.ratio * 10) / 10}× the window's median — this is filling up right now.${escalated}`,
+    };
+  }
+  if (contained) {
+    return {
+      state: 'receiving',
+      label: 'retrying',
+      tone: 'secondary',
+      detail: `${activity.total.toLocaleString()} retries over the window, and nothing reached `
+        + `${escalation.topic}. A retry queue that fills and drains is doing its job — what would be `
+        + 'a loss is what escalates out of it.',
     };
   }
   return {
     state: 'receiving',
     label: 'receiving',
     tone: 'warning',
-    detail: `${activity.total.toLocaleString()} ${what} over the window.`,
+    detail: `${activity.total.toLocaleString()} ${what} over the window.${escalated}`,
   };
 }
 
