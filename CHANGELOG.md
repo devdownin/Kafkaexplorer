@@ -20,52 +20,6 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
-
-- **The Dead Letter screen ranked queues it had not measured.** Its two series travelled in one
-  call, queue and source interleaved, so the list was twice the number of rows; the server caps a
-  request at `explorer.activity-max-topics` (100) keeping the head, so past about fifty queues the
-  cut fell on real rows. Those rows never got a curve, the volume sort put them last for want of a
-  measurement, and the screen presented "most filled first" as a fact about the cluster when it was
-  only true of the measured part. The queues now travel alone — the same cap covers twice as many
-  rows — and the sources follow in a second call, for the rows on screen only, since that is where
-  the second curve is drawn. What has been read is not read again, which is what keeps the loop
-  (sorting by rate changes the page, the page fetches sources, the sources change the rate) from
-  oscillating.
-
-### Added
-
-- **The Dead Letter screen puts its state in the URL** — window, filter, sort and the opened row —
-  like every other page here. It was the one exception, and the cost landed at the worst moment:
-  during an incident, "look at `orders.DLQ` over seven days" could not be sent as a link. Reading
-  preferences (curve scale, refresh cadence) deliberately stay in local storage: they belong to the
-  person, not to the situation being shared. Only what departs from the default is written, so the
-  address bar stays readable.
-- **A retry queue is no longer read as a dead-letter queue.** A retry that fills *and drains* is a
-  system doing its job — what is a loss is what escalates out of it. The verdict now takes the
-  escalation into account: a retry whose dead letter stayed empty reads as *retrying* rather than as
-  a warning, and one that did escalate says how many and to where. The escalation target is deduced
-  from the pairing already computed, either by chaining (`orders.retry.5m.DLQ`) or, where the
-  producer names siblings rather than children as Spring Kafka does (`orders.2.dlt` beside
-  `orders.2.retry.5m`), by the dead letter that shares the retry's source — and only when it is
-  unique, since two of them mean nobody knows which.
-
-### Fixed
-
-- **The screenshot stub said the consumer groups could not be read** where the truth was that
-  nobody consumes the topic — it omitted `available` from its `TopicConsumers` reply, so the panel
-  read `undefined` and reported a failed read. Exactly the distinction that panel exists to draw,
-  inverted by a missing field. Nothing had shown it because no capture opened that tab. The stub is
-  now a named fixture, so `check-fixtures.py` compares its keys against the interface both ways.
-
-### Changed
-
-- **The dashboard's sortable headers are now 24 px tall** (WCAG 2.5.8), which they were not, at 18.
-  Nothing on that page was edited: `SortButton` lived inside `Dashboard.tsx`, and moving it to
-  `components/ui/` — because a second screen needed to sort — fixed it for both at once. Measured
-  by `layout-probe.mjs`: the dashboard falls from 5 undersized targets to 1, its command palette
-  from 6 to 2, and both budgets are lowered to match.
-
 ### Added
 
 - **A Dead Letter & Retry screen** (`/dead-letter`), with two curves per queue. The dashboard
@@ -79,11 +33,36 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     the failure rate. Forty failures an hour is a catastrophe on a fifty-message-an-hour flow and
     a rounding error on a busy one; an absolute count cannot tell you which.
 
+  Neither costs a new measurement: both series come from the existing
+  `GET /api/dashboard/activity`. The queues travel in one call and the sources in a second, for the
+  rows on screen only — that endpoint measures at most `explorer.activity-max-topics` (100) per
+  request, so asking for both at once would halve how many queues a cluster can rank, and rows past
+  the cut would carry no curve while the volume sort quietly put them last.
+
+  The source is derived from the queue's name and kept only when the cluster really has that
+  topic — exactly (`orders.DLQ` → `orders`) or, where a step-numbered convention makes the bare
+  prefix a name nothing carries, by inferring the one non-queue topic under it
+  (`demo.orders.2.dlt` → `demo.orders.2.validated`), which the screen labels as inferred. Where
+  several topics sit under the prefix it names them and pairs nothing, rather than computing a
+  rate against half the traffic. A bucket whose source produced nothing is drawn as a hole and not
+  as zero, which would claim nothing failed where the truth is that nothing was in flight.
+
+  **A retry queue is not read as a dead-letter queue.** A retry that fills *and drains* is a system
+  doing its job — what is a loss is what escalates out of it — so a retry whose dead letter stayed
+  empty reads as *retrying* rather than as a warning, and one that did escalate says how many and
+  to where. The escalation target comes from the pairing already computed, by chaining
+  (`orders.retry.5m.DLQ`) or, where the producer names siblings rather than children as Spring
+  Kafka does (`orders.2.dlt` beside `orders.2.retry.5m`), by the dead letter that shares the
+  retry's source — and only when it is unique, since two of them mean nobody knows which.
+
   The table sorts by volume (reversible, and the active column says which way), filters by queue
   or source name, and paginates past 25 rows; an auto-refresh selector reuses the dashboard's
   cadences and its 30 s floor, and the page states when its figures were read. Both curves are
   keyboard-reachable and open different buckets — the worst arrivals and the worst *rate* are
-  rarely the same hour.
+  rarely the same hour. **The screen state travels in the URL** — window, filter, sort, opened
+  row — so "look at `orders.DLQ` over seven days" is a link you can send during an incident;
+  reading preferences (curve scale, refresh cadence) stay in local storage, because they belong to
+  the person rather than to the situation being shared.
 
   **Opening a row answers the two questions the curves cannot.** *What is arriving* groups the
   queue's most recent records by a field — `failure_reason` in the body, `exception` or
@@ -103,15 +82,21 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   round number invented at this point is what the suggestion panel refuses to write. Nothing is
   created either — the editor opens, the operator previews and saves.
 
-  Neither costs a new measurement: both series come from the existing
-  `GET /api/dashboard/activity`, the queue and its source travelling in the same call.
-  The source is derived from the queue's name and kept only when the cluster really has that
-  topic — exactly (`orders.DLQ` → `orders`) or, where a step-numbered convention makes the bare
-  prefix a name nothing carries, by inferring the one non-queue topic under it
-  (`demo.orders.2.dlt` → `demo.orders.2.validated`), which the screen labels as inferred. Where
-  several topics sit under the prefix it names them and pairs nothing, rather than computing a
-  rate against half the traffic. A bucket whose source produced nothing is drawn as a hole and
-  not as zero, which would claim nothing failed where the truth is that nothing was in flight.
+### Changed
+
+- **The dashboard's sortable headers are now 24 px tall** (WCAG 2.5.8), which they were not, at 18.
+  Nothing on that page was edited: `SortButton` lived inside `Dashboard.tsx`, and moving it to
+  `components/ui/` — because a second screen needed to sort — fixed it for both at once. Measured
+  by `layout-probe.mjs`: the dashboard falls from 5 undersized targets to 1, its command palette
+  from 6 to 2, and both budgets are lowered to match.
+
+### Fixed
+
+- **The screenshot stub said the consumer groups could not be read** where the truth was that
+  nobody consumes the topic — it omitted `available` from its `TopicConsumers` reply, so the panel
+  read `undefined` and reported a failed read. Exactly the distinction that panel exists to draw,
+  inverted by a missing field. Nothing had shown it because no capture opened that tab. The stub is
+  now a named fixture, so `check-fixtures.py` compares its keys against the interface both ways.
 
 ## [1.9.13] — 2026-09-05
 
