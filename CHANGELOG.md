@@ -22,6 +22,36 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The Dead Letter screen ranked queues it had not measured.** Its two series travelled in one
+  call, queue and source interleaved, so the list was twice the number of rows; the server caps a
+  request at `explorer.activity-max-topics` (100) keeping the head, so past about fifty queues the
+  cut fell on real rows. Those rows never got a curve, the volume sort put them last for want of a
+  measurement, and the screen presented "most filled first" as a fact about the cluster when it was
+  only true of the measured part. The queues now travel alone — the same cap covers twice as many
+  rows — and the sources follow in a second call, for the rows on screen only, since that is where
+  the second curve is drawn. What has been read is not read again, which is what keeps the loop
+  (sorting by rate changes the page, the page fetches sources, the sources change the rate) from
+  oscillating.
+
+### Added
+
+- **The Dead Letter screen puts its state in the URL** — window, filter, sort and the opened row —
+  like every other page here. It was the one exception, and the cost landed at the worst moment:
+  during an incident, "look at `orders.DLQ` over seven days" could not be sent as a link. Reading
+  preferences (curve scale, refresh cadence) deliberately stay in local storage: they belong to the
+  person, not to the situation being shared. Only what departs from the default is written, so the
+  address bar stays readable.
+- **A retry queue is no longer read as a dead-letter queue.** A retry that fills *and drains* is a
+  system doing its job — what is a loss is what escalates out of it. The verdict now takes the
+  escalation into account: a retry whose dead letter stayed empty reads as *retrying* rather than as
+  a warning, and one that did escalate says how many and to where. The escalation target is deduced
+  from the pairing already computed, either by chaining (`orders.retry.5m.DLQ`) or, where the
+  producer names siblings rather than children as Spring Kafka does (`orders.2.dlt` beside
+  `orders.2.retry.5m`), by the dead letter that shares the retry's source — and only when it is
+  unique, since two of them mean nobody knows which.
+
+### Fixed
+
 - **The screenshot stub said the consumer groups could not be read** where the truth was that
   nobody consumes the topic — it omitted `available` from its `TopicConsumers` reply, so the panel
   read `undefined` and reported a failed read. Exactly the distinction that panel exists to draw,

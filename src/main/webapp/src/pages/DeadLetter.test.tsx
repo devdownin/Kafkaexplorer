@@ -69,7 +69,7 @@ const ACTIVITY = {
   warnings: [],
 };
 
-let activityParams: Record<string, unknown> | undefined;
+let activityCalls: string[] = [];
 
 const SAMPLES = {
   topic: { name: 'orders.DLQ', partitions: 1, minOffsets: {}, maxOffsets: {} },
@@ -94,7 +94,7 @@ const CONSUMERS = {
 let detailUrls: string[] = [];
 
 function stubApi(options: { topics?: unknown; activity?: unknown; activityFails?: boolean } = {}) {
-  activityParams = undefined;
+  activityCalls = [];
   detailUrls = [];
   mockedAxios.get.mockImplementation((url: string, config?: AxiosRequestConfig) => {
     if (url === '/api/dashboard') {
@@ -106,7 +106,7 @@ function stubApi(options: { topics?: unknown; activity?: unknown; activityFails?
       return Promise.resolve({ status: 200, data: SAMPLES });
     }
     if (url === '/api/dashboard/activity') {
-      activityParams = config?.params as Record<string, unknown> | undefined;
+      activityCalls.push(String((config?.params as { topics?: string } | undefined)?.topics ?? ''));
       return options.activityFails
         ? Promise.reject(new Error('the broker did not answer'))
         : Promise.resolve({ status: 200, data: options.activity ?? ACTIVITY });
@@ -115,13 +115,12 @@ function stubApi(options: { topics?: unknown; activity?: unknown; activityFails?
   });
 }
 
-async function renderPage() {
+async function renderPage(entry = '/') {
   const { default: DeadLetter } = await import('./DeadLetter');
-  return render(
-    <RouterProvider
-      router={createMemoryRouter([{ path: '/', element: <DeadLetter /> }], { initialEntries: ['/'] })}
-    />,
-  );
+  const router = createMemoryRouter([{ path: '/', element: <DeadLetter /> }], {
+    initialEntries: [entry],
+  });
+  return { ...render(<RouterProvider router={router} />), router };
 }
 
 beforeEach(() => {
@@ -144,14 +143,55 @@ describe('DeadLetter', () => {
     expect(screen.getByText('no source paired')).toBeInTheDocument();
   });
 
-  it('asks for every source in the same call as its queue', async () => {
+  it('asks for the queues alone first, then only the sources of the rows on screen', async () => {
     stubApi();
     await renderPage();
 
-    await waitFor(() => expect(activityParams).toBeDefined());
-    // Par paires : la coupe serveur (`explorer.activity-max-topics`) retire des lignes entières
-    // au lieu de retirer toutes les sources d'un coup.
-    expect(activityParams!.topics).toBe('lonely-dlt,orders.DLQ,orders,payments.retry.5m,payments');
+    await waitFor(() => expect(activityCalls.length).toBeGreaterThan(1));
+    /*
+     * Les files seules dans le premier appel : entrelacées avec leurs sources, la liste doublait
+     * et la coupe du serveur (`explorer.activity-max-topics`) mordait sur des lignes réelles, qui
+     * n'avaient alors jamais de courbe et que le tri par volume classait au fond faute de mesure.
+     */
+    expect(activityCalls[0]).toBe('lonely-dlt,orders.DLQ,payments.retry.5m');
+    // Les sources suivent, sans `lonely-dlt` qui n'en a pas.
+    expect(activityCalls[1].split(',').sort()).toEqual(['orders', 'payments']);
+  });
+
+  it('does not ask twice for a source it already read', async () => {
+    stubApi();
+    await renderPage();
+    await waitFor(() => expect(activityCalls.length).toBeGreaterThan(1));
+    const after = activityCalls.length;
+
+    // Trier réordonne la page ; la connaissance acquise ne se redemande pas, et c'est ce cliquet
+    // qui empêche la boucle « le tri change la page, la page change le tri » d'osciller.
+    fireEvent.click(screen.getByRole('button', { name: /Sorted by this column/ }));
+    await waitFor(() => expect(screen.getByText('orders.DLQ')).toBeInTheDocument());
+    expect(activityCalls.length).toBe(after);
+  });
+
+  it('puts the screen state in the URL, so an incident can be sent as a link', async () => {
+    stubApi();
+    const { router } = await renderPage();
+
+    await waitFor(() => expect(screen.getByText('receiving')).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('Filter queues'), { target: { value: 'orders' } });
+    await waitFor(() => expect(router.state.location.search).toContain('q=orders'));
+
+    fireEvent.click(screen.getByRole('button', { name: /Show what is arriving in orders\.DLQ/ }));
+    await waitFor(() => expect(router.state.location.search).toContain('open=orders.DLQ'));
+    // Le défaut n'est pas épinglé : ce qui est dans l'URL est ce qui s'écarte du défaut.
+    expect(router.state.location.search).not.toContain('sort=volume');
+  });
+
+  it('replays the state a shared link carries', async () => {
+    stubApi();
+    await renderPage('/?q=payments&sort=name&dir=asc');
+
+    await waitFor(() => expect(screen.getByText('payments.retry.5m')).toBeInTheDocument());
+    expect(screen.queryByText('orders.DLQ')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sorted by this column, ascending/ })).toBeInTheDocument();
   });
 
   it('renders both curves per queue, and names what the second one measures', async () => {

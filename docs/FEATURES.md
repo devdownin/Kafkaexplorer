@@ -201,6 +201,14 @@ them (dead letters first, retries after), sorts by volume, and says so in their 
   twenty read as 10 % rather than 100 %. *Who drains it* is the Topic Explorer's consumers panel:
   a queue taking ten messages an hour with a consumer behind it is healthy, and the same queue with
   no assigned member is a leak. Both are read when the row opens, never with the table.
+- **A retry queue is read as a retry queue.** A retry that fills and drains is a system doing its
+  job; what is a loss is what escalates out of it into the dead letter. The verdict says so — a
+  retry whose dead letter stayed empty reads as *retrying*, one that escalated says how many and to
+  where — and the escalation target is deduced from the pairing already computed, never asked of the
+  cluster.
+- **The screen state travels in the URL** — window, filter, sort, opened row — so "look at this
+  queue over seven days" is a link you can send during an incident. Reading preferences stay local
+  to you.
 - **A queue becomes an alert in one click.** "Alert on this rate" opens the metric editor
   pre-filled with the second curve itself — the queue over its source, counted from offsets since
   the previous refresh. No threshold is proposed, because nothing here has been measured over time
