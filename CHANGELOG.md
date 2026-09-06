@@ -22,6 +22,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Nothing yet.
 
+## [1.10.0] — 2026-09-06
+
+Released from `main` with no entry recorded here; see [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v1.10.0).
+
 ## [1.9.12] — 2026-09-03
 
 ### Fixed
@@ -1897,7 +1901,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.12...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.12...v1.10.0
 [1.9.12]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.11...v1.9.12
 [1.9.11]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.10...v1.9.11
 [1.9.10]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.9...v1.9.10
