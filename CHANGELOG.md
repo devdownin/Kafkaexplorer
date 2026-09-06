@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.10.1] — 2026-09-06
+
 ### Fixed
 
 - **The screenshot stub said the consumer groups could not be read** where the truth was that
@@ -1962,7 +1966,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.13...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.13...v1.10.1
 [1.9.13]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.12...v1.9.13
 [1.9.12]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.11...v1.9.12
 [1.9.11]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.10...v1.9.11
