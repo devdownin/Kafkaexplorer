@@ -1105,8 +1105,18 @@ jobs:
       #                     explorer.max-concurrent-jobs bullet in CLAUDE.md twice over, at 868
       #                     and 1505 chars, the shorter missing the clause that says the cap
       #                     cannot bind. The 0.60 threshold is MEASURED, not guessed: on this
-      #                     tree, deliberately-written map-level summaries score 0.21-0.24 and
-      #                     drifted copies 0.74-0.93, with nothing in between.
+      #                     tree, deliberately-written map-level summaries score 0.16-0.24 and
+      #                     drifted copies 0.67-0.93, with nothing in between. It compares
+      #                     PARAGRAPHS, and did not for its first eight weeks: markdown carries
+      #                     no line semantics, this tree wraps some prose at ~100 chars and
+      #                     leaves the rest on one line, and a wrapped paragraph is a run of
+      #                     lines each under any threshold worth setting — so every one was
+      #                     skipped unread. Measured on the revision that exposed it: 563 of
+      #                     CLAUDE.md's 820 non-blank lines were byte-identical to a note and
+      #                     this reported zero, seeing 28 unwrapped lines and nothing else.
+      #                     Joining each paragraph first, the same two inputs yield 54 011 bytes
+      #                     of duplication against 3 494. The threshold did not move and no
+      #                     exemption was added: both would have been the wrong repair.
       #   check-doc-paths   every repository path the maintainer docs name in PROSE rather than
       #                     in a link — check-links.py never saw those, and three pointed at
       #                     documents and a directory deleted months earlier. docs/notes/ is

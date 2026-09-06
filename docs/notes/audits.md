@@ -24,21 +24,29 @@ confident sentence in the UI. (The report itself, `CONSUMER-GROUPS-AUDIT.md`, wa
 tree in d643f23; its conclusions are the paragraphs in this file, not a separate document.)
 
 `PROCESS-MINING-LLM-SCOPE.md` reviews the half of Process Mining that **uses** the model, the
-ingestion half having been audited several times over and the prompt never. It implements nothing:
-every item is sized and ranked, and one dominates. The analysis prompt samples messages *per topic,
-independently* (`LlmAnalysisService.appendCommonSections`), while four of the five audit prompts ask
-questions about a **case** — ordering, orphans, latency, duplicates are all "per correlation id" —
-so the model is asked to correlate records it was never shown together, and what it can still do is
-infer a pipeline from the topic names. The budget narrows it further: `sample` is forty scalars of
-up to 160 characters *per message*, inlined verbatim, and it is by definition the values the mapping
-did **not** name — so roughly 2 % of a snapshot's records reach the model, a ratio the coverage
-panel has been displaying all along (`messagesDetailed` against `messagesRead`) without anyone
-drawing the conclusion. The recommendation is to compute the event log in Java — `digest.fields()`
-already carries case id, timestamp and status per record — and send the directly-follows graph,
-the variants and the per-edge latencies, leaving the model the interpretation. The pattern already
-exists one file over: `FieldProfilingService` aggregates per path instead of inlining per record,
-which is why profiling behaves on small models and the analysis does not. Read it before touching
-`LlmAnalysisService`, `LlmSchemas` or `AuditPromptCatalog`.
+ingestion half having been audited several times over and the prompt never. It implemented nothing:
+every item was sized and ranked, and one dominated — **and that one has since shipped**, so the
+document is now a record of why this code looks as it does rather than a plan. The prompt used to
+sample messages *per topic, independently*, while four of the five audit prompts ask questions about
+a **case** — ordering, orphans, latency, duplicates are all "per correlation id" — so the model was
+asked to correlate records it had never been shown together, and what it could still do was infer a
+pipeline from the topic names. The budget narrowed it further: roughly 2 % of a snapshot's records
+reached the model, a ratio the coverage panel had been displaying all along (`messagesDetailed`
+against `messagesRead`) without anyone drawing the conclusion.
+
+What answers now is `ProcessModel`, built by `ProcessModelBuilder` from the digests: every field is
+a count, a sort or a set difference over what `PayloadDigest.fields()` already carried, so it cannot
+be wrong and it is reproducible between two runs on the same window. The model is handed the
+directly-follows graph, the variants and the per-edge latencies, plus whole **case traces** — one
+per variant, labelled as worked examples rather than as a representative sample, since the
+proportions are stated separately and computed over everything. Left to it is the half it cannot be
+replaced on: what the numbers mean, and drawing the Mermaid from an edge list rather than from a
+guess. Per-topic sampling survives as the **fallback for when no event log can be built** — without
+a validated field mapping there is no case id, reported as `available = false` with a reason and
+never as a process with zero cases. The pattern came from one file over: `FieldProfilingService`
+aggregates per path instead of inlining per record, which is why profiling behaved on small models
+when the analysis did not. Read the document before touching `LlmAnalysisService`, `LlmSchemas` or
+`AuditPromptCatalog`.
 
 `PROCESS-MINING-LLM-CALLS-AUDIT.md` is its sibling on the other axis: the same feature, but the
 **calls** rather than the prompt, and every provider **except OpenRouter** — `ANTHROPIC`,
@@ -115,21 +123,31 @@ reviewed in `METRICS-TWO-QUERY-AUDIT.md`, twelve items ranked, of which the firs
 shipped. What they were is worth knowing before touching either compute method, because each fix
 is load-bearing and none of it is obvious from the code that remains.
 
-**`BOUNDED_HINT` bounded nothing, and the option that would have is not available here.** Its
+**The "bounded scan" hint bounded nothing, and the option that would have is not available here.**
+(It was `BOUNDED_HINT`; what is left of it is `SCAN_STARTUP_EARLIEST`, named for what it actually
+sets.) Its
 javadoc described `scan.bounded.mode` ("reads all data that exists at query start, then
-terminates") while the constant wrote `scan.startup.mode`, which says where a scan *begins*; the
-environment is `inStreamingMode()`, so the source never ended, and the option merely restated what
-`DdlGeneratorService` already writes into every generated table. The bounded option was added, with
-a degrade-once fallback standing in for an experiment nobody had run — and then the experiment ran
-(`KafkaClusterIntegrationTest`, in CI) and **`flink-connector-kafka:5.0.0-2.2` refuses it**:
-*"Unsupported options found for 'kafka'. Unsupported options: scan.bounded.mode,
-scan.bounded.specific-offsets, scan.bounded.timestamp-millis"*. Sending it was worse than not:
-`FlinkSqlService` reads that refusal as an **engine** failure, so it falls back to the direct reader
-and returns rows with **no error**, which means the latch could never fire on it and three such
-queries would trip the process-wide circuit breaker that takes the planner out for every other
-screen. The hint carries the startup mode alone now; **what actually removed the templates'
-dependence on an unbounded planner scan is the direct-read routing below**, and the integration test
-asserts the current answer so a connector bump that changes it fails and says which day that was.
+terminates") while the constant wrote `scan.startup.mode`, which says where a scan *begins*;
+the environment is `inStreamingMode()`, so the source never ended, and the option merely
+restated what `DdlGeneratorService` already writes into every generated table. The bounded
+option was then added, measured against a real broker, and recorded as **refused** by
+`flink-connector-kafka:5.0.0-2.2` on the strength of *"Unsupported options found for
+'kafka'"*. **That measurement was confounded and the conclusion is retired.** The hint never
+reached the planner — `FlinkSqlService.stripSqlComments` erased `/* … */` blocks and a
+Calcite hint is comment-shaped, which the engine's own log showed by printing the query
+without it — and the key genuinely refused in that same `WITH (…)` was
+`json.ignore-parse-errors` written without its `value.` prefix, the exception enumerating
+every unconsumed option at once so the blame fell on the option just added rather than on
+the one that had always been wrong. Both fixed, the connector bounds the scan and the
+planner answers the count. What has **not** changed is what `MetricService` sends: the
+startup mode alone. Bounding a metric's read changes what the metric *measures* — a count
+over "everything at query start" is not the count these templates publish today, whose
+semantics were settled against the direct reader (`isSingleTableRead`, `directRead`, the
+window and offsets modes) — so sending it again is a separate change, argued and measured
+on its own. What removed the templates' dependence on an unbounded planner scan in the
+first place is the direct-read routing below, and that is untouched.
+
+**Raw SQL is routed by its shape, and its result is read like a changelog.** `computeRawSqlMetric` asked for the planner unconditionally, under a comment reading "never the direct reader: raw SQL is the operator's own, and may need the planner" — written when the planner answered nothing, so in practice every such metric fell back to the direct reader, which returns an aggregate in one row. With the engine working the planner really answers, and a streaming `COUNT(*)` is an endless changelog: on a large topic it fills the row budget and the last row is a **partial** count published as a total; on a small one it never fills it, blocks, and the metric spends its whole time budget at every refresh before falling back — measured at 30 s on an eight-record topic. The shape decides now, not the mode: `isSingleTableRead` sends a single-table read to the reader that answers it in one row (the rule the templates already apply), and everything else — a join, a subquery — genuinely needs the planner, which is an improvement over a direct reader that read one table and ignored the rest in silence. Two guards follow it. A truncated changelog is **refused** rather than published, through `isTruncatedChangelog`, one predicate that this path and `aggregateValue` both call — two copies of "FLINK and rows >= budget" is how they come to disagree. And on a FLINK result the value is the **last** numeric row: `extractPrimaryMetricValue` returns the first, which is the aggregate on the direct reader and `+I(1)` on a changelog — the same defect the two-query path was fixed for, left standing here and made reachable the day the planner started answering. Nothing changes for a metric the direct reader serves.
 
 **A streaming `COUNT(*)` is a retract changelog, and the value is its *last* row.** The collector
 drops `RowKind` and `extractPrimaryMetricValue` kept the first, which is `+I(1)`, so above roughly
@@ -290,6 +308,10 @@ was asked for — reliability, ergonomics, optimisation, UI quality. All finding
 codebase; the report also carries a "constaté, non traité" section (the absence of a mobile
 layout, and two statements of identical text being indistinguishable to `resolveOrigin`).
 
+**A correction here is not durable by being written**: the two items of this pass that lasted are
+the ones a test pins, which is why every one of them carries a test verified to fail against the
+revision it describes.
+
 **A second pass (S1–S7) sits under it**, and two of its seven items are the first pass's own
 corrections re-opened by work that landed afterwards — which is the reason to read it before
 touching either path again. The pre-flight `POST /api/query/validate` was added *above*
@@ -423,8 +445,15 @@ without being a phone — turns out to be painful in practice. What is load-bear
   since Monaco stacks several and a clipping inside its own rendering is Monaco's defect, not this
   application's. With them gone, and with the one real finding they were crowding out fixed
   (`SuggestionsPanel` truncated the name of the metric a proposal is already covered by, with
-  nothing carrying it), **every page and state reports zero unreachable at desktop width**, which
-  is the precondition for ever gating that column.
+  nothing carrying it), the column became safe to gate, and `UNREACHABLE_BUDGET` gates it.
+  **This line used to claim more than that — "every page and state reports zero unreachable at
+  desktop width" — and a re-run refuted it**, which is the whole reason the bullet below says to
+  read a zero as unconfirmed. Two rows were non-zero at 1440x900: `topic-explorer` at 2, since
+  fixed to 0 by a `title` on the message table's preview cell, and `settings` at 1, which is the
+  connection pill's dot — a decorative 12 px `span` carrying no text, so nothing is cut off in the
+  sense the column means. That one is budgeted and named rather than corrected on a guess, so the
+  honest form of the claim is *one row, known, and not content*. The absolute was never necessary:
+  what makes a column gateable is that its findings are real, not that they are all zero.
 - **`--detail` reports the innermost clipped element, not the pile above it.** A container is
   usually cut off only because its child is, so one defect surfaced three or four times under the
   class names of a stack of layout `div`s — and since the sample is capped at eight in DOM order,
