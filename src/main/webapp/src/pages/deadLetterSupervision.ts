@@ -35,18 +35,37 @@ import { detectTrend } from './topicActivity';
 /** Ce qu'un topic est pour cet écran. `RETRY` n'est pas une file d'échec, c'est une file d'attente. */
 export type DeadLetterKind = 'DLQ' | 'DLT' | 'RETRY';
 
-/** Une ligne de l'écran : la file, ce qu'elle est, et le topic dont elle recueille les échecs. */
-export interface SupervisionTopic {
-  topic: string;
-  kind: DeadLetterKind;
+/**
+ * Comment la source a été trouvée — ou pourquoi elle ne l'a pas été.
+ *
+ * Ce n'est pas un détail d'implémentation : `exact` est une déduction du nom, `prefix` est une
+ * **inférence**, et l'écran les dit différemment. Le second cas est celui qu'une convention
+ * `<domaine>.<flux>.<étape>` produit — `demo.orders.2.dlt` recueille les échecs de
+ * `demo.orders.2.validated`, jamais d'un topic nommé `demo.orders.2`, qui n'existe pas. La règle
+ * stricte seule n'appariait donc rien sur le jeu de démonstration que ce dépôt sème lui-même.
+ */
+export type PairingHow = 'exact' | 'prefix' | 'ambiguous' | 'none';
+
+/** Le résultat de l'appariement, avec ce qu'il faut pour l'expliquer sans le refaire. */
+export interface SourcePairing {
   /**
    * Le topic source, **vérifié contre le catalogue du cluster** et jamais deviné : sans lui la
    * seconde courbe n'existe pas, et une source inventée produirait un taux d'échec calculé contre
    * un dénominateur qui n'a jamais été mesuré.
    */
   source: string | null;
-  /** Le nom qui a été cherché quand rien n'a été trouvé — sinon l'absence se lit comme un défaut. */
-  triedSource: string | null;
+  how: PairingHow;
+  /** Le nom exact cherché en premier — sinon une absence se lit comme un défaut de mesure. */
+  tried: string | null;
+  /** Les topics qui répondaient tous au même préfixe : c'est l'ambiguïté, énumérée. */
+  alternatives: string[];
+}
+
+/** Une ligne de l'écran : la file, ce qu'elle est, et le topic dont elle recueille les échecs. */
+export interface SupervisionTopic {
+  topic: string;
+  kind: DeadLetterKind;
+  pairing: SourcePairing;
 }
 
 /** Un segment de nom de topic, avec sa position — l'appariement découpe la chaîne d'origine. */
@@ -86,7 +105,7 @@ const DEAD_LETTER_TAIL = /[._-](dlt|dlq)$/i;
  *   balayage de toutes les découpes produirait des candidats comme `5m`, qui n'ont aucun sens et
  *   qui finiraient par tomber juste une fois sur un cluster assez grand.
  *
- * Aucun de ces noms n'est affirmé : `pairSource` les confronte au catalogue.
+ * Aucun de ces noms n'est affirmé : `resolveSource` les confronte au catalogue.
  */
 export function sourceCandidates(topic: string): string[] {
   const out: string[] = [];
@@ -114,9 +133,57 @@ export function sourceCandidates(topic: string): string[] {
   return out;
 }
 
-/** Le premier candidat que le cluster connaît réellement, ou `null`. */
-export function pairSource(topic: string, known: ReadonlySet<string>): string | null {
-  return sourceCandidates(topic).find(candidate => known.has(candidate)) ?? null;
+/** Vrai pour un topic qui est lui-même une file : jamais la source d'une autre. */
+function isQueue(topic: string): boolean {
+  return isDeadLetterTopic(topic) || isRetryTopic(topic);
+}
+
+/**
+ * La source de cette file, et comment elle a été trouvée.
+ *
+ * **Deux passes, parce qu'une seule n'appariait rien sur le cluster de démonstration.** La règle
+ * stricte — retirer le marqueur, chercher le nom obtenu — suppose que la source s'appelle
+ * exactement le préfixe de la file. C'est vrai de `orders.DLQ` → `orders`, et faux de toute
+ * convention à étapes numérotées : `demo.orders.2.dlt` donne `demo.orders.2`, qui n'est le nom
+ * d'aucun topic, alors que sa source `demo.orders.2.validated` est juste à côté dans le
+ * catalogue. Les trois files que `setup-demo.sh` sème tombent toutes dans ce cas, donc la seconde
+ * courbe n'existait sur aucune ligne du jeu de données que ce dépôt recommande lui-même.
+ *
+ * La seconde passe cherche donc les topics qui **partagent ce préfixe** et qui ne sont pas
+ * eux-mêmes des files — un `.retry` ne peut pas être la source de son `.dlt` par cette voie, il
+ * l'est par la chaîne, que les candidats couvrent déjà en position plus précise.
+ *
+ * **Elle n'apparie qu'en l'absence d'ambiguïté, et l'ambiguïté est énumérée plutôt qu'arbitrée.**
+ * `demo.payments.dlq` a deux voisins possibles (`authorized`, `captured`) : en choisir un
+ * donnerait un taux d'échec calculé contre la moitié du trafic, c'est-à-dire un nombre faux qui a
+ * l'air d'un nombre. L'écran nomme les deux et laisse la ligne sans seconde courbe — c'est la même
+ * règle que partout ici, une mesure qu'on ne peut pas prendre ne se remplace pas par une valeur.
+ */
+export function resolveSource(topic: string, catalogue: readonly string[]): SourcePairing {
+  const candidates = sourceCandidates(topic);
+  const tried = candidates[0] ?? null;
+  const known = new Set(catalogue);
+
+  const exact = candidates.find(candidate => known.has(candidate));
+  if (exact) return { source: exact, how: 'exact', tried, alternatives: [] };
+
+  for (const candidate of candidates) {
+    const siblings = catalogue.filter(other =>
+      other !== topic
+      && other.length > candidate.length + 1
+      && other.startsWith(candidate)
+      && '._-'.includes(other[candidate.length])
+      && !isQueue(other));
+    if (siblings.length === 1) {
+      return { source: siblings[0], how: 'prefix', tried, alternatives: [] };
+    }
+    if (siblings.length > 1) {
+      // Un candidat plus court serait plus ambigu encore : on s'arrête là plutôt que d'élargir.
+      return { source: null, how: 'ambiguous', tried, alternatives: siblings };
+    }
+  }
+
+  return { source: null, how: 'none', tried, alternatives: [] };
 }
 
 /**
@@ -127,16 +194,14 @@ export function pairSource(topic: string, known: ReadonlySet<string>): string | 
  * en premier. À l'intérieur d'un groupe, l'ordre est alphabétique — le tri par volume est un
  * réglage de l'écran, pas une propriété de la liste.
  */
-export function supervisionTopics(topics: string[], known?: ReadonlySet<string>): SupervisionTopic[] {
-  const catalogue = known ?? new Set(topics);
+export function supervisionTopics(topics: string[]): SupervisionTopic[] {
   const rows = topics
-    .filter(topic => isDeadLetterTopic(topic) || isRetryTopic(topic))
-    .map<SupervisionTopic>(topic => {
-      const kind: DeadLetterKind = deadLetterLabel(topic) ?? 'RETRY';
-      const candidates = sourceCandidates(topic);
-      const source = candidates.find(candidate => catalogue.has(candidate)) ?? null;
-      return { topic, kind, source, triedSource: source ? null : candidates[0] ?? null };
-    });
+    .filter(isQueue)
+    .map<SupervisionTopic>(topic => ({
+      topic,
+      kind: deadLetterLabel(topic) ?? 'RETRY',
+      pairing: resolveSource(topic, topics),
+    }));
 
   const rank = (row: SupervisionTopic) => (row.kind === 'RETRY' ? 1 : 0);
   return rows.sort((a, b) => rank(a) - rank(b) || a.topic.localeCompare(b.topic));
@@ -155,9 +220,44 @@ export function activityRequestTopics(rows: SupervisionTopic[]): string[] {
   const out: string[] = [];
   for (const row of rows) {
     if (!out.includes(row.topic)) out.push(row.topic);
-    if (row.source && !out.includes(row.source)) out.push(row.source);
+    const source = row.pairing.source;
+    if (source && !out.includes(source)) out.push(source);
   }
   return out;
+}
+
+/**
+ * Ce que la ligne dit de son appariement — deux phrases, jamais une seule.
+ *
+ * Une source déduite du nom et une source **inférée du voisinage** ne se valent pas : la seconde
+ * est une hypothèse que l'écran a le devoir d'exposer, puisque tout le taux d'échec en dépend. Le
+ * libellé court tient dans la cellule, le détail va dans l'infobulle et dans l'énoncé accessible.
+ */
+export function describePairing(pairing: SourcePairing): { label: string; detail: string } {
+  switch (pairing.how) {
+    case 'exact':
+      return {
+        label: `from ${pairing.source}`,
+        detail: `The name says so: ${pairing.source} is what is left once the queue marker is removed, and the cluster has that topic.`,
+      };
+    case 'prefix':
+      return {
+        label: `from ${pairing.source} (inferred)`,
+        detail: `No topic is named ${pairing.tried}, so the source was inferred: ${pairing.source} is the only topic under that prefix that is not itself a queue. The share below rests on that guess.`,
+      };
+    case 'ambiguous':
+      return {
+        label: 'source ambiguous',
+        detail: `${pairing.alternatives.length} topics sit under ${pairing.tried} (${pairing.alternatives.join(', ')}), and picking one would compute the share against part of the traffic. None was picked.`,
+      };
+    default:
+      return {
+        label: 'no source paired',
+        detail: pairing.tried
+          ? `No topic named ${pairing.tried} exists on this cluster, and nothing sits under that prefix, so there is nothing to compute a share against.`
+          : 'The name carries no source to derive, so there is nothing to compute a share against.',
+      };
+  }
 }
 
 // ── La part du trafic qui échoue ─────────────────────────────────────────────
@@ -458,7 +558,7 @@ export function summarize(
     receiving: 0,
     surging: 0,
     messages: 0,
-    unpaired: rows.filter(r => r.source === null).length,
+    unpaired: rows.filter(r => r.pairing.source === null).length,
     measured: 0,
   };
   for (const row of rows) {

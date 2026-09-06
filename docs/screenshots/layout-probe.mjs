@@ -53,6 +53,7 @@ const PAGES = [
     settleMs: 2500,
   },
   { name: 'audit', url: '/audit' },
+  { name: 'dead-letter', url: '/dead-letter' },
   { name: 'metrics', url: '/metrics' },
   { name: 'cluster', url: '/cluster' },
   // The one screen whose entire purpose is data entry, and it was not measured at all — so the
@@ -221,6 +222,7 @@ const UNREACHABLE_BUDGET = {
   'stream-flow': 0,
   'data-model': 0,
   'audit': 0,
+  'dead-letter': 0,
   'metrics': 0,
   'metrics·editor': 2,
   'cluster': 2,
@@ -246,6 +248,17 @@ const TARGET_BUDGET = {
   // dont la hauteur ne se relève qu'en relevant le pas de toutes les vues denses. Le nombre suit
   // donc la taille du catalogue, pas la qualité de la page ; c'est bien ce plafond qu'il faut
   // recalibrer, et non le contrôle qu'il faut corriger ici.
+  /*
+   * 6 au bureau, 4 ailleurs, et la composition vaut d'être écrite parce qu'elle dit ce qui a été
+   * corrigé et ce qui ne peut pas l'être ici. Les trois en-têtes triables mesuraient 18 px de
+   * haut : relevés à 24 (`min-h-6`), comme ceux de l'explorateur de topics l'ont été, un en-tête
+   * étant une ligne et non un enregistrement — 7 → 4. Ce qui reste est le lien du logo, commun à
+   * toutes les pages, et le **texte des lignes denses** : le nom du topic, et le lien « from … »
+   * qui n'apparaît qu'au bureau, d'où les deux de plus. C'est nommément la classe que
+   * MOBILE-LAYOUT-SCOPE.md laisse ouverte — 24 px y voudrait dire relever le pas de toutes les
+   * vues denses, une décision de densité d'information plutôt qu'un correctif d'accessibilité.
+   */
+  'dead-letter': 6,
   'sql-editor': 42,
   'sql-editor·confirm': 39,
   /*

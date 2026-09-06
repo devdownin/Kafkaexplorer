@@ -27,7 +27,7 @@ Built for data engineers, architects and anyone who has ever asked *"what's actu
 ![The dashboard: every topic, its message count, its state and when it last received something](docs/img/dashboard.png)
 
 <details>
-<summary>More screens — Topic Explorer, SQL Editor, Stream Flow, Data Model, Audit, Cluster</summary>
+<summary>More screens — Topic Explorer, SQL Editor, Stream Flow, Data Model, Dead Letter, Audit, Cluster</summary>
 
 **Topic Explorer** — search the whole topic and see what was actually covered.
 ![Topic Explorer](docs/img/topic-explorer.png)
@@ -40,6 +40,9 @@ Built for data engineers, architects and anyone who has ever asked *"what's actu
 
 **Data Model** — topics read as tables, with the relations between them deduced and graded.
 ![Data Model](docs/img/data-model.png)
+
+**Dead Letter & Retry** — every failure queue, what landed in it, and what share of its source that is.
+![Dead Letter & Retry](docs/img/dead-letter.png)
 
 **Cluster Audit** — graded findings, and every run states its own scope.
 ![Cluster Audit](docs/img/audit.png)
@@ -112,6 +115,7 @@ The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPO
 | Read a set of topics as an entity-relation diagram | **Data Model** — relations deduced, graded, and openable as SQL |
 | Turn SQL into Prometheus metrics with live charts | **Metrics** |
 | Get KPIs proposed from what your cluster was observed doing | **Metrics** — suggested from the audit and traced flows |
+| See what is piling up in your DLQ, DLT and retry topics | **Dead Letter** — arrivals, and the share of the source that represents |
 | Health-check the entire cluster in one click | **Audit** |
 | Inspect brokers, KRaft quorum, client groups, feature flags | **Cluster** |
 | Let an LLM reconstruct and audit your business flows | **Process Mining** |

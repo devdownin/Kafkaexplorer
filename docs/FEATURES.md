@@ -156,3 +156,41 @@ Any query the engine can run becomes a Prometheus series, scraped from `/actuato
 - **Live charts and status**: each metric card shows its recent history, its warning/critical thresholds and why it is pending — the usual cause being a missing `AS metric_value` alias, not a resource problem.
 
 ![The Metrics page: two configured metrics above the KPIs derived from this cluster — each card carrying the audit measurement it rests on and the multiple its thresholds come from](img/metrics.png)
+
+## 15. Dead Letter & Retry Supervision
+A page of its own for the topics named `.DLQ`, `.DLT` or `retry` — because they are the one family
+this application must read backwards. Everywhere else a curve that climbs is a sign of life; on a
+failure queue it is loss, and a silent queue is the good news. The dashboard lists these topics
+among the others, sorted by name, with a verdict written the other way round; this screen groups
+them (dead letters first, retries after), sorts by volume, and says so in their own terms.
+
+- **Two sparklines per queue, because neither answers alone.** *Arrivals* is what landed in the
+  queue, bucket by bucket, counted from offsets — clicking a point opens those messages in the
+  Topic Explorer, the same gesture the dashboard already offers. *Share of source* is the same
+  buckets over what the queue's source topic produced: the failure rate. Forty failures an hour is
+  a catastrophe on a fifty-message-an-hour flow and a rounding error on a busy one, and an absolute
+  count cannot tell you which.
+- **No new measurement.** Both series come from `GET /api/dashboard/activity`, which takes a list —
+  the queue and its source travel in one call and the ratio is computed in the browser. The request
+  interleaves queue and source so that when the server's `explorer.activity-max-topics` cut bites,
+  it drops whole rows (which it then names in its warnings) rather than every source at once.
+- **The source is derived from the name and then verified against the cluster.** Exactly, where the
+  convention allows it (`orders.DLQ` → `orders`); by inference where a step-numbered convention
+  makes the bare prefix a name nothing carries — `demo.orders.2.dlt` pairs with
+  `demo.orders.2.validated`, the only topic under that prefix that is not itself a queue, and the
+  row says *inferred* because the whole rate rests on that guess. Where several topics sit under the
+  prefix the screen names them and pairs nothing: choosing one would compute the rate against part
+  of the traffic. A chained queue pairs with its immediate feeder rather than the head of the chain.
+- **A bucket with no traffic upstream is drawn as a hole, not as zero.** A rate of nothing is not
+  zero, and a flat line there would claim nothing failed where the truth is that nothing was in
+  flight. Buckets the source cannot explain are counted and reported — a queue lags its source by
+  one hop — instead of being absorbed into the average.
+- **The percentage scale has a 1 % floor**, and the chart says when the floor is what set it: an
+  own-peak scale is right for counts, which have no unit, and would draw a mountain for a 0.3 %
+  failure rate.
+- **A verdict per row** — *quiet*, *receiving*, *surging* or *not measured*. "Surging" uses the same
+  trend rule the dashboard applies to any topic (the last bucket against the window's median), so
+  there is one definition of "this is climbing"; what differs is the conclusion drawn from it. A
+  topic the broker could not answer for is *not measured*, never *quiet*.
+
+![The Dead Letter & Retry page: three failure queues with their arrivals and the share of their source topic that represents, one of them reporting an ambiguous source rather than guessing](img/dead-letter.png)

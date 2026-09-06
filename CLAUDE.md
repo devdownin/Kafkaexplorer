@@ -248,10 +248,12 @@ graph and that `touch-action` is neutralised. It is what found the wheel defect 
   See `SQL-EDITOR-AUDIT.md` for the full review, including what was deliberately left open.
 - `Compare` (`/compare`) — side-by-side topic comparison
 - `DeadLetter` (`/dead-letter`) — the DLQ / DLT / retry topics, two curves each: arrivals, and
-  those same buckets over what the paired source produced. The pairing is by name and only ever
-  against a topic the cluster really lists; where a bucket's denominator is zero the second curve
-  is drawn as a hole, since a rate of no traffic is not zero. Decisions live in
-  `pages/deadLetterSupervision.ts`; `docs/notes/frontend.md` carries the argument.
+  those same buckets over what the paired source produced. Pairing is derived from the name and
+  always confronted with the catalogue — exactly where the convention allows, otherwise by the one
+  non-queue topic under the prefix, which the row labels as inferred, and not at all when several
+  answer. Where a bucket's denominator is zero the second curve is drawn as a hole, since a rate of
+  no traffic is not zero. Decisions live in `pages/deadLetterSupervision.ts`;
+  `docs/notes/frontend.md` carries the argument, including what the strict rule alone measured.
 
 
 - `Help` (`/help`) — the SQL guide, written as a course rather than a reference card, with every example runnable against what `setup-demo.sh` seeds and opened through the same `?sql=` link a colleague would paste. The content lives in `pages/helpContent.ts` so tests can keep it executable; see `docs/notes/frontend.md`.

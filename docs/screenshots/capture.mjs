@@ -107,6 +107,15 @@ const SCREENS = [
     settle: page => page.getByText(/relations deduced/).first().waitFor(),
   },
   {
+    name: 'dead-letter',
+    url: '/dead-letter',
+    // Attendre le verdict d'une ligne, et non l'en-tête : les deux courbes arrivent au second
+    // appel, et l'en-tête est rendu avant lui — la capture montrerait des squelettes sous un
+    // titre correct. `receiving` n'apparaît que sur une file qui a reçu quelque chose, donc sur
+    // une ligne dont les deux séries sont là.
+    settle: page => page.getByText('receiving').first().waitFor(),
+  },
+  {
     name: 'metrics',
     url: '/metrics',
     // The suggestions panel is what the screen is about — the generic templates below it look

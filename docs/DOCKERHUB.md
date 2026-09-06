@@ -178,6 +178,14 @@ on a million.
 
 ![Cluster Audit: 28 topics, 2 critical and 3 warning, health score 89%, with the per-topic table and its findings](https://devdownin.github.io/Kafkaexplorer/img/audit.png)
 
+**Dead Letter & Retry** — every topic named `.DLQ`, `.DLT` or `retry`, with two curves each:
+what landed in it, and what share of its source topic that represents. A count of failures
+compares to nothing on its own; a rate compares between topics and between weeks. Where the
+source cannot be identified without guessing, the page says so instead of computing a rate
+against part of the traffic.
+
+![Dead Letter & Retry: three failure queues with their arrivals and the share of their source topic that represents, one of them reporting an ambiguous source rather than guessing](https://devdownin.github.io/Kafkaexplorer/img/dead-letter.png)
+
 **Metrics** — turn a query into a Prometheus series, and let the page propose the KPIs your
 own cluster calls for. Each proposal carries the audit measurement behind it and states that
 its thresholds are a multiple of that measurement, not a round number someone liked.

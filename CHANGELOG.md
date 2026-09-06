@@ -20,7 +20,28 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **A Dead Letter & Retry screen** (`/dead-letter`), with two curves per queue. The dashboard
+  already listed these topics and badged them, but read them like every other topic — sorted by
+  name, mixed in with business streams, with a curve that says "this is producing, it is alive".
+  On a failure queue that reading is backwards. The new screen groups them, sorts by volume, and
+  its verdicts are written that way round: a silent queue is the good news.
+  - **Arrivals** — what landed in the queue, bucket by bucket, with the same click-through to the
+    messages of a bucket the dashboard already has.
+  - **Share of source** — the same buckets over what the paired source topic produced, which is
+    the failure rate. Forty failures an hour is a catastrophe on a fifty-message-an-hour flow and
+    a rounding error on a busy one; an absolute count cannot tell you which.
+
+  Neither costs a new measurement: both series come from the existing
+  `GET /api/dashboard/activity`, the queue and its source travelling in the same call.
+  The source is derived from the queue's name and kept only when the cluster really has that
+  topic — exactly (`orders.DLQ` → `orders`) or, where a step-numbered convention makes the bare
+  prefix a name nothing carries, by inferring the one non-queue topic under it
+  (`demo.orders.2.dlt` → `demo.orders.2.validated`), which the screen labels as inferred. Where
+  several topics sit under the prefix it names them and pairs nothing, rather than computing a
+  rate against half the traffic. A bucket whose source produced nothing is drawn as a hole and
+  not as zero, which would claim nothing failed where the truth is that nothing was in flight.
 
 ## [1.9.12] — 2026-09-03
 

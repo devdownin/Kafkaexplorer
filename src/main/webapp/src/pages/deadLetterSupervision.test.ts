@@ -12,8 +12,8 @@
 import { describe, it, expect } from 'vitest';
 import type { TopicActivity } from '../api/types';
 import {
-  activityRequestTopics, assessQueue, describeShare, formatPercent, pairSource, shareSeries,
-  shareShape, SHARE_SCALE_FLOOR, sourceCandidates, summarize, supervisionTopics,
+  activityRequestTopics, assessQueue, describePairing, describeShare, formatPercent, resolveSource,
+  shareSeries, shareShape, SHARE_SCALE_FLOOR, sourceCandidates, summarize, supervisionTopics,
 } from './deadLetterSupervision';
 
 function activity(topic: string, counts: number[], extra: Partial<TopicActivity> = {}): TopicActivity {
@@ -59,10 +59,62 @@ describe('sourceCandidates', () => {
   });
 });
 
-describe('pairSource', () => {
-  it('returns only a topic the cluster really has', () => {
-    expect(pairSource('orders.DLQ', new Set(['orders', 'orders.DLQ']))).toBe('orders');
-    expect(pairSource('orders.DLQ', new Set(['orders.DLQ']))).toBeNull();
+describe('resolveSource', () => {
+  it('takes the exact name when the cluster has it', () => {
+    expect(resolveSource('orders.DLQ', ['orders', 'orders.DLQ']))
+      .toMatchObject({ source: 'orders', how: 'exact' });
+  });
+
+  it('infers the source from the prefix when no topic carries the bare name', () => {
+    /*
+     * La convention `<domaine>.<flux>.<étape>` : c'est celle des trois files que `setup-demo.sh`
+     * sème, et la règle stricte seule n'en appariait aucune — la seconde courbe n'existait donc
+     * sur aucune ligne du jeu de données que le dépôt recommande.
+     */
+    const catalogue = ['demo.orders.1.received', 'demo.orders.2.validated',
+                       'demo.orders.2.retry.5m', 'demo.orders.2.dlt'];
+    expect(resolveSource('demo.orders.2.dlt', catalogue)).toMatchObject({
+      source: 'demo.orders.2.validated', how: 'prefix', tried: 'demo.orders.2',
+    });
+    expect(resolveSource('demo.orders.2.retry.5m', catalogue)).toMatchObject({
+      source: 'demo.orders.2.validated', how: 'prefix',
+    });
+  });
+
+  it('refuses to arbitrate between several topics under the prefix', () => {
+    // Choisir `authorized` ou `captured` donnerait un taux calculé contre la moitié du trafic.
+    const pairing = resolveSource('demo.payments.dlq',
+      ['demo.payments.authorized', 'demo.payments.captured', 'demo.payments.dlq']);
+    expect(pairing.source).toBeNull();
+    expect(pairing.how).toBe('ambiguous');
+    expect(pairing.alternatives).toEqual(['demo.payments.authorized', 'demo.payments.captured']);
+  });
+
+  it('never infers a queue as the source of another queue', () => {
+    // `orders.retry.1` répond au préfixe, mais une file n'alimente pas une file par cette voie.
+    expect(resolveSource('orders.dlq', ['orders.retry.1', 'orders.dlq']))
+      .toMatchObject({ source: null, how: 'none' });
+  });
+
+  it('reports what it looked for when nothing matched at all', () => {
+    expect(resolveSource('orders.DLQ', ['orders.DLQ']))
+      .toMatchObject({ source: null, how: 'none', tried: 'orders' });
+  });
+});
+
+describe('describePairing', () => {
+  it('says an inferred source is inferred', () => {
+    const described = describePairing(
+      resolveSource('demo.orders.2.dlt', ['demo.orders.2.validated', 'demo.orders.2.dlt']));
+    expect(described.label).toBe('from demo.orders.2.validated (inferred)');
+    expect(described.detail).toContain('rests on that guess');
+  });
+
+  it('enumerates the ambiguity rather than hiding it', () => {
+    const pairing = resolveSource('demo.payments.dlq',
+      ['demo.payments.authorized', 'demo.payments.captured', 'demo.payments.dlq']);
+    expect(describePairing(pairing).detail)
+      .toContain('demo.payments.authorized, demo.payments.captured');
   });
 });
 
@@ -77,8 +129,8 @@ describe('supervisionTopics', () => {
 
   it('names the source it looked for when it found none', () => {
     const row = supervisionTopics(topics).find(r => r.topic === 'shipments-dlt')!;
-    expect(row.source).toBeNull();
-    expect(row.triedSource).toBe('shipments');
+    expect(row.pairing.source).toBeNull();
+    expect(row.pairing.tried).toBe('shipments');
   });
 });
 

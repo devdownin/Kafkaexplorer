@@ -199,14 +199,33 @@ rapport se fait dans le navigateur.
 Trois décisions la tiennent, et chacune est une manière de se tromper qui ne se voit sur aucune
 courbe.
 
-**La source n'est jamais devinée.** `sourceCandidates` dérive des noms — le suffixe pour une file
-morte, le marqueur `retry` dans les deux sens — et `pairSource` ne retient que ceux que le cluster
-liste réellement. Sans cette vérification, un dénominateur inventé produirait un taux d'échec
-calculé contre un topic qui n'existe pas, c'est-à-dire un nombre faux qui a l'air d'un nombre. Une
-file non appariée n'a pas de seconde courbe et l'écran nomme le topic qu'il a cherché : l'absence
-se lit alors comme une convention de nommage à laquelle il ne sait pas répondre, pas comme un
-défaut de mesure. Pour une file chaînée (`orders.retry.5m.DLQ`), le maillon immédiat passe avant la
-tête de chaîne — le taux d'échec d'une file se calcule contre ce qui l'alimente.
+**La source est toujours confrontée au catalogue, et l'écran dit *comment* elle a été trouvée.**
+`sourceCandidates` dérive des noms — le suffixe pour une file morte, le marqueur `retry` dans les
+deux sens — puis `resolveSource` les confronte aux topics que le cluster liste réellement. Sans
+cette vérification, un dénominateur inventé produirait un taux d'échec calculé contre un topic qui
+n'existe pas, c'est-à-dire un nombre faux qui a l'air d'un nombre. Pour une file chaînée
+(`orders.retry.5m.DLQ`), le maillon immédiat passe avant la tête de chaîne — le taux d'échec d'une
+file se calcule contre ce qui l'alimente.
+
+**La règle stricte seule n'appariait rien**, et c'est une mesure et non une intuition : elle suppose
+que la source porte exactement le préfixe de la file, ce qui est vrai de `orders.DLQ` → `orders` et
+faux de toute convention à étapes numérotées. Les trois files que `setup-demo.sh` sème
+(`demo.orders.2.dlt`, `demo.orders.2.retry.5m`, `demo.payments.dlq`) donnent `demo.orders.2` et
+`demo.payments`, qui ne sont le nom d'aucun topic — la seconde courbe n'existait donc sur **aucune
+ligne** du jeu de données que ce dépôt recommande lui-même. Trouvé en préparant la capture
+d'écran, ce qui est l'argument de `docs/screenshots/` en une ligne : une page rendue sur des
+données réalistes montre ce qu'aucun test unitaire ne demandait.
+
+D'où une seconde passe, et deux garde-fous qui la rendent honnête. Elle cherche les topics qui
+**partagent le préfixe** sans être eux-mêmes des files — `demo.orders.2.validated` est le seul sous
+`demo.orders.2.`, donc c'est lui. Le résultat est étiqueté `prefix` et non `exact`, et la ligne
+affiche « (inferred) » avec l'explication en infobulle : tout le taux d'échec repose sur cette
+hypothèse, et la présenter comme une déduction du nom serait la seule chose que cet écran ne doit
+pas faire. Et quand plusieurs topics répondent au préfixe — `demo.payments.authorized` et
+`demo.payments.captured` — l'écran **les énumère et n'apparie rien** : en choisir un donnerait un
+taux calculé contre la moitié du trafic. Une file non appariée n'a pas de seconde courbe et l'écran
+nomme ce qu'il a cherché ; l'absence se lit alors comme une convention à laquelle il ne sait pas
+répondre, pas comme un défaut de mesure.
 
 **Un bucket où la source n'a rien produit n'a pas de taux, et se dessine comme un trou.** Tracé à
 zéro il affirmerait « rien n'a échoué » là où la vérité est « il n'y avait rien à échouer », et

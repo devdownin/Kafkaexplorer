@@ -18,7 +18,7 @@ import {
   type ActivityScale, type ActivityWindow,
 } from './topicActivity';
 import {
-  activityRequestTopics, assessQueue, shareSeries, summarize, supervisionTopics,
+  activityRequestTopics, assessQueue, describePairing, shareSeries, summarize, supervisionTopics,
   type SupervisionTopic,
 } from './deadLetterSupervision';
 
@@ -138,7 +138,8 @@ const DeadLetter: React.FC = () => {
   const shares = useMemo(() => {
     const out: Record<string, ReturnType<typeof shareSeries>> = {};
     for (const row of rows) {
-      out[row.topic] = shareSeries(series[row.topic], row.source ? series[row.source] : null);
+      const source = row.pairing.source;
+      out[row.topic] = shareSeries(series[row.topic], source ? series[source] : null);
     }
     return out;
   }, [rows, series]);
@@ -277,15 +278,18 @@ const DeadLetter: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow>
+                {/* `min-h-6` : cible tactile de 24 px (WCAG 2.5.8). Un en-tête est une ligne
+                    et non un enregistrement, donc c'est corrigé ici plutôt que budgété dans
+                    `layout-probe.mjs` — la même conclusion que l'explorateur de topics. */}
                 <Th>
-                  <button onClick={() => setSortKey('name')} className="hover:text-on-surface transition-colors">
+                  <button onClick={() => setSortKey('name')} className="inline-flex items-center min-w-6 min-h-6 hover:text-on-surface transition-colors">
                     Topic
                   </button>
                 </Th>
                 <Th>Status</Th>
                 <Th>
                   <span className="flex items-center gap-1">
-                    <button onClick={() => setSortKey('volume')} className="hover:text-on-surface transition-colors">
+                    <button onClick={() => setSortKey('volume')} className="inline-flex items-center min-w-6 min-h-6 hover:text-on-surface transition-colors">
                       Arrivals
                     </button>
                     <Tooltip content={`What landed in the queue, one point per ${formatSpan(window_.bucketMs)}, counted from offsets. Click a point to open those messages.`}>
@@ -295,7 +299,7 @@ const DeadLetter: React.FC = () => {
                 </Th>
                 <Th>
                   <span className="flex items-center gap-1">
-                    <button onClick={() => setSortKey('share')} className="hover:text-on-surface transition-colors">
+                    <button onClick={() => setSortKey('share')} className="inline-flex items-center min-w-6 min-h-6 hover:text-on-surface transition-colors">
                       Share of source
                     </button>
                     <Tooltip content="The same buckets divided by what the paired source topic produced — the failure rate. Broken where the source produced nothing: a share of no traffic is not zero.">
@@ -343,6 +347,8 @@ interface QueueRowProps {
 
 const QueueRow: React.FC<QueueRowProps> = ({ row, activity, share, size, loading, scale }) => {
   const verdict = assessQueue(activity, row.kind);
+  const pairing = describePairing(row.pairing);
+  const source = row.pairing.source;
   return (
     <TableRow>
       <Td>
@@ -351,24 +357,22 @@ const QueueRow: React.FC<QueueRowProps> = ({ row, activity, share, size, loading
         </Link>
         <div className="flex items-center gap-1.5 mt-1">
           <Badge tone={row.kind === 'RETRY' ? 'secondary' : 'primary'}>{row.kind}</Badge>
-          {row.source ? (
-            <span className="text-[11px] text-outline">
-              from{' '}
-              <Link to={`/topic/${encodeURIComponent(row.source)}`} className="hover:text-primary transition-colors">
-                {row.source}
-              </Link>
-            </span>
-          ) : (
-            <Tooltip
-              content={
-                row.triedSource
-                  ? `No topic named ${row.triedSource} exists on this cluster, so there is nothing to compute a share against.`
-                  : 'The name carries no source to derive, so there is nothing to compute a share against.'
-              }
-            >
-              <span className="text-[11px] text-outline">no source paired</span>
-            </Tooltip>
-          )}
+          {/*
+            * L'appariement est toujours expliqué, y compris quand il a réussi : une source
+            * *inférée* du voisinage porte tout le taux d'échec de la ligne, et la présenter comme
+            * un fait déduit du nom serait la seule chose que cet écran ne doit pas faire.
+            */}
+          <Tooltip content={pairing.detail}>
+            {source ? (
+              <span className="text-[11px] text-outline">
+                <Link to={`/topic/${encodeURIComponent(source)}`} className="hover:text-primary transition-colors">
+                  {pairing.label}
+                </Link>
+              </span>
+            ) : (
+              <span className="text-[11px] text-outline">{pairing.label}</span>
+            )}
+          </Tooltip>
         </div>
       </Td>
       <Td>
@@ -382,7 +386,7 @@ const QueueRow: React.FC<QueueRowProps> = ({ row, activity, share, size, loading
       <Td>
         <ShareSparkline
           topic={row.topic}
-          source={row.source}
+          source={source}
           series={share}
           activity={activity ?? null}
           loading={loading}
