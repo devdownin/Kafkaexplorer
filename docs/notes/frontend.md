@@ -174,6 +174,71 @@ What remains are effects that load, measure or subscribe: they end up setting st
 Dev server proxy: Vite forwards `/api/*` to `http://localhost:8080` (configured in `vite.config.ts`).
 
 
+## Dead Letter & Retry — pourquoi deux courbes, et pourquoi la seconde a des trous
+
+L'écran (`pages/DeadLetter.tsx`, décisions dans `pages/deadLetterSupervision.ts`) n'existe pas
+parce que le tableau de bord manquerait ces topics — il les liste, les badge (`topicKinds.ts`) et
+sait même les masquer. Il existe parce qu'il les **lit à l'envers**. Partout ailleurs dans
+l'application, une courbe qui monte est un signe de vie ; sur une file de rebut, c'est une perte,
+et un topic silencieux est la bonne nouvelle. Un écran trié par nom, mêlant les files aux flux
+métier, avec un verdict qui appelle « surveiller » un topic qui produit, ne peut pas dire ça.
+
+**La première courbe est celle du tableau de bord, réutilisée telle quelle** — le composant
+`components/dashboard/Sparkline.tsx`, y compris son clic qui ouvre les messages du bucket. C'est
+exactement le geste qu'on veut ici : voir un pic d'échecs et lire ce qu'il contenait est la même
+question posée deux fois. En réécrire une variante aurait donné deux définitions de « ce que ce
+topic a reçu » et deux occasions de diverger.
+
+**La seconde existe parce que la première ne se compare à rien.** quarante échecs par heure sont une catastrophe sur
+un flux à cinquante messages par heure et un bruit de fond sur un flux à cinq cent mille ; les
+mêmes buckets rapportés à ceux du topic source donnent un taux d'échec, qui se compare d'un topic
+à l'autre et d'une semaine à l'autre. Elle ne coûte **aucune mesure supplémentaire** :
+`GET /api/dashboard/activity` prend une liste, la file et sa source y partent ensemble, et le
+rapport se fait dans le navigateur.
+
+Trois décisions la tiennent, et chacune est une manière de se tromper qui ne se voit sur aucune
+courbe.
+
+**La source n'est jamais devinée.** `sourceCandidates` dérive des noms — le suffixe pour une file
+morte, le marqueur `retry` dans les deux sens — et `pairSource` ne retient que ceux que le cluster
+liste réellement. Sans cette vérification, un dénominateur inventé produirait un taux d'échec
+calculé contre un topic qui n'existe pas, c'est-à-dire un nombre faux qui a l'air d'un nombre. Une
+file non appariée n'a pas de seconde courbe et l'écran nomme le topic qu'il a cherché : l'absence
+se lit alors comme une convention de nommage à laquelle il ne sait pas répondre, pas comme un
+défaut de mesure. Pour une file chaînée (`orders.retry.5m.DLQ`), le maillon immédiat passe avant la
+tête de chaîne — le taux d'échec d'une file se calcule contre ce qui l'alimente.
+
+**Un bucket où la source n'a rien produit n'a pas de taux, et se dessine comme un trou.** Tracé à
+zéro il affirmerait « rien n'a échoué » là où la vérité est « il n'y avait rien à échouer », et
+c'est la règle que ce dépôt applique partout ailleurs (`TopicActivity.available`,
+`PartitionLag.lag`) : une mesure impossible ne revient pas en zéro. `shareShape` casse le trait et
+grise la plage, avec le même vocabulaire visuel que la zone vidée par la rétention sur la courbe
+voisine. Ce que la mesure ne peut pas éviter est dit plutôt que corrigé : un message produit en fin
+de bucket échoue dans le suivant, donc les deux séries sont décalées d'un traitement, et les
+buckets que la source n'explique pas sont comptés (`unexplained`) au lieu d'être absorbés.
+
+**Son échelle a un plancher** (`SHARE_SCALE_FLOOR`, 1 %). Cadrer sur la pointe est le bon choix
+pour des comptes, qui n'ont pas d'unité — c'est ce que fait `topicActivity.sparkline`, et la note
+de ce module dit pourquoi. Un pourcentage en a une : cadrer un pic de 0,3 % sur le haut de la boîte
+dessinerait une montagne pour un taux qui n'en est pas une. Sous le plancher, la courbe reste
+écrasée en bas, et un pointillé en haut de la boîte le déclare — une échelle non annoncée est
+précisément ce qui rend un graphique trompeur.
+
+Deux détails de câblage valent d'être écrits. La liste envoyée à l'endpoint est **entrelacée**
+(`activityRequestTopics` : file, source, file, source) parce que le contrôleur coupe à
+`explorer.activity-max-topics` en gardant le début — groupée par nature, la coupe aurait retiré
+toutes les sources d'un coup, donc la moitié de l'écran, au lieu de retirer des lignes entières
+que le serveur nomme ensuite dans ses `warnings`. Et le tri par défaut est le **volume**, pas le
+nom : on vient ici chercher ce qui se remplit, et l'ordre alphabétique met en tête celui dont le
+nom commence par « a ». Les lignes non mesurées tombent en bas — une absence de mesure n'est pas
+un zéro, mais ce n'est pas non plus un motif d'ouvrir la page.
+
+L'écran ne demande **pas** qui draine ces files, et c'est une omission délibérée :
+`GET /api/topic/{name}/consumers` balaie les groupes du cluster topic par topic, ce qui est un coût
+tout autre que les deux lectures d'offsets d'ici. Le lien vers l'explorateur de topic, qui porte
+déjà ce panneau, est la réponse tant que personne n'a mesuré ce que coûterait la version
+automatique.
+
 ## TopicExplorer — Sélection interactive de champs
 
 - `JsonNode` passe `fieldPath` en dot-notation récursivement (`fieldPath ? fieldPath+"."+k : k`). `XmlViewer` utilise `DOMParser` navigateur (récursif) avec le même schéma de chemin.

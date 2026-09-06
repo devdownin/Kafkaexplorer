@@ -26,6 +26,7 @@ export const NAV_ITEMS: NavItem[] = [
 
   { name: 'Metrics',        icon: 'monitoring',      path: '/metrics',        group: 'Observe' },
   { name: 'Audit',          icon: 'fact_check',      path: '/audit',          group: 'Observe' },
+  { name: 'Dead Letter',    icon: 'report',          path: '/dead-letter',    group: 'Observe' },
   { name: 'Cluster',        icon: 'hub',             path: '/cluster',        group: 'Observe' },
 
   { name: 'Lineage',        icon: 'account_tree',    path: '/lineage',        group: 'Analyze' },
