@@ -252,6 +252,45 @@ nom : on vient ici chercher ce qui se remplit, et l'ordre alphabétique met en t
 nom commence par « a ». Les lignes non mesurées tombent en bas — une absence de mesure n'est pas
 un zéro, mais ce n'est pas non plus un motif d'ouvrir la page.
 
+Quatre décisions de la barre d'outils, ajoutées après une relecture de l'écran livré, et chacune
+répond à une manière précise de se tromper.
+
+**Le filtre ne porte que sur le tableau.** Les tuiles du haut et la demande de séries couvrent
+toutes les files : un compteur « Surging » qui suivrait la zone de recherche annoncerait zéro
+incident dès qu'on y tape trois lettres, ce qui est la pire chose qu'un écran de supervision puisse
+faire. Il cherche dans le nom de la file **et** dans celui de sa source, parce qu'un incident se
+nomme par son flux et pas par ses files.
+
+**Le tri a un sens naturel par colonne** (`NATURAL_DIR`), et ce n'est pas un détail : un tri
+générique en ascendant mettrait les files les plus calmes en tête de l'écran qui existe pour
+montrer celles qui ne le sont pas. Le nom départage à égalité, sinon deux files de même volume
+changeraient de place à chaque rafraîchissement automatique. Une ligne non mesurée vaut -1 et tombe
+au bout en descendant — ce n'est pas un zéro, mais ce n'est pas non plus un motif d'ouvrir la page ;
+en ascendant elle remonte, ce qui répond à l'autre question, « qu'est-ce que je n'ai pas pu lire ? ».
+
+**La colonne s'appelle « Size » et non « Backlog ».** Le premier nom était faux par son mot :
+la valeur est `endOffsets - beginningOffsets`, donc ce que le topic contient, alors que sur une file
+de rebut « backlog » se lit « en attente de reprise ». Les deux ne coïncident que si personne n'a
+jamais consommé, et c'était la seule colonne chiffrée de la ligne.
+
+**La courbe de part est devenue une action, et c'est ce qui la rend accessible.** Elle avait été
+écrite inerte au motif que « voir les messages de ce pic » appartenait à la courbe voisine ; le
+raisonnement était faux sur son point central, les deux courbes ne culminant pas au même bucket —
+le pic d'arrivées est le moment où il en est le plus tombé, le pic de part le moment où la
+proportion a été la pire, et sur un flux irrégulier ce sont deux incidents différents. Inerte, elle
+n'était qu'un `role="img"` dont les valeurs par bucket ne s'obtenaient qu'au survol, c'est-à-dire à
+la souris — ce que ce dépôt reproche à `title=""` partout ailleurs. L'arrêt de tabulation se paie
+maintenant contre une destination propre, ce qui est exactement la règle que la sparkline du
+tableau de bord applique déjà.
+
+**Et `SortButton` a quitté `Dashboard.tsx`.** Le premier écran à trier l'avait défini chez lui ; le
+second a écrit un bouton nu — clic qui pose la clé, jamais de sens, aucun indicateur — ce qui est le
+motif que ce dépôt a déjà payé avec les quatre littéraux `internal.` et les trois copies du viewport
+de graphe : la seconde écriture est toujours plus pauvre, et l'écart ne se voit qu'en mettant les
+deux pages côte à côte. Dans `components/ui/`, il porte `min-w-6 min-h-6`, et le chiffre dit ce que
+l'extraction vaut : sans qu'une ligne du tableau de bord ait été retouchée, ses cibles sous 24 px
+tombent de 5 à 1 et celles de sa palette de commandes de 6 à 2.
+
 L'écran ne demande **pas** qui draine ces files, et c'est une omission délibérée :
 `GET /api/topic/{name}/consumers` balaie les groupes du cluster topic par topic, ce qui est un coût
 tout autre que les deux lectures d'offsets d'ici. Le lien vers l'explorateur de topic, qui porte

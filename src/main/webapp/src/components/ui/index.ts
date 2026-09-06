@@ -21,6 +21,8 @@ export type { TooltipProps, HelpTipProps } from './Tooltip';
 export type { ErrorPanelProps } from './ErrorPanel';
 export { PageHeader } from './PageHeader';
 export type { PageHeaderProps } from './PageHeader';
+export { SortButton } from './SortButton';
+export type { SortButtonProps } from './SortButton';
 export { Stat } from './Stat';
 export type { StatProps } from './Stat';
 export { Field, Input, Select, Textarea } from './Field';

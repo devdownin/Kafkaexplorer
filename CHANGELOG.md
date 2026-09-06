@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The dashboard's sortable headers are now 24 px tall** (WCAG 2.5.8), which they were not, at 18.
+  Nothing on that page was edited: `SortButton` lived inside `Dashboard.tsx`, and moving it to
+  `components/ui/` — because a second screen needed to sort — fixed it for both at once. Measured
+  by `layout-probe.mjs`: the dashboard falls from 5 undersized targets to 1, its command palette
+  from 6 to 2, and both budgets are lowered to match.
+
 ### Added
 
 - **A Dead Letter & Retry screen** (`/dead-letter`), with two curves per queue. The dashboard
@@ -32,6 +40,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - **Share of source** — the same buckets over what the paired source topic produced, which is
     the failure rate. Forty failures an hour is a catastrophe on a fifty-message-an-hour flow and
     a rounding error on a busy one; an absolute count cannot tell you which.
+
+  The table sorts by volume (reversible, and the active column says which way), filters by queue
+  or source name, and paginates past 25 rows; an auto-refresh selector reuses the dashboard's
+  cadences and its 30 s floor, and the page states when its figures were read. Both curves are
+  keyboard-reachable and open different buckets — the worst arrivals and the worst *rate* are
+  rarely the same hour.
 
   Neither costs a new measurement: both series come from the existing
   `GET /api/dashboard/activity`, the queue and its source travelling in the same call.

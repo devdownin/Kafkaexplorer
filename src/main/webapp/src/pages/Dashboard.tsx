@@ -9,7 +9,7 @@ import {
   PageHeader, Stat, Badge, Button, EmptyState,
   Table, TableHead, TableBody, TableRow, Th, Td,
   Input, Select, StatGridSkeleton, TableSkeleton,
-  Switch,
+  Switch, SortButton,
 } from '../components/ui';
 import Sparkline from '../components/dashboard/Sparkline';
 import type { TopicActivityResponse } from '../api/types';
@@ -48,32 +48,6 @@ interface DashboardData {
   topicLastMessages: Record<string, number | null>;
 }
 
-/**
- * En-tête de colonne triable. Défini au niveau du module : à l'intérieur du composant, chaque
- * rendu en créait un *type* neuf, que React démonte et remonte au lieu de le mettre à jour.
- */
-const SortButton: React.FC<{
-  k: SortKey;
-  sortKey: SortKey;
-  sortDir: SortDir;
-  onToggle: (k: SortKey) => void;
-  className?: string;
-  children: React.ReactNode;
-}> = ({ k, sortKey, sortDir, onToggle, className, children }) => (
-  <button
-    onClick={() => onToggle(k)}
-    className={`flex items-center gap-1 hover:text-on-surface transition-colors ${className ?? ''}`}
-  >
-    {children}
-    {sortKey !== k ? (
-      <span className="material-symbols-outlined text-[15px] opacity-30">unfold_more</span>
-    ) : sortDir === 'asc' ? (
-      <span className="material-symbols-outlined text-[15px] text-primary">arrow_upward</span>
-    ) : (
-      <span className="material-symbols-outlined text-[15px] text-primary">arrow_downward</span>
-    )}
-  </button>
-);
 
 /**
  * « il y a 5 min » se calcule depuis un instant de référence *passé en paramètre* : appeler

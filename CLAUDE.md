@@ -235,6 +235,10 @@ follows the pointer, that the zoom stays anchored under the cursor, that the key
 graph and that `touch-action` is neutralised. It is what found the wheel defect above.
 
 **Form conventions** — build every form out of these; hand-rolled `<input className="…">` blocks drift from the tokens and skip the accessibility wiring.
+- `SortButton` is the sortable column header — the arrow that says which column sorts and which
+  way, and a 24 px target. It was the Dashboard's private component until a second screen sorted
+  and wrote a bare button instead; extracting it fixed the target size on both at once (measured
+  in `layout-probe.mjs`'s budgets).
 - `PasswordInput` adds a reveal toggle and `autoComplete="new-password"`. Secrets typed blind fail at connection time with nothing to diagnose.
 - Wrap in a real `<form onSubmit>` so Enter submits from any field. `Button` defaults to `type="button"` for that reason — submit buttons declare `type="submit"` explicitly.
 

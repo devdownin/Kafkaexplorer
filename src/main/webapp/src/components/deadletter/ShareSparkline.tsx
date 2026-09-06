@@ -2,8 +2,9 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import React, { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { TopicActivity } from '../../api/types';
-import { bucketLabel } from '../../pages/topicActivity';
+import { bucketLabel, bucketLink, describeBucketLink } from '../../pages/topicActivity';
 import {
   describeShare, formatPercent, shareShape, SHARE_SCALE_FLOOR, type ShareSeries,
 } from '../../pages/deadLetterSupervision';
@@ -40,11 +41,22 @@ export interface ShareSparklineProps {
  *    nouvelle, et la couleur primaire — celle de l'activité normale partout ailleurs — dirait le
  *    contraire.
  *
- * Elle ne mène nulle part au clic : le geste « voir les messages de ce pic » appartient à la
- * courbe des arrivées, qui est juste à côté et qui le fait déjà. Deux boutons par ligne pour la
- * même destination coûteraient un arrêt de tabulation sans rien ajouter.
+ * **Elle mène quelque part, et c'est un autre endroit que sa voisine.** Elle avait d'abord été
+ * écrite inerte, au motif que « voir les messages de ce pic » appartenait à la courbe des arrivées
+ * et que deux boutons par ligne pour la même destination coûteraient un arrêt de tabulation sans
+ * rien ajouter. Le raisonnement était faux sur son point central : les deux courbes ne culminent
+ * pas au même bucket. Le pic d'arrivées est le moment où il en est tombé le plus ; le pic de
+ * *part* est le moment où la proportion a été la pire — une salve de vingt échecs pendant une
+ * heure de gros trafic n'est pas le même incident que trois échecs pendant une heure creuse, et
+ * c'est le second qu'on veut ouvrir. Destinations différentes, donc action propre.
+ *
+ * Ce que ça corrige au passage n'est pas cosmétique : inerte, la courbe n'était qu'un
+ * `role="img"` dont les valeurs par bucket ne s'obtenaient qu'au survol, c'est-à-dire à la souris
+ * — exactement ce que ce dépôt reproche à `title=""` ailleurs. L'arrêt de tabulation se paie
+ * maintenant contre une action, ce qui est la règle que la sparkline voisine applique déjà.
  */
 const ShareSparkline: React.FC<ShareSparklineProps> = ({ topic, source, series, activity, loading }) => {
+  const navigate = useNavigate();
   const [hovered, setHovered] = useState<number | null>(null);
   const shape = useMemo(
     () => (series.available ? shareShape(series.points, WIDTH, HEIGHT, PADDING) : null),
@@ -80,6 +92,9 @@ const ShareSparkline: React.FC<ShareSparklineProps> = ({ topic, source, series, 
   const step = series.points.length > 1 ? (WIDTH - PADDING * 2) / (series.points.length - 1) : 0;
   const marked = hovered !== null ? shape.points[hovered] : null;
   const hoveredValue = hovered !== null ? series.points[hovered] : null;
+  /* Au clavier aucun bucket n'est désigné : c'est le pire taux qui s'ouvre, celui que l'énoncé
+     accessible vient justement de nommer. */
+  const target = hovered ?? series.peakIndex;
 
   const bucketAt = (clientX: number, target: Element): number => {
     const box = target.getBoundingClientRect();
@@ -90,12 +105,16 @@ const ShareSparkline: React.FC<ShareSparklineProps> = ({ topic, source, series, 
 
   return (
     <div className="flex items-center gap-2">
-      <span
-        role="img"
-        aria-label={label}
+      <button
+        type="button"
+        onClick={() => activity && navigate(bucketLink(topic, activity, target))}
+        disabled={!activity}
+        aria-label={activity ? `${label} ${describeBucketLink(activity, target)}` : label}
         title={label}
         onPointerMove={e => setHovered(bucketAt(e.clientX, e.currentTarget))}
         onPointerLeave={() => setHovered(null)}
+        onBlur={() => setHovered(null)}
+        className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default"
       >
         <svg
           width={WIDTH}
@@ -139,7 +158,7 @@ const ShareSparkline: React.FC<ShareSparklineProps> = ({ topic, source, series, 
             </>
           )}
         </svg>
-      </span>
+      </button>
       {/* Largeur fixe, même raison que sur la courbe voisine : le libellé change au survol. */}
       <span className="w-[7rem] shrink-0 text-[11px] tabular-nums text-on-surface-variant" aria-hidden="true">
         {hovered !== null ? (

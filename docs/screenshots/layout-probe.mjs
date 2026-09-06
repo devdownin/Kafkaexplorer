@@ -238,8 +238,16 @@ const UNREACHABLE_BUDGET = {
 };
 
 const TARGET_BUDGET = {
-  'dashboard': 5,
-  'dashboard·palette': 6,
+  /*
+   * 5 → 1 et 6 → 2 le 2026-09-06, sans qu'une seule ligne de cette page ait été retouchée : ses
+   * quatre en-têtes triables mesuraient 18 px, et `SortButton` — jusque-là défini dans
+   * `Dashboard.tsx`, extrait vers `components/ui/` quand un second écran a eu besoin de trier —
+   * porte désormais `min-w-6 min-h-6`. C'est l'argument de l'extraction en un chiffre : un
+   * contrôle partagé se corrige une fois pour toutes les pages, là où quatre copies se corrigent
+   * quatre fois, ou trois.
+   */
+  'dashboard': 1,
+  'dashboard·palette': 2,
   // +3 chacun le 2026-08-27, et la cause est mécanique plutôt qu'une dette qui glisse : le
   // navigateur de schéma rend **un bouton de 195 x 16 par topic du catalogue**, et les fixtures
   // ont gagné les trois topics de reprise et de file morte que `setup-demo.sh` sème désormais

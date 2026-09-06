@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 import axios from 'axios';
 import ErrorBanner from '../components/ErrorBanner';
 import {
-  PageHeader, Stat, Badge, Button, EmptyState, Select, Tooltip,
+  PageHeader, Stat, Badge, Button, EmptyState, Select, Tooltip, HelpTip, Input, SortButton,
   Table, TableHead, TableBody, TableRow, Th, Td, StatGridSkeleton, TableSkeleton,
 } from '../components/ui';
 import Sparkline from '../components/dashboard/Sparkline';
@@ -17,6 +17,10 @@ import {
   ACTIVITY_WINDOWS, formatSpan, readActivityScale, writeActivityScale,
   type ActivityScale, type ActivityWindow,
 } from './topicActivity';
+import {
+  REFRESH_OPTIONS, REFRESH_OFF, activityIntervalMs, describeRefreshStatus, readRefreshChoice,
+  writeRefreshChoice, type RefreshChoice,
+} from './dashboardRefresh';
 import {
   activityRequestTopics, assessQueue, describePairing, shareSeries, summarize, supervisionTopics,
   type SupervisionTopic,
@@ -47,7 +51,20 @@ function readWindow(): ActivityWindow {
   return ACTIVITY_WINDOWS[1];
 }
 
-type SortKey = 'name' | 'volume' | 'share';
+type SortKey = 'name' | 'volume' | 'share' | 'size';
+type SortDir = 'asc' | 'desc';
+
+const PAGE_SIZES = [10, 25, 50, 100];
+
+/**
+ * Le sens par défaut de chaque colonne, parce qu'il n'est pas le même partout : sur un nom on
+ * cherche l'ordre alphabétique, sur un volume ou un taux on cherche le pire, qui est le plus
+ * grand. Prendre `asc` pour tout — ce que fait un tri générique — mettrait en tête les files les
+ * plus calmes sur l'écran qui existe pour montrer celles qui ne le sont pas.
+ */
+const NATURAL_DIR: Record<SortKey, SortDir> = {
+  name: 'asc', volume: 'desc', share: 'desc', size: 'desc',
+};
 
 /**
  * La supervision des files de rebut et de reprise.
@@ -73,6 +90,14 @@ const DeadLetter: React.FC = () => {
   const [window_, setWindow] = useState<ActivityWindow>(readWindow);
   const [scale, setScale] = useState<ActivityScale>(readActivityScale);
   const [sortKey, setSortKey] = useState<SortKey>('volume');
+  const [sortDir, setSortDir] = useState<SortDir>(NATURAL_DIR.volume);
+  const [filter, setFilter] = useState('');
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const [refresh, setRefresh] = useState<RefreshChoice>(readRefreshChoice);
+  /** L'instant de la dernière réponse : c'est lui qui date les chiffres, pas le rendu. */
+  const [fetchedAt, setFetchedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
@@ -80,6 +105,7 @@ const DeadLetter: React.FC = () => {
     axios.get<DashboardResponse>('/api/dashboard', { signal: controller.signal, timeout: TIMEOUT_MS })
       .then(response => {
         setCatalogue({ topics: response.data.topics, sizes: response.data.topicSizes });
+        setFetchedAt(Date.now());
         setError(null);
       })
       .catch(e => {
@@ -134,6 +160,7 @@ const DeadLetter: React.FC = () => {
   const seriesLoading = requested.length > 0 && activityKey !== key;
 
   const summary = useMemo(() => summarize(rows, series), [rows, series]);
+  const sizes = useMemo(() => catalogue?.sizes ?? {}, [catalogue]);
 
   const shares = useMemo(() => {
     const out: Record<string, ReturnType<typeof shareSeries>> = {};
@@ -151,13 +178,58 @@ const DeadLetter: React.FC = () => {
    * non plus un motif d'ouvrir la page.
    */
   const sorted = useMemo(() => {
-    const copy = [...rows];
-    if (sortKey === 'name') return copy.sort((a, b) => a.topic.localeCompare(b.topic));
-    if (sortKey === 'share') {
-      return copy.sort((a, b) => (shares[b.topic]?.overall ?? -1) - (shares[a.topic]?.overall ?? -1));
-    }
-    return copy.sort((a, b) => (series[b.topic]?.total ?? -1) - (series[a.topic]?.total ?? -1));
-  }, [rows, series, shares, sortKey]);
+    /*
+     * Une ligne non mesurée vaut -1 et tombe donc au bout en descendant : une absence de mesure
+     * n'est pas un zéro, mais ce n'est pas non plus un motif d'ouvrir la page. En ascendant elle
+     * remonte en tête, ce qui est le bon résultat de l'autre question — « qu'est-ce que je n'ai
+     * pas pu lire ? ».
+     */
+    const rank = (row: SupervisionTopic): number | string => {
+      if (sortKey === 'name') return row.topic;
+      if (sortKey === 'share') return shares[row.topic]?.overall ?? -1;
+      if (sortKey === 'size') return sizes[row.topic] ?? -1;
+      return series[row.topic]?.total ?? -1;
+    };
+    const sign = sortDir === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      const x = rank(a);
+      const y = rank(b);
+      const order = typeof x === 'string' ? x.localeCompare(y as string) : x - (y as number);
+      // Le nom départage : deux files à égalité de volume ne doivent pas changer de place d'un
+      // rafraîchissement à l'autre, ce qui rend un tableau qui se rafraîchit tout seul illisible.
+      return order !== 0 ? order * sign : a.topic.localeCompare(b.topic);
+    });
+  }, [rows, series, shares, sizes, sortKey, sortDir]);
+
+  /*
+   * Le filtre ne porte que sur le **tableau**. Les tuiles du haut et la demande de séries couvrent
+   * toutes les files, bornées par le serveur qui le dit dans ses `warnings` : un écran de
+   * supervision dont le compteur « Surging » suivrait la page affichée annoncerait zéro incident
+   * dès qu'on tape trois lettres dans une zone de recherche.
+   */
+  const matching = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return sorted;
+    return sorted.filter(row =>
+      row.topic.toLowerCase().includes(needle)
+      || (row.pairing.source?.toLowerCase().includes(needle) ?? false));
+  }, [sorted, filter]);
+
+  const totalPages = Math.max(1, Math.ceil(matching.length / pageSize));
+  const pageRows = useMemo(
+    () => matching.slice(page * pageSize, (page + 1) * pageSize),
+    [matching, page, pageSize],
+  );
+
+  /** La bascule : la colonne active s'inverse, une autre prend son sens naturel. */
+  const toggleSort = useCallback((key: SortKey) => {
+    setSortKey(current => {
+      if (current === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+      else setSortDir(NATURAL_DIR[key]);
+      return key;
+    });
+    setPage(0);
+  }, []);
 
   const changeWindow = useCallback((id: string) => {
     const found = ACTIVITY_WINDOWS.find(w => w.id === id);
@@ -168,6 +240,36 @@ const DeadLetter: React.FC = () => {
     } catch {
       /* l'écriture est un confort, jamais une condition */
     }
+  }, []);
+
+  /*
+   * Le sondage, et les deux règles qu'il reprend du tableau de bord plutôt que d'en inventer
+   * d'autres : il ne tourne que quand l'onglet est **visible** — un écran de supervision laissé
+   * ouvert sur un second moniteur en veille n'a personne pour le lire, et continuerait pourtant à
+   * interroger le broker — et sa période passe par `activityIntervalMs`, qui plafonne le choix au
+   * cache serveur de 30 s. Les deux lectures de cette page sont de la classe « activité » (le
+   * catalogue est caché lui aussi), donc une seule cadence les gouverne, contrairement au tableau
+   * de bord où le sondage court à 5 s et la colonne d'activité à 30.
+   */
+  useEffect(() => {
+    const period = activityIntervalMs(refresh);
+    if (period === null) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') setReloadToken(n => n + 1);
+    }, period);
+    return () => clearInterval(timer);
+  }, [refresh]);
+
+  /* L'âge affiché doit vieillir tout seul : sans cette horloge il resterait sur « just now »
+     jusqu'au prochain rendu, c'est-à-dire jusqu'au prochain rafraîchissement. */
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 10_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const changeRefresh = useCallback((choice: RefreshChoice) => {
+    setRefresh(choice);
+    writeRefreshChoice(choice);
   }, []);
 
   const toggleScale = useCallback(() => {
@@ -199,6 +301,15 @@ const DeadLetter: React.FC = () => {
             >
               {ACTIVITY_WINDOWS.map(w => <option key={w.id} value={w.id}>{w.label}</option>)}
             </Select>
+            <Select
+              aria-label="Auto-refresh"
+              value={refresh}
+              onChange={e => changeRefresh(e.target.value)}
+              className="w-[9.5rem]"
+            >
+              {REFRESH_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+              <option value={REFRESH_OFF}>Off</option>
+            </Select>
             <Button variant="secondary" onClick={toggleScale} title="Vertical scale of the arrivals curve">
               {scale === 'log' ? 'Log scale' : 'Linear scale'}
             </Button>
@@ -208,6 +319,12 @@ const DeadLetter: React.FC = () => {
           </>
         }
       />
+
+      {/* Quand les chiffres ont été lus, et ce que la page fera ensuite. L'un sans l'autre ne
+          répond pas : « il y a 4 min » sans la cadence laisse croire à une panne. */}
+      <p className="text-[12px] text-on-surface-variant -mt-3">
+        {describeRefreshStatus(refresh, fetchedAt, now)}
+      </p>
 
       {error && <ErrorBanner message={error} onRetry={() => setReloadToken(n => n + 1)} />}
 
@@ -274,56 +391,125 @@ const DeadLetter: React.FC = () => {
           action={<Link to="/"><Button variant="secondary">Back to the dashboard</Button></Link>}
         />
       ) : (
-        <div className="bg-surface-container rounded-xl ring-1 ring-white/[0.045] overflow-hidden">
-          <Table>
-            <TableHead>
-              <TableRow>
-                {/* `min-h-6` : cible tactile de 24 px (WCAG 2.5.8). Un en-tête est une ligne
-                    et non un enregistrement, donc c'est corrigé ici plutôt que budgété dans
-                    `layout-probe.mjs` — la même conclusion que l'explorateur de topics. */}
-                <Th>
-                  <button onClick={() => setSortKey('name')} className="inline-flex items-center min-w-6 min-h-6 hover:text-on-surface transition-colors">
-                    Topic
-                  </button>
-                </Th>
-                <Th>Status</Th>
-                <Th>
-                  <span className="flex items-center gap-1">
-                    <button onClick={() => setSortKey('volume')} className="inline-flex items-center min-w-6 min-h-6 hover:text-on-surface transition-colors">
-                      Arrivals
-                    </button>
-                    <Tooltip content={`What landed in the queue, one point per ${formatSpan(window_.bucketMs)}, counted from offsets. Click a point to open those messages.`}>
-                      <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-outline">info</span>
-                    </Tooltip>
-                  </span>
-                </Th>
-                <Th>
-                  <span className="flex items-center gap-1">
-                    <button onClick={() => setSortKey('share')} className="inline-flex items-center min-w-6 min-h-6 hover:text-on-surface transition-colors">
-                      Share of source
-                    </button>
-                    <Tooltip content="The same buckets divided by what the paired source topic produced — the failure rate. Broken where the source produced nothing: a share of no traffic is not zero.">
-                      <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-outline">info</span>
-                    </Tooltip>
-                  </span>
-                </Th>
-                <Th className="text-right">Backlog</Th>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {sorted.map(row => (
-                <QueueRow
-                  key={row.topic}
-                  row={row}
-                  activity={series[row.topic]}
-                  share={shares[row.topic]}
-                  size={catalogue?.sizes[row.topic]}
-                  loading={seriesLoading}
-                  scale={scale}
-                />
-              ))}
-            </TableBody>
-          </Table>
+        <div className="space-y-3">
+          {/* Le filtre porte sur le nom de la file **et** sur celui de sa source : quand un
+              incident touche un flux, on tape le nom du flux, pas celui de ses files. */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <Input
+              type="search"
+              aria-label="Filter queues"
+              placeholder="Filter by queue or source…"
+              value={filter}
+              onChange={e => { setFilter(e.target.value); setPage(0); }}
+              className="w-72 max-w-full"
+            />
+            <p className="text-[12px] text-on-surface-variant tabular-nums">
+              {matching.length === rows.length
+                ? `${rows.length} queue${rows.length === 1 ? '' : 's'}`
+                : `${matching.length} of ${rows.length} queues`}
+            </p>
+          </div>
+
+          <div className="bg-surface-container rounded-xl ring-1 ring-white/[0.045] overflow-hidden">
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <Th><SortButton k="name" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort}>Topic</SortButton></Th>
+                  <Th>Status</Th>
+                  <Th>
+                    <span className="flex items-center gap-1">
+                      <SortButton k="volume" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort}>Arrivals</SortButton>
+                      <Tooltip content={`What landed in the queue, one point per ${formatSpan(window_.bucketMs)}, counted from offsets. Click a point to open those messages.`}>
+                        <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-outline">info</span>
+                      </Tooltip>
+                    </span>
+                  </Th>
+                  <Th>
+                    <span className="flex items-center gap-1">
+                      <SortButton k="share" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort}>Share of source</SortButton>
+                      <Tooltip content="The same buckets divided by what the paired source topic produced — the failure rate. Broken where the source produced nothing: a share of no traffic is not zero.">
+                        <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-outline">info</span>
+                      </Tooltip>
+                    </span>
+                  </Th>
+                  <Th className="text-right">
+                    {/*
+                      * Nommée « Backlog » jusqu'ici, et c'était faux par son nom : la valeur est
+                      * `endOffsets - beginningOffsets`, donc ce que le topic contient, pas ce qui
+                      * reste à traiter. Sur une file de rebut « backlog » se lit « en attente de
+                      * reprise », et les deux ne coïncident que si personne n'a jamais consommé —
+                      * un mot qui répond à côté sur la seule colonne chiffrée de la ligne.
+                      */}
+                    <span className="inline-flex items-center gap-1">
+                      <SortButton k="size" sortKey={sortKey} sortDir={sortDir} onToggle={toggleSort}>Size</SortButton>
+                      <HelpTip
+                        label="What Size counts"
+                        content={
+                          'Records the topic holds — the log end minus its start. That is what is in '
+                          + 'the queue, not what is left to reprocess: a consumer that has drained it '
+                          + 'leaves the records in place until retention removes them. Offsets a '
+                          + 'transaction marker took count too.'
+                        }
+                      />
+                    </span>
+                  </Th>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {pageRows.map(row => (
+                  <QueueRow
+                    key={row.topic}
+                    row={row}
+                    activity={series[row.topic]}
+                    share={shares[row.topic]}
+                    size={sizes[row.topic]}
+                    loading={seriesLoading}
+                    scale={scale}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {matching.length === 0 && (
+            <p className="text-[13px] text-on-surface-variant px-1">
+              No queue matches “{filter}”. {rows.length} are watched on this cluster.
+            </p>
+          )}
+
+          {/* Le pager n'apparaît qu'au-delà d'une page : sur les trois files d'un cluster
+              ordinaire, c'est un contrôle qui ne fait rien et qu'il faut quand même lire. */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between gap-3 flex-wrap px-1">
+              <p className="text-[12px] text-on-surface-variant tabular-nums">
+                {`${page * pageSize + 1}–${Math.min((page + 1) * pageSize, matching.length)} of ${matching.length}`}
+              </p>
+              <div className="flex items-center gap-2">
+                <Select
+                  aria-label="Rows per page"
+                  value={String(pageSize)}
+                  onChange={e => { setPageSize(Number(e.target.value)); setPage(0); }}
+                  className="w-[6.5rem]"
+                >
+                  {PAGE_SIZES.map(n => <option key={n} value={n}>{n} rows</option>)}
+                </Select>
+                <Button
+                  variant="secondary"
+                  onClick={() => setPage(p => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                  disabled={page >= totalPages - 1}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

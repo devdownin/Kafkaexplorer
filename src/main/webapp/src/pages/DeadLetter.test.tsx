@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { AxiosRequestConfig } from 'axios';
@@ -132,9 +132,15 @@ describe('DeadLetter', () => {
 
     // La part sur la fenêtre : 12 messages tombés pour 300 produits par `orders`.
     await waitFor(() => expect(screen.getByText('4%')).toBeInTheDocument());
-    const shares = screen.getAllByRole('img', { name: /took .* of what/ });
+    /*
+     * Un bouton et non une image : les valeurs par bucket ne doivent pas être réservées à la
+     * souris, et l'arrêt de tabulation se paie contre une action — ouvrir le pire *taux*, qui
+     * n'est pas le même bucket que le pic d'arrivées.
+     */
+    const shares = screen.getAllByRole('button', { name: /took .* of what/ });
     expect(shares.length).toBeGreaterThan(0);
     expect(shares[0]).toHaveAccessibleName(/orders\.DLQ took 4% of what orders produced/);
+    expect(shares[0]).toHaveAccessibleName(/Opens orders\.DLQ with the search primed/);
   });
 
   it('says a queue without a source has nothing to compare against', async () => {
@@ -177,6 +183,52 @@ describe('DeadLetter', () => {
       expect(screen.getByText('No dead-letter or retry topic on this cluster')).toBeInTheDocument(),
     );
     expect(mockedAxios.get).not.toHaveBeenCalledWith('/api/dashboard/activity', expect.anything());
+  });
+
+  it('sorts by volume first, reverses on a second activation, and says which column sorts', async () => {
+    stubApi();
+    await renderPage();
+    /*
+     * Attendre les **séries**, pas seulement le catalogue : le tri par volume n'a rien à trier
+     * tant qu'elles ne sont pas là, et l'ordre est alors celui du départage par nom. Attendre le
+     * nom du topic passait par chance en isolation et échouait dans la suite complète.
+     */
+    await waitFor(() => expect(screen.getByText('receiving')).toBeInTheDocument());
+
+    const rowNames = () => screen.getAllByRole('row').slice(1)
+      .map(r => r.querySelector('a')?.textContent ?? '');
+    // Le volume, décroissant : on vient ici chercher ce qui se remplit, pas la lettre « a ».
+    expect(rowNames()[0]).toBe('orders.DLQ');
+    // Une colonne active dit qu'elle l'est et dans quel sens — un bouton nu ne disait ni l'un
+    // ni l'autre, et ne s'inversait jamais.
+    expect(screen.getByRole('button', { name: /Sorted by this column, descending/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Sorted by this column, descending/ }));
+    expect(screen.getByRole('button', { name: /Sorted by this column, ascending/ })).toBeInTheDocument();
+    expect(rowNames()[0]).not.toBe('orders.DLQ');
+  });
+
+  it('filters the table without narrowing what the KPI tiles count', async () => {
+    stubApi();
+    await renderPage();
+    await waitFor(() => expect(screen.getByText('orders.DLQ')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Filter queues'), { target: { value: 'payments' } });
+    expect(screen.queryByText('orders.DLQ')).not.toBeInTheDocument();
+    expect(screen.getByText('payments.retry.5m')).toBeInTheDocument();
+    /*
+     * Les tuiles continuent de compter les trois files : un compteur d'incidents qui suivrait la
+     * zone de recherche annoncerait zéro dès qu'on y tape trois lettres.
+     */
+    expect(screen.getByText('1 of 3 queues')).toBeInTheDocument();
+    expect(screen.getByText('2 dead letter · 1 retry')).toBeInTheDocument();
+  });
+
+  it('states when the figures were read and what it will do next', async () => {
+    stubApi();
+    await renderPage();
+    await waitFor(() =>
+      expect(screen.getByText(/Updated just now · refreshing every 5 s/)).toBeInTheDocument());
   });
 
   it('passes the server own warnings through rather than swallowing them', async () => {
