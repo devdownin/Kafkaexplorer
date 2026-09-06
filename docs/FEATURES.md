@@ -170,10 +170,11 @@ them (dead letters first, retries after), sorts by volume, and says so in their 
   buckets over what the queue's source topic produced: the failure rate. Forty failures an hour is
   a catastrophe on a fifty-message-an-hour flow and a rounding error on a busy one, and an absolute
   count cannot tell you which.
-- **No new measurement.** Both series come from `GET /api/dashboard/activity`, which takes a list —
-  the queue and its source travel in one call and the ratio is computed in the browser. The request
-  interleaves queue and source so that when the server's `explorer.activity-max-topics` cut bites,
-  it drops whole rows (which it then names in its warnings) rather than every source at once.
+- **No new measurement.** Both series come from `GET /api/dashboard/activity`, which takes a list,
+  and the ratio is computed in the browser. The queues travel in one call and the sources in a
+  second, for the rows on screen only — the endpoint measures at most
+  `explorer.activity-max-topics` (100) per request, and asking for both at once halved how many
+  queues a cluster could rank. What has already been read is not asked for again.
 - **The source is derived from the name and then verified against the cluster.** Exactly, where the
   convention allows it (`orders.DLQ` → `orders`); by inference where a step-numbered convention
   makes the bare prefix a name nothing carries — `demo.orders.2.dlt` pairs with
@@ -188,11 +189,10 @@ them (dead letters first, retries after), sorts by volume, and says so in their 
 - **The percentage scale has a 1 % floor**, and the chart says when the floor is what set it: an
   own-peak scale is right for counts, which have no unit, and would draw a mountain for a 0.3 %
   failure rate.
-- **A verdict per row** — *quiet*, *receiving*, *surging* or *not measured*. "Surging" uses the same
+- **A verdict per row** — *quiet*, *retrying*, *receiving*, *surging* or *not measured*. "Surging" uses the same
   trend rule the dashboard applies to any topic (the last bucket against the window's median), so
   there is one definition of "this is climbing"; what differs is the conclusion drawn from it. A
   topic the broker could not answer for is *not measured*, never *quiet*.
-
 - **Opening a row says what is failing, and who is fixing it.** *What is arriving* groups the
   queue's most recent records by a field — `failure_reason`, `exception`, `original-topic`,
   whichever the producer writes — which is what separates a service outage from a batch of

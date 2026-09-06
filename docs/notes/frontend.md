@@ -243,14 +243,12 @@ dessinerait une montagne pour un taux qui n'en est pas une. Sous le plancher, la
 écrasée en bas, et un pointillé en haut de la boîte le déclare — une échelle non annoncée est
 précisément ce qui rend un graphique trompeur.
 
-Deux détails de câblage valent d'être écrits. La liste envoyée à l'endpoint est **entrelacée**
-(`activityRequestTopics` : file, source, file, source) parce que le contrôleur coupe à
-`explorer.activity-max-topics` en gardant le début — groupée par nature, la coupe aurait retiré
-toutes les sources d'un coup, donc la moitié de l'écran, au lieu de retirer des lignes entières
-que le serveur nomme ensuite dans ses `warnings`. Et le tri par défaut est le **volume**, pas le
-nom : on vient ici chercher ce qui se remplit, et l'ordre alphabétique met en tête celui dont le
-nom commence par « a ». Les lignes non mesurées tombent en bas — une absence de mesure n'est pas
-un zéro, mais ce n'est pas non plus un motif d'ouvrir la page.
+Le tri par défaut est le **volume**, pas le nom : on vient ici chercher ce qui se remplit, et
+l'ordre alphabétique met en tête celui dont le nom commence par « a ». Les lignes non mesurées
+tombent en bas — une absence de mesure n'est pas un zéro, mais ce n'est pas non plus un motif
+d'ouvrir la page. Comment les deux séries sont demandées est décrit plus bas, sous **Deux demandes,
+parce qu'une seule mentait à grande échelle** : la première version les faisait voyager ensemble et
+c'est ce qui a dû changer.
 
 Quatre décisions de la barre d'outils, ajoutées après une relecture de l'écran livré, et chacune
 répond à une manière précise de se tromper.
