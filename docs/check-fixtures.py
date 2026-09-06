@@ -66,6 +66,7 @@ CONTRACTS = {
     "dataModelLimits": "DataModelLimits",
     "ddlPreview": "DdlPreviewResponse",
     "topicActivity": "TopicActivityResponse",
+    "topicConsumers": "TopicConsumers",
 }
 
 # Exports with no interface to check against, each with the reason. A reason rather than a bare

@@ -57,6 +57,28 @@ const SIZES = {
   'internal.audit.history': 7, 'internal.metrics.config': 3,
 };
 
+/**
+ * Qui lit un topic. Écrit ici plutôt qu'en objet anonyme dans `server.mjs`, et c'est le défaut que
+ * ce déplacement corrige : la version en ligne omettait `available`, donc le panneau lisait
+ * `undefined` et affirmait « les groupes n'ont pas pu être lus » — une lecture qui a échoué, là où
+ * la vérité était « personne ne lit ce topic ». Exactement la distinction que ce panneau existe
+ * pour rendre, inversée par un champ manquant. Personne ne l'avait vu parce qu'aucune capture
+ * n'ouvrait cet onglet ; la ligne dépliée de l'écran des files d'échec le monte, elle.
+ *
+ * Nommée, elle passe désormais sous `check-fixtures.py`, qui compare les clés au contrat
+ * `TopicConsumers` dans les deux sens.
+ */
+export const topicConsumers = {
+  topic: 'demo.orders.5.shipped',
+  groups: [],
+  groupsExamined: 0,
+  groupsEligible: 0,
+  groupsInCluster: 0,
+  truncated: false,
+  available: true,
+  warnings: [],
+};
+
 export const topicSizes = Object.fromEntries(
   TOPICS.map((t, i) => [t, SIZES[t] ?? 180 + ((i * 37) % 420)]));
 

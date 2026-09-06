@@ -2,7 +2,7 @@
 
 `docs/img/*.png` is what the [Docker Hub overview page](../DOCKERHUB.md), the READMEs and the
 GitHub Pages site show. They are produced here, not taken by hand, so that a UI change can be
-reflected by re-running one command instead of someone remembering to re-photograph eight
+reflected by re-running one command instead of someone remembering to re-photograph nine
 screens at the same window size.
 
 ```bash
@@ -15,8 +15,8 @@ node capture.mjs http://127.0.0.1:4173 ../img
 ```
 
 Requires Node 22+ and Playwright with a Chromium build (`npm i -g playwright && playwright
-install chromium`). The capture exits non-zero if any screen fails — seven screenshots out of
-eight means the eighth silently disappears from the documentation, so a partial run is a
+install chromium`). The capture exits non-zero if any screen fails — eight screenshots out of
+nine means the ninth silently disappears from the documentation, so a partial run is a
 failed run.
 
 **Installed globally, Playwright needs `NODE_PATH` to be found**, and every command on this page
@@ -47,8 +47,8 @@ point is that its numbers get re-measured was the one that could not run.
 
 **Install `pngquant` too** (`apt install pngquant`, `brew install pngquant`, or point
 `PNGQUANT` at a binary). Each shot is quantised to an 8-bit palette, which on flat UI colour
-and text is visually indistinguishable from the original and takes the eight from ~2.9 MB to
-~970 kB. That is not repository housekeeping: the Docker Hub overview loads all eight of them from
+and text is visually indistinguishable from the original and takes the nine from ~2.9 MB to
+~1.0 MB. That is not repository housekeeping: the Docker Hub overview loads all nine of them from
 GitHub Pages on every view. Without the binary the run still succeeds and says so at the end
 — compression is not what this script is for, but nobody should discover the omission from a
 commit diff either.
@@ -61,7 +61,7 @@ interactive targets fall below the 24 x 24 CSS px of WCAG 2.5.8, and — on the 
 the question is sharpest — the width actually left to the Monaco editor.
 
 ```bash
-node layout-probe.mjs http://127.0.0.1:4173            # eight pages, four opened states, three viewports
+node layout-probe.mjs http://127.0.0.1:4173            # ten pages, four opened states, three viewports
 node layout-probe.mjs http://127.0.0.1:4173 --sweep    # editor width against viewport width
 node layout-probe.mjs http://127.0.0.1:4173 --check    # what CI gates on; non-zero on a regression
 ```
@@ -87,10 +87,12 @@ clipping than `UNREACHABLE_BUDGET`. That third one was excluded for a long time 
 that clipping turns on text metrics; comparing a CI run against a developer machine on the same
 commit measured the argument, and it splits the two columns rather than covering both —
 `clipped` differed on 4 of the 21 rows, `unreachable` on none. Which is what they are: one counts
-where a string happens to wrap, the other whether any path to the rest exists. It walks **phone and desktop
-only** — the gate runs on every pull request and each viewport is eight page loads waited out to
-`networkidle`, which put the job past its timeout the first time all three ran. The extremes are
-the ones that matter: overflow appears at the narrow end, and the peak target count is at one end
+where a string happens to wrap, the other whether any path to the rest exists. It walks **all three viewports**
+— the gate runs on every pull request and each viewport is ten page loads waited out to
+`networkidle`, which put the job past its timeout the first time all three ran. Tablet was dropped
+for that budget and has since been restored, the reason having been re-measured: the screenshot job
+spends 3 min 36 s of its 25-minute ceiling, 65 s of it here. The extremes are still the ones that
+carry the gate: overflow appears at the narrow end, and the peak target count is at one end
 or the other. A page added to `PAGES`
 without a budget entry fails the check rather than being measured and never gated. Clipping is
 **reported and not gated**, deliberately — it turns on text metrics, so the same string wraps
@@ -160,7 +162,7 @@ fixed random seed was tried first and is *not* the fix, which is why it is not h
 starting positions repeat, while the drift depends on elapsed time and the shutter falls at an
 instant that varies. So the layer is hidden instead — `[data-decorative]`, which such layers set on
 themselves rather than being listed here, and which they can only honestly set when they are
-`aria-hidden` and carry no text. Nothing the capture documents is lost, and the eight screens are
+`aria-hidden` and carry no text. Nothing the capture documents is lost, and the nine screens are
 byte-identical across runs again.
 
 **An API route the SPA calls and `server.mjs` does not stub fails the run.** It used to be a

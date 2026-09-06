@@ -46,10 +46,7 @@ const API = [
   [m => m === '/api/audit/last', () => F.auditReport],
   [m => m === '/api/audit/history', () => F.auditHistory],
   [m => m.startsWith('/api/topic/') && m.endsWith('/search'), () => F.topicSearch],
-  [m => m.startsWith('/api/topic/') && m.endsWith('/consumers'), () => ({
-    topic: 'demo.orders.5.shipped', groups: [], groupsExamined: 0, groupsInCluster: 0,
-    truncated: false, warnings: [],
-  })],
+  [m => m.startsWith('/api/topic/') && m.endsWith('/consumers'), () => F.topicConsumers],
   [m => m.startsWith('/api/topic/'), () => F.topicDetail],
   [m => m === '/api/metrics', () => F.metrics],
   [m => m === '/api/metrics/templates', () => F.metricTemplates],

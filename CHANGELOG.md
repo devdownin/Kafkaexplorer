@@ -20,7 +20,68 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **The screenshot stub said the consumer groups could not be read** where the truth was that
+  nobody consumes the topic — it omitted `available` from its `TopicConsumers` reply, so the panel
+  read `undefined` and reported a failed read. Exactly the distinction that panel exists to draw,
+  inverted by a missing field. Nothing had shown it because no capture opened that tab. The stub is
+  now a named fixture, so `check-fixtures.py` compares its keys against the interface both ways.
+
+### Changed
+
+- **The dashboard's sortable headers are now 24 px tall** (WCAG 2.5.8), which they were not, at 18.
+  Nothing on that page was edited: `SortButton` lived inside `Dashboard.tsx`, and moving it to
+  `components/ui/` — because a second screen needed to sort — fixed it for both at once. Measured
+  by `layout-probe.mjs`: the dashboard falls from 5 undersized targets to 1, its command palette
+  from 6 to 2, and both budgets are lowered to match.
+
+### Added
+
+- **A Dead Letter & Retry screen** (`/dead-letter`), with two curves per queue. The dashboard
+  already listed these topics and badged them, but read them like every other topic — sorted by
+  name, mixed in with business streams, with a curve that says "this is producing, it is alive".
+  On a failure queue that reading is backwards. The new screen groups them, sorts by volume, and
+  its verdicts are written that way round: a silent queue is the good news.
+  - **Arrivals** — what landed in the queue, bucket by bucket, with the same click-through to the
+    messages of a bucket the dashboard already has.
+  - **Share of source** — the same buckets over what the paired source topic produced, which is
+    the failure rate. Forty failures an hour is a catastrophe on a fifty-message-an-hour flow and
+    a rounding error on a busy one; an absolute count cannot tell you which.
+
+  The table sorts by volume (reversible, and the active column says which way), filters by queue
+  or source name, and paginates past 25 rows; an auto-refresh selector reuses the dashboard's
+  cadences and its 30 s floor, and the page states when its figures were read. Both curves are
+  keyboard-reachable and open different buckets — the worst arrivals and the worst *rate* are
+  rarely the same hour.
+
+  **Opening a row answers the two questions the curves cannot.** *What is arriving* groups the
+  queue's most recent records by a field — `failure_reason` in the body, `exception` or
+  `original-topic` in a header, whichever the producer's convention uses — which is what separates
+  a service outage from a batch of malformed messages. It is a sample and says so: twenty records
+  is not the window the curves cover, and a field absent from a record is counted as absent rather
+  than dropped, so two carriers out of twenty read as 10 % and never as 100 %. *Who drains it*
+  mounts the Topic Explorer's own consumers panel, because a queue taking ten messages an hour with
+  a consumer behind it is healthy and the same queue with no assigned member is a leak. Both are
+  read on open, never with the table: they cost a group sweep and a sample where the curves cost
+  offsets.
+
+  **And a queue can become an alert in one click.** "Alert on this rate" opens the metric editor
+  pre-filled with exactly the second curve — `TOPIC_COUNT_DELTA` in `RATIO`, queue over source,
+  counted from offsets since the previous refresh, the parameters `MetricSuggestionService` already
+  uses for its own gap cards. No threshold is proposed: nothing here was measured over time, and a
+  round number invented at this point is what the suggestion panel refuses to write. Nothing is
+  created either — the editor opens, the operator previews and saves.
+
+  Neither costs a new measurement: both series come from the existing
+  `GET /api/dashboard/activity`, the queue and its source travelling in the same call.
+  The source is derived from the queue's name and kept only when the cluster really has that
+  topic — exactly (`orders.DLQ` → `orders`) or, where a step-numbered convention makes the bare
+  prefix a name nothing carries, by inferring the one non-queue topic under it
+  (`demo.orders.2.dlt` → `demo.orders.2.validated`), which the screen labels as inferred. Where
+  several topics sit under the prefix it names them and pairs nothing, rather than computing a
+  rate against half the traffic. A bucket whose source produced nothing is drawn as a hole and
+  not as zero, which would claim nothing failed where the truth is that nothing was in flight.
 
 ## [1.9.13] — 2026-09-05
 

@@ -27,7 +27,7 @@ Pensé pour les data engineers, les architectes, et tous ceux qui se sont un jou
 ![Le tableau de bord : chaque topic, son nombre de messages, son état et la date de son dernier message](docs/img/dashboard.png)
 
 <details>
-<summary>Autres écrans — Topic Explorer, Éditeur SQL, Stream Flow, Modèle de données, Audit, Cluster</summary>
+<summary>Autres écrans — Topic Explorer, Éditeur SQL, Stream Flow, Modèle de données, Files d'échec, Audit, Cluster</summary>
 
 **Topic Explorer** — cherchez dans tout le topic, et lisez ce qui a réellement été couvert.
 ![Topic Explorer](docs/img/topic-explorer.png)
@@ -40,6 +40,9 @@ Pensé pour les data engineers, les architectes, et tous ceux qui se sont un jou
 
 **Modèle de données** — les topics lus comme des tables, avec les relations entre eux déduites et graduées.
 ![Modèle de données](docs/img/data-model.png)
+
+**Files d'échec et de reprise** — chaque file, ce qui y est tombé, et la part du trafic de sa source que ça représente.
+![Files d'échec et de reprise](docs/img/dead-letter.png)
 
 **Audit du cluster** — constats gradués, et chaque run énonce son propre périmètre.
 ![Audit du cluster](docs/img/audit.png)
@@ -112,6 +115,7 @@ Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deu
 | Lire un ensemble de topics comme un diagramme entité-relation | **Data Model** — relations déduites, graduées, ouvrables en SQL |
 | Transformer du SQL en métriques Prometheus avec graphiques | **Metrics** |
 | Se voir proposer des KPI tirés de ce que le cluster a montré | **Metrics** — proposés d'après l'audit et les traces |
+| Voir ce qui s'accumule dans vos topics DLQ, DLT et de reprise | **Dead Letter** — les arrivées, et la part de la source que ça représente |
 | Vérifier la santé de tout le cluster en un clic | **Audit** |
 | Inspecter brokers, quorum KRaft, groupes clients, feature flags | **Cluster** |
 | Laisser un LLM reconstruire et auditer vos flux métier | **Process Mining** |

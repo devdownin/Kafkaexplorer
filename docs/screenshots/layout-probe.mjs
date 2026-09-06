@@ -53,6 +53,7 @@ const PAGES = [
     settleMs: 2500,
   },
   { name: 'audit', url: '/audit' },
+  { name: 'dead-letter', url: '/dead-letter' },
   { name: 'metrics', url: '/metrics' },
   { name: 'cluster', url: '/cluster' },
   // The one screen whose entire purpose is data entry, and it was not measured at all — so the
@@ -165,6 +166,27 @@ const STATES = {
       close: ESCAPE,
     },
   ],
+  'dead-letter': [
+    {
+      /*
+       * La ligne dépliée : le regroupement des derniers enregistrements et le panneau des
+       * consommateurs. Deux surfaces qu'aucune URL n'atteint, donc invisibles à la mesure de la
+       * page au repos — exactement la classe que `STATES` a été ajouté pour couvrir. Elle se
+       * déclare à toutes les largeurs parce qu'elle n'a pas de seuil : le dépliant est dans la
+       * première colonne du tableau, qui existe partout.
+       */
+      name: 'open',
+      viewports: ['phone', 'tablet', 'desktop'],
+      open: async page => {
+        await page.getByRole('button', { name: /Show what is arriving in/ }).first().click();
+        await page.getByText(/most recent record/).first().waitFor({ timeout: 5000 });
+      },
+      close: async page => {
+        await page.getByRole('button', { name: /Hide what is arriving in/ }).first().click();
+        await page.waitForTimeout(200);
+      },
+    },
+  ],
 };
 
 /** Le nom sous lequel un état est rapporté et budgété : `metrics·topic-list`. */
@@ -221,6 +243,8 @@ const UNREACHABLE_BUDGET = {
   'stream-flow': 0,
   'data-model': 0,
   'audit': 0,
+  'dead-letter': 0,
+  'dead-letter·open': 0,
   'metrics': 0,
   'metrics·editor': 2,
   'cluster': 2,
@@ -236,8 +260,16 @@ const UNREACHABLE_BUDGET = {
 };
 
 const TARGET_BUDGET = {
-  'dashboard': 5,
-  'dashboard·palette': 6,
+  /*
+   * 5 → 1 et 6 → 2 le 2026-09-06, sans qu'une seule ligne de cette page ait été retouchée : ses
+   * quatre en-têtes triables mesuraient 18 px, et `SortButton` — jusque-là défini dans
+   * `Dashboard.tsx`, extrait vers `components/ui/` quand un second écran a eu besoin de trier —
+   * porte désormais `min-w-6 min-h-6`. C'est l'argument de l'extraction en un chiffre : un
+   * contrôle partagé se corrige une fois pour toutes les pages, là où quatre copies se corrigent
+   * quatre fois, ou trois.
+   */
+  'dashboard': 1,
+  'dashboard·palette': 2,
   // +3 chacun le 2026-08-27, et la cause est mécanique plutôt qu'une dette qui glisse : le
   // navigateur de schéma rend **un bouton de 195 x 16 par topic du catalogue**, et les fixtures
   // ont gagné les trois topics de reprise et de file morte que `setup-demo.sh` sème désormais
@@ -246,6 +278,21 @@ const TARGET_BUDGET = {
   // dont la hauteur ne se relève qu'en relevant le pas de toutes les vues denses. Le nombre suit
   // donc la taille du catalogue, pas la qualité de la page ; c'est bien ce plafond qu'il faut
   // recalibrer, et non le contrôle qu'il faut corriger ici.
+  /*
+   * 6 au bureau, 4 ailleurs, et la composition vaut d'être écrite parce qu'elle dit ce qui a été
+   * corrigé et ce qui ne peut pas l'être ici. Les trois en-têtes triables mesuraient 18 px de
+   * haut : relevés à 24 (`min-h-6`), comme ceux de l'explorateur de topics l'ont été, un en-tête
+   * étant une ligne et non un enregistrement — 7 → 4. Ce qui reste est le lien du logo, commun à
+   * toutes les pages, et le **texte des lignes denses** : le nom du topic, et le lien « from … »
+   * qui n'apparaît qu'au bureau, d'où les deux de plus. C'est nommément la classe que
+   * MOBILE-LAYOUT-SCOPE.md laisse ouverte — 24 px y voudrait dire relever le pas de toutes les
+   * vues denses, une décision de densité d'information plutôt qu'un correctif d'accessibilité.
+   */
+  'dead-letter': 6,
+  /* La ligne dépliée n'ajoute aucune cible sous 24 px : ses six contrôles — le sélecteur de
+     champ, le bouton d'alerte, ceux du panneau des consommateurs — sont tous des contrôles de
+     taille pleine. Le compte est celui de la page, et c'est ce qu'il fallait vérifier. */
+  'dead-letter·open': 6,
   'sql-editor': 42,
   'sql-editor·confirm': 39,
   /*

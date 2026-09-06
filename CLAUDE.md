@@ -194,33 +194,82 @@ parser/       JSON, XML and Avro (via Confluent Schema Registry) schema inferenc
 
 ### Frontend
 
-`docs/notes/frontend.md` carries the app shell, the design system, the graph viewport and the
-rationale for each page. Four rules bind before that note has been read:
 
-- **The three SVG graphs share one viewport** — `components/graph/useGraphViewport.ts`, used by
-  `Lineage`, `StreamFlow` and `DataModel`. Never re-implement panning or zooming in a page: the
-  hook owns the transform, the gestures and the wheel listener, and a page keeps only what
-  genuinely differs (what `0` recadres, what `Escape` deselects, which node a selection reveals).
-  It exists because that code sat in three files and the move to pointer events, without which a
-  tablet cannot pan at all, had to be made three times.
-- **`svgRef` is a callback ref, not an object ref, and that is load-bearing.** Two of the three
-  pages render their canvas only once a result has arrived, so an effect keyed on anything else
-  runs once against a null ref and never again — which is how the `wheel` listener stopped
-  attaching on two graphs when the hook was extracted.
-- **Build every form out of the shared controls.** `PasswordInput` adds a reveal toggle and
-  `autoComplete="new-password"`, because a secret typed blind fails at connection time with
-  nothing to diagnose; wrap the fields in a real `<form onSubmit>` so Enter submits from any of
-  them, which is why `Button` defaults to `type="button"` and a submit button says so explicitly.
-  A hand-rolled `<input className="…">` drifts from the tokens and skips the accessibility wiring.
-- **A pure module never differs from its page component by case alone.** A lower-case `compare`
-  module beside `pages/Compare.tsx` is one file name on a case-insensitive filesystem: the two
-  collide in the module graph and the import resolves to `undefined` — React's "Element type is
-  invalid". Measured on Windows, **110 of 1 558 Vitest cases failed** across the five affected
-  page suites while CI on Linux stayed green, so `mvn verify` could not be trusted on the machine
-  where the code is written. The pure halves are `compareMessages`, `dataModelGraph`,
-  `helpContent`, `queryWorkbenchLogic` and `streamFlowLogic`; better still, name a module for what
-  it holds — `queryError.ts`, `sqlScope.ts`, `metricScope.ts`, `topicActivity.ts` — which avoids
-  the collision by construction.
+**The three SVG graphs share one viewport** — `components/graph/useGraphViewport.ts`, used by
+`Lineage`, `StreamFlow` and `DataModel`. They carried the same implementation copied three times:
+the same `isPanning` / `lastPos` refs, the same three pointer handlers line-for-line, the same
+non-passive `wheel` listener, the same keyboard step. That is exactly the shape that lets a fix
+land on one page and not the other two, and it had already happened here — the move to *pointer*
+events, without which a tablet cannot pan a graph at all, had to be made three times.
+
+The split is **mechanics in the hook, policy in the pages**. The hook owns the transform state,
+the gestures, the wheel zoom and the viewport measurement, and exposes `panBy` / `zoomAround` /
+`zoomFromCenter` so a page's keyboard handler is a few lines. What stays in each page is what
+genuinely differs: what `0` recadres (a fit for Stream Flow and Data Model, a fixed origin for
+Lineage), what `Escape` deselects, and which node a table selection brings into view. Absorbing
+those through three more callbacks would have made the hook harder to read than the forty lines
+it replaces.
+
+Three things are parameters rather than constants because the pages really disagree: the scale
+bounds (Data Model goes to 0.1–3, the other two 0.15–4 — a hundred entities need the lower
+floor), the initial transform, and whether a press on a `[data-node]` starts a pan. `viewAdjusted`
+is the hook's, with `markFitted()` / `markAdjusted()` as the pair of verbs: `panBy` and
+`zoomAround` raise it themselves, and a page that sets its own transform — centring on an entity —
+says so, because Data Model's automatic refit on a resize must not undo a framing the operator
+chose.
+
+**`svgRef` is a callback ref, not an object ref, and that is load-bearing.** Stream Flow and Data
+Model render their canvas only once a result has arrived, so an effect keyed on anything else runs
+once with `ref.current` still null and never runs again — which is exactly how the `wheel` listener
+stopped attaching on two of the three graphs when this hook was extracted. Each page used to work
+around it with its own dependency (`[hasResult, nodes.length]`, `[zoomAround, model]`) under a
+comment reading "re-attach after the SVG mounts"; sharing the code dropped the dependency and the
+defect came back. A callback ref makes the mount observable, so the question no longer reaches the
+caller — and pages read the element as `canvas` rather than `svgRef.current`.
+
+Only `zoomTransform` is unit-tested; the rest is pointer plumbing over geometry jsdom does not
+have, where a test would assert that mocks were called rather than that a graph pans. What covers
+it instead is **`docs/screenshots/graph-gestures.mjs`**, run by CI in the screenshot job: real
+pointer, wheel and keyboard events against the compiled SPA in Chromium, asserting that the pan
+follows the pointer, that the zoom stays anchored under the cursor, that the keyboard reaches the
+graph and that `touch-action` is neutralised. It is what found the wheel defect above.
+
+**Form conventions** — build every form out of these; hand-rolled `<input className="…">` blocks drift from the tokens and skip the accessibility wiring.
+- `SortButton` is the sortable column header — the arrow that says which column sorts and which
+  way, and a 24 px target. It was the Dashboard's private component until a second screen sorted
+  and wrote a bare button instead; extracting it fixed the target size on both at once (measured
+  in `layout-probe.mjs`'s budgets).
+- `PasswordInput` adds a reveal toggle and `autoComplete="new-password"`. Secrets typed blind fail at connection time with nothing to diagnose.
+- Wrap in a real `<form onSubmit>` so Enter submits from any field. `Button` defaults to `type="button"` for that reason — submit buttons declare `type="submit"` explicitly.
+
+**Routes / pages** (`pages/`):
+- `QueryController` — `/api/query/**`. Every endpoint here answers with a *reason* rather than a bare status: `ddl-preview` through `SqlErrorClassifier.explain()`, `init` with `kafkaError` / `flinkError` instead of two empty catches, `cancel` with what it actually achieved, `submitJob` with an `ApiError` split 400/500 on the classifier. `docs/notes/frontend.md` has the defect behind each.
+
+
+  **What Job mode left behind, and what became of each.** #323 removed the `SubmittedJobPanel` and its wiring along with the feature — five pieces of state, a polling effect, a Stop handler, all referencing an `executionMode` that no longer existed, which is why the SPA had stopped type-checking on `main`. #325 then removed the three pieces that still compiled and simply had no caller — `GET /api/query/sink-ddl` (with `DdlGeneratorService.sinkColumns`), `insertTargetAndSource`, `flinkJobHistory.isJobTerminal` — plus the shipped-but-unread `explorer.inference-poll-timeout-ms`, and added `docs/check-config-yaml.py` so a settable, inert `explorer.*` key fails the build instead of sitting there. **The last of it was the Dashboard's own "Flink SQL Jobs" table**, which had a caller and was the reason the three job reads and the persistence behind them survived two clean-ups: without a submission it no longer listed jobs but the synchronous reads `FlinkJobStore` recorded on the way past, all finished, one per Run and ~2 900 a day per planner-answered metric — a panel of running jobs that never shows one, which is misleading rather than merely reduced. It went, and `GET /api/query/jobs`, `GET /api/query/jobs/{queryId}`, `POST /api/query/jobs/{queryId}/cancel`, `FlinkJobService`, `FlinkJobStore`, `FlinkManagedJobDetails`, `FlinkJobHistoryEntry` and two `explorer.*` keys with it. The one kept is `FlinkSqlService.submitJob` with the `explorer.max-concurrent-jobs` cap that guards it: unreachable over HTTP, and not dead code — it is where `FlinkSqlServiceInsertVariantsTest` establishes what an INSERT means here. What survives in the browser is the rule the two mode guards served: an `INSERT` is refused there, **with its cause**, rather than sent to the engine to be answered by the whitelist. `docs/notes/frontend.md` carries the reasoning for each.
+
+
+  See `SQL-EDITOR-AUDIT.md` for the full review, including what was deliberately left open.
+- `Compare` (`/compare`) — side-by-side topic comparison
+- `DeadLetter` (`/dead-letter`) — the DLQ / DLT / retry topics, two curves each: arrivals, and
+  those same buckets over what the paired source produced; opening a row groups the queue's last
+  records by a field to say *what* is failing, mounts the Topic Explorer's consumers panel to say
+  who drains it, and offers the same rate as a metric draft (`pages/metricFromQueue.ts`, `RATIO`
+  over offsets, no threshold invented). Pairing is derived from the name and
+  always confronted with the catalogue — exactly where the convention allows, otherwise by the one
+  non-queue topic under the prefix, which the row labels as inferred, and not at all when several
+  answer. Where a bucket's denominator is zero the second curve is drawn as a hole, since a rate of
+  no traffic is not zero. Decisions live in `pages/deadLetterSupervision.ts`;
+  `docs/notes/frontend.md` carries the argument, including what the strict rule alone measured.
+
+
+- `Help` (`/help`) — the SQL guide, written as a course rather than a reference card, with every example runnable against what `setup-demo.sh` seeds and opened through the same `?sql=` link a colleague would paste. The content lives in `pages/helpContent.ts` so tests can keep it executable; see `docs/notes/frontend.md`.
+
+
+**A pure module never differs from its page component by case alone.** a lower-case `compare` module sitting beside `pages/Compare.tsx` is one file name on a case-insensitive filesystem: the two collide in the module graph, and what comes back is a `Compare` module whose `default` is `undefined` — React's "Element type is invalid". Measured on Windows: **110 of 1 558 Vitest cases failed**, five whole page suites among them (`Compare`, `DataModel`, `Help`, `QueryWorkbench`, `StreamFlow` — exactly the five pairs), while CI on Linux stayed green. So `mvn verify`, the one command this file calls "the only command that runs everything", could not be trusted on the machine where the code is written. The pure halves are `compareMessages` / `dataModelGraph` / `helpContent` / `queryWorkbenchLogic` / `streamFlowLogic`; the names are uniform rather than precious, and what matters is the rule, not the words. Most pure modules here were never affected — `queryError.ts`, `sqlScope.ts`, `metricScope.ts`, `topicActivity.ts` are named for what they hold rather than for their page, which is the habit that avoids this by construction.
+
+
+Dev server proxy: Vite forwards `/api/*` to `http://localhost:8080` (configured in `vite.config.ts`).
 
 ### Configuration
 

@@ -19,6 +19,7 @@ const Compare = lazy(() => import('./pages/Compare'));
 const Lineage = lazy(() => import('./pages/Lineage'));
 const Metrics = lazy(() => import('./pages/Metrics'));
 const Audit = lazy(() => import('./pages/Audit'));
+const DeadLetter = lazy(() => import('./pages/DeadLetter'));
 const StreamFlow = lazy(() => import('./pages/StreamFlow'));
 const Config = lazy(() => import('./pages/Config'));
 const Help = lazy(() => import('./pages/Help'));
@@ -86,6 +87,7 @@ const router = createBrowserRouter([
       { path: '/metrics', element: <Metrics /> },
       { path: '/metrics/help', element: <MetricsHelp /> },
       { path: '/audit', element: <Audit /> },
+      { path: '/dead-letter', element: <DeadLetter /> },
       { path: '/stream-flow', element: <StreamFlow /> },
       { path: '/config', element: <Config /> },
       { path: '/help', element: <Help /> },
