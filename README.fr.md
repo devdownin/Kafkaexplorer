@@ -64,6 +64,7 @@ Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilot
 - 🩺 **Audit du cluster en un clic** — messages toxiques, doublons, pertes en ligne et latence des flux, calculés sur tout le cluster en tâche de fond.
 - 🤖 **Process mining assisté par IA** — reconstruisez vos flux métier en flowcharts et traquez les anomalies avec OpenRouter (le défaut : une clé, la plupart des fournisseurs hébergés), Claude, un LLM local (Ollama…) ou un [SpectraLLM](https://github.com/devdownin/SpectraLLM) privé.
 - 🔭 **Nativement Kafka 4** — quorum de contrôleurs KRaft, groupes KIP-848, share groups (KIP-932) et versions de features, visibles dans l'UI et exportés vers Prometheus.
+- 🔌 **Un serveur MCP pour votre agent** — on expose la couche d'analyse, pas une dixième traduction de l'`AdminClient` : du SQL sur du Kafka vanilla, l'inférence de schéma, et des réponses qui disent ce qu'elles n'ont **pas** lu. Désactivé par défaut, en lecture seule une fois actif, et la lecture seule est tenue à l'enregistrement — un outil mutant n'est pas enregistré du tout, donc ni listé ni invocable.
 - 🎁 **Un bac à sable inclus** — 79 topics de démo créés automatiquement, du pipeline de commandes en 6 étapes à la supply chain de 60 topics, tous avec clé de record et headers : une commande à tracer à travers les partitions, une corrélation qui ne vit que dans les headers, une vraie série temporelle à fenêtrer, des doublons et des messages poison pour l'audit.
 
 ## 🚀 Démarrage rapide
@@ -133,6 +134,8 @@ Le défaut est un point d'accès *hébergé* : les digests de messages qu'il con
 ## 🛠️ Sous le capot
 
 Un unique JAR Spring Boot 4.1 embarquant Apache Flink 2.3 comme moteur SQL, avec un frontend React 19 + Tailwind. Clients Kafka 4.3 (compatibles brokers 2.1+), Avro via Confluent Schema Registry, métriques Prometheus sur `/actuator/prometheus`. Le SQL est restreint par liste blanche (`SELECT` / `EXPLAIN` / `CREATE TABLE` uniquement), le parsing XML est durci contre les attaques XXE, et les secrets sont masqués dans tout DDL affiché par l'UI.
+
+Un serveur MCP optionnel, dans le même processus (Spring AI 2.0), expose ces mêmes services à un agent LLM — mêmes caches, mêmes budgets, aucun second client Kafka — derrière une garde calquée sur KIP-1318. Inactif sauf `explorer.mcp.enabled=true` ; voir **[SPEC-MCP.md](SPEC-MCP.md)**.
 
 Plongée dans l'architecture : **[docs/architecture.md](docs/architecture.md)**
 

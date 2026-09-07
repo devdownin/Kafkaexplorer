@@ -23,6 +23,7 @@ one of these areas without reading its note is how a correction gets un-correcte
 | `docs/notes/ci-and-checks.md` | Workflows, the `docs/check-*.py` family, testing strategy, governance and supply chain |
 | `docs/notes/configuration-and-routing.md` | Every `explorer.*` / `claude.*` / `process-mining.*` knob, and the SPA routing rules |
 | `docs/notes/audits.md` | What each root `*-AUDIT.md` / `*-SCOPE.md` report concluded and left open |
+| `docs/notes/mcp-server.md` | The MCP server: the honesty contracts, registration-time read-only, the guard order, and the phase plan |
 
 The audit reports themselves are at the root: `AUDIT-FEATURE-REVIEW.md`, `DOCKER-AUDIT.md`,
 `FLINK-JOBS-AUDIT.md`, `INSERT-SCOPE.md`, `METRICS-TWO-QUERY-AUDIT.md`,
@@ -280,6 +281,29 @@ The reports are named under **Deep-dive notes** above; what each one concluded, 
 shipped out of it and what it left open is in `docs/notes/audits.md`. Read that note before
 changing any area a report covers — most of what those audits fixed is load-bearing, and none of
 it is obvious from the code that remains.
+
+## MCP server
+
+`SPEC-MCP.md` at the root is the specification; `docs/notes/mcp-server.md` is what has been built
+of it and why. **Off by default** (`explorer.mcp.enabled=false`) and **read-only when on**
+(`explorer.mcp.readonly=true`), both of which are the posture rather than a convenience.
+
+Two rules bind before that note has been read:
+
+- **The read-only guard is at registration, not invocation, and the framework leaves no choice.**
+  Spring AI scans `@McpTool` methods on *every* bean in the context, so a tool that exists as a
+  bean is listed by `tools/list` whatever its body then refuses. Mutating toolsets are therefore
+  declared as beans by `McpServerConfiguration` only when `readonly` is false — never
+  `@Component`. `McpCatalogService` is told about the withheld ones too, so the console can answer
+  "why does my agent not see this tool?" with a row and a reason instead of an absence.
+- **A measurement that failed is never zero, and never a bare null.** `Measured<T>` carries
+  `{value, measured, reason}` as three real record components rather than through a Jackson
+  serializer, because the REST surface runs on Jackson 2 and the MCP transport on Jackson 3: a
+  serializer registered against one is silently absent from the other, and the half that lost it
+  emits the naked null the type exists to prevent. Every tool response also carries a `Coverage`
+  saying what was read, what was not *by name*, and why it stopped — an empty result with
+  `stopReason != EXHAUSTED` means "not found in what was scanned", which is a different sentence
+  from "does not exist".
 
 ## Security
 

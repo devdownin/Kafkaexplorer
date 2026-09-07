@@ -11,6 +11,19 @@ spring:
   application:
     name: kafka-sql-explorer
 
+  ai:
+    mcp:
+      server:
+        # One switch, not two. Spring AI's MCP server autoconfiguration defaults to *on*, so
+        # without this line a deployment that never asked for MCP would still bind /mcp and answer
+        # tools/list. Reading explorer.mcp.enabled here means the feature has exactly one place to
+        # be turned on, and it is the property whose name says what it does.
+        enabled: ${explorer.mcp.enabled:false}
+        name: kafka-explorer-mcp
+        # Restated by hand, and that is a known weakness: the application's version is not exposed
+        # as a property this file can interpolate. Revisit if the build ever filters resources.
+        version: 0.1.0
+
   lifecycle:
     # Upper bound on the graceful phase above: enough for a query at the 10s default
     # timeout plus its teardown. It is also half of the container's stop budget — the
@@ -235,6 +248,72 @@ explorer:
   # seconds is a wide margin over a healthy metadata call; the restore that gives up says so at
   # WARN, and the next one reads that verdict instead of paying for it again.
   startup-restore-timeout-ms: 3000
+
+  # ---------------------------------------------------------------------------------------------
+  # MCP server — docs/notes/mcp-server.md, SPEC-MCP.md
+  # ---------------------------------------------------------------------------------------------
+  mcp:
+    # Off. Pointing a language model at a Kafka cluster is a decision an operator makes
+    # deliberately, and a feature that arrives switched on in an upgrade is not that decision.
+    # It is also the single switch: spring.ai.mcp.server.enabled above reads this one, so the
+    # endpoint cannot end up bound by a default nobody set.
+    enabled: false
+
+    # And opting in still does not open the write surface. `readonly` is enforced at *registration*:
+    # a mutating tool is not a bean, so it is not listed by tools/list and cannot be invoked by
+    # name whatever a prompt says. Setting this false is what registers them.
+    readonly: true
+
+    tools:
+      allowed: "*"
+      denied: ""
+      # Expose the KIP-1318 tool names (consume_messages, describe_topic, ...) as aliases, for
+      # agents trained on that surface. Not implemented yet — see docs/notes/mcp-server.md.
+      kip1318-aliases: false
+
+    # Resource scope, checked before any Kafka call rather than after: a scope check that runs
+    # after the read has already disclosed what it was refusing. "*" places no restriction; a list
+    # restricts every tool at once, e.g. "demo.,sandbox.".
+    allowed-topic-prefixes: "*"
+    allowed-group-prefixes: "*"
+
+    approval-required-tools: "kex_produce_message,kex_set_cluster_target,kex_create_metric"
+
+    # Ceilings a tool cannot be argued out of. A caller asking for more is clamped and *told* —
+    # not refused, which costs a round trip and teaches nothing, and not silently cut, which hands
+    # a model a truncated answer wearing a complete answer's shape.
+    hard-max-rows: 1000
+    hard-max-records: 50
+    hard-max-output-bytes: 1048576
+    hard-max-topics: 200
+    default-budget-ms: 20000
+    hard-max-budget-ms: 60000
+
+    # Append-only topic for the call trail. Not written yet (phase 5); until it is, the console
+    # reports that nothing is being persisted rather than implying a history that does not exist.
+    audit-topic: internal.mcp.audit
+
+    console:
+      enabled: true
+      # The live feed keeps this many calls in memory. It is not a history store — the audit topic
+      # is — and the console says "earlier history: replay from ..." rather than showing a list
+      # that is short for reasons it does not mention.
+      ring-buffer-size: 2000
+      allow-runtime-toggle: true
+      allow-try-it: true
+
+    dlp:
+      # redact | block | off.
+      #   redact — mask credentials and obvious personal data on the way out.
+      #   block  — refuse to return a payload carrying them at all (-32045), rather than returning
+      #            it masked. It is a real refusal now; it used to be accepted and behave exactly
+      #            like `redact`, which made the stricter-sounding setting the weaker claim.
+      #   off    — return payloads untouched.
+      # Applied to tool output, to resources, and to recorded call parameters *before* they are
+      # persisted: redacting only what is displayed leaves the secret sitting in the ring buffer and
+      # on the audit topic, where it outlives the call. Call parameters are always redacted and
+      # never blocked — an argument came from the caller, so refusing it protects nobody.
+      mode: redact
 
 # Process Mining ingestion tuning. Defaults target "complex" payloads — JSON documents around
 # 1 MB with ~10 levels of nesting — which are never buffered nor prompted verbatim: each record

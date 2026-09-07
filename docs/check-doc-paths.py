@@ -88,6 +88,12 @@ NOT_A_PATH = {
     # An OpenRouter model identifier written as a shape rather than a name, beside the
     # `openai/gpt-4o-mini` example below.
     'vendor/model',
+    # A JSON-RPC method name of the MCP protocol. Slash-separated and backticked like a path,
+    # but it names a wire call, not a file — `docs/notes/mcp-server.md` cannot state what
+    # registration-time hiding actually achieves without naming it. Its siblings
+    # (`tools/call`, `resources/read`, ...) are deliberately absent: this list expires what
+    # nothing cites, so they are added the day a document names one.
+    'tools/list',
     # Files this application CREATES at runtime under its `data/` volume, which is
     # gitignored — so they are real paths on a running deployment and never in a checkout.
     # The Docker Hub page documents them because an operator has to know what the volume

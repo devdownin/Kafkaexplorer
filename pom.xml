@@ -37,6 +37,12 @@
 		-->
 		<test.excluded.groups>llm-eval</test.excluded.groups>
 		<test.groups />
+		<!--
+			Spring AI 2.0.1 is built against Spring Boot 4.1.1 — the exact parent version above.
+			Pinned rather than taken from a BOM: one artifact is imported, so a BOM would add an
+			import block whose only job is to restate this number.
+		-->
+		<spring-ai.version>2.0.1</spring-ai.version>
 	</properties>
 	<repositories>
 		<repository>
@@ -48,6 +54,16 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+		<!--
+			The MCP server surface (docs/notes/mcp-server.md). In-process by design: it adapts the
+			services this application already runs, so there is no second Kafka client and no
+			second configuration to drift from the UI's.
+		-->
+		<dependency>
+			<groupId>org.springframework.ai</groupId>
+			<artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+			<version>${spring-ai.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

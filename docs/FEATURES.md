@@ -215,3 +215,47 @@ them (dead letters first, retries after), sorts by volume, and says so in their 
   and a round number would be an invention; and nothing is created until you preview and save.
 
 ![The Dead Letter & Retry page: three failure queues with their arrivals and the share of their source topic that represents, one of them reporting an ambiguous source rather than guessing](img/dead-letter.png)
+
+## 16. MCP Server (agent access) — off by default
+The analysis layer of this application, exposed to an LLM agent over the Model Context Protocol.
+Not a tenth Kafka MCP server: the surface those expose is the `AdminClient` translated into
+JSON-RPC — `list_topics`, `consume`, `describe_consumer_group` — which answers none of the
+questions an engineer actually asks. What is exposed here is SQL over vanilla Kafka, schema
+inference, and the correlation tools; the Kafka control plane is deliberately delegated elsewhere.
+
+Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, and why:
+[`docs/notes/mcp-server.md`](notes/mcp-server.md).
+
+- **Off unless you turn it on** — `explorer.mcp.enabled` ships `false` and drives the transport
+  too, so there is exactly one switch and no endpoint bound by a default nobody set. **Read-only
+  when on**: `explorer.mcp.readonly` ships `true`, and it is enforced at *registration* — a
+  mutating tool is not a bean, so it is neither listed nor invocable, whatever a prompt argues.
+- **Every answer says what it did not read.** A `coverage` envelope travels with each response:
+  topics scanned, topics **named** that were not, records read, why the pass stopped, and a resume
+  token. This is the point of the whole module. An empty array is the one shape a language model
+  reads as "it does not exist", while the truthful sentence is usually "it was not in the part I
+  looked at" — and no other Kafka MCP server puts that difference in the payload.
+- **A measurement that failed is never zero.** Values that a broker may decline to answer arrive as
+  `{"value": null, "measured": false, "reason": "..."}`, never as a `0` a model would publish as a
+  fact, and never as a bare `null` it would resolve to the same thing.
+- **Tools, phase 1** — `kex_list_topics`, `kex_describe_topic`, `kex_preview_messages` (bounded and
+  redacted, with the partition and offset of every record so any sample can be re-read),
+  `kex_infer_schema` (columns, types and a ready `CREATE TABLE`, with the sample size that backs
+  them), `kex_sql_query` (the whitelist and the engine that actually answered, `FLINK` or
+  `KAFKA_DIRECT`, with any predicate the direct reader could not apply), and `kex_list_tables`.
+- **The guard is KIP-1318's, in KIP-1318's order.** Resource scope is checked **before** any Kafka
+  call — a scope check that runs after the read has already disclosed what it was refusing — and
+  the error codes (`-32041` out of scope, `-32046` validation, `-32047` quarantine…) are adopted
+  unchanged so an agent trained on that surface can read our refusals.
+- **A ceiling clamps and says so.** Ask for a hundred thousand rows and you get the configured
+  maximum plus a warning naming the real ceiling — not a refusal, which costs a round trip and
+  teaches nothing, and not a silent cut, which hands a model a truncated answer wearing a complete
+  answer's shape.
+- **Credentials and obvious PII are redacted** on the way out — tool output, resources, and the
+  recorded call parameters *before* they are persisted, since redacting only what is displayed
+  leaves the secret in the log.
+- **Instrumented from the first call.** `explorer_mcp_calls_total`, `_denied_total{guard,code}`,
+  `_call_duration`, `_records_scanned_total`, `_output_truncated_total` and
+  `_audit_write_errors_total` are on `/actuator/prometheus` alongside the existing series. The
+  operator console that reads them — the catalogue of what is exposed *and what is withheld, with
+  the reason*, and the live call feed with its refusals — is phase 2.

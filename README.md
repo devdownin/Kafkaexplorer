@@ -64,6 +64,7 @@ These are generated, not photographed: `docs/screenshots/` drives the compiled S
 - 🩺 **One-click cluster audit** — poison messages, duplicates, flow drop-offs and latency, computed across your whole cluster in the background.
 - 🤖 **AI-powered process mining** — reconstruct business flows as flowcharts and hunt anomalies with OpenRouter (the default: one key, most hosted vendors), Claude, any local LLM (Ollama…), or a private [SpectraLLM](https://github.com/devdownin/SpectraLLM).
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, visible in the UI and exported to Prometheus.
+- 🔌 **An MCP server for your agent** — expose the analysis layer, not a tenth translation of the `AdminClient`: SQL over vanilla Kafka, schema inference, and answers that say what they did **not** read. Off by default, read-only when on, and read-only is enforced at registration — a mutating tool is not registered at all, so it is neither listed nor invocable.
 - 🎁 **A batteries-included sandbox** — 76 demo topics seeded automatically, from a 6-step order pipeline to a 60-topic supply chain, all keyed and header-stamped: an order to trace across partitions, a header-only correlation to follow, a real time series to window, duplicates and poison records for the audit to find.
 
 ## 🚀 Quick Start
@@ -133,6 +134,8 @@ The default is a *hosted* endpoint, so the message digests it builds leave your 
 ## 🛠️ Under the hood
 
 A single Spring Boot 4.1 JAR embedding Apache Flink 2.3 as the SQL engine, with a React 19 + Tailwind frontend. Kafka clients 4.3 (compatible with brokers 2.1+), Avro via Confluent Schema Registry, Prometheus metrics on `/actuator/prometheus`. SQL is whitelisted (`SELECT` / `EXPLAIN` / `CREATE TABLE` only), XML parsing is XXE-hardened, and credentials are redacted from any DDL shown in the UI.
+
+An optional in-process MCP server (Spring AI 2.0) exposes the same services to an LLM agent — same caches, same budgets, no second Kafka client — behind a KIP-1318-shaped guard. Off unless `explorer.mcp.enabled=true`; see **[SPEC-MCP.md](SPEC-MCP.md)**.
 
 Architecture deep-dive: **[docs/architecture.md](docs/architecture.md)**
 

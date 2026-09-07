@@ -20,7 +20,115 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **An MCP server, so an agent can ask this application what it knows.** Phase 1 of
+  [`SPEC-MCP.md`](SPEC-MCP.md): an in-process module (Spring AI 2.0, same JAR, same services,
+  same caches and budgets — no second Kafka client) exposing six read tools —
+  `kex_list_topics`, `kex_describe_topic`, `kex_preview_messages`, `kex_infer_schema`,
+  `kex_sql_query`, `kex_list_tables`. What it deliberately does *not* expose is the Kafka
+  control plane: nine other Kafka MCP servers already translate the `AdminClient` into
+  JSON-RPC, and reproducing that surface would add attack surface for no differentiation.
+  What is here instead is the half nobody else has — SQL over vanilla Kafka and schema
+  inference, so a topic that carries only bytes becomes something an agent can write a
+  `WHERE` against instead of inventing column names.
+  **Off by default** (`explorer.mcp.enabled=false`, which drives the transport too, so there
+  is one switch and no endpoint bound by a default nobody set) and **read-only when on**.
+- **Every MCP answer says what it did not read.** A `coverage` envelope travels with each
+  response — topics scanned, topics **named** that were not, records read, why the pass
+  stopped, and a resume token — and values that a broker may decline to answer arrive as
+  `{"value": null, "measured": false, "reason": "…"}`. This is the point of the module rather
+  than a nicety: an empty array is the one shape a language model reads as "it does not
+  exist", while the truthful sentence is usually "it was not in the part I looked at", and a
+  bare `null` is resolved to zero just as confidently. It is the invariant this codebase
+  already held on consumer lag (`PartitionLag`, `PartitionTimeLag`, `TopicTimeLag`), extended
+  to a consumer that cannot see a dash and ask what it means.
+- **The read-only guard is at registration, not invocation.** Spring AI scans `@McpTool`
+  methods on every bean in the context, so a tool that exists as a bean is listed by
+  `tools/list` whatever its body then refuses — an invitation with a rejection attached, and
+  one more thing for a prompt to argue with. Mutating toolsets are therefore declared
+  conditionally and are simply not beans while `explorer.mcp.readonly` holds. The catalogue is
+  told about them anyway, with the reason they are withheld, because "why does my agent not
+  see this tool?" is answered by a row, not by an absence.
+- **A KIP-1318-shaped guard, in KIP-1318's order.** Resource scope is checked *before* any
+  Kafka call — a scope check that runs after the read has already disclosed what it was
+  refusing — and the error codes are adopted unchanged so an agent trained on that surface can
+  read our refusals. Ceilings clamp and say so rather than refusing (which costs a round trip
+  and teaches nothing) or cutting silently (which hands a model a truncated answer wearing a
+  complete answer's shape). Credentials and obvious PII are redacted on the way out, including
+  from recorded call parameters *before* they are persisted.
+- **Instrumented from the first call**, on `/actuator/prometheus` beside the existing series:
+  `explorer_mcp_calls_total`, `_denied_total{guard,code}`, `_call_duration`,
+  `_records_scanned_total`, `_output_truncated_total`, `_audit_write_errors_total`. Refusals
+  are recorded exactly like successes — a control that blocks silently is a control nobody
+  ever tunes.
+
+- **Every MCP call now passes through one interception layer**, which is what makes three of the
+  claims above true rather than aspirational. Refusals reach the agent as their own JSON-RPC code
+  (`-32041` out of scope, `-32047` quarantine…) instead of being flattened by the SDK into a
+  generic tool error; the caller is identified and recorded, refusals alongside successes; and
+  `hard-max-output-bytes` is enforced. An oversized response is **refused, not truncated** — a cut
+  result is indistinguishable from a complete one, so the reply names the size, the ceiling and
+  what to narrow.
+
+- **MCP tools declare themselves read-only.** `@McpTool.McpAnnotations` defaults `readOnlyHint` to
+  false and `destructiveHint` to true, so all six read tools had been advertising themselves as
+  potentially destructive — not a missing hint but a false one. Clients use these to decide whether
+  a call needs a human in the loop, so it cost an approval prompt per call on exactly the tools an
+  agent explores with.
+
+### Fixed
+
+- **A user's SQL error reached the agent as a transport failure instead of as an answer.** MCP has
+  two error channels — the SDK documents `isError` as "the tool *execution* failed and the content
+  contains error information", which the model reads, against a JSON-RPC error, which a client may
+  surface as a transport fault without showing the model anything. Phase 1 sent both through the
+  second, which quietly undid the reason `kex_sql_query` preserves the planner's sentence: "unknown
+  column at line 1, column 8" only turns a failed call into a correct one if the thing rewriting
+  the query can see it. `-32046` and `-32043` now return results; scope, quarantine, taint,
+  approval, rate limit, policy and exfiltration stay JSON-RPC errors, because a refusal the model
+  can read is one it will try to phrase its way around.
+- **`explorer.mcp.dlp.mode: block` silently behaved like `redact`.** `BLOCK` appeared nowhere in the
+  scrubber — only `off` was distinguished — so an operator who set it, believing a payload carrying
+  a secret would not leave, got the same masked payload. A security setting that reads stricter
+  than it behaves is worse than not offering it. It now refuses with `-32045`. Call parameters stay
+  redacted rather than blocked: an argument came from the caller, so refusing it protects nobody.
+- **The MCP metrics counted nothing, the output ceiling capped nothing, and the guard's error
+  codes reached no one.** All three had shipped as claims with no code path behind them:
+  `McpCallRecorder` was written, tested and wired to Micrometer but called from nowhere, so a
+  serving deployment reported `explorer_mcp_calls_total` at zero — which reads as "no calls", not
+  "nothing counts", and is this module's own invariant broken by its own bookkeeping.
+  `hard-max-output-bytes` was published in the catalogue as a ceiling a caller cannot argue out
+  of, and nothing measured a byte. `McpToolException.jsonRpcCode()` was read by nothing. The
+  interception layer above closes all three.
+- **Two `explorer.mcp` settings claimed something they did not do.** `scrub-all-outputs` shipped,
+  was read by nothing, and could not have meant anything — redaction already applies to every
+  output whenever the mode is not `off` — so it is removed; a knob that cannot change what happens
+  invites an operator to believe they narrowed something. `approval-required-tools` badged a tool
+  `EXPOSED_WITH_APPROVAL` in the catalogue while no approval token is checked anywhere; the badge
+  now carries that fact, because a console asserting a control that does not exist fails at its
+  one job.
+- **The coverage envelope was read from the wrong type.** The first draft of `McpCallContext`
+  tested `instanceof ToolResult`, which can never match: Spring AI serialises a tool's return
+  value and parses it back as a plain `Map` before the interception layer sees it. Every call
+  would have been recorded as "this tool does not count records", leaving the induced-load column
+  empty on a server doing real work. Found by reading the SDK — a test against a mock returning
+  our own type would have passed.
+- **The MCP redactor masked the word "Bearer" and left the token.** Found by its own test
+  while it was being written: `Authorization: Bearer <jwt>` matched the credential-key rule
+  first, whose value pattern stopped at whitespace, so the header came back as
+  `Authorization: ****** <jwt>` — a redaction that reads as if it had worked, which is worse
+  than none. The bearer rule now runs first and the value pattern spans the rest of the line.
+
+### Changed
+
+- **`docs/check-config-yaml.py` resolves a sub-tree bound by its own properties class.**
+  `explorer.mcp.*` is bound by `McpProperties`, not by a getter on `ExplorerConfig`, so the
+  getter-or-field test declared the whole sub-tree dead and was wrong about every key under
+  it. A key now also counts as read when some class declares that prefix **and** something
+  injects it — the second half matters, since a properties class nobody injects is exactly the
+  dead knob the check exists to find, one level down. `docs/check-doc-paths.py` likewise learns
+  that `tools/list` names a JSON-RPC method, not a file.
 
 ## [1.10.2] — 2026-09-06
 
