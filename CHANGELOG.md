@@ -103,6 +103,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The console's "unknown tool" message printed `%s` instead of the tool name.** `.formatted(tool)`
+  was written after the last literal of a concatenated string, so it bound to the fragment it
+  touched — which carries no placeholder — and the panel read *"no tool named %s is registered"* on
+  the one sentence whose job is to name it. Every test passed, because none of them read the
+  message; CodeQL counts placeholders against arguments and found it. There is a test now.
 - **A user's SQL error reached the agent as a transport failure instead of as an answer.** MCP has
   two error channels — the SDK documents `isError` as "the tool *execution* failed and the content
   contains error information", which the model reads, against a JSON-RPC error, which a client may

@@ -52,7 +52,7 @@ class McpToolSpecificationPostProcessorTest {
         assertThat(specs).singleElement()
                 .satisfies(s -> assertThat(s.tool().name()).isEqualTo("kex_list_topics"));
 
-        specs.getFirst().callHandler().apply(null, new CallToolRequest("kex_list_topics", Map.of()));
+        specs.getFirst().callHandler().apply(null, CallToolRequest.builder().name("kex_list_topics").arguments(Map.of()).build());
 
         assertThat(recorder.recent(McpCallFilter.all(), 10)).singleElement()
                 .satisfies(call -> assertThat(call.tool()).isEqualTo("kex_list_topics"));

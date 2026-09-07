@@ -53,20 +53,33 @@ public class McpToolInvoker {
                 .findFirst();
 
         if (specification.isEmpty()) {
-            return McpTryResult.notInvocable(tool,
-                    "no tool named %s is registered. Withheld tools are listed in the catalogue "
-                            + "with the reason they are hidden; a hidden tool cannot be run from "
-                            + "here either — \"Try it\" is not a way around the guard."
-                            .formatted(tool));
+            // `.formatted` on the whole message, not on the last literal of the concatenation:
+            // written the other way it binds to the fragment it touches, which carries no
+            // placeholder, and the operator reads "no tool named %s is registered" — the one
+            // sentence in this panel whose job is to name the tool. Caught by CodeQL, which counts
+            // placeholders against arguments.
+            return McpTryResult.notInvocable(tool, ("no tool named %s is registered. Withheld "
+                    + "tools are listed in the catalogue with the reason they are hidden; a hidden "
+                    + "tool cannot be run from here either — \"Try it\" is not a way around the "
+                    + "guard.").formatted(tool));
         }
 
         try {
             CallToolResult result = McpCallOrigin.as(McpCallRecord.Origin.CONSOLE,
-                    () -> specification.get().callHandler().apply(null, new CallToolRequest(tool, arguments)));
+                    () -> specification.get().callHandler().apply(null, request(tool, arguments)));
             return McpTryResult.of(tool, result);
         } catch (McpError e) {
             return McpTryResult.refused(tool, e.getJsonRpcError().code(), e.getJsonRpcError().message());
         }
+    }
+
+    /**
+     * The builder rather than {@code new CallToolRequest(name, arguments)}, which the SDK
+     * deprecated: the constructor fixes the argument shape, while the builder is where the meta and
+     * progress-token fields a later phase will need are set.
+     */
+    private static CallToolRequest request(String tool, Map<String, Object> arguments) {
+        return CallToolRequest.builder().name(tool).arguments(arguments).build();
     }
 
     private List<SyncToolSpecification> specifications() {
