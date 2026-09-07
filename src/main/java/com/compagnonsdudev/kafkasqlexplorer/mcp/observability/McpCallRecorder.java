@@ -42,12 +42,14 @@ public class McpCallRecorder {
     private final Object ringLock = new Object();
     private final int capacity;
 
+    /** Null until phase 5 configures one — see {@link McpAuditSink} for why that is not a no-op. */
     private final McpAuditSink auditSink;
     private final MeterRegistry meters;
     private final AtomicLong auditWriteErrors = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
 
     public McpCallRecorder(McpProperties properties, McpAuditSink auditSink, MeterRegistry meters) {
+        // auditSink may be null: no sink configured is a state the console reports, not a failure.
         this.capacity = Math.max(1, properties.getConsole().getRingBufferSize());
         this.auditSink = auditSink;
         this.meters = meters;
@@ -85,6 +87,9 @@ public class McpCallRecorder {
         }
         meters.counter("explorer_mcp_output_bytes_total", "tool", call.tool()).increment(call.outputBytes());
 
+        if (auditSink == null) {
+            return;
+        }
         try {
             auditSink.append(call);
         } catch (RuntimeException e) {
@@ -120,8 +125,12 @@ public class McpCallRecorder {
         return dropped.get();
     }
 
+    /**
+     * Whether anything outlives the ring. False makes the console say so, rather than letting an
+     * operator read a bounded live feed as the history it is not.
+     */
     public boolean auditPersisted() {
-        return auditSink.active();
+        return auditSink != null;
     }
 
     public int ringCapacity() {

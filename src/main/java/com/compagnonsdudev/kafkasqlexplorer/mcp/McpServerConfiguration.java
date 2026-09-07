@@ -23,7 +23,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -62,20 +61,6 @@ public class McpServerConfiguration {
     private static final Logger log = LoggerFactory.getLogger(McpServerConfiguration.class);
 
     /**
-     * Where calls are kept beyond the console ring.
-     *
-     * <p>Inactive until phase 5 wires the append-only topic. Declared now, and declared as a bean
-     * rather than as a null the recorder handles, so the recorder's failure counter and the
-     * console field that surfaces it are exercised from the first release instead of being added
-     * once there is something to lose.
-     */
-    @Bean
-    @ConditionalOnMissingBean
-    McpAuditSink mcpAuditSink() {
-        return McpAuditSink.inactive();
-    }
-
-    /**
      * The guard and its redactor. Beans here rather than {@code @Component}s so that a deployment
      * with {@code explorer.mcp.enabled=false} builds none of this module — a disabled feature that
      * still instantiates half of itself is a disabled feature that can still fail at startup.
@@ -96,8 +81,12 @@ public class McpServerConfiguration {
     }
 
     @Bean
-    McpCallRecorder mcpCallRecorder(McpProperties properties, McpAuditSink auditSink, MeterRegistry meters) {
-        return new McpCallRecorder(properties, auditSink, meters);
+    McpCallRecorder mcpCallRecorder(McpProperties properties, MeterRegistry meters,
+                                    ObjectProvider<McpAuditSink> auditSink) {
+        // No sink until phase 5 wires the append-only topic. The recorder is built against the
+        // interface from the start so its failure counter, and the console field that surfaces it,
+        // exist before there is anything to lose — but nothing pretends to persist in the meantime.
+        return new McpCallRecorder(properties, auditSink.getIfAvailable(), meters);
     }
 
     @Bean

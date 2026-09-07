@@ -86,6 +86,25 @@ class McpCallRecorderTest {
     }
 
     @Test
+    void with_no_sink_configured_the_call_is_still_recorded_and_the_console_is_told() {
+        // The state this ships in. It must not throw, and it must not let the console read a
+        // bounded live feed as the history it is not.
+        McpProperties properties = new McpProperties();
+        McpCallRecorder noSink = new McpCallRecorder(properties, null, meters);
+
+        assertThatNoException().isThrownBy(() -> noSink.record(ok("kex_list_topics")));
+
+        assertThat(noSink.recent(McpCallFilter.all(), 10)).hasSize(1);
+        assertThat(noSink.auditPersisted()).isFalse();
+        assertThat(noSink.auditWriteErrors()).isZero();
+    }
+
+    @Test
+    void a_configured_sink_is_reported_as_persisting() {
+        assertThat(recorder.auditPersisted()).isTrue();
+    }
+
+    @Test
     void the_feed_filters_and_returns_the_most_recent_first() {
         recorder.record(ok("kex_list_topics"));
         recorder.record(denied("kex_sql_query", -32046, McpGuard.VALIDATION));
