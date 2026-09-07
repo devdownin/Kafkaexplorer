@@ -36,10 +36,12 @@ C4Container
     title Container Diagram for Kafka SQL Explorer
 
     Person(user, "Data Engineer / Architect", "Uses the explorer")
+    System_Ext(agent, "LLM agent", "Claude Code, Claude Desktop, Cursor — off by default.")
 
     System_Boundary(c1, "Kafka SQL Explorer") {
         Container(web_ui, "Web UI", "React 19, Tailwind CSS, Monaco Editor", "Visualizes topics, query results, and lineage graphs.")
         Container(spring_app, "Spring Boot Application", "Java 25, Spring Boot 4.1", "Handles business logic, security, and integration.")
+        Container(mcp, "MCP server", "Spring AI 2.0, in-process", "Exposes the analysis layer to agents. Same services, same budgets, same caches.")
         Container(flink_engine, "Embedded Flink Engine", "Apache Flink 2.3", "Executes SQL queries against Kafka topics.")
     }
 
@@ -47,6 +49,8 @@ C4Container
 
     Rel(user, web_ui, "Interacts with", "Browser")
     Rel(web_ui, spring_app, "Sends requests to", "REST/HTML")
+    Rel(agent, mcp, "Calls tools", "MCP over HTTP / stdio")
+    Rel(mcp, spring_app, "Adapts, never reimplements", "in-process")
     Rel(spring_app, flink_engine, "Submits SQL jobs", "Flink Table API")
     Rel(spring_app, kafka, "Fetches metadata & samples", "Kafka Admin/Consumer Client")
     Rel(flink_engine, kafka, "Reads/Writes streams", "Flink Kafka Connector")
@@ -72,6 +76,10 @@ C4Component
         Component(suggest_svc, "MetricSuggestionService", "Service", "Derives contextual KPIs from audit reports and Stream Flow traces. Proposes, never creates.")
         Component(model_svc, "DataModelService", "Service", "Reads topics as entities and deduces graded relations from key-column names. States its evidence; never invents a key.")
 
+        Component(mcp_tools, "*McpTools", "MCP toolset", "Thin adapters over the services above. Every response carries a Coverage envelope saying what was read and what was not.")
+        Component(mcp_guard, "ToolGuard + DlpScrubber", "Guard", "Resource scope before any I/O, hard ceilings, credential and PII redaction. KIP-1318 error codes.")
+        Component(mcp_obs, "McpCallRecorder + McpCatalogService", "Observability", "Bounded live ring, Prometheus series, and the introspected catalogue — including the tools that are withheld, and why.")
+
         Component(cache, "Caffeine Cache", "Cache", "Stores topic metadata to reduce Kafka load.")
     }
 
@@ -90,6 +98,11 @@ C4Component
     Rel(model_ctrl, model_svc, "Uses")
     Rel(model_svc, inference_svc, "Infers each topic's columns")
     Rel(model_svc, kafka_svc, "Samples messages and counts")
+    Rel(mcp_tools, mcp_guard, "Checks scope and clamps before reading")
+    Rel(mcp_tools, kafka_svc, "Lists, describes and samples")
+    Rel(mcp_tools, flink_svc, "Runs whitelisted SQL")
+    Rel(mcp_tools, inference_svc, "Infers a topic's columns")
+    Rel(mcp_obs, mcp_tools, "Introspects the surface it serves")
 ```
 
 ## Key Architectural Decisions (Robustness & Performance)
@@ -101,4 +114,6 @@ C4Component
 - **Dynamic SQL Hint Injection**: `FlinkSqlService` uses regex-based SQL manipulation to inject Flink SQL hints (`/*+ OPTIONS(...) */`) for per-query offset control, allowing users to switch between Earliest and Latest modes without altering table definitions.
 - **Strict Timeouts**: All interactions with the Kafka cluster and Flink engine have explicit timeouts to prevent the application from hanging.
 - **A Measurement That Failed Is Never Zero**: across consumer lag (records and time alike), an unread partition, an unreadable group or a spent budget produces `null` with its reason, not `0`. Zero is a claim — "caught up", "no backlog" — and published as a Prometheus gauge it silences the very alert the metric exists to raise. The API records (`PartitionLag`, `PartitionTimeLag`, `TopicTimeLag`) box every such field so the distinction survives to the UI and to the exporter.
+- **An Agent Is Told What It Did Not Read**: every MCP tool response carries a `Coverage` envelope — what was scanned, what was *not* by name, why the pass stopped, and a resume token. It exists because an empty result is the one shape a language model reads as a negative answer, while the truthful sentence is usually "not in the part I looked at". The same rule governs individual values: `Measured<T>` is `{value, measured, reason}`, never a bare `null` a model would resolve to zero. See [notes/mcp-server.md](notes/mcp-server.md).
+- **The MCP Read-Only Guard Is At Registration**: Spring AI scans `@McpTool` methods on every bean in the context, so a tool that exists as a bean is listed by `tools/list` whatever its body then refuses. Mutating toolsets are therefore declared conditionally by `McpServerConfiguration` and are simply not beans while `explorer.mcp.readonly` holds — neither discoverable nor invocable. The catalogue is told about them anyway, so the operator console can answer "why does my agent not see this tool?" with a row and a reason rather than an absence.
 - **Suggestions Rest On Observations**: `MetricSuggestionService` derives KPIs only from measurements that were actually taken — an audit report, a Stream Flow trace — carries the evidence and threshold basis with each proposal, and creates nothing: the operator previews and saves. Flow traces live in the browser, so the frontend sends them back in the request rather than the derivation rule being written twice, once per language.

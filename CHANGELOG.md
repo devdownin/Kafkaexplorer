@@ -20,7 +20,66 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- **An MCP server, so an agent can ask this application what it knows.** Phase 1 of
+  [`SPEC-MCP.md`](SPEC-MCP.md): an in-process module (Spring AI 2.0, same JAR, same services,
+  same caches and budgets — no second Kafka client) exposing six read tools —
+  `kex_list_topics`, `kex_describe_topic`, `kex_preview_messages`, `kex_infer_schema`,
+  `kex_sql_query`, `kex_list_tables`. What it deliberately does *not* expose is the Kafka
+  control plane: nine other Kafka MCP servers already translate the `AdminClient` into
+  JSON-RPC, and reproducing that surface would add attack surface for no differentiation.
+  What is here instead is the half nobody else has — SQL over vanilla Kafka and schema
+  inference, so a topic that carries only bytes becomes something an agent can write a
+  `WHERE` against instead of inventing column names.
+  **Off by default** (`explorer.mcp.enabled=false`, which drives the transport too, so there
+  is one switch and no endpoint bound by a default nobody set) and **read-only when on**.
+- **Every MCP answer says what it did not read.** A `coverage` envelope travels with each
+  response — topics scanned, topics **named** that were not, records read, why the pass
+  stopped, and a resume token — and values that a broker may decline to answer arrive as
+  `{"value": null, "measured": false, "reason": "…"}`. This is the point of the module rather
+  than a nicety: an empty array is the one shape a language model reads as "it does not
+  exist", while the truthful sentence is usually "it was not in the part I looked at", and a
+  bare `null` is resolved to zero just as confidently. It is the invariant this codebase
+  already held on consumer lag (`PartitionLag`, `PartitionTimeLag`, `TopicTimeLag`), extended
+  to a consumer that cannot see a dash and ask what it means.
+- **The read-only guard is at registration, not invocation.** Spring AI scans `@McpTool`
+  methods on every bean in the context, so a tool that exists as a bean is listed by
+  `tools/list` whatever its body then refuses — an invitation with a rejection attached, and
+  one more thing for a prompt to argue with. Mutating toolsets are therefore declared
+  conditionally and are simply not beans while `explorer.mcp.readonly` holds. The catalogue is
+  told about them anyway, with the reason they are withheld, because "why does my agent not
+  see this tool?" is answered by a row, not by an absence.
+- **A KIP-1318-shaped guard, in KIP-1318's order.** Resource scope is checked *before* any
+  Kafka call — a scope check that runs after the read has already disclosed what it was
+  refusing — and the error codes are adopted unchanged so an agent trained on that surface can
+  read our refusals. Ceilings clamp and say so rather than refusing (which costs a round trip
+  and teaches nothing) or cutting silently (which hands a model a truncated answer wearing a
+  complete answer's shape). Credentials and obvious PII are redacted on the way out, including
+  from recorded call parameters *before* they are persisted.
+- **Instrumented from the first call**, on `/actuator/prometheus` beside the existing series:
+  `explorer_mcp_calls_total`, `_denied_total{guard,code}`, `_call_duration`,
+  `_records_scanned_total`, `_output_truncated_total`, `_audit_write_errors_total`. Refusals
+  are recorded exactly like successes — a control that blocks silently is a control nobody
+  ever tunes.
+
+### Fixed
+
+- **The MCP redactor masked the word "Bearer" and left the token.** Found by its own test
+  while it was being written: `Authorization: Bearer <jwt>` matched the credential-key rule
+  first, whose value pattern stopped at whitespace, so the header came back as
+  `Authorization: ****** <jwt>` — a redaction that reads as if it had worked, which is worse
+  than none. The bearer rule now runs first and the value pattern spans the rest of the line.
+
+### Changed
+
+- **`docs/check-config-yaml.py` resolves a sub-tree bound by its own properties class.**
+  `explorer.mcp.*` is bound by `McpProperties`, not by a getter on `ExplorerConfig`, so the
+  getter-or-field test declared the whole sub-tree dead and was wrong about every key under
+  it. A key now also counts as read when some class declares that prefix **and** something
+  injects it — the second half matters, since a properties class nobody injects is exactly the
+  dead knob the check exists to find, one level down. `docs/check-doc-paths.py` likewise learns
+  that `tools/list` names a JSON-RPC method, not a file.
 
 ## [1.10.2] — 2026-09-06
 
