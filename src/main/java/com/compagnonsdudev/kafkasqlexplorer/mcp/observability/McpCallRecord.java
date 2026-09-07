@@ -34,7 +34,9 @@ import java.util.Map;
  * @param recordsScanned   records read, unmeasured for the tools that do not count
  * @param stopReason       the coverage's stop reason, null for a tool with no envelope
  * @param truncated        whether a ceiling cut the payload
- * @param outputBytes      size of the serialised response
+ * @param outputBytes      size of the serialised response, unmeasured when it could not be
+ *                         computed — a size that is unknown is not a size of zero, and the console
+ *                         column it feeds is read as induced load
  */
 public record McpCallRecord(
         String correlationId,
@@ -51,7 +53,7 @@ public record McpCallRecord(
         Measured<Long> recordsScanned,
         StopReason stopReason,
         boolean truncated,
-        long outputBytes
+        Measured<Long> outputBytes
 ) {
 
     public enum Origin { AGENT, CONSOLE, PROMPT }

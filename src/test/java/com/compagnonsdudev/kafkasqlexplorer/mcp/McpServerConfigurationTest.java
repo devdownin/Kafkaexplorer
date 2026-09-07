@@ -6,6 +6,8 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.Coverage;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.ToolResult;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCallRecorder;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpToolInterceptor;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpToolSpecificationPostProcessor;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCatalogService;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.ToolDescriptor;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.Visibility;
@@ -74,6 +76,7 @@ class McpServerConfigurationTest {
             assertThat(context).doesNotHaveBean(ToolGuard.class);
             assertThat(context).doesNotHaveBean(McpCatalogService.class);
             assertThat(context).doesNotHaveBean(TopicMcpTools.class);
+            assertThat(context).doesNotHaveBean(McpToolInterceptor.class);
         });
     }
 
@@ -84,6 +87,10 @@ class McpServerConfigurationTest {
             assertThat(context).hasSingleBean(SchemaMcpTools.class);
             assertThat(context).hasSingleBean(SqlMcpTools.class);
             assertThat(context).hasSingleBean(McpCallRecorder.class);
+            // Without these two the recorder is written and never called, the output ceiling is
+            // advertised and never applied, and a guard's JSON-RPC code never reaches the agent.
+            assertThat(context).hasSingleBean(McpToolInterceptor.class);
+            assertThat(context).hasSingleBean(McpToolSpecificationPostProcessor.class);
 
             McpCatalogService catalog = context.getBean(McpCatalogService.class);
             assertThat(catalog.writeSurfaceOpen()).isFalse();

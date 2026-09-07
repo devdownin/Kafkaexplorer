@@ -62,12 +62,49 @@ must be able to answer "why does my agent not see `kex_produce_message`?" with
   warnings, rather than refused. The caller asked for something reasonable in the wrong unit far
   more often than it attacked us, and a refusal there costs a round trip for nothing.
 
+## One layer makes three claims true
+
+`McpToolInterceptor` wraps every tool's call handler, and it exists because three things this
+module already asserted were, without it, false:
+
+- **The recorder was written, tested, wired to metrics — and called by nothing.** A serving
+  deployment reported `explorer_mcp_calls_total` at zero, which reads as "no calls", not as
+  "nothing counts". That is the module's own invariant broken by the module's own bookkeeping.
+- **`hard-max-output-bytes` was published in the catalogue as a ceiling a caller cannot argue
+  out of, and nothing measured a byte.** A guarantee that is advertised and not kept is worse
+  than none.
+- **`McpToolException` carried a KIP-1318 code that nothing read.** `ToolGuard` refused
+  correctly, then the SDK flattened the refusal into a generic tool error — so the whole reason
+  for adopting those numbers, that an agent trained on that surface can tell "out of scope" from
+  "the broker is down", did not survive the trip.
+
+Three claims, one missing layer. Two details of it are load-bearing:
+
+**The envelope arrives as a `Map`, not as a `ToolResult`.** Spring AI serialises a tool's return
+value to JSON and parses it back as a plain `Object` before anything downstream sees it — that
+round trip *is* MCP structured content. `McpCallContext`'s first version tested
+`instanceof ToolResult`, which can never match there: every call would have recorded "does not
+count records", and the induced-load column would have read empty on a busy server. Caught by
+reading the SDK, not by a test — the test would have passed against a mock returning our type.
+
+**An oversized payload is refused, not cut.** Truncating a serialised result gives malformed JSON
+at best and, at worst, a shorter answer a model cannot distinguish from a complete one — the exact
+failure this module exists to prevent. The reply names the tool, the size, the ceiling and what to
+narrow, and the caller pays one round trip to keep the truth.
+
+`McpToolSpecificationPostProcessor` is how it attaches: Spring AI's `toolSpecs` bean carries no
+`@ConditionalOnMissingBean`, so a bean of ours would collide rather than displace it. Post-processing
+takes the list the framework built and hands back the same tools with wrapped handlers. It wraps the
+**stateful** specification, which is what the shipped `STREAMABLE` protocol produces; switching
+`spring.ai.mcp.server.protocol` to `STATELESS` produces a different type this does not see, and
+would silently drop all three guarantees above.
+
 ## Phases
 
 | Phase | Content | State |
 |---|---|---|
-| 1 — Socle honnête | `Coverage`/`Measured`/`ToolResult`, `McpProperties`, `ToolGuard`, `McpCallRecorder` + metrics, `McpCatalogService`, tools `kex_list_topics` / `kex_describe_topic` / `kex_preview_messages` / `kex_infer_schema` / `kex_sql_query` / `kex_list_tables` | **in progress** |
-| 2 — Écran MCP | `/api/mcp/status`, `/catalog`, `/calls`, `/stats`; React page | not started |
+| 1 — Socle honnête | `Coverage`/`Measured`/`ToolResult`, `McpProperties`, `ToolGuard`, `McpCallRecorder` + metrics, `McpCatalogService`, `McpToolInterceptor`, tools `kex_list_topics` / `kex_describe_topic` / `kex_preview_messages` / `kex_infer_schema` / `kex_sql_query` / `kex_list_tables` | **done** |
+| 2 — Écran MCP | `/api/mcp/status`, `/catalog`, `/calls`, `/stats`; React page. Worth splitting: the REST half reads with `curl` and carries most of the operator value; the page follows | not started |
 | 3 — Différenciation | `kex_trace_key`, `kex_resume_trace`, `kex_analyze_dead_letters`, `kex_consumer_lag` | not started |
 | 4 — Modélisation | `kex_deduce_data_model`, `kex_build_join`, `kex_run_audit`/`kex_get_audit`, `kex_suggest_kpis` | not started |
 | 5 — Entreprise | OAuth 2.1, taint guard, approval token, audit topic + replay, kill switch | not started |

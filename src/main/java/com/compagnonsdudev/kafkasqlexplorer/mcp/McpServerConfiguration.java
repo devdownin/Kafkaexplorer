@@ -7,6 +7,8 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpAuditSink;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCallRecorder;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCatalogService;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpToolInterceptor;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpToolSpecificationPostProcessor;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.McpToolset;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.MutatingMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ReadOnlyMcpTools;
@@ -87,6 +89,30 @@ public class McpServerConfiguration {
         // interface from the start so its failure counter, and the console field that surfaces it,
         // exist before there is anything to lose — but nothing pretends to persist in the meantime.
         return new McpCallRecorder(properties, auditSink.getIfAvailable(), meters);
+    }
+
+    /**
+     * The layer every tool call passes through. Without it three of this module's claims are not
+     * true: the metrics stay at zero on a serving deployment, {@code hard-max-output-bytes} is a
+     * ceiling the catalogue advertises and nothing enforces, and a guard's KIP-1318 code never
+     * reaches the agent. See {@link McpToolInterceptor}.
+     */
+    @Bean
+    McpToolInterceptor mcpToolInterceptor(McpProperties properties, ToolGuard guard,
+                                          DlpScrubber dlp, McpCallRecorder recorder) {
+        return new McpToolInterceptor(properties, guard, dlp, recorder);
+    }
+
+    /**
+     * Static, and it has to be: a {@code BeanPostProcessor} declared by an instance method makes
+     * its whole configuration class instantiate before the container is ready to configure it,
+     * which Spring reports as a wall of "is not eligible for post-processing" warnings and which
+     * would, here, build the properties bean before its binding is available.
+     */
+    @Bean
+    static McpToolSpecificationPostProcessor mcpToolSpecificationPostProcessor(
+            ObjectProvider<McpToolInterceptor> interceptor) {
+        return new McpToolSpecificationPostProcessor(interceptor);
     }
 
     @Bean

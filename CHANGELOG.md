@@ -63,8 +63,30 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are recorded exactly like successes — a control that blocks silently is a control nobody
   ever tunes.
 
+- **Every MCP call now passes through one interception layer**, which is what makes three of the
+  claims above true rather than aspirational. Refusals reach the agent as their own JSON-RPC code
+  (`-32041` out of scope, `-32047` quarantine…) instead of being flattened by the SDK into a
+  generic tool error; the caller is identified and recorded, refusals alongside successes; and
+  `hard-max-output-bytes` is enforced. An oversized response is **refused, not truncated** — a cut
+  result is indistinguishable from a complete one, so the reply names the size, the ceiling and
+  what to narrow.
+
 ### Fixed
 
+- **The MCP metrics counted nothing, the output ceiling capped nothing, and the guard's error
+  codes reached no one.** All three had shipped as claims with no code path behind them:
+  `McpCallRecorder` was written, tested and wired to Micrometer but called from nowhere, so a
+  serving deployment reported `explorer_mcp_calls_total` at zero — which reads as "no calls", not
+  "nothing counts", and is this module's own invariant broken by its own bookkeeping.
+  `hard-max-output-bytes` was published in the catalogue as a ceiling a caller cannot argue out
+  of, and nothing measured a byte. `McpToolException.jsonRpcCode()` was read by nothing. The
+  interception layer above closes all three.
+- **The coverage envelope was read from the wrong type.** The first draft of `McpCallContext`
+  tested `instanceof ToolResult`, which can never match: Spring AI serialises a tool's return
+  value and parses it back as a plain `Map` before the interception layer sees it. Every call
+  would have been recorded as "this tool does not count records", leaving the induced-load column
+  empty on a server doing real work. Found by reading the SDK — a test against a mock returning
+  our own type would have passed.
 - **The MCP redactor masked the word "Bearer" and left the token.** Found by its own test
   while it was being written: `Authorization: Bearer <jwt>` matched the credential-key rule
   first, whose value pattern stopped at whitespace, so the header came back as

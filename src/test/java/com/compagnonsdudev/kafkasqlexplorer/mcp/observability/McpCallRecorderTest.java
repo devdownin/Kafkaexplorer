@@ -79,10 +79,23 @@ class McpCallRecorderTest {
         recorder.record(new McpCallRecord("c1", Instant.now(), 5L, McpCallRecord.Origin.AGENT,
                 "svc@corp", "claude-code/1.4.2", "kex_list_tables", Map.of(),
                 McpCallRecord.Outcome.OK, null, null,
-                Measured.unmeasured("this tool reads no records"), null, false, 120L));
+                Measured.unmeasured("this tool reads no records"), null, false, Measured.of(120L)));
 
         assertThat(meters.find("explorer_mcp_records_scanned_total")
                 .tag("tool", "kex_list_tables").counter()).isNull();
+    }
+
+    @Test
+    void an_unmeasured_output_size_is_not_counted_as_zero_bytes() {
+        // A size that could not be computed is not a small response. Adding a zero would make the
+        // induced-load figure read low for exactly the payloads most likely to be large.
+        recorder.record(new McpCallRecord("c2", Instant.now(), 5L, McpCallRecord.Origin.AGENT,
+                "svc@corp", "claude-code/1.4.2", "kex_sql_query", Map.of(),
+                McpCallRecord.Outcome.OK, null, null, Measured.of(3L), StopReason.EXHAUSTED,
+                false, Measured.unmeasured("the response could not be serialised for measurement")));
+
+        assertThat(meters.find("explorer_mcp_output_bytes_total")
+                .tag("tool", "kex_sql_query").counter()).isNull();
     }
 
     @Test
@@ -117,12 +130,13 @@ class McpCallRecorderTest {
     private static McpCallRecord ok(String tool) {
         return new McpCallRecord("c-" + tool, Instant.now(), 12L, McpCallRecord.Origin.AGENT,
                 "svc@corp", "claude-code/1.4.2", tool, Map.of(), McpCallRecord.Outcome.OK,
-                null, null, Measured.of(42L), StopReason.EXHAUSTED, false, 512L);
+                null, null, Measured.of(42L), StopReason.EXHAUSTED, false, Measured.of(512L));
     }
 
     private static McpCallRecord denied(String tool, int code, McpGuard guard) {
         return new McpCallRecord("d-" + tool, Instant.now(), 2L, McpCallRecord.Origin.AGENT,
                 "svc@corp", "claude-code/1.4.2", tool, Map.of(), McpCallRecord.Outcome.DENIED,
-                code, guard, Measured.unmeasured("refused before reading"), null, false, 0L);
+                code, guard, Measured.unmeasured("refused before reading"), null, false,
+                Measured.of(0L));
     }
 }

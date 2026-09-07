@@ -85,7 +85,10 @@ public class McpCallRecorder {
             meters.counter("explorer_mcp_records_scanned_total", "tool", call.tool())
                     .increment(call.recordsScanned().value());
         }
-        meters.counter("explorer_mcp_output_bytes_total", "tool", call.tool()).increment(call.outputBytes());
+        if (call.outputBytes() != null && call.outputBytes().measured()) {
+            meters.counter("explorer_mcp_output_bytes_total", "tool", call.tool())
+                    .increment(call.outputBytes().value());
+        }
 
         if (auditSink == null) {
             return;
