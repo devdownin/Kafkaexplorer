@@ -303,11 +303,17 @@ explorer:
       allow-try-it: true
 
     dlp:
-      # redact | block | off. Applied to tool output, to resources, and to recorded call parameters
-      # *before* they are persisted — redacting only what is displayed leaves the secret sitting in
-      # the ring buffer and on the audit topic, where it outlives the call.
+      # redact | block | off.
+      #   redact — mask credentials and obvious personal data on the way out.
+      #   block  — refuse to return a payload carrying them at all (-32045), rather than returning
+      #            it masked. It is a real refusal now; it used to be accepted and behave exactly
+      #            like `redact`, which made the stricter-sounding setting the weaker claim.
+      #   off    — return payloads untouched.
+      # Applied to tool output, to resources, and to recorded call parameters *before* they are
+      # persisted: redacting only what is displayed leaves the secret sitting in the ring buffer and
+      # on the audit topic, where it outlives the call. Call parameters are always redacted and
+      # never blocked — an argument came from the caller, so refusing it protects nobody.
       mode: redact
-      scrub-all-outputs: true
 
 # Process Mining ingestion tuning. Defaults target "complex" payloads — JSON documents around
 # 1 MB with ~10 levels of nesting — which are never buffered nor prompted verbatim: each record

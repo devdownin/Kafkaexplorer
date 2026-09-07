@@ -99,6 +99,56 @@ takes the list the framework built and hands back the same tools with wrapped ha
 `spring.ai.mcp.server.protocol` to `STATELESS` produces a different type this does not see, and
 would silently drop all three guarantees above.
 
+## MCP has two error channels, and which one a refusal takes decides who reads it
+
+The SDK documents `CallToolResult.isError` as "the tool **execution** failed and the content
+contains error information" — that result goes back to the model. A JSON-RPC error is a failure of
+the *call*, and a client may surface it as a transport fault without showing the model anything.
+`McpErrorCode.Level` therefore splits the codes, and it is not bookkeeping:
+
+- **`EXECUTION` → an `isError` result.** `-32046` (a `SELECT id, FROM orders`) and `-32043` (the
+  broker was away). Phase 1 sent both as hard errors, which quietly undid the reason `SqlMcpTools`
+  preserves the planner's sentence at all: "unknown column at line 1, column 8" only turns a failed
+  call into a correct one if the thing that has to rewrite the query can see it.
+- **`PROTOCOL` → a JSON-RPC error.** Scope, quarantine, taint, approval, rate limit, policy,
+  exfiltration. These must *not* arrive as readable tool output: a refusal the model can read is a
+  refusal it will try to phrase its way around, and an agent probing at a scope denial is precisely
+  what the guard exists to stop.
+
+## `dlp.mode: block` is a refusal now, not a synonym for `redact`
+
+`BLOCK` appeared nowhere in `DlpScrubber` — only `OFF` was distinguished — so an operator who set
+it, believing a payload carrying a secret would not leave, received the same masked payload
+`redact` produces. A security setting that reads stricter than it behaves is worse than not
+offering the setting. It now raises `-32045`, detected by "the masker changed something", which is
+exact by construction: what would be masked *is* what is blocked, with no second pattern set to
+disagree with the first.
+
+Call **parameters** are the deliberate exception: always redacted, never blocked. Block is about
+what leaves the cluster; an argument came *from* the caller, so refusing it protects nobody and
+loses the record of the call. What matters there is that the secret does not settle into the ring
+buffer and the audit topic.
+
+## The tool hints were not merely missing — they were wrong
+
+`@McpTool.McpAnnotations` defaults `readOnlyHint` to **false** and `destructiveHint` to **true**, so
+a tool that declares neither advertises itself as potentially destructive. All six read tools were
+making that claim. Clients use these hints to decide whether a call needs a human in the loop, so
+the cost fell exactly where it is least deserved: an approval prompt per call, on the tools an agent
+uses to explore. `ToolAnnotationsTest` pins them, and will fail the tool added next that forgets.
+
+## Two settings that could not have meant anything
+
+`scrub-all-outputs` shipped, was read by nothing, and could not have done anything: redaction
+already applies to every output whenever the mode is not `off`, so its two values described one
+behaviour. Removed — a knob that cannot change what happens invites an operator to believe they
+have narrowed something.
+
+`approval-required-tools` is read only by the catalogue, which badged a tool
+`EXPOSED_WITH_APPROVAL` while no approval token is checked anywhere. The badge now carries the
+reason, saying it is declared and not enforced until phase 5: a console asserting a control that
+does not exist fails at the one job it has.
+
 ## Phases
 
 | Phase | Content | State |

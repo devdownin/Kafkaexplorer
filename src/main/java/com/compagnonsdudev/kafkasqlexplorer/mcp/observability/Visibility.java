@@ -21,8 +21,18 @@ public record Visibility(State state, String reason) {
         return new Visibility(State.EXPOSED, null);
     }
 
+    /**
+     * Named in {@code explorer.mcp.approval-required-tools} — <b>declared, not yet enforced</b>.
+     *
+     * <p>The reason is carried rather than left null on purpose. No approval token is checked
+     * anywhere yet (phase 5), so a badge reading "approval required" with nothing behind it would
+     * be this console asserting a control that does not exist — on the screen whose whole job is to
+     * tell an operator what is actually in force.
+     */
     public static Visibility exposedWithApproval() {
-        return new Visibility(State.EXPOSED_WITH_APPROVAL, null);
+        return new Visibility(State.EXPOSED_WITH_APPROVAL,
+                "declared in explorer.mcp.approval-required-tools; the token check is not "
+                        + "implemented yet, so nothing enforces it");
     }
 
     public static Visibility hiddenBy(String reason) {

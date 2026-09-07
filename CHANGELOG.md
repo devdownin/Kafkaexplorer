@@ -71,8 +71,28 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   result is indistinguishable from a complete one, so the reply names the size, the ceiling and
   what to narrow.
 
+- **MCP tools declare themselves read-only.** `@McpTool.McpAnnotations` defaults `readOnlyHint` to
+  false and `destructiveHint` to true, so all six read tools had been advertising themselves as
+  potentially destructive — not a missing hint but a false one. Clients use these to decide whether
+  a call needs a human in the loop, so it cost an approval prompt per call on exactly the tools an
+  agent explores with.
+
 ### Fixed
 
+- **A user's SQL error reached the agent as a transport failure instead of as an answer.** MCP has
+  two error channels — the SDK documents `isError` as "the tool *execution* failed and the content
+  contains error information", which the model reads, against a JSON-RPC error, which a client may
+  surface as a transport fault without showing the model anything. Phase 1 sent both through the
+  second, which quietly undid the reason `kex_sql_query` preserves the planner's sentence: "unknown
+  column at line 1, column 8" only turns a failed call into a correct one if the thing rewriting
+  the query can see it. `-32046` and `-32043` now return results; scope, quarantine, taint,
+  approval, rate limit, policy and exfiltration stay JSON-RPC errors, because a refusal the model
+  can read is one it will try to phrase its way around.
+- **`explorer.mcp.dlp.mode: block` silently behaved like `redact`.** `BLOCK` appeared nowhere in the
+  scrubber — only `off` was distinguished — so an operator who set it, believing a payload carrying
+  a secret would not leave, got the same masked payload. A security setting that reads stricter
+  than it behaves is worse than not offering it. It now refuses with `-32045`. Call parameters stay
+  redacted rather than blocked: an argument came from the caller, so refusing it protects nobody.
 - **The MCP metrics counted nothing, the output ceiling capped nothing, and the guard's error
   codes reached no one.** All three had shipped as claims with no code path behind them:
   `McpCallRecorder` was written, tested and wired to Micrometer but called from nowhere, so a
@@ -81,6 +101,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `hard-max-output-bytes` was published in the catalogue as a ceiling a caller cannot argue out
   of, and nothing measured a byte. `McpToolException.jsonRpcCode()` was read by nothing. The
   interception layer above closes all three.
+- **Two `explorer.mcp` settings claimed something they did not do.** `scrub-all-outputs` shipped,
+  was read by nothing, and could not have meant anything — redaction already applies to every
+  output whenever the mode is not `off` — so it is removed; a knob that cannot change what happens
+  invites an operator to believe they narrowed something. `approval-required-tools` badged a tool
+  `EXPOSED_WITH_APPROVAL` in the catalogue while no approval token is checked anywhere; the badge
+  now carries that fact, because a console asserting a control that does not exist fails at its
+  one job.
 - **The coverage envelope was read from the wrong type.** The first draft of `McpCallContext`
   tested `instanceof ToolResult`, which can never match: Spring AI serialises a tool's return
   value and parses it back as a plain `Map` before the interception layer sees it. Every call

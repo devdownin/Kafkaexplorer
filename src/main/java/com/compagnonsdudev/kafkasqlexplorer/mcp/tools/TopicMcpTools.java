@@ -64,7 +64,9 @@ public class TopicMcpTools implements ReadOnlyMcpTools {
         return ToolCategory.EXPLORATION;
     }
 
-    @McpTool(name = "kex_list_topics", description = """
+    @McpTool(name = "kex_list_topics", annotations = @McpTool.McpAnnotations(
+            readOnlyHint = true, destructiveHint = false, openWorldHint = true),
+            description = """
             List the Kafka topics of the connected cluster with their partition count, readable
             record count and last activity.
 
@@ -133,7 +135,9 @@ public class TopicMcpTools implements ReadOnlyMcpTools {
         return new ToolResult<>(summaries, coverage, warnings, truncated);
     }
 
-    @McpTool(name = "kex_describe_topic", description = """
+    @McpTool(name = "kex_describe_topic", annotations = @McpTool.McpAnnotations(
+            readOnlyHint = true, destructiveHint = false, openWorldHint = true),
+            description = """
             Describe one topic: partitions, earliest and latest offset per partition, readable
             record count, the payload format inferred from a sample, and the consumer groups seen
             on it.
@@ -186,7 +190,9 @@ public class TopicMcpTools implements ReadOnlyMcpTools {
                 Coverage.exhausted(1, 0L, System.currentTimeMillis() - startedAt), warnings);
     }
 
-    @McpTool(name = "kex_preview_messages", description = """
+    @McpTool(name = "kex_preview_messages", annotations = @McpTool.McpAnnotations(
+            readOnlyHint = true, destructiveHint = false, openWorldHint = true),
+            description = """
             Return a small, bounded sample of records from one topic, pretty-printed, with
             credentials and obvious personal data redacted.
 

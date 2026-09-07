@@ -124,9 +124,17 @@ public class McpToolInterceptor {
             return result;
 
         } catch (McpToolException e) {
-            // A refusal is recorded exactly like a success — a control that blocks silently is a
-            // control nobody ever tunes — and reaches the agent as its own JSON-RPC code, which is
-            // what lets a model tell "narrow your scope" from "retry later".
+            // Recorded exactly like a success — a control that blocks silently is a control nobody
+            // ever tunes — but returned through whichever of MCP's two error channels the code
+            // belongs to. See McpErrorCode.Level: a refusal the model must not argue with is a
+            // JSON-RPC error, a failure it is meant to read and correct is tool output.
+            if (e.errorCode().reportedToTheModel()) {
+                CallToolResult failure = executionFailure(e);
+                record(correlationId, startedAt, startedNanos, tool, identity, clientInfo,
+                        redactedParams, outcomeOf(e), e.jsonRpcCode(), e.guard(), null, false,
+                        sizeOf(failure));
+                return failure;
+            }
             record(correlationId, startedAt, startedNanos, tool, identity, clientInfo,
                     redactedParams, outcomeOf(e), e.jsonRpcCode(), e.guard(), null, false,
                     Measured.of(0L));
@@ -154,12 +162,29 @@ public class McpToolInterceptor {
     }
 
     /**
+     * A failure the model is expected to read and act on.
+     *
+     * <p>The code travels in the text rather than being dropped: it is what tells a model that the
+     * statement was rejected before anything ran, as against a cluster that was briefly away. The
+     * message is the planner's own — its line and column are the whole reason this path exists
+     * instead of a hard error the client may never show.
+     */
+    private static CallToolResult executionFailure(McpToolException e) {
+        return CallToolResult.builder()
+                .isError(true)
+                .addTextContent("[%d %s] %s".formatted(
+                        e.jsonRpcCode(), e.errorCode().name(), e.getMessage()))
+                .build();
+    }
+
+    /**
      * Turns our refusal into the SDK's hard failure.
      *
      * <p>{@link McpError} rather than an error {@code CallToolResult}, and the difference is not
      * cosmetic: the SDK propagates an {@code McpError} as a JSON-RPC error carrying its code, while
      * a plain runtime exception becomes a result with {@code isError} and a text blob. Only the
-     * first puts {@code -32041} where a client looks for it.
+     * first puts {@code -32041} where a client looks for it — and only the first stops a model
+     * treating a scope refusal as something to rephrase its way around.
      */
     private static McpError asMcpError(McpToolException e) {
         return McpError.builder(e.jsonRpcCode())

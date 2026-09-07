@@ -60,7 +60,9 @@ public class SqlMcpTools implements ReadOnlyMcpTools {
         return ToolCategory.EXPLORATION;
     }
 
-    @McpTool(name = "kex_sql_query", description = """
+    @McpTool(name = "kex_sql_query", annotations = @McpTool.McpAnnotations(
+            readOnlyHint = true, destructiveHint = false, openWorldHint = true),
+            description = """
             Run a read-only SQL statement against the Kafka topics of this cluster and return the
             rows. A topic can be queried by name with no DDL: the table is inferred from a sample of
             its records on first use. Call kex_infer_schema first if you need the column names.
@@ -124,7 +126,9 @@ public class SqlMcpTools implements ReadOnlyMcpTools {
         return new ToolResult<>(answer, coverage, warnings, atCap);
     }
 
-    @McpTool(name = "kex_list_tables", description = """
+    @McpTool(name = "kex_list_tables", annotations = @McpTool.McpAnnotations(
+            readOnlyHint = true, destructiveHint = false, openWorldHint = true),
+            description = """
             List the Flink tables this application currently has registered, with their columns and
             the CREATE TABLE that defines them.
 

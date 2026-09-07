@@ -112,15 +112,50 @@ class McpToolInterceptorTest {
     }
 
     @Test
-    void an_unreachable_dependency_is_an_error_not_a_denial() {
-        // Filing a broker outage under "denied" sends an operator to loosen a guard that was never
-        // involved.
-        assertThatThrownBy(() -> invoke((exchange, request) -> {
-            throw new McpToolException(McpErrorCode.DEPENDENCY_UNAVAILABLE, "Kafka was unreachable");
-        }, Map.of())).isInstanceOf(McpError.class);
+    void a_user_sql_error_comes_back_as_tool_output_so_the_model_can_correct_it() {
+        // The SDK documents isError as "the tool EXECUTION failed and the content contains error
+        // information" — that result reaches the model. A JSON-RPC error is a failure of the call
+        // itself, which a client may surface as a transport fault without showing the model
+        // anything. Sent as a hard error, the planner's line and column — the whole reason for
+        // preserving its message — could never be read by the thing that has to act on it.
+        CallToolResult result = invoke((exchange, request) -> {
+            throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
+                    "SQL parse failed. Encountered \"FROM\" at line 1, column 12.");
+        }, Map.of("sql", "SELECT id, FROM orders"));
 
+        assertThat(result.isError()).isTrue();
+        assertThat(result.content().getFirst().toString())
+                .contains("line 1, column 12").contains("-32046");
+        assertThat(recorder.recent(McpCallFilter.all(), 10)).singleElement().satisfies(call -> {
+            assertThat(call.jsonRpcErrorCode()).isEqualTo(-32046);
+            assertThat(call.outputBytes().measured()).isTrue();
+        });
+    }
+
+    @Test
+    void an_unreachable_dependency_is_an_error_not_a_denial_and_reaches_the_model() {
+        // Filing a broker outage under "denied" sends an operator to loosen a guard that was never
+        // involved; and the model should read "the broker is away" rather than be told the call
+        // itself was malformed.
+        CallToolResult result = invoke((exchange, request) -> {
+            throw new McpToolException(McpErrorCode.DEPENDENCY_UNAVAILABLE, "Kafka was unreachable");
+        }, Map.of());
+
+        assertThat(result.isError()).isTrue();
         assertThat(recorder.recent(McpCallFilter.all(), 10)).singleElement()
                 .satisfies(call -> assertThat(call.outcome()).isEqualTo(McpCallRecord.Outcome.ERROR));
+    }
+
+    @Test
+    void a_scope_refusal_stays_a_hard_json_rpc_error_the_model_cannot_talk_around() {
+        // The other side of the same split: a permission refusal must not arrive as readable tool
+        // output inviting the model to try a variation. An agent probing around a scope refusal is
+        // exactly what the guard exists to stop.
+        assertThat(McpErrorCode.OUT_OF_SCOPE.reportedToTheModel()).isFalse();
+        assertThat(McpErrorCode.QUARANTINED.reportedToTheModel()).isFalse();
+        assertThat(McpErrorCode.EXFILTRATION_BLOCKED.reportedToTheModel()).isFalse();
+        assertThat(McpErrorCode.VALIDATION_FAILED.reportedToTheModel()).isTrue();
+        assertThat(McpErrorCode.DEPENDENCY_UNAVAILABLE.reportedToTheModel()).isTrue();
     }
 
     @Test

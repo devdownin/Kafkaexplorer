@@ -54,7 +54,9 @@ public class SchemaMcpTools implements ReadOnlyMcpTools {
         return ToolCategory.EXPLORATION;
     }
 
-    @McpTool(name = "kex_infer_schema", description = """
+    @McpTool(name = "kex_infer_schema", annotations = @McpTool.McpAnnotations(
+            readOnlyHint = true, destructiveHint = false, openWorldHint = true),
+            description = """
             Infer the column names and Flink SQL types of one or more Kafka topics by sampling their
             records, and return a ready-to-run CREATE TABLE for each.
 

@@ -86,16 +86,28 @@ public class McpProperties {
         public void setAllowTryIt(boolean allowTryIt) { this.allowTryIt = allowTryIt; }
     }
 
+    /**
+     * There is deliberately no {@code scrub-all-outputs} flag beside {@link Dlp#mode}.
+     *
+     * <p>One shipped, read by nothing, and it could not have meant anything: redaction already
+     * applies to every output whenever the mode is not {@code off}, so the flag's two values
+     * described the same behaviour. A knob that cannot change what happens is worse than a missing
+     * one — it invites an operator to believe they have narrowed something.
+     */
     public static class Dlp {
-        public enum Mode { REDACT, BLOCK, OFF }
+        public enum Mode {
+            /** Mask credentials and obvious personal data on the way out. */
+            REDACT,
+            /** Refuse to return a payload that carries them at all — {@code -32045}. */
+            BLOCK,
+            /** Return payloads untouched, for a cluster whose contents need no protection. */
+            OFF
+        }
 
         private Mode mode = Mode.REDACT;
-        private boolean scrubAllOutputs = true;
 
         public Mode getMode() { return mode; }
         public void setMode(Mode mode) { this.mode = mode; }
-        public boolean isScrubAllOutputs() { return scrubAllOutputs; }
-        public void setScrubAllOutputs(boolean scrubAllOutputs) { this.scrubAllOutputs = scrubAllOutputs; }
     }
 
     /** True when the list places no restriction at all — empty, or containing the wildcard. */

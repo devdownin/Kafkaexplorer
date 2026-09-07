@@ -60,10 +60,22 @@ public class DlpScrubber {
     }
 
     public boolean active() {
-        return properties.getDlp().getMode() != McpProperties.Dlp.Mode.OFF;
+        return mode() != McpProperties.Dlp.Mode.OFF;
     }
 
-    /** Scrubs a free-text payload — a message body, an error message, a SQL string. */
+    private McpProperties.Dlp.Mode mode() {
+        return properties.getDlp().getMode();
+    }
+
+    /**
+     * Scrubs a free-text payload — a message body, an error message, a SQL string.
+     *
+     * <p>In {@code block} mode it refuses instead of masking, and that difference is the whole
+     * reason the mode exists. It used to be accepted and ignored: an operator who set
+     * {@code block}, believing a payload carrying a secret would not leave, got the same redacted
+     * payload {@code redact} produces. A security setting that reads stricter than it behaves is
+     * worse than not offering the setting.
+     */
     public String scrub(String text) {
         if (text == null || !active()) {
             return text;
@@ -74,12 +86,39 @@ public class DlpScrubber {
         // an already-masked `Bearer ******` into one mask rather than two.
         String out = BEARER.matcher(text).replaceAll("$1" + MASK);
         out = SECRET_ASSIGNMENT.matcher(out).replaceAll("$1$2" + MASK + "$2");
-        return EMAIL.matcher(out).replaceAll(MASK);
+        out = EMAIL.matcher(out).replaceAll(MASK);
+        return blockOrReturn(text, out, "a record this tool read");
     }
 
     /** Scrubs DDL through the same masker the UI paths use. */
     public String scrubDdl(String ddl) {
-        return active() ? DdlGeneratorService.maskSensitiveProperties(ddl) : ddl;
+        if (ddl == null || !active()) {
+            return ddl;
+        }
+        return blockOrReturn(ddl, DdlGeneratorService.maskSensitiveProperties(ddl),
+                "a table definition this tool read");
+    }
+
+    /**
+     * The redacted text, or a refusal when the mode says nothing sensitive may leave at all.
+     *
+     * <p>Detection is "the masker changed something", which is exact rather than a second set of
+     * patterns that could disagree with the first — the thing that would be masked is by definition
+     * the thing that would be blocked.
+     *
+     * <p>{@code -32045} is a protocol-level refusal, so it reaches the caller as a JSON-RPC error
+     * rather than as tool output: handing the model a message about a payload it may not have is
+     * the wrong shape for a control whose point is that nothing leaves.
+     */
+    private String blockOrReturn(String original, String scrubbed, String what) {
+        if (mode() != McpProperties.Dlp.Mode.BLOCK || scrubbed.equals(original)) {
+            return scrubbed;
+        }
+        throw new McpToolException(McpErrorCode.EXFILTRATION_BLOCKED, McpGuard.POLICY,
+                ("%s carries a credential or personal data, and explorer.mcp.dlp.mode=block "
+                        + "forbids returning it even redacted. Set the mode to `redact` to receive "
+                        + "it masked, or narrow the read so it does not cover this data.")
+                        .formatted(what));
     }
 
     /**
@@ -88,6 +127,12 @@ public class DlpScrubber {
      * <p>Keys are matched as well as values: a parameter literally named {@code password} is
      * redacted whatever its value looks like, which the value patterns alone would miss for a
      * secret that happens to be a plain word.
+     *
+     * <p><b>Always redacts, never blocks</b>, even in {@code block} mode — and the asymmetry is
+     * deliberate. Block is about what leaves the cluster; an argument came <em>from</em> the
+     * caller, so refusing the call protects nobody and loses a record of it. What matters here is
+     * that the secret does not settle into the ring buffer and the audit topic, which redaction
+     * before persistence already achieves.
      */
     public Map<String, Object> scrubParams(Map<String, Object> params) {
         if (params == null || params.isEmpty() || !active()) {
@@ -102,7 +147,12 @@ public class DlpScrubber {
         if (sensitiveKey(key)) {
             return MASK;
         }
-        return value instanceof String s ? scrub(s) : value;
+        if (!(value instanceof String s)) {
+            return value;
+        }
+        String out = BEARER.matcher(s).replaceAll("$1" + MASK);
+        out = SECRET_ASSIGNMENT.matcher(out).replaceAll("$1$2" + MASK + "$2");
+        return EMAIL.matcher(out).replaceAll(MASK);
     }
 
     private static boolean sensitiveKey(String key) {
