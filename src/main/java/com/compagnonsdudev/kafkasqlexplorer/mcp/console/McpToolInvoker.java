@@ -77,9 +77,14 @@ public class McpToolInvoker {
      * The builder rather than {@code new CallToolRequest(name, arguments)}, which the SDK
      * deprecated: the constructor fixes the argument shape, while the builder is where the meta and
      * progress-token fields a later phase will need are set.
+     *
+     * <p><b>{@code builder(name)}, not {@code builder().name(name)}</b> — the no-argument overload
+     * is deprecated too, and the first replacement went straight into it. The named one is not
+     * sugar: it asserts the name is non-empty at construction, where the other leaves a request
+     * that fails later and further from the mistake.
      */
     private static CallToolRequest request(String tool, Map<String, Object> arguments) {
-        return CallToolRequest.builder().name(tool).arguments(arguments).build();
+        return CallToolRequest.builder(tool).arguments(arguments).build();
     }
 
     private List<SyncToolSpecification> specifications() {

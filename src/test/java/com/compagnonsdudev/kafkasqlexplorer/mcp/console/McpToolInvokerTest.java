@@ -94,8 +94,7 @@ class McpToolInvokerTest {
         invokerFor(List.of(spec)).invoke("kex_list_topics", Map.of());
 
         spec.callHandler().apply(null,
-                io.modelcontextprotocol.spec.McpSchema.CallToolRequest.builder()
-                        .name("kex_list_topics").arguments(Map.of()).build());
+                io.modelcontextprotocol.spec.McpSchema.CallToolRequest.builder("kex_list_topics").arguments(Map.of()).build());
 
         assertThat(recorder.recent(McpCallFilter.all(), 10)).extracting(McpCallRecord::origin)
                 .containsExactly(McpCallRecord.Origin.AGENT, McpCallRecord.Origin.CONSOLE);

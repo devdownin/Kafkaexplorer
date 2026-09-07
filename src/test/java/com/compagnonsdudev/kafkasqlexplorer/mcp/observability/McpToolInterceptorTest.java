@@ -61,7 +61,7 @@ class McpToolInterceptorTest {
                                   Map<String, Object> arguments) {
         SyncToolSpecification wrapped = interceptor.wrap(
                 new SyncToolSpecification(Tool.builder("kex_list_topics").build(), handler));
-        return wrapped.callHandler().apply(null, CallToolRequest.builder().name("kex_list_topics").arguments(arguments).build());
+        return wrapped.callHandler().apply(null, CallToolRequest.builder("kex_list_topics").arguments(arguments).build());
     }
 
     @Test
