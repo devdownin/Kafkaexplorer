@@ -101,6 +101,20 @@ public class McpCallRecorder {
         }
     }
 
+    /**
+     * Everything the ring currently holds, oldest first.
+     *
+     * <p>A copy taken under the lock rather than a live view: the console aggregates over it
+     * several times per request (counts, percentiles, per-tool and per-identity groupings) and
+     * iterating the live deque would either hold the lock across all of that or read a ring that
+     * changes underneath the sums, so two cards on the same screen would disagree.
+     */
+    public List<McpCallRecord> snapshot() {
+        synchronized (ringLock) {
+            return List.copyOf(ring);
+        }
+    }
+
     /** Most recent first, so the console's first page is the one an operator wants. */
     public List<McpCallRecord> recent(McpCallFilter filter, int limit) {
         List<McpCallRecord> snapshot;

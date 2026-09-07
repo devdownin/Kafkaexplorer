@@ -41,6 +41,19 @@ ROOT = Path(__file__).resolve().parent.parent
 TYPES = ROOT / 'src/main/webapp/src/api/types.ts'
 DOMAIN = ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/domain'
 
+# Response shapes that do not live in domain/, because they belong to a module rather than to the
+# application's shared vocabulary. The MCP console serves `mcp/console`, and its envelope types come
+# from `mcp/contract` and `mcp/observability`. Widening the source set is the honest fix: the
+# alternative was to leave those interfaces unmarked and therefore unchecked, which is exactly the
+# silent drift this script exists to catch — the checker would have been loudest about the one part
+# of the tree it could not see. Listed rather than discovered by a recursive glob, so adding a
+# package stays a decision.
+EXTRA_RECORD_DIRS = [
+    ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/mcp/console',
+    ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/mcp/contract',
+    ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/mcp/observability',
+]
+
 # @java <Name> in the doc comment preceding an interface / type alias.
 TS_BLOCK = re.compile(
     r'@java\s+(\w+)\s*\*/\s*export\s+(?:interface\s+(\w+)\s*\{(.*?)\n\}|type\s+(\w+)\s*=\s*([^;]+);)',
@@ -60,6 +73,22 @@ SCALARS = {
     'short': 'number', 'Short': 'number',
     'boolean': 'boolean', 'Boolean': 'boolean',
     'Object': 'unknown',
+    # Jackson writes an Instant as an ISO-8601 string, and every page parses it as one. Mapping it
+    # to `number` would have been the plausible wrong guess — epoch millis is what this codebase
+    # uses for a Kafka timestamp, which is a `long` and already covered above.
+    'Instant': 'string',
+}
+
+# Java types whose TypeScript counterpart is a declared interface or alias rather than a scalar.
+# Kept apart from SCALARS because the mapping is by name into `api/types.ts`, not by shape: these
+# only resolve because a marked interface of that name exists, and the resolver checks it does.
+DECLARED = {
+    'Measured': 'Measured',
+    # A record nested in another type is written `Outer.Inner` in a component. The console's call
+    # feed carries two of them, and the alias each resolves to is named for what it means on the
+    # page rather than for its Java nesting.
+    'McpCallRecord.Origin': 'McpOrigin',
+    'McpCallRecord.Outcome': 'McpOutcome',
 }
 
 
@@ -125,15 +154,22 @@ def java_to_ts(java_type: str, known: set[str], renames: dict[str, str] | None =
     java_type = java_type.strip()
     if java_type in SCALARS:
         return SCALARS[java_type]
+    if java_type in DECLARED:
+        return DECLARED[java_type]
     if java_type in renames:
         return renames[java_type]
     if java_type in known:
         return java_type
-    generic = re.fullmatch(r'(\w+)<(.+)>', java_type, re.DOTALL)
+    generic = re.fullmatch(r'([\w.]+)<(.+)>', java_type, re.DOTALL)
     if generic:
         outer, inner = generic.group(1), split_generics(generic.group(2))
         if outer in ('List', 'Set', 'Collection') and len(inner) == 1:
             return f'{java_to_ts(inner[0], known, renames)}[]'
+        # A generic carrier the frontend declares itself, `Measured<Long>` being the one that
+        # matters: its three components are the wire shape, so the TS side is a real interface and
+        # the parameter has to resolve too — `Measured<number>`, never a bare `Measured`.
+        if outer in DECLARED and len(inner) == 1:
+            return f'{DECLARED[outer]}<{java_to_ts(inner[0], known, renames)}>'
         if outer == 'Map' and len(inner) == 2:
             key = java_to_ts(inner[0], known, renames)
             # A Java map key is a string or a number once it is JSON.
@@ -223,7 +259,7 @@ def accepts(declared: str, expected: str, java_type: str) -> bool:
 
 def parse_java() -> tuple[dict[str, list[tuple[str, str]]], set[str]]:
     """
-    Every record and enum under domain/, **nested declarations included**.
+    Every record and enum under domain/ and EXTRA_RECORD_DIRS, **nested declarations included**.
 
     This used to take the first record of each file and stop, which made a nested one invisible:
     `FlowAudit.StepInfo` is declared inside `FlowAudit`, so marking a `StepInfo` interface `@java`
@@ -233,7 +269,10 @@ def parse_java() -> tuple[dict[str, list[tuple[str, str]]], set[str]]:
     """
     records: dict[str, list[tuple[str, str]]] = {}
     enums: set[str] = set()
-    for path in sorted(DOMAIN.glob('*.java')):
+    sources = sorted(DOMAIN.glob('*.java'))
+    for extra in EXTRA_RECORD_DIRS:
+        sources.extend(sorted(extra.glob('*.java')))
+    for path in sources:
         source = strip_comments(path.read_text(encoding='utf-8'))
         for match in JAVA_RECORD.finditer(source):
             components = []
@@ -296,12 +335,12 @@ def main() -> int:
     for java_name, ts_name, fields, alias in declarations:
         if alias is not None:
             if java_name not in enums:
-                problems.append(f'{ts_name}: @java {java_name} is not an enum in domain/')
+                problems.append(f'{ts_name}: @java {java_name} is not an enum in the checked packages')
             checked += 1
             continue
 
         if java_name not in records:
-            problems.append(f'{ts_name}: @java {java_name} matches no record in domain/')
+            problems.append(f'{ts_name}: @java {java_name} matches no record in the checked packages')
             continue
 
         components = dict(records[java_name])

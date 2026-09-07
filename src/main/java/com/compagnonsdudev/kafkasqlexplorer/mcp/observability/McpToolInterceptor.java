@@ -233,7 +233,7 @@ public class McpToolInterceptor {
                 correlationId,
                 startedAt,
                 (System.nanoTime() - startedNanos) / 1_000_000L,
-                McpCallRecord.Origin.AGENT,
+                McpCallOrigin.current(),
                 identity,
                 clientInfo,
                 tool,

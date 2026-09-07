@@ -22,6 +22,30 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **An MCP console — the screen at `/mcp`, and `/api/mcp/**` behind it.** Two tabs: *Catalogue*
+  answers "what does this server offer an agent, exactly, right now?" and *Supervision* answers
+  "what have the agents done with it, and what was refused?". It is the visible counterpart of the
+  decision to point a model at a cluster, and no other Kafka MCP server has one — their surface is
+  discovered with `--list-tools`, their usage by grepping logs.
+  **Withheld tools appear in the table with the reason they are hidden**, because an operator whose
+  agent cannot see `kex_produce_message` has one question, and an absent row answers it with
+  silence. Refusals sit on the same card as successes, grouped by code *and* guard, since several
+  guards share a code and collapsing either way points at a setting that was not involved.
+  A copyable client configuration is generated from the endpoint actually bound, never with a token
+  in it. "Try it" runs the real tool through the real guard and is recorded as `origin: CONSOLE`,
+  so it counts toward the load it causes without being mistaken for agent traffic.
+- **Every console number carries the window it actually rests on.** The live ring is bounded by
+  design — it is a feed, the audit topic is history — so a card headed "24 h" computed over a ring
+  that reaches back forty minutes would be a wrong number wearing a right label, and wrong in the
+  direction that reassures. `ObservedWindow` travels with the catalogue and the stats, and the
+  screen says when the ring evicted rather than showing a list that is short for reasons it does
+  not mention. A p95 over fewer than twenty calls is `non mesuré` with its reason, never `0 ms`:
+  below that it is just the slowest call, usually a cold start.
+- **`<MeasuredValue>`**, shared by the console and available to the Metrics and Dead Letter screens:
+  one component that renders a measurement or says it was not taken and why. The dash a table
+  renders by default says nothing — not "zero", not "unread", not "this tool does not count" — and
+  that is exactly the distinction an operator comes here to make.
+
 - **An MCP server, so an agent can ask this application what it knows.** Phase 1 of
   [`SPEC-MCP.md`](SPEC-MCP.md): an in-process module (Spring AI 2.0, same JAR, same services,
   same caches and budgets — no second Kafka client) exposing six read tools —

@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.mcp;
 
+import com.compagnonsdudev.kafkasqlexplorer.mcp.console.McpConsoleService;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.console.McpEndpointResolver;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.console.McpToolInvoker;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.DlpScrubber;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpAuditSink;
@@ -113,6 +116,27 @@ public class McpServerConfiguration {
     static McpToolSpecificationPostProcessor mcpToolSpecificationPostProcessor(
             ObjectProvider<McpToolInterceptor> interceptor) {
         return new McpToolSpecificationPostProcessor(interceptor);
+    }
+
+    /**
+     * The console's read model. Beans here rather than components, so a deployment with the server
+     * off builds none of it — the controller answers "disabled" from an absent provider instead.
+     */
+    @Bean
+    McpEndpointResolver mcpEndpointResolver(org.springframework.core.env.Environment environment) {
+        return new McpEndpointResolver(environment);
+    }
+
+    @Bean
+    McpConsoleService mcpConsoleService(McpProperties properties, McpCatalogService catalog,
+                                        McpCallRecorder recorder, McpEndpointResolver endpoints) {
+        return new McpConsoleService(properties, catalog, recorder, endpoints);
+    }
+
+    @Bean
+    McpToolInvoker mcpToolInvoker(
+            ObjectProvider<java.util.List<io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification>> toolSpecs) {
+        return new McpToolInvoker(toolSpecs);
     }
 
     @Bean
