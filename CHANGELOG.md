@@ -22,6 +22,20 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The MCP server is now started by a test — it never had been.** Every test in the module built
+  its tool specifications by hand: `McpServerConfigurationTest` loads `AutoConfigurations.of()`,
+  which is empty, so Spring AI's scanner had never run, the `toolSpecs` bean the post-processor
+  exists to post-process had never been built by the framework, and nothing had asserted what
+  `tools/list` would answer. Two hundred unit tests over five phases, and the thing had never been
+  switched on. That hid a class of failure the suite could not reach: Spring AI derives each tool's
+  JSON schema **from its method signature**, and a type it cannot express is a startup failure or a
+  silently missing tool, found in production by the first agent that connects — and these tools take
+  `List<String>` parameters and return a generic `ToolResult<T>` over nested records.
+  `McpServerBootTest` boots with `explorer.mcp.enabled=true` and asserts the fifteen tools register
+  with a description and a schema, that the interceptor wrapped every one, and that the catalogue
+  the console reads names exactly what the transport serves. It found nothing broken — which is the
+  outcome to hope for, not one that could be assumed.
+
 - **Three things the MCP console owed its reader.** A call row expands to show what only the CSV
   held — `redactedParams`, `correlationId` and `stopReason` — because exporting a file to find out
   why a call went wrong is the last gesture anyone makes, not the first; and a stop reason other

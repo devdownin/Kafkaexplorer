@@ -462,6 +462,37 @@ that produced it**, which is the only action the card invites. It returns nothin
 not know — a code this screen has never seen comes from a server newer than itself, and inventing a
 meaning would be worse than letting the number speak.
 
+### The server had never been started
+
+Every test in this module built its tool specifications by hand.
+`McpServerConfigurationTest` runs an `ApplicationContextRunner` with `AutoConfigurations.of()` —
+**empty** — so Spring AI's own scanner had never run in a test, the `toolSpecs` bean the
+post-processor exists to post-process had never been built by the framework, and nothing had ever
+asserted what `tools/list` would answer. Two hundred unit tests over five phases, and the thing had
+never been switched on.
+
+What that hid is a class of failure the suite could not reach. Spring AI derives a JSON schema for
+every `@McpTool` method **from its signature**, and a parameter or return type it cannot express is
+a startup failure or a silently missing tool — found in production, by the first agent that
+connects. These tools take `List<String>` parameters and return a generic `ToolResult<T>` over
+records that nest other records and a generic `Measured<T>`; none of it had been put in front of the
+scanner.
+
+`McpServerBootTest` starts the application with `explorer.mcp.enabled=true` and asserts the fifteen
+tools are registered, each with a description and an input schema, each wrapped by the interceptor,
+and that the catalogue the console reads names exactly what the transport serves — two lists that
+can drift are two answers to "what does this server offer", and the console's whole purpose is to be
+the one an operator can trust. It found nothing broken, which is the outcome to hope for and not one
+that could be assumed: the point is that the next signature change cannot break the wiring in
+silence.
+
+**It also pins a fact that is easy to misread today.** `readonly=true` withholds the write surface
+at bean registration, and that surface is currently *empty* — no `MutatingMcpTools` exists, so
+`writeSurfaceOpen()` cannot return true and the console's "hidden by read-only" row never renders on
+a real deployment. The module's headline posture is, for now, a claim about an empty set. The test
+asserts the fact rather than the mechanism, so when the first write tool lands it is what says
+whether it stayed withheld.
+
 ### What phase 5 deliberately leaves
 
 **The taint guard is deferred, and its reason is the mirror of every other deferral here.** It

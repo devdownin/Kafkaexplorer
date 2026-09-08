@@ -196,7 +196,7 @@ parser/       JSON, XML and Avro (via Confluent Schema Registry) schema inferenc
 ### Frontend
 
 `docs/notes/frontend.md` carries the app shell, the design system, the graph viewport and the
-rationale for each page. Five rules bind before that note has been read:
+rationale for each page. Six rules bind before that note has been read:
 
 - **The three SVG graphs share one viewport** — `components/graph/useGraphViewport.ts`, used by
   `Lineage`, `StreamFlow` and `DataModel`. Never re-implement panning or zooming in a page: the
@@ -332,6 +332,12 @@ Four rules bind before that note has been read:
   rather than removing**, and that is not inconsistency: a client caches `tools/list` from its
   `initialize`, so a tool that vanished mid-session is one the model keeps calling with nothing to
   read.
+- **`McpServerBootTest` is the only test that starts the server, and it has to stay that way round.**
+  Every other test in the module builds its tool specifications by hand, which is right for what
+  they assert and blind to the one thing only a real boot shows: Spring AI derives each tool's JSON
+  schema *from its method signature*, so a parameter or return type it cannot express is a startup
+  failure or a silently missing tool. A new `@McpTool` therefore goes in that test's expected list —
+  a tool the framework refused to register is otherwise indistinguishable from one nobody added.
 
 ## Security
 
