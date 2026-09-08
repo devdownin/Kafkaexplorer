@@ -6,7 +6,7 @@ import type { McpCallView, McpStatsView, McpToolRow, Measured, ObservedWindow, M
 import {
   DEFAULT_WINDOW, callsToCsv, coverageLabel, deniedShare, filtersFromParams, filtersToParams,
   formatBytes, formatMeasured, historyNotice, isWindow, outcomeLabel, overrideAge,
-  overrideBanner, sortTools, windowCaveat,
+  overrideBanner, replaySummary, sortTools, windowCaveat,
 } from './mcpConsoleLogic';
 
 const measured = (value: number): Measured<number> => ({ value, measured: true, reason: null });
@@ -205,5 +205,36 @@ describe('overrideBanner / describeOverride / overrideAge', () => {
     expect(overrideAge(45 * 60_000)).toBe('depuis 45 min');
     expect(overrideAge(5 * 3_600_000)).toBe('depuis 5 h');
     expect(overrideAge(50 * 3_600_000)).toBe('depuis 2 j');
+  });
+});
+
+describe('replaySummary', () => {
+  const replay = (over: Partial<McpReplay> = {}): McpReplay => ({
+    calls: [{ tool: 'kex_list_topics' }], recordsScanned: 12,
+    scanReachedWindowStart: true, topicExists: true, warnings: [], ...over,
+  });
+
+  it("distingue une piste vide d'une fenêtre vide", () => {
+    // Deux conclusions opposées tirées de la même liste vide.
+    const summary = replaySummary(replay({ calls: [], topicExists: false, recordsScanned: 0 }));
+    expect(summary).toContain('piste vide');
+    expect(summary).not.toContain('appel(s)');
+  });
+
+  it("dit que l'absence en est une quand le balayage a atteint le début de la fenêtre", () => {
+    expect(replaySummary(replay())).toContain('une absence en est bien une');
+  });
+
+  it("dit que l'absence ne prouve rien quand la rétention a mordu dans la fenêtre", () => {
+    // Sans cette phrase, l'écran laisse choisir la lecture rassurante.
+    const summary = replaySummary(replay({ scanReachedWindowStart: false }));
+    expect(summary).toContain("n'a PAS atteint");
+    expect(summary).toContain('ne prouve rien');
+  });
+
+  it('compte ce qui a été trouvé et ce qui a été lu, qui ne sont pas le même nombre', () => {
+    const summary = replaySummary(replay({ calls: [{ a: 1 }, { b: 2 }], recordsScanned: 40 }));
+    expect(summary).toContain('2 appel(s)');
+    expect(summary).toContain('40 enregistrement(s)');
   });
 });

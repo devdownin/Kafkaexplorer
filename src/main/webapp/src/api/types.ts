@@ -1334,6 +1334,15 @@ export interface McpToolRow {
   p95Ms: Measured<number>;
 }
 
+/** @java Replay */
+export interface McpReplay {
+  calls: Record<string, unknown>[];
+  recordsScanned: number;
+  scanReachedWindowStart: boolean;
+  topicExists: boolean;
+  warnings: string[];
+}
+
 /** @java McpOverrideView */
 export interface McpOverrideView {
   kind: string;

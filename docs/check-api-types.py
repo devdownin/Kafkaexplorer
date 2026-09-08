@@ -77,6 +77,12 @@ SCALARS = {
     # to `number` would have been the plausible wrong guess — epoch millis is what this codebase
     # uses for a Kafka timestamp, which is a `long` and already covered above.
     'Instant': 'string',
+    # A JsonNode is whatever was stored: the audit trail is replayed as the JSON it was written as,
+    # deliberately not deserialised into a record, so a call appended by an older build still reads
+    # back. `Record<string, unknown>` is the honest TypeScript for that — an object nobody promises
+    # the shape of — and typing it as a known interface would claim a guarantee the replay does not
+    # make.
+    'JsonNode': 'Record<string, unknown>',
 }
 
 # Java types whose TypeScript counterpart is a declared interface or alias rather than a scalar.

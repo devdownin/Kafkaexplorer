@@ -418,6 +418,38 @@ them, and it is computed from the case retention actually hides: a seek landing 
 partition's first surviving record proves nothing older is left, so whether anything in the window
 preceded it cannot be known.
 
+### The console reaches every lever, which it did not at first
+
+The first cut of this phase shipped the banner and the per-tool switch and left four of the five
+endpoints reachable only by `curl`: quarantine, the read-only lock, the approval mint and the
+replay. That is the same failure the whole phase exists to close — a control an operator cannot use
+is a control that does not exist — so each has its place on the screen now, beside the thing it
+changes: the lock next to the badge stating the posture, quarantine on the client row, the mint on
+the tool whose badge says it needs one, the replay under the live feed that already said the
+history lives elsewhere.
+
+**Quarantine is the lever that matters most in an incident**, and it was the one missing: "this
+agent is looping" is answered by stopping the identity, not the tool — stop the tool and it calls
+the next one.
+
+**Restricting asks for a reason; lifting asks for nothing.** The asymmetry is deliberate. The reason
+is what the banner shows and what gets the derogation lifted weeks later, so it is required going
+in. Coming out there is nothing left to explain, and a form at that moment is friction on the one
+gesture that returns the surface to its configured state.
+
+**The form is a real form, not `prompt()`.** The browser prompt blocks the thread, cannot be styled,
+validates nothing, and several browsers remove it outright inside an iframe — an emergency switch
+that depends on it is one that does not open on the day of the incident.
+
+**A minted token is shown once and read back nowhere.** It is a bearer credential; an endpoint able
+to re-read it would turn a single-use approval into a standing permission for anyone who can reach
+this application.
+
+**The replay says what it covered, not only what it found.** `replaySummary` renders the difference
+`scanReachedWindowStart` carries, because a bounded scan that comes back empty is either a quiet
+window or a window it never reached, and a screen that shows only the empty list lets the reader
+pick the reassuring one.
+
 ### What phase 5 deliberately leaves
 
 **The taint guard is deferred, and its reason is the mirror of every other deferral here.** It

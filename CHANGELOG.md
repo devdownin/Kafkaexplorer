@@ -57,6 +57,18 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   A tool switched off is **refused, not removed**: a client caches the tool list from its
   `initialize`, so a tool that vanished mid-session is one the model keeps calling with nothing to
   read. The refusal names the operator and the reason.
+- **The MCP console reaches every lever.** The kill switch's first cut shipped the banner and the
+  per-tool switch and left four endpoints reachable only by `curl` — quarantine, the read-only lock,
+  the approval mint and the replay — which is the same failure the phase exists to close: a control
+  an operator cannot use is a control that does not exist. Each now sits beside the thing it
+  changes. **Quarantine is the one that matters most in an incident** and was the one missing:
+  "this agent is looping" is answered by stopping the identity, not the tool — stop the tool and it
+  calls the next one. Restricting asks for a reason (it is what gets the derogation lifted later);
+  lifting asks for nothing, since there is nothing left to explain and a form there is friction on
+  the one gesture that restores the configured state. A real form, not `prompt()`, which blocks the
+  thread, styles nothing and is removed outright by several browsers inside an iframe — an emergency
+  switch that depends on it does not open on the day of the incident. A minted approval token is
+  shown once and read back nowhere.
 - **The MCP call trail is written and can be replayed.** Every call *and every refusal* is appended
   to `explorer.mcp.audit-topic` — a control that blocks silently is a control nobody ever tunes, and
   the refusals are the half an incident review needs. A failed append never fails the call: it

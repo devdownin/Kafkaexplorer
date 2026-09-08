@@ -12,6 +12,7 @@
 import type {
   McpCallView,
   McpOverrideView,
+  McpReplay,
   McpStatsView,
   McpToolRow,
   Measured,
@@ -222,4 +223,24 @@ export function describeOverride(override: McpOverrideView): string {
  */
 export function overrideBanner(overrides: McpOverrideView[]): string[] | null {
   return overrides.length === 0 ? null : overrides.map(describeOverride);
+}
+
+/**
+ * Ce que le rejeu a réellement couvert.
+ *
+ * La phrase qui compte est la seconde : le balayage est borné, donc une fenêtre revenue vide est
+ * soit une fenêtre où rien ne s'est passé, soit une fenêtre que le balayage n'a pas atteinte — deux
+ * conclusions opposées tirées de la même liste vide. Sans elle, l'écran laisse choisir la
+ * rassurante.
+ */
+export function replaySummary(replay: McpReplay): string {
+  if (!replay.topicExists) {
+    return "Rien n'a jamais été journalisé : le topic d'audit n'existe pas encore. Ce n'est pas une "
+      + 'fenêtre vide, c\'est une piste vide.';
+  }
+  const found = `${replay.calls.length} appel(s) sur ${replay.recordsScanned} enregistrement(s) lus.`;
+  return replay.scanReachedWindowStart
+    ? `${found} Le balayage a atteint le début de la fenêtre : une absence en est bien une.`
+    : `${found} Le balayage n'a PAS atteint le début de la fenêtre — la rétention en a retiré des `
+      + 'enregistrements, donc une absence ici ne prouve rien.';
 }
