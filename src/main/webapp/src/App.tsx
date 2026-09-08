@@ -27,6 +27,7 @@ const MetricsHelp = lazy(() => import('./pages/MetricsHelp'));
 const Cluster = lazy(() => import('./pages/Cluster'));
 const ProcessMining = lazy(() => import('./pages/ProcessMining'));
 const DataModel = lazy(() => import('./pages/DataModel'));
+const Mcp = lazy(() => import('./pages/Mcp'));
 
 const PageFallback: FC = () => (
   <div className="flex items-center justify-center h-full min-h-[60vh]">
@@ -94,6 +95,7 @@ const router = createBrowserRouter([
       { path: '/cluster', element: <Cluster /> },
       { path: '/process-mining', element: <ProcessMining /> },
       { path: '/data-model', element: <DataModel /> },
+      { path: '/mcp', element: <Mcp /> },
       { path: '*', element: <NotFound /> },
     ],
   },

@@ -149,12 +149,53 @@ have narrowed something.
 reason, saying it is declared and not enforced until phase 5: a console asserting a control that
 does not exist fails at the one job it has.
 
+## The console, and the two rules that shape every number on it
+
+Phase 2 is `/api/mcp/**` plus the React screen at `/mcp`. It is the visible counterpart of the
+decision to point a model at a cluster, and no other Kafka MCP server offers one — their surface is
+discovered with `--list-tools` and their usage by grepping logs.
+
+**Every aggregate carries the window it actually rests on.** `ObservedWindow` travels with the
+catalogue and the stats: how far back the ring reaches, how much it evicted, and whether anything is
+persisted beyond it. The ring is bounded by design — it is a live feed, the audit topic is history —
+so a card headed "24 h" computed over a ring that reaches back forty minutes is a wrong number
+wearing a right label, and wrong in the direction that reassures. `windowCaveat` renders the warning
+only when there is one; an advisory shown permanently becomes furniture.
+
+**A percentile over too few calls is refused, not computed.** `McpToolRow.MIN_CALLS_FOR_P95` is 20.
+Below it, the "95th percentile" is simply the slowest call, most often a cold start, and an operator
+reading it as typical goes hunting for a problem that is not there. `0 ms` would be worse still — it
+says the tool is instantaneous. The value is `Measured`, and `<MeasuredValue>` renders the reason.
+
+Three smaller decisions worth knowing:
+
+- **The endpoint is the bound address, not the property.** `McpEndpointResolver` captures the port
+  from `WebServerInitializedEvent` (which moved to `org.springframework.boot.web.server.context` in
+  Spring Boot 4). `server.port=0`, a container mapping or a command-line override all make the
+  configured value a URL that does not answer — and it would be pasted into a client before anyone
+  found out.
+- **The controller answers even when the module is absent**, which is the shipped default. A 404
+  would leave the screen unable to tell "the server is off" from "this build is too old"; the empty
+  state that explains itself is the reason the screen exists at all.
+- **"Try it" is off by default, because it is an authentication bypass waiting to happen.** The
+  endpoint executes the real tool over an application URL, and this application authenticates
+  nothing while `SPEC-MCP.md` puts OAuth 2.1 in front of `/mcp`. Leaving it on would mean that
+  wiring up that OAuth — the phase 5 work — buys nothing, since the same tools stay reachable one
+  path over with no token, mutating ones included once `readonly` is cleared. The console does not
+  need it: everything else on both tabs is a read.
+- **"Try it" runs the real specification.** `McpToolInvoker` resolves the tool out of the same list
+  the transport serves — already wrapped by the interceptor — so the scope check, the ceilings, the
+  redaction and the recording all apply. Only the attribution differs: `McpCallOrigin` marks it
+  `CONSOLE` through a ThreadLocal, because the interception point is an SDK `BiFunction` this
+  application cannot add a parameter to. A "Try it" that bypassed the guard would answer a different
+  question from the one the button asks.
+
 ## Phases
 
 | Phase | Content | State |
 |---|---|---|
 | 1 — Socle honnête | `Coverage`/`Measured`/`ToolResult`, `McpProperties`, `ToolGuard`, `McpCallRecorder` + metrics, `McpCatalogService`, `McpToolInterceptor`, tools `kex_list_topics` / `kex_describe_topic` / `kex_preview_messages` / `kex_infer_schema` / `kex_sql_query` / `kex_list_tables` | **done** |
-| 2 — Écran MCP | `/api/mcp/status`, `/catalog`, `/calls`, `/stats`; React page. Worth splitting: the REST half reads with `curl` and carries most of the operator value; the page follows | not started |
+| 2 — Écran MCP | `/api/mcp/status`, `/catalog`, `/calls`, `/stats`, `/clients`, `/catalog/client-config`, `/try/{tool}`; the React page with its Catalogue and Supervision tabs | **done** |
 | 3 — Différenciation | `kex_trace_key`, `kex_resume_trace`, `kex_analyze_dead_letters`, `kex_consumer_lag` | not started |
 | 4 — Modélisation | `kex_deduce_data_model`, `kex_build_join`, `kex_run_audit`/`kex_get_audit`, `kex_suggest_kpis` | not started |
 | 5 — Entreprise | OAuth 2.1, taint guard, approval token, audit topic + replay, kill switch | not started |

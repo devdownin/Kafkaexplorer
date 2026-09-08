@@ -1220,3 +1220,199 @@ export interface DataModelLimits {
   /** Combien de topics sont inférés en parallèle. */
   inferenceThreads: number;
 }
+
+/* ------------------------------------------------------------------------------------------------
+ * Console MCP — `GET /api/mcp/**` (docs/notes/mcp-server.md, SPEC-MCP.md §6)
+ * ---------------------------------------------------------------------------------------------- */
+
+/**
+ * Une valeur qui a pu, légitimement, ne pas être mesurée.
+ *
+ * Trois champs et non deux, parce que c'est la forme sur le fil : côté Java, `Measured` est un
+ * record à trois composants précisément pour que la surface REST (Jackson 2) et le transport MCP
+ * (Jackson 3) produisent le même JSON sans sérialiseur enregistré. Un `null` nu se lit « rien », et
+ * « rien » se lit « zéro » — ce que ce type existe pour empêcher.
+ *
+ * Se rend avec `<MeasuredValue>`, jamais avec un tiret : un tiret ne dit pas pourquoi.
+ *
+ * @java Measured
+ */
+export interface Measured<T> {
+  value: T | null;
+  measured: boolean;
+  reason: string | null;
+}
+
+/** @java StopReason */
+export type StopReason =
+  | 'EXHAUSTED'
+  | 'TIME_BUDGET'
+  | 'TOPIC_LIMIT'
+  | 'RECORD_LIMIT'
+  | 'CANCELLED'
+  | 'PARTIAL_FAILURE';
+
+/** @java ToolCategory */
+export type ToolCategory = 'EXPLORATION' | 'CORRELATION' | 'DIAGNOSTIC' | 'WRITE';
+
+/** @java Origin */
+export type McpOrigin = 'AGENT' | 'CONSOLE' | 'PROMPT';
+
+/** @java Outcome */
+export type McpOutcome = 'OK' | 'DENIED' | 'ERROR';
+
+/**
+ * Les trois états de visibilité d'un outil.
+ *
+ * Alias nommé plutôt qu'union en ligne dans `Visibility` : côté Java c'est une enum imbriquée
+ * (`Visibility.State`), donc l'ensemble fermé existe des deux côtés et `check-api-types.py` exige
+ * qu'il soit déclaré comme tel. Le préfixe `Mcp` évite la collision qu'un type nommé `State`
+ * provoquerait dans un fichier de types partagé.
+ *
+ * @java State
+ */
+export type McpVisibilityState = 'EXPOSED' | 'EXPOSED_WITH_APPROVAL' | 'HIDDEN';
+
+/**
+ * Pourquoi un outil est visible, ou ne l'est pas.
+ *
+ * `reason` porte aussi, sur `EXPOSED_WITH_APPROVAL`, ce que cet état ne garantit pas encore : aucun
+ * jeton d'approbation n'est vérifié avant la phase 5, et un badge qui affirmerait le contraire
+ * ferait échouer cet écran sur son seul travail.
+ *
+ * @java Visibility
+ */
+export interface Visibility {
+  state: McpVisibilityState;
+  reason: string | null;
+}
+
+/**
+ * Ce sur quoi les chiffres reposent réellement, par opposition à ce qui a été demandé.
+ *
+ * L'anneau est borné : c'est un flux vif, pas un magasin d'historique. Une carte titrée « 24 h »
+ * calculée sur un anneau qui ne remonte qu'à quarante minutes est un chiffre faux sous une
+ * étiquette juste — et faux dans le sens qui rassure.
+ *
+ * @java ObservedWindow
+ */
+export interface ObservedWindow {
+  requestedWindowMs: number;
+  oldestCallAt: string | null;
+  callsHeld: number;
+  ringCapacity: number;
+  droppedFromRing: number;
+  auditPersisted: boolean;
+}
+
+/** @java McpStatusView */
+export interface McpStatusView {
+  enabled: boolean;
+  transports: string[];
+  endpoint: string | null;
+  readonly: boolean;
+  writeSurfaceOpen: boolean;
+  mutatingToolsExposed: string[];
+  authentication: string;
+  topicScope: string[];
+  groupScope: string[];
+  tryItEnabled: boolean;
+}
+
+/** @java McpToolRow */
+export interface McpToolRow {
+  name: string;
+  category: ToolCategory;
+  description: string;
+  visibility: Visibility;
+  defaultBudgetMs: number | null;
+  hardMaxRecords: number | null;
+  hardMaxRows: number | null;
+  hardMaxBytes: number;
+  calls: number;
+  denied: number;
+  p95Ms: Measured<number>;
+}
+
+/** @java McpCatalogView */
+export interface McpCatalogView {
+  tools: McpToolRow[];
+  observedWindow: ObservedWindow;
+}
+
+/** @java McpCallView */
+export interface McpCallView {
+  correlationId: string;
+  startedAt: string;
+  durationMs: number;
+  origin: McpOrigin;
+  identity: string | null;
+  clientInfo: string | null;
+  tool: string;
+  redactedParams: Record<string, unknown>;
+  outcome: McpOutcome;
+  jsonRpcErrorCode: number | null;
+  deniedByGuard: string | null;
+  recordsScanned: Measured<number>;
+  stopReason: StopReason | null;
+  partialCoverage: boolean;
+  truncated: boolean;
+  outputBytes: Measured<number>;
+}
+
+/** @java ToolCount */
+export interface McpToolCount {
+  tool: string;
+  calls: number;
+}
+
+/** @java DenialCount */
+export interface McpDenialCount {
+  jsonRpcErrorCode: number | null;
+  guard: string;
+  count: number;
+}
+
+/** @java McpStatsView */
+export interface McpStatsView {
+  calls: number;
+  denied: number;
+  errors: number;
+  p50Ms: Measured<number>;
+  p95Ms: Measured<number>;
+  maxMs: Measured<number>;
+  slowestTool: string | null;
+  recordsScanned: Measured<number>;
+  outputBytes: Measured<number>;
+  activeIdentities: number;
+  topTools: McpToolCount[];
+  denialsByCode: McpDenialCount[];
+  observedWindow: ObservedWindow;
+}
+
+/** @java McpClientRow */
+export interface McpClientRow {
+  identity: string;
+  clientInfo: string | null;
+  calls: number;
+  denied: number;
+  lastSeenAt: string | null;
+}
+
+/** @java McpClientConfig */
+export interface McpClientConfig {
+  client: string;
+  format: string;
+  snippet: string;
+  tokenHint: string | null;
+}
+
+/** @java McpTryResult */
+export interface McpTryResult {
+  tool: string;
+  invoked: boolean;
+  isError: boolean;
+  jsonRpcErrorCode: number | null;
+  message: string | null;
+  structuredContent: unknown;
+}

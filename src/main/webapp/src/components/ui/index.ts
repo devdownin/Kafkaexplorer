@@ -23,6 +23,8 @@ export { PageHeader } from './PageHeader';
 export type { PageHeaderProps } from './PageHeader';
 export { SortButton } from './SortButton';
 export type { SortButtonProps } from './SortButton';
+export { MeasuredValue } from './MeasuredValue';
+export type { MeasuredValueProps } from './MeasuredValue';
 export { Stat } from './Stat';
 export type { StatProps } from './Stat';
 export { Field, Input, Select, Textarea } from './Field';
