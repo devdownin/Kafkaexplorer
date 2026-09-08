@@ -5,6 +5,10 @@ package com.compagnonsdudev.kafkasqlexplorer.mcp.observability;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.McpProperties;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.StopReason;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.DlpScrubber;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpApprovalStore;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRateLimiter;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRuntimeSwitches;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolFilter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpErrorCode;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpGuard;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpScopeViolationException;
@@ -36,6 +40,8 @@ class McpToolInterceptorTest {
     private McpProperties properties;
     private McpCallRecorder recorder;
     private McpToolInterceptor interceptor;
+    private McpRuntimeSwitches switches;
+    private McpApprovalStore approvals;
     private final MeterRegistry meters = new SimpleMeterRegistry();
 
     @BeforeEach
@@ -43,7 +49,10 @@ class McpToolInterceptorTest {
         properties = new McpProperties();
         DlpScrubber dlp = new DlpScrubber(properties);
         recorder = new McpCallRecorder(properties, null, meters);
-        interceptor = new McpToolInterceptor(properties, new ToolGuard(properties, dlp), dlp, recorder);
+        switches = new McpRuntimeSwitches(properties);
+        approvals = new McpApprovalStore(properties);
+        interceptor = new McpToolInterceptor(properties, new ToolGuard(properties, dlp), dlp,
+                recorder, switches, new McpRateLimiter(properties), approvals);
     }
 
     /** A tool that answers with the structured content Spring AI actually produces: a Map. */
@@ -204,7 +213,8 @@ class McpToolInterceptorTest {
         // cannot see who invoked it.
         boolean[] ran = {false};
         interceptor = new McpToolInterceptor(properties, quarantineEverything(),
-                new DlpScrubber(properties), recorder);
+                new DlpScrubber(properties), recorder, new McpRuntimeSwitches(properties),
+                new McpRateLimiter(properties), new McpApprovalStore(properties));
 
         assertThatThrownBy(() -> invoke((exchange, request) -> {
             ran[0] = true;
@@ -220,5 +230,108 @@ class McpToolInterceptorTest {
         ToolGuard guard = new ToolGuard(properties, new DlpScrubber(properties));
         guard.quarantine(McpToolInterceptor.LOCAL_IDENTITY);
         return guard;
+    }
+
+    @Test
+    void a_tool_an_operator_switched_off_refuses_with_the_name_and_the_reason() {
+        // Refused rather than removed from tools/list: a client caches that list from its
+        // initialize, so a tool that vanished mid-session is one the model keeps calling with
+        // nothing to read.
+        boolean[] ran = {false};
+        switches.disableTool("kex_list_topics", "alice", "a runaway loop");
+
+        assertThatThrownBy(() -> invoke((exchange, request) -> {
+            ran[0] = true;
+            return structured(1L, StopReason.EXHAUSTED, false);
+        }, Map.of()))
+                .isInstanceOf(McpError.class)
+                .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().code()).isEqualTo(-32044))
+                .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().message())
+                        .contains("alice").contains("runaway"));
+
+        assertThat(ran[0]).isFalse();
+        assertThat(recorder.recent(McpCallFilter.all(), 10)).singleElement()
+                .satisfies(call -> assertThat(call.deniedByGuard()).isEqualTo(McpGuard.DENY_LIST));
+    }
+
+    @Test
+    void an_identity_quarantined_from_the_console_is_stopped_with_the_operators_words() {
+        switches.quarantine(McpToolInterceptor.LOCAL_IDENTITY, "alice", "exfiltration attempt");
+
+        assertThatThrownBy(() -> invoke(
+                (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false), Map.of()))
+                .isInstanceOf(McpError.class)
+                .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().code()).isEqualTo(-32047))
+                .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().message())
+                        .contains("alice").contains("exfiltration"));
+    }
+
+    @Test
+    void a_tool_that_requires_approval_is_refused_without_a_token_and_runs_with_one() {
+        properties.setApprovalRequiredTools(java.util.Set.of("kex_list_topics"));
+
+        assertThatThrownBy(() -> invoke(
+                (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false), Map.of()))
+                .isInstanceOf(McpError.class)
+                .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().code()).isEqualTo(-32042));
+
+        String token = approvals.mint("kex_list_topics", "alice");
+        CallToolResult result = invoke(
+                (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false),
+                Map.of(McpToolInterceptor.APPROVAL_ARGUMENT, token));
+
+        assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
+    }
+
+    @Test
+    void the_approval_token_is_removed_from_what_gets_recorded_rather_than_masked() {
+        // A bearer credential in the ring buffer or on the audit topic outlives the fifteen minutes
+        // it was minted for.
+        properties.setApprovalRequiredTools(java.util.Set.of("kex_list_topics"));
+        String token = approvals.mint("kex_list_topics", "alice");
+
+        invoke((exchange, request) -> structured(1L, StopReason.EXHAUSTED, false),
+                Map.of(McpToolInterceptor.APPROVAL_ARGUMENT, token, "prefix", "demo."));
+
+        assertThat(recorder.recent(McpCallFilter.all(), 10)).singleElement().satisfies(call -> {
+            assertThat(call.redactedParams()).doesNotContainKey(McpToolInterceptor.APPROVAL_ARGUMENT);
+            assertThat(call.redactedParams()).containsEntry("prefix", "demo.");
+        });
+    }
+
+    @Test
+    void the_rate_limit_refuses_past_the_burst_and_the_refusal_is_recorded_like_any_other() {
+        // A control that blocks silently is a control nobody ever tunes.
+        properties.getRateLimit().setCallsPerMinute(60);
+        properties.getRateLimit().setBurst(1);
+
+        invoke((exchange, request) -> structured(1L, StopReason.EXHAUSTED, false), Map.of());
+
+        assertThatThrownBy(() -> invoke(
+                (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false), Map.of()))
+                .isInstanceOf(McpError.class)
+                .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().code()).isEqualTo(-32029));
+
+        assertThat(recorder.recent(McpCallFilter.all(), 10)).hasSize(2)
+                .anySatisfy(call -> assertThat(call.deniedByGuard()).isEqualTo(McpGuard.RATE_LIMIT));
+    }
+
+    @Test
+    void the_approval_check_runs_before_the_rate_limit_so_an_unapproved_call_costs_no_allowance() {
+        // Otherwise a caller with no token could spend another's allowance by being refused.
+        properties.setApprovalRequiredTools(java.util.Set.of("kex_list_topics"));
+        properties.getRateLimit().setCallsPerMinute(60);
+        properties.getRateLimit().setBurst(1);
+
+        assertThatThrownBy(() -> invoke(
+                (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false), Map.of()))
+                .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().code()).isEqualTo(-32042));
+
+        String token = approvals.mint("kex_list_topics", "alice");
+        CallToolResult result = invoke(
+                (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false),
+                Map.of(McpToolInterceptor.APPROVAL_ARGUMENT, token));
+
+        assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
     }
 }

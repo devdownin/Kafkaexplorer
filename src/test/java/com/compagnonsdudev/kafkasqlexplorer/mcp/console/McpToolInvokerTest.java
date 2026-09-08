@@ -5,6 +5,10 @@ package com.compagnonsdudev.kafkasqlexplorer.mcp.console;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.McpProperties;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.Measured;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.DlpScrubber;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpApprovalStore;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRateLimiter;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRuntimeSwitches;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolFilter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpErrorCode;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpGuard;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpScopeViolationException;
@@ -53,7 +57,9 @@ class McpToolInvokerTest {
                                                java.util.function.Supplier<CallToolResult> body) {
         DlpScrubber dlp = new DlpScrubber(properties);
         McpToolInterceptor interceptor =
-                new McpToolInterceptor(properties, new ToolGuard(properties, dlp), dlp, recorder);
+                new McpToolInterceptor(properties, new ToolGuard(properties, dlp), dlp, recorder,
+                        new McpRuntimeSwitches(properties), new McpRateLimiter(properties),
+                        new McpApprovalStore(properties));
         return interceptor.wrap(new SyncToolSpecification(Tool.builder(name).build(),
                 (exchange, request) -> body.get()));
     }

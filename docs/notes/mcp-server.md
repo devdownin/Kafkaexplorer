@@ -335,6 +335,134 @@ read that run rather than take the KPI on trust; without an audit the coverage s
 `PARTIAL_FAILURE` rather than `EXHAUSTED`, since a short list because nothing has been measured is a
 different answer from a short list because the cluster is simple.
 
+## Phase 5 — the guard pipeline, the kill switch, and a trail that survives
+
+Six settings shipped for four phases accepted and acted on by nothing. Each said so where an
+operator would look, which is better than silence and still leaves a control an operator believes is
+in force and is not. Five of them are now real.
+
+**`explorer.mcp.tools.allowed` / `.denied` are enforced by absence, not by refusal.** Checking
+inside each call would have been the easy fix and the wrong one: a denied tool would then be listed
+by `tools/list`, described to the model, chosen by it, and refused — a round trip spent on a surface
+that advertises what it will not do. `McpToolSpecificationPostProcessor` filters the specification
+list before the transport sees it, so a denied tool is not there at all, exactly as a mutating tool
+under `readonly` is not a bean. The deny-list always wins, because the two settings are written by
+different people at different times — one in a base configuration, one in an environment overlay —
+and the safe resolution of a disagreement between them is the restrictive one. A name in either list
+that no tool carries is logged as the typo it is: a deny-list with a typo in it silences nothing
+while reading as though it did.
+
+**The kill switch is `McpRuntimeSwitches`, and an incident is its whole reason.** "An agent is
+hammering the cluster" and "this tool is returning something it should not" are answered by a
+redeploy in minutes at best, and the minutes are the problem. Four levers — lock read-only, switch
+one tool off, quarantine an identity, mint an approval — each taking effect on the next call.
+
+Three rules shape it, and each one is a way the feature could have become the problem:
+
+- **Every switch narrows.** Read-only can be turned *on* when the configuration has it off, never
+  off when the configuration has it on: the write surface is decided at bean registration, so a
+  switch could not open it anyway, and offering a control that appears to and does not is worse than
+  not offering it.
+- **Every override carries who, when and why — and none of them expires.** That pairing is the
+  mitigation for the worst failure mode this feature has: a runtime derogation that outlives the
+  incident it answered and becomes the permanent configuration nobody remembers choosing. An expiry
+  would be worse, not better — it would restore a wider surface at an arbitrary moment, quietly. So
+  they persist until lifted, and the console keeps a banner naming each live one with its age. The
+  banner cannot be dismissed; one that could would be dismissed on the first day and the derogation
+  would stay.
+- **In memory, per process, deliberately not persisted.** A kill switch has to take effect now, and
+  one that must first be written somewhere durable can fail to. A restart returns the deployment to
+  its configured posture, which is the safe direction: the YAML is the source of truth and an
+  override is an exception to it.
+
+**A tool switched off is refused, not removed**, and that is not inconsistency with the deny-list: a
+client caches the tool list from its `initialize`, so a tool that vanishes mid-session is one the
+model keeps calling and cannot be told about. The refusal is `-32044` naming the operator and the
+reason — the only form this can take that the caller can actually read.
+
+**Approval tokens make `approval-required-tools` mean something.** Single use, bound to one tool,
+fifteen minutes, unguessable, compared in constant time; each of those is the answer to a way an
+approval can be defeated, and the reasons are written out in `McpApprovalStore`. Two decisions worth
+knowing: it applies to **any** tool an operator lists rather than only the mutating ones, because a
+read is the sensitive gesture on a cluster whose payloads are regulated and hard-coding the list to
+the write surface would deny that operator the control; and the refusal never says which of the
+three ways it failed — unknown, expired, or minted for another tool — because distinguishing them
+tells a caller holding a stolen token which part of it to change, while a caller holding a
+legitimate one has the same thing to do in all three cases. The token travels as `_approvalToken`
+and is **removed, not masked,** before the call is recorded: a bearer credential in a durable log
+outlives the fifteen minutes it was minted for.
+
+**Rate limiting (`-32029`) is a token bucket per identity, refilled continuously.** A fixed window
+lets a caller spend the whole allowance in the last second of one minute and the whole allowance
+again in the first second of the next, which is twice the configured rate at exactly the moment the
+cluster is least able to take it. An operator clicks; a model loops — and a tool that answers "not
+found in what was scanned" invites another pass, so the ceilings in `ToolGuard` bound one call and
+this bounds the sequence. The refusal names the wait, because a bare "rate limited" teaches a model
+to retry immediately, which is the behaviour the limit exists to stop. It is per server instance and
+says so: a distributed limiter needs a store this application does not have, and one that silently
+allowed N times the rate would be the claim-without-code this module keeps removing.
+
+**The audit topic is written, and the replay reads it back.** Every call *and every refusal* — a
+control that blocks silently is a control nobody ever tunes, and the refusals are the half an
+incident review actually needs. A failed append never fails the call: it increments
+`explorer_mcp_audit_write_errors_total`, and that gauge moving is the signal that the trail has
+holes. Refusing the tool instead would turn an unreachable broker into an outage of the whole MCP
+surface, and a trail is not worth that; a trail with a counted hole is honest, a surface that goes
+down when its trail does is not.
+
+`McpAuditReplayService` seeks by timestamp on the broker's own index rather than scanning from the
+beginning, and **reports what it could not reach**, which is the point of it. The scan is bounded, so
+a window that returned nothing is either a window in which nothing happened or a window the scan
+never reached — opposite conclusions from the same empty list. `scanReachedWindowStart` separates
+them, and it is computed from the case retention actually hides: a seek landing exactly on a
+partition's first surviving record proves nothing older is left, so whether anything in the window
+preceded it cannot be known.
+
+### The console reaches every lever, which it did not at first
+
+The first cut of this phase shipped the banner and the per-tool switch and left four of the five
+endpoints reachable only by `curl`: quarantine, the read-only lock, the approval mint and the
+replay. That is the same failure the whole phase exists to close — a control an operator cannot use
+is a control that does not exist — so each has its place on the screen now, beside the thing it
+changes: the lock next to the badge stating the posture, quarantine on the client row, the mint on
+the tool whose badge says it needs one, the replay under the live feed that already said the
+history lives elsewhere.
+
+**Quarantine is the lever that matters most in an incident**, and it was the one missing: "this
+agent is looping" is answered by stopping the identity, not the tool — stop the tool and it calls
+the next one.
+
+**Restricting asks for a reason; lifting asks for nothing.** The asymmetry is deliberate. The reason
+is what the banner shows and what gets the derogation lifted weeks later, so it is required going
+in. Coming out there is nothing left to explain, and a form at that moment is friction on the one
+gesture that returns the surface to its configured state.
+
+**The form is a real form, not `prompt()`.** The browser prompt blocks the thread, cannot be styled,
+validates nothing, and several browsers remove it outright inside an iframe — an emergency switch
+that depends on it is one that does not open on the day of the incident.
+
+**A minted token is shown once and read back nowhere.** It is a bearer credential; an endpoint able
+to re-read it would turn a single-use approval into a standing permission for anyone who can reach
+this application.
+
+**The replay says what it covered, not only what it found.** `replaySummary` renders the difference
+`scanReachedWindowStart` carries, because a bounded scan that comes back empty is either a quiet
+window or a window it never reached, and a screen that shows only the empty list lets the reader
+pick the reassuring one.
+
+### What phase 5 deliberately leaves
+
+**The taint guard is deferred, and its reason is the mirror of every other deferral here.** It
+exists to stop a value read from the cluster being used as a mutating argument — and there are no
+mutating tools in this tree. Under the shipped `readonly=true` there is nothing it could ever fire
+on, so shipping it now would be dead code rather than a control, and a guard that has never had
+anything to guard is one nobody has ever seen work. It lands with the write surface it protects.
+
+**OAuth 2.1 is separate**, and not for want of anything to build on: it changes the deployment
+contract — a new starter, a filter chain, and a direct contradiction of `SECURITY.md`'s "no
+authentication out of the box" — and that deserves its own review rather than riding in behind a
+guard-pipeline change.
+
 ## Phases
 
 | Phase | Content | State |
@@ -344,7 +472,9 @@ different answer from a short list because the cluster is simple.
 | 3 — Différenciation | `kex_trace_key`, `kex_resume_trace`, `kex_compare_traces`, `kex_consumer_lag` | **done** |
 | 3b — `kex_analyze_dead_letters` | blocked: the pairing rule lives only in `deadLetterSupervision.ts`; it needs a Java service first | not started |
 | 4 — Modélisation | `kex_deduce_data_model`, `kex_build_join`, `kex_run_audit`/`kex_get_audit`, `kex_suggest_kpis` | **done** |
-| 5 — Entreprise | OAuth 2.1, taint guard, approval token, audit topic + replay, kill switch | not started |
+| 5 — Entreprise | per-tool allow/deny enforced by absence, kill switch (read-only lock, per-tool off, quarantine), approval token, rate limit, audit topic + replay | **done** |
+| 5b — OAuth 2.1 | separate: it changes the deployment contract and contradicts `SECURITY.md`'s "no authentication" | not started |
+| 5c — Taint guard | blocked: nothing to guard until a mutating tool exists | not started |
 
 Phase 2 before phase 3 is the spec's ordering and it is kept: instrumentation added after the
 fact is instrumentation that never gets added.

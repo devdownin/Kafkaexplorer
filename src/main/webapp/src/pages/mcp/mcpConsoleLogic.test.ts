@@ -2,10 +2,13 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { describe, expect, it } from 'vitest';
-import type { McpCallView, McpStatsView, McpToolRow, Measured, ObservedWindow } from '../../api/types';
+import type {
+  McpCallView, McpOverrideView, McpReplay, McpStatsView, McpToolRow, Measured, ObservedWindow,
+} from '../../api/types';
 import {
   DEFAULT_WINDOW, callsToCsv, coverageLabel, deniedShare, filtersFromParams, filtersToParams,
-  formatBytes, formatMeasured, historyNotice, isWindow, outcomeLabel, sortTools, windowCaveat,
+  formatBytes, formatMeasured, historyNotice, isWindow, outcomeLabel, overrideAge,
+  overrideBanner, replaySummary, sortTools, windowCaveat,
 } from './mcpConsoleLogic';
 
 const measured = (value: number): Measured<number> => ({ value, measured: true, reason: null });
@@ -159,5 +162,81 @@ describe('les octets', () => {
   it('rend les plafonds dans leur unité', () => {
     expect(formatBytes(512)).toBe('512 o');
     expect(formatBytes(1_048_576)).toBe('1.0 Mio');
+  });
+});
+
+describe('overrideBanner / describeOverride / overrideAge', () => {
+  const override = (over: Partial<McpOverrideView> = {}): McpOverrideView => ({
+    kind: 'TOOL', target: 'kex_sql_query', actor: 'alice', reason: 'une boucle folle',
+    since: '2026-09-08T05:00:00Z', ageMs: 120_000, ...over,
+  });
+
+  it('ne rend rien quand aucune dérogation ne tient', () => {
+    expect(overrideBanner([])).toBeNull();
+  });
+
+  it('nomme le levier, sa cible, son auteur, son âge et sa raison', () => {
+    const [line] = overrideBanner([override()])!;
+    expect(line).toContain('kex_sql_query');
+    expect(line).toContain('alice');
+    expect(line).toContain('depuis 2 min');
+    expect(line).toContain('boucle folle');
+  });
+
+  it('dit le verrou global sans cible', () => {
+    const [line] = overrideBanner([override({ kind: 'READONLY', target: null })])!;
+    expect(line).toContain('lecture seule');
+    expect(line).not.toContain('null');
+  });
+
+  it('dit la quarantaine par identité', () => {
+    const [line] = overrideBanner([override({ kind: 'QUARANTINE', target: 'agent-7' })])!;
+    expect(line).toContain('agent-7');
+    expect(line).toContain('quarantaine');
+  });
+
+  it("remplace un auteur ou une raison absents plutôt que d'afficher un vide", () => {
+    // Une colonne vide se lit comme un défaut de la page, pas comme une question à poser.
+    const [line] = overrideBanner([override({ actor: null, reason: null })])!;
+    expect(line).toContain('non nommé');
+    expect(line).toContain('sans raison');
+  });
+
+  it('échelonne l’âge : une dérogation vieille d’un jour se lit d’un coup d’œil', () => {
+    expect(overrideAge(30_000)).toBe("à l'instant");
+    expect(overrideAge(45 * 60_000)).toBe('depuis 45 min');
+    expect(overrideAge(5 * 3_600_000)).toBe('depuis 5 h');
+    expect(overrideAge(50 * 3_600_000)).toBe('depuis 2 j');
+  });
+});
+
+describe('replaySummary', () => {
+  const replay = (over: Partial<McpReplay> = {}): McpReplay => ({
+    calls: [{ tool: 'kex_list_topics' }], recordsScanned: 12,
+    scanReachedWindowStart: true, topicExists: true, warnings: [], ...over,
+  });
+
+  it("distingue une piste vide d'une fenêtre vide", () => {
+    // Deux conclusions opposées tirées de la même liste vide.
+    const summary = replaySummary(replay({ calls: [], topicExists: false, recordsScanned: 0 }));
+    expect(summary).toContain('piste vide');
+    expect(summary).not.toContain('appel(s)');
+  });
+
+  it("dit que l'absence en est une quand le balayage a atteint le début de la fenêtre", () => {
+    expect(replaySummary(replay())).toContain('une absence en est bien une');
+  });
+
+  it("dit que l'absence ne prouve rien quand la rétention a mordu dans la fenêtre", () => {
+    // Sans cette phrase, l'écran laisse choisir la lecture rassurante.
+    const summary = replaySummary(replay({ scanReachedWindowStart: false }));
+    expect(summary).toContain("n'a PAS atteint");
+    expect(summary).toContain('ne prouve rien');
+  });
+
+  it('compte ce qui a été trouvé et ce qui a été lu, qui ne sont pas le même nombre', () => {
+    const summary = replaySummary(replay({ calls: [{ a: 1 }, { b: 2 }], recordsScanned: 40 }));
+    expect(summary).toContain('2 appel(s)');
+    expect(summary).toContain('40 enregistrement(s)');
   });
 });

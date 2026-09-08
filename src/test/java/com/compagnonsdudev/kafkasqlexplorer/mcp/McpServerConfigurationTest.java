@@ -21,6 +21,7 @@ import com.compagnonsdudev.kafkasqlexplorer.service.FlinkTableStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.MessageFormatterService;
 import com.compagnonsdudev.kafkasqlexplorer.service.SchemaInferenceService;
+import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
 import com.compagnonsdudev.kafkasqlexplorer.service.DataModelService;
 import com.compagnonsdudev.kafkasqlexplorer.service.DataModelSqlService;
@@ -68,6 +69,7 @@ class McpServerConfigurationTest {
         @Bean DataModelSqlService dataModelSqlService() { return new DataModelSqlService(); }
         @Bean AuditService auditService() { return mock(AuditService.class); }
         @Bean MetricSuggestionService metricSuggestionService() { return mock(MetricSuggestionService.class); }
+        @Bean KafkaConfig kafkaConfig() { return mock(KafkaConfig.class); }
         @Bean MeterRegistry meterRegistry() { return new SimpleMeterRegistry(); }
         @Bean FakeWriteTools fakeWriteTools() { return new FakeWriteTools(); }
     }

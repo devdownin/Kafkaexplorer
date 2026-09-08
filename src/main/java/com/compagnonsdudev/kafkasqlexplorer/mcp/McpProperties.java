@@ -29,6 +29,7 @@ public class McpProperties {
     private boolean readonly = true;
 
     private Tools tools = new Tools();
+    private RateLimit rateLimit = new RateLimit();
     private Console console = new Console();
     private Dlp dlp = new Dlp();
 
@@ -65,6 +66,27 @@ public class McpProperties {
         public void setDenied(String denied) { this.denied = denied; }
         public boolean isKip1318Aliases() { return kip1318Aliases; }
         public void setKip1318Aliases(boolean kip1318Aliases) { this.kip1318Aliases = kip1318Aliases; }
+    }
+
+    /**
+     * How many calls one identity may make. An operator clicks; a model loops — and a tool that
+     * answers "not found in what was scanned" invites another pass, so a model with a budget and
+     * no rate limit spends it on the cluster the UI shares.
+     */
+    public static class RateLimit {
+        /** Zero or less turns the limiter off, as {@code explorer.max-concurrent-jobs} already reads. */
+        private int callsPerMinute = 120;
+        /**
+         * How many calls may arrive at once before the sustained rate applies. An agent's opening
+         * moves are a burst by nature — list, describe, infer — and a limiter with no burst turns
+         * that ordinary sequence into a refusal.
+         */
+        private int burst = 20;
+
+        public int getCallsPerMinute() { return callsPerMinute; }
+        public void setCallsPerMinute(int callsPerMinute) { this.callsPerMinute = callsPerMinute; }
+        public int getBurst() { return burst; }
+        public void setBurst(int burst) { this.burst = burst; }
     }
 
     public static class Console {
@@ -162,6 +184,9 @@ public class McpProperties {
     public void setDefaultBudgetMs(long defaultBudgetMs) { this.defaultBudgetMs = defaultBudgetMs; }
     public long getHardMaxBudgetMs() { return hardMaxBudgetMs; }
     public void setHardMaxBudgetMs(long hardMaxBudgetMs) { this.hardMaxBudgetMs = hardMaxBudgetMs; }
+    public RateLimit getRateLimit() { return rateLimit; }
+    public void setRateLimit(RateLimit rateLimit) { this.rateLimit = rateLimit; }
+
     public String getAuditTopic() { return auditTopic; }
     public void setAuditTopic(String auditTopic) { this.auditTopic = auditTopic; }
 }

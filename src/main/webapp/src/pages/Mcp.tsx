@@ -11,13 +11,13 @@ import {
   Stat, Textarea, Tooltip,
 } from '../components/ui';
 import type {
-  McpCallView, McpCatalogView, McpClientConfig, McpClientRow, McpStatsView, McpStatusView,
-  McpToolRow, McpTryResult,
+  McpApprovalResult, McpCallView, McpCatalogView, McpClientConfig, McpClientRow, McpOverrideView,
+  McpReplay, McpStatsView, McpStatusView, McpSwitchResult, McpToolRow, McpTryResult,
 } from '../api/types';
 import {
   DEFAULT_WINDOW, EMPTY_FILTERS, WINDOWS, callsToCsv, coverageLabel, deniedShare, filtersFromParams,
   filtersToParams, formatBytes, formatDuration, formatNumber, historyNotice, isWindow,
-  outcomeLabel, sortTools, windowCaveat,
+  outcomeLabel, overrideBanner, replaySummary, sortTools, windowCaveat,
 } from './mcp/mcpConsoleLogic';
 import type { FeedFilters, McpWindow } from './mcp/mcpConsoleLogic';
 
@@ -51,6 +51,7 @@ const Mcp: FC = () => {
   const [stats, setStats] = useState<McpStatsView | null>(null);
   const [calls, setCalls] = useState<McpCallView[]>([]);
   const [clients, setClients] = useState<McpClientRow[]>([]);
+  const [overrides, setOverrides] = useState<McpOverrideView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -74,18 +75,21 @@ const Mcp: FC = () => {
       const feed = new URLSearchParams({ limit: '200' });
       for (const [key, value] of Object.entries(filters)) if (value) feed.set(key, value);
 
-      const [statusRes, catalogRes, statsRes, callsRes, clientsRes] = await Promise.all([
-        axios.get<McpStatusView>('/api/mcp/status'),
-        axios.get<McpCatalogView>(`/api/mcp/catalog?${query}`),
-        axios.get<McpStatsView>(`/api/mcp/stats?${query}`),
-        axios.get<McpCallView[]>(`/api/mcp/calls?${feed}`),
-        axios.get<McpClientRow[]>(`/api/mcp/clients?${query}`),
-      ]);
+      const [statusRes, catalogRes, statsRes, callsRes, clientsRes, overridesRes] =
+        await Promise.all([
+          axios.get<McpStatusView>('/api/mcp/status'),
+          axios.get<McpCatalogView>(`/api/mcp/catalog?${query}`),
+          axios.get<McpStatsView>(`/api/mcp/stats?${query}`),
+          axios.get<McpCallView[]>(`/api/mcp/calls?${feed}`),
+          axios.get<McpClientRow[]>(`/api/mcp/clients?${query}`),
+          axios.get<McpOverrideView[]>('/api/mcp/overrides'),
+        ]);
       setStatus(statusRes.data);
       setCatalog(catalogRes.data);
       setStats(statsRes.data);
       setCalls(callsRes.data);
       setClients(clientsRes.data);
+      setOverrides(overridesRes.data);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'la console MCP est injoignable');
@@ -157,7 +161,14 @@ const Mcp: FC = () => {
         }
       />
 
-      {status ? <StatusBanner status={status} /> : null}
+      {status ? (
+        <StatusBanner
+          status={status}
+          locked={overrides.some((o) => o.kind === 'READONLY')}
+          onSwitched={() => void load()}
+        />
+      ) : null}
+      <OverrideBanner overrides={overrides} />
 
       {status && !status.enabled ? (
         <EmptyState
@@ -170,6 +181,8 @@ const Mcp: FC = () => {
           catalog={catalog}
           endpoint={status?.endpoint ?? null}
           tryItEnabled={status?.tryItEnabled ?? false}
+          overrides={overrides}
+          onSwitched={() => void load()}
         />
       ) : (
         <SupervisionTab
@@ -182,6 +195,8 @@ const Mcp: FC = () => {
           onPause={setPaused}
           onFilters={(next) => setUrl({ filters: next })}
           onWindow={(next) => setUrl({ window: next })}
+          overrides={overrides}
+          onSwitched={() => void load()}
         />
       )}
     </div>
@@ -189,7 +204,247 @@ const Mcp: FC = () => {
 };
 
 /** Six faits, lus du runtime — l'endpoint est l'adresse liée, pas la propriété. */
-const StatusBanner: FC<{ status: McpStatusView }> = ({ status }) => (
+/**
+ * Les dérogations en cours, en permanence tant qu'il en tient une.
+ *
+ * Non refermable, et c'est tout son intérêt : le pire mode de défaillance du commutateur est une
+ * dérogation qui survit à l'incident qu'elle répondait et devient la configuration permanente que
+ * personne ne se souvient d'avoir choisie. Un bandeau qu'on peut fermer serait fermé le premier
+ * jour, et la dérogation resterait.
+ */
+const OverrideBanner: FC<{ overrides: McpOverrideView[] }> = ({ overrides }) => {
+  const lines = overrideBanner(overrides);
+  if (!lines) return null;
+  return (
+    <Card className="border-warning bg-warning-container p-4">
+      <div className="flex items-start gap-3">
+        <span className="material-symbols-outlined text-warning" aria-hidden="true">
+          shield_lock
+        </span>
+        <div className="space-y-1 text-sm">
+          <p className="font-medium">
+            {lines.length === 1 ? 'Une dérogation est active' : `${lines.length} dérogations sont actives`}
+          </p>
+          <ul className="space-y-1 text-xs text-on-surface-variant">
+            {lines.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <p className="text-xs text-on-surface-variant">
+            Elles ne s'effacent pas d'elles-mêmes : une expiration rouvrirait la surface à un moment
+            arbitraire, sans que personne le décide.
+          </p>
+        </div>
+      </div>
+    </Card>
+  );
+};
+
+/**
+ * Le formulaire que tout levier partage : qui, et pourquoi.
+ *
+ * Un vrai formulaire plutôt que `prompt()`. Le `prompt()` du navigateur bloque le fil, ne se
+ * style pas, ne valide rien, et plusieurs navigateurs le suppriment purement et simplement dans
+ * une iframe — un commutateur de secours qui dépend de lui est un commutateur qui, le jour de
+ * l'incident, ne s'ouvre pas.
+ *
+ * La raison est **obligatoire**, l'auteur non. C'est la raison qui, dans le bandeau, fait lever la
+ * dérogation quand l'incident est passé ; un nom sans phrase n'apprend rien à qui la lit trois
+ * semaines plus tard. Le champ dit que l'auteur est déclaré et non vérifié : cette application
+ * n'authentifie personne, et une colonne « auteur » qui laisserait croire le contraire serait
+ * pire que pas de colonne.
+ */
+const OverrideForm: FC<{
+  title: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  onConfirm: (actor: string, reason: string) => Promise<void>;
+}> = ({ title, confirmLabel, onCancel, onConfirm }) => {
+  const [actor, setActor] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (reason.trim() === '') return;
+    setBusy(true);
+    try {
+      await onConfirm(actor.trim(), reason.trim());
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <form onSubmit={(e) => void submit(e)} className="w-72 space-y-2 text-left">
+      <p className="text-xs font-medium">{title}</p>
+      <Field label="Pourquoi ?">
+        {(field) => (
+          <Input
+            {...field}
+            autoFocus
+            value={reason}
+            placeholder="l'agent boucle sur prod"
+            onChange={(e) => setReason(e.target.value)}
+          />
+        )}
+      </Field>
+      <Field label="Qui ? (déclaré, non vérifié)">
+        {(field) => (
+          <Input {...field} value={actor} onChange={(e) => setActor(e.target.value)} />
+        )}
+      </Field>
+      <div className="flex gap-2">
+        <Button size="sm" type="submit" variant="danger" disabled={busy || reason.trim() === ''}>
+          {confirmLabel}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Annuler
+        </Button>
+      </div>
+    </form>
+  );
+};
+
+/**
+ * Le levier générique : un bouton qui ouvre le formulaire pour restreindre, et qui lève sans rien
+ * demander.
+ *
+ * L'asymétrie est voulue. Restreindre demande une raison parce que la raison est ce qui fera lever
+ * la dérogation plus tard ; lever n'en demande pas, parce qu'une dérogation levée ne laisse rien
+ * derrière elle qu'il faudrait expliquer, et qu'un formulaire à ce moment-là est un frein sur le
+ * seul des deux gestes qui rend la surface à son état configuré.
+ */
+const OverrideSwitch: FC<{
+  endpoint: string;
+  restricted: boolean;
+  formTitle: string;
+  restrictLabel: string;
+  liftLabel: string;
+  onSwitched: () => void;
+}> = ({ endpoint, restricted, formTitle, restrictLabel, liftLabel, onSwitched }) => {
+  const [open, setOpen] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const send = async (enable: boolean, actor: string, reason: string) => {
+    try {
+      const res = await axios.post<McpSwitchResult>(endpoint, { enable, actor, reason });
+      // `applied: false` n'est pas une erreur : verrouiller une surface que la configuration tient
+      // déjà en lecture seule ne change rien, et le message dit lequel des deux s'est produit.
+      setProblem(res.data.applied ? null : res.data.message);
+      setOpen(false);
+      onSwitched();
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : 'le levier est injoignable');
+    }
+  };
+
+  if (open) {
+    return (
+      <OverrideForm
+        title={formTitle}
+        confirmLabel={restrictLabel}
+        onCancel={() => setOpen(false)}
+        onConfirm={(actor, reason) => send(true, actor, reason)}
+      />
+    );
+  }
+
+  return (
+    <div className="text-right">
+      <Button
+        size="sm"
+        variant={restricted ? 'outline' : 'ghost'}
+        onClick={() => (restricted ? void send(false, '', '') : setOpen(true))}
+      >
+        {restricted ? liftLabel : restrictLabel}
+      </Button>
+      {problem ? <p className="mt-1 max-w-xs text-xs text-error">{problem}</p> : null}
+    </div>
+  );
+};
+
+/**
+ * Le levier par outil.
+ *
+ * Il coupe, il ne supprime pas : un client garde en cache la liste d'outils de son `initialize`,
+ * donc un outil qui disparaît en cours de session est un outil que le modèle continue d'appeler
+ * sans rien pouvoir lire. Coupé, il refuse avec `-32044` en nommant l'opérateur et sa raison.
+ */
+const ToolSwitch: FC<{ tool: string; off: boolean; onSwitched: () => void }> = ({
+  tool, off, onSwitched,
+}) => (
+  <OverrideSwitch
+    endpoint={`/api/mcp/toggle/tool/${tool}`}
+    restricted={off}
+    formTitle={`Couper ${tool}`}
+    restrictLabel="Couper"
+    liftLabel="Rétablir"
+    onSwitched={onSwitched}
+  />
+);
+
+/**
+ * Le jeton d'approbation, frappé pour un appel d'un outil.
+ *
+ * Sans lui l'outil est inappelable : il est nommé dans `approval-required-tools`, donc chaque
+ * appel est refusé `-32042` tant qu'aucun humain n'a approuvé. Le badge le disait déjà et rien ne
+ * permettait de le débloquer — un contrôle sans moyen de s'en servir.
+ *
+ * Le jeton n'est montré qu'une fois et n'est relu nulle part : c'est un porteur, et un endpoint
+ * capable de le redonner ferait d'une approbation à usage unique une permission permanente pour
+ * quiconque atteint cette application.
+ */
+const ApprovalMint: FC<{ tool: string }> = ({ tool }) => {
+  const [result, setResult] = useState<McpApprovalResult | null>(null);
+
+  const mint = async () => {
+    try {
+      const res = await axios.post<McpApprovalResult>(`/api/mcp/approve/${tool}`, {
+        enable: true, actor: '', reason: '',
+      }, { validateStatus: () => true });
+      setResult(res.data);
+    } catch (e) {
+      setResult({
+        token: null, tool: null, expiresInMinutes: 0,
+        message: e instanceof Error ? e.message : 'la frappe est injoignable',
+      });
+    }
+  };
+
+  if (result?.token) {
+    return (
+      <div className="max-w-xs space-y-1 text-right">
+        <p className="text-[11px] text-on-surface-variant">
+          Un appel, {result.expiresInMinutes} min. Montré une seule fois.
+        </p>
+        <code className="block break-all rounded bg-surface-container-high p-1 text-[10px]">
+          {result.token}
+        </code>
+        <Button size="sm" variant="ghost" onClick={() => void copyText(result.token ?? '')}>
+          Copier
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-right">
+      <Button size="sm" variant="outline" onClick={() => void mint()}>
+        Approuver
+      </Button>
+      {result?.message ? (
+        <p className="mt-1 max-w-xs text-xs text-error">{result.message}</p>
+      ) : null}
+    </div>
+  );
+};
+
+const StatusBanner: FC<{
+  status: McpStatusView;
+  locked: boolean;
+  onSwitched: () => void;
+}> = ({ status, locked, onSwitched }) => (
   <Card className="p-4">
     <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
       <Badge tone={status.enabled ? 'success' : 'neutral'} dot>
@@ -211,6 +466,19 @@ const StatusBanner: FC<{ status: McpStatusView }> = ({ status }) => (
       <Fact label="Authentification" value={status.authentication} />
       <Fact label="Portée topics" value={status.topicScope.join(', ')} />
       <Fact label="Portée groupes" value={status.groupScope.join(', ')} />
+      {status.enabled ? (
+        /* Le levier est à côté de l'état qu'il change. Il ne peut que restreindre : la surface
+           d'écriture se décide à l'enregistrement des beans, donc un bouton qui prétendrait
+           l'ouvrir mentirait — le serveur répond alors « rien à lever » et le dit. */
+        <OverrideSwitch
+          endpoint="/api/mcp/toggle/readonly"
+          restricted={locked}
+          formTitle="Verrouiller la surface en lecture seule"
+          restrictLabel="Verrouiller"
+          liftLabel="Lever le verrou"
+          onSwitched={onSwitched}
+        />
+      ) : null}
     </div>
   </Card>
 );
@@ -240,9 +508,17 @@ const CatalogTab: FC<{
   catalog: McpCatalogView | null;
   endpoint: string | null;
   tryItEnabled: boolean;
-}> = ({ catalog, endpoint, tryItEnabled }) => {
+  overrides: McpOverrideView[];
+  onSwitched: () => void;
+}> = ({ catalog, endpoint, tryItEnabled, overrides, onSwitched }) => {
   const [config, setConfig] = useState<McpClientConfig | null>(null);
   const [client, setClient] = useState('claude-code');
+  /* Les outils coupés à chaud, tirés du bandeau plutôt que d'un second appel : la même vérité,
+     lue une fois. */
+  const switchedOff = useMemo(
+    () => new Set(overrides.filter((o) => o.kind === 'TOOL').map((o) => o.target ?? '')),
+    [overrides],
+  );
   const [trying, setTrying] = useState<McpToolRow | null>(null);
 
   useEffect(() => {
@@ -302,13 +578,25 @@ const CatalogTab: FC<{
                   <MeasuredValue value={tool.p95Ms} unit="ms" />
                 </td>
                 <td className="p-3">
-                  {/* Masqué plutôt que désactivé quand le serveur refuserait : un bouton qui a
-                      l'air disponible et répond 403 apprend à se méfier de l'écran. */}
-                  {tool.visibility.state !== 'HIDDEN' && tryItEnabled ? (
-                    <Button size="sm" variant="outline" onClick={() => setTrying(tool)}>
-                      Essayer
-                    </Button>
-                  ) : null}
+                  <div className="flex justify-end gap-2">
+                    {/* Masqué plutôt que désactivé quand le serveur refuserait : un bouton qui a
+                        l'air disponible et répond 403 apprend à se méfier de l'écran. */}
+                    {tool.visibility.state !== 'HIDDEN' && tryItEnabled ? (
+                      <Button size="sm" variant="outline" onClick={() => setTrying(tool)}>
+                        Essayer
+                      </Button>
+                    ) : null}
+                    {tool.visibility.state === 'EXPOSED_WITH_APPROVAL' ? (
+                      <ApprovalMint tool={tool.name} />
+                    ) : null}
+                    {tool.visibility.state !== 'HIDDEN' ? (
+                      <ToolSwitch
+                        tool={tool.name}
+                        off={switchedOff.has(tool.name)}
+                        onSwitched={onSwitched}
+                      />
+                    ) : null}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -439,6 +727,83 @@ const TryPanel: FC<{ tool: McpToolRow; onClose: () => void }> = ({ tool, onClose
   );
 };
 
+/**
+ * Le rejeu depuis le topic d'audit.
+ *
+ * `historyNotice` disait déjà à l'opérateur que l'histoire est ailleurs, et rien ne l'y menait.
+ * Le flux vif répond à « que se passe-t-il » ; ceci répond à « que s'est-il passé », qui est par
+ * nature une question posée après coup.
+ *
+ * La phrase de couverture compte autant que les lignes : un balayage borné qui revient vide peut
+ * l'être parce que rien ne s'est passé ou parce qu'il n'est pas allé jusque-là, et l'écran ne doit
+ * pas laisser choisir la lecture rassurante.
+ */
+const ReplayPanel: FC = () => {
+  const [open, setOpen] = useState(false);
+  const [hours, setHours] = useState('24');
+  const [replay, setReplay] = useState<McpReplay | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      const to = new Date();
+      const from = new Date(to.getTime() - Number(hours) * 3_600_000);
+      const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
+      const res = await axios.get<McpReplay>(`/api/mcp/calls/replay?${query}`);
+      setReplay(res.data);
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : "le topic d'audit est injoignable");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        Rejouer depuis le topic d'audit
+      </Button>
+    );
+  }
+
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Dernières (heures)" className="w-36">
+          {(field) => (
+            <Input {...field} type="number" min={1} value={hours} onChange={(e) => setHours(e.target.value)} />
+          )}
+        </Field>
+        <Button size="sm" disabled={busy} onClick={() => void run()}>
+          Rejouer
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Fermer
+        </Button>
+      </div>
+
+      {problem ? <p className="text-xs text-error">{problem}</p> : null}
+
+      {replay ? (
+        <div className="space-y-2">
+          <p className="text-xs text-on-surface-variant">{replaySummary(replay)}</p>
+          {replay.warnings.map((warning) => (
+            <p key={warning} className="text-xs text-warning">⚠ {warning}</p>
+          ))}
+          {replay.calls.length > 0 ? (
+            <pre className="max-h-80 overflow-auto rounded bg-surface-container-high p-3 text-[11px]">
+              {replay.calls.map((call) => JSON.stringify(call)).join('\n')}
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
+    </Card>
+  );
+};
+
 interface SupervisionProps {
   stats: McpStatsView | null;
   calls: McpCallView[];
@@ -449,11 +814,18 @@ interface SupervisionProps {
   onPause: (paused: boolean) => void;
   onFilters: (filters: FeedFilters) => void;
   onWindow: (window: McpWindow) => void;
+  overrides: McpOverrideView[];
+  onSwitched: () => void;
 }
 
 const SupervisionTab: FC<SupervisionProps> = ({
   stats, calls, clients, filters, window: win, paused, onPause, onFilters, onWindow,
+  overrides, onSwitched,
 }) => {
+  const quarantined = useMemo(
+    () => new Set(overrides.filter((o) => o.kind === 'QUARANTINE').map((o) => o.target ?? '')),
+    [overrides],
+  );
   if (!stats) return null;
   const share = deniedShare(stats);
 
@@ -485,6 +857,8 @@ const SupervisionTab: FC<SupervisionProps> = ({
           Exporter en CSV
         </Button>
       </div>
+
+      <ReplayPanel />
 
       <WindowNotice view={stats} />
 
@@ -658,9 +1032,22 @@ const SupervisionTab: FC<SupervisionProps> = ({
           <h3 className="mb-2 text-sm font-medium">Clients</h3>
           <ul className="space-y-1 text-xs">
             {clients.map((client) => (
-              <li key={client.identity}>
-                <span className="font-mono">{client.identity}</span>
-                {client.clientInfo ? ` — ${client.clientInfo}` : ''} · {formatNumber(client.calls)} appels
+              <li key={client.identity} className="flex items-start justify-between gap-3">
+                <span>
+                  <span className="font-mono">{client.identity}</span>
+                  {client.clientInfo ? ` — ${client.clientInfo}` : ''} ·{' '}
+                  {formatNumber(client.calls)} appels
+                </span>
+                {/* Le levier le plus utile en incident : « cet agent boucle » se règle en coupant
+                    l'identité, pas l'outil — il en appellerait un autre. */}
+                <OverrideSwitch
+                  endpoint={`/api/mcp/quarantine/${encodeURIComponent(client.identity)}`}
+                  restricted={quarantined.has(client.identity)}
+                  formTitle={`Mettre ${client.identity} en quarantaine`}
+                  restrictLabel="Quarantaine"
+                  liftLabel="Relâcher"
+                  onSwitched={onSwitched}
+                />
               </li>
             ))}
           </ul>

@@ -2,12 +2,18 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.mcp;
 
+import com.compagnonsdudev.kafkasqlexplorer.mcp.console.McpAuditReplayService;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.console.McpConsoleService;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.console.McpEndpointResolver;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.console.McpToolInvoker;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.DlpScrubber;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpApprovalStore;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRateLimiter;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRuntimeSwitches;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolFilter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpAuditSink;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.KafkaMcpAuditSink;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCallRecorder;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCatalogService;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpToolInterceptor;
@@ -24,6 +30,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SchemaMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SqlMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.StreamFlowMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.TopicMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
 import com.compagnonsdudev.kafkasqlexplorer.service.DataModelService;
 import com.compagnonsdudev.kafkasqlexplorer.service.DataModelSqlService;
@@ -45,7 +52,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -92,16 +98,51 @@ public class McpServerConfiguration {
     }
 
     @Bean
-    McpCatalogService mcpCatalogService(McpProperties properties) {
-        return new McpCatalogService(properties);
+    McpToolFilter mcpToolFilter(McpProperties properties) {
+        return new McpToolFilter(properties);
+    }
+
+    /**
+     * The three controls a call passes through that only the interception layer can apply: who is
+     * calling, how often, and what an operator switched off a second ago.
+     */
+    @Bean
+    McpRuntimeSwitches mcpRuntimeSwitches(McpProperties properties) {
+        return new McpRuntimeSwitches(properties);
+    }
+
+    @Bean
+    McpRateLimiter mcpRateLimiter(McpProperties properties) {
+        return new McpRateLimiter(properties);
+    }
+
+    @Bean
+    McpApprovalStore mcpApprovalStore(McpProperties properties) {
+        return new McpApprovalStore(properties);
+    }
+
+    @Bean
+    McpCatalogService mcpCatalogService(McpProperties properties, McpToolFilter filter) {
+        return new McpCatalogService(properties, filter);
+    }
+
+    /**
+     * The append-only trail. A bean rather than a component so a deployment with the server off
+     * builds no producer, and so the sink is absent — not a no-op — when there is nothing to record.
+     */
+    @Bean
+    McpAuditSink mcpAuditSink(KafkaConfig kafkaConfig, McpProperties properties) {
+        return new KafkaMcpAuditSink(kafkaConfig, properties);
+    }
+
+    @Bean
+    McpAuditReplayService mcpAuditReplayService(KafkaConfig kafkaConfig, McpProperties properties) {
+        return new McpAuditReplayService(kafkaConfig, properties);
     }
 
     @Bean
     McpCallRecorder mcpCallRecorder(McpProperties properties, MeterRegistry meters,
                                     ObjectProvider<McpAuditSink> auditSink) {
-        // No sink until phase 5 wires the append-only topic. The recorder is built against the
-        // interface from the start so its failure counter, and the console field that surfaces it,
-        // exist before there is anything to lose — but nothing pretends to persist in the meantime.
         return new McpCallRecorder(properties, auditSink.getIfAvailable(), meters);
     }
 
@@ -113,8 +154,11 @@ public class McpServerConfiguration {
      */
     @Bean
     McpToolInterceptor mcpToolInterceptor(McpProperties properties, ToolGuard guard,
-                                          DlpScrubber dlp, McpCallRecorder recorder) {
-        return new McpToolInterceptor(properties, guard, dlp, recorder);
+                                          DlpScrubber dlp, McpCallRecorder recorder,
+                                          McpRuntimeSwitches switches, McpRateLimiter rateLimiter,
+                                          McpApprovalStore approvals) {
+        return new McpToolInterceptor(properties, guard, dlp, recorder, switches, rateLimiter,
+                approvals);
     }
 
     /**
@@ -125,8 +169,8 @@ public class McpServerConfiguration {
      */
     @Bean
     static McpToolSpecificationPostProcessor mcpToolSpecificationPostProcessor(
-            ObjectProvider<McpToolInterceptor> interceptor) {
-        return new McpToolSpecificationPostProcessor(interceptor);
+            ObjectProvider<McpToolInterceptor> interceptor, ObjectProvider<McpToolFilter> filter) {
+        return new McpToolSpecificationPostProcessor(interceptor, filter);
     }
 
     /**
@@ -221,6 +265,7 @@ public class McpServerConfiguration {
     @Bean
     McpCatalogPublisher mcpCatalogPublisher(McpProperties properties,
                                             McpCatalogService catalog,
+                                            McpToolFilter filter,
                                             ObjectProvider<ReadOnlyMcpTools> readTools,
                                             ObjectProvider<MutatingMcpTools> writeTools) {
         List<McpToolset> all = new ArrayList<>(readTools.stream().toList());
@@ -232,8 +277,6 @@ public class McpServerConfiguration {
             exposed.addAll(mutating);
         }
 
-        Set<String> denied = names(properties.getTools().getDenied());
-        Set<String> allowed = names(properties.getTools().getAllowed());
         catalog.publish(all, exposed);
 
         log.info("MCP server enabled: {} tool(s) exposed, {} withheld, readonly={}, "
@@ -242,23 +285,24 @@ public class McpServerConfiguration {
                 catalog.catalog().size() - catalog.exposed().size(),
                 properties.isReadonly(),
                 properties.getAllowedTopicPrefixes());
-        if (!denied.isEmpty() || !allowed.contains(McpProperties.ANY)) {
-            // Phase 1 registers whole toolsets; per-name allow/deny lands with the console's
-            // runtime toggle in phase 2. Saying so is better than a setting that quietly does
-            // nothing — a deny-list an operator believes is in force is worse than none.
-            log.warn("explorer.mcp.tools.allowed/.denied are configured but per-tool filtering is "
-                    + "not active yet; all registered tools are exposed. Use explorer.mcp.readonly "
-                    + "to withhold the write surface.");
+        // A name in either list that no tool carries is a typo, and a deny-list with a typo in it
+        // silences nothing while reading as though it did — the exact failure this setting was
+        // added to prevent.
+        Set<String> registered = catalog.catalog().stream()
+                .map(com.compagnonsdudev.kafkasqlexplorer.mcp.observability.ToolDescriptor::name)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        Set<String> unknownDenied = filter.deniedButUnknown(registered);
+        Set<String> unknownAllowed = filter.allowedButUnknown(registered);
+        if (!unknownDenied.isEmpty()) {
+            log.warn("explorer.mcp.tools.denied names {} tool(s) this server does not have, so they "
+                    + "deny nothing: {}. Registered tools: {}", unknownDenied.size(), unknownDenied,
+                    registered);
+        }
+        if (!unknownAllowed.isEmpty()) {
+            log.warn("explorer.mcp.tools.allowed names {} tool(s) this server does not have: {}",
+                    unknownAllowed.size(), unknownAllowed);
         }
         return new McpCatalogPublisher();
-    }
-
-    private static Set<String> names(String csv) {
-        if (csv == null || csv.isBlank()) {
-            return Set.of();
-        }
-        return new LinkedHashSet<>(Arrays.stream(csv.split(",")).map(String::trim)
-                .filter(s -> !s.isEmpty()).toList());
     }
 
     /** A marker bean: publishing happens in the factory method, this is what makes it eager. */

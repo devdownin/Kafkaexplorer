@@ -11,6 +11,8 @@
  */
 import type {
   McpCallView,
+  McpOverrideView,
+  McpReplay,
   McpStatsView,
   McpToolRow,
   Measured,
@@ -186,4 +188,59 @@ export function callsToCsv(calls: McpCallView[]): string {
     ].map(escape).join(','),
   );
   return [header.join(','), ...rows].join('\n');
+}
+
+/** L'âge d'une dérogation, en clair. C'est le chiffre qui rend une dérogation oubliée visible. */
+export function overrideAge(ageMs: number): string {
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 1) return "à l'instant";
+  if (minutes < 60) return `depuis ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `depuis ${hours} h`;
+  return `depuis ${Math.floor(hours / 24)} j`;
+}
+
+/** Ce que dit une ligne du bandeau : le levier, sa cible, qui l'a mis et pourquoi. */
+export function describeOverride(override: McpOverrideView): string {
+  const what =
+    override.kind === 'READONLY'
+      ? 'Surface verrouillée en lecture seule'
+      : override.kind === 'TOOL'
+        ? `Outil ${override.target} coupé`
+        : `Identité ${override.target} en quarantaine`;
+  return `${what} par ${override.actor ?? 'un opérateur non nommé'} ${overrideAge(override.ageMs)} — ${
+    override.reason ?? 'sans raison donnée'
+  }`;
+}
+
+/**
+ * Le bandeau des dérogations actives, ou `null`.
+ *
+ * Il ne disparaît jamais tant qu'une dérogation tient, et c'est tout son intérêt : le pire mode de
+ * défaillance de ce commutateur est une dérogation qui survit à l'incident qu'elle répondait et
+ * devient la configuration permanente que personne ne se souvient d'avoir choisie. Un bandeau qu'on
+ * peut fermer serait fermé le premier jour.
+ */
+export function overrideBanner(overrides: McpOverrideView[]): string[] | null {
+  return overrides.length === 0 ? null : overrides.map(describeOverride);
+}
+
+/**
+ * Ce que le rejeu a réellement couvert.
+ *
+ * La phrase qui compte est la seconde : le balayage est borné, donc une fenêtre revenue vide est
+ * soit une fenêtre où rien ne s'est passé, soit une fenêtre que le balayage n'a pas atteinte — deux
+ * conclusions opposées tirées de la même liste vide. Sans elle, l'écran laisse choisir la
+ * rassurante.
+ */
+export function replaySummary(replay: McpReplay): string {
+  if (!replay.topicExists) {
+    return "Rien n'a jamais été journalisé : le topic d'audit n'existe pas encore. Ce n'est pas une "
+      + 'fenêtre vide, c\'est une piste vide.';
+  }
+  const found = `${replay.calls.length} appel(s) sur ${replay.recordsScanned} enregistrement(s) lus.`;
+  return replay.scanReachedWindowStart
+    ? `${found} Le balayage a atteint le début de la fenêtre : une absence en est bien une.`
+    : `${found} Le balayage n'a PAS atteint le début de la fenêtre — la rétention en a retiré des `
+      + 'enregistrements, donc une absence ici ne prouve rien.';
 }
