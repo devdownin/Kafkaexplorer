@@ -62,6 +62,22 @@ class McpCatalogServiceTest {
                 });
         assertThat(catalog.exposed()).extracting(ToolDescriptor::name).containsExactly("kex_fake_list");
         assertThat(catalog.writeSurfaceOpen()).isFalse();
+        // Withheld, but present — which is the sentence the banner needs and could not make.
+        assertThat(catalog.writeSurfaceExists()).isTrue();
+    }
+
+    @Test
+    void a_build_with_no_mutating_tool_says_so_rather_than_reporting_a_guard_with_nothing_to_guard() {
+        // The state this application is actually in: no MutatingMcpTools implementation exists, so
+        // read-only withholds an empty set. "READ-ONLY" over that is true and reads as "a write
+        // surface is being held back" — a reassurance about a guard that has nothing to guard.
+        McpCatalogService catalog = catalogOf(new McpProperties());
+        FakeReadTools read = new FakeReadTools();
+
+        catalog.publish(List.of(read), List.of(read));
+
+        assertThat(catalog.writeSurfaceOpen()).isFalse();
+        assertThat(catalog.writeSurfaceExists()).isFalse();
     }
 
     @Test
@@ -75,6 +91,7 @@ class McpCatalogServiceTest {
         catalog.publish(List.of(read, write), List.of(read, write));
 
         assertThat(catalog.writeSurfaceOpen()).isTrue();
+        assertThat(catalog.writeSurfaceExists()).isTrue();
         assertThat(catalog.catalog())
                 .filteredOn(d -> d.name().equals("kex_produce_message"))
                 .singleElement()

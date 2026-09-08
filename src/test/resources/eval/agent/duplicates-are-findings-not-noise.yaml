@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: duplicates-are-findings-not-noise
+title: "A redelivery is a finding, not a rounding error"
+
+# ORD-103 and ORD-105 are produced twice by the seeder, deliberately: at-least-once redelivery is
+# the ordinary state of a Kafka pipeline and the thing an audit exists to surface.
+invariant: >
+  a duplicate is what at-least-once delivery looks like from the outside; smoothing it into "a few
+  duplicates, nothing serious" is the audit's finding discarded by its reader
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received"]
+    keys: ["ORD-103", "ORD-105"]
+
+prompt: |
+  Audit the demo order topics and tell me what is wrong with them.
+maxToolCalls: 8
+budgetMs: 180000
+
+trace:
+  mustCall: ["kex_run_audit", "kex_get_audit"]
+  maxCalls: 8
+
+verdict:
+  mustAssert:
+    - "that duplicate records were found"
+  mustNotAssert:
+    - "that the duplicates are insignificant or can be ignored"
+  mustCite:
+    - "at least one duplicated record key, or the count the audit reported"

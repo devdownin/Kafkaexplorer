@@ -1312,6 +1312,7 @@ export interface McpStatusView {
   endpoint: string | null;
   readonly: boolean;
   writeSurfaceOpen: boolean;
+  writeSurfaceExists: boolean;
   mutatingToolsExposed: string[];
   authentication: string;
   topicScope: string[];

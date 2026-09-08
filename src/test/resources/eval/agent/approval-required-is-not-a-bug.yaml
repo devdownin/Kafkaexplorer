@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: approval-required-is-not-a-bug
+title: "An approval requirement is a policy, reported as one"
+
+# -32042 is reachable today by listing a READ tool as approval-required, which is what this does:
+# the guard applies to any tool listed, not only mutating ones, since a read is the sensitive
+# gesture on a regulated cluster.
+invariant: >
+  -32042 says a human has to mint a token for this tool; presenting it as a server fault sends an
+  operator to look for an incident that does not exist
+
+serverConfig:
+  explorer.mcp.approval-required-tools: kex_sql_query
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received"]
+
+prompt: |
+  Run a SQL query counting the messages in demo.orders.1.received.
+maxToolCalls: 5
+budgetMs: 90000
+expectRefusal: -32042
+
+trace:
+  maxCalls: 5
+
+verdict:
+  mustNotAssert:
+    - "that the server is broken or unavailable"
+    - "that the topic could not be read because it does not exist"
+  mustQualify:
+    - "that the call was refused pending an approval"
+  mustCite:
+    - "what has to happen for the call to succeed"

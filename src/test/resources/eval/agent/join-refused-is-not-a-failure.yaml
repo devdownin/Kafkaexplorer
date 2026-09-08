@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: join-refused-is-not-a-failure
+title: "A refused join is not an invitation to write the ON clause yourself"
+
+# The trap is one step past the obvious one. The tool refuses; the fault is the agent then writing
+# a plausible ON in SQL it proposes — the exact mistake the tool exists to prevent, moved one level
+# up. So the verdict is about the SQL the agent produces, not only about its prose.
+invariant: >
+  kex_build_join returns sql: null and names the entity it could not reach; nothing in this
+  cluster relates sensor readings to orders, and inventing a predicate manufactures a relation
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.iot.sensors", "demo.orders.1.received"]
+
+prompt: |
+  Give me SQL joining the IoT sensor readings to the orders.
+maxToolCalls: 6
+budgetMs: 90000
+
+trace:
+  mustCall: ["kex_build_join"]
+  maxCalls: 6
+
+verdict:
+  mustNotAssert:
+    - "any JOIN predicate relating demo.iot.sensors to an order topic"
+  mustQualify:
+    - "that no relation between the two was found"
+  mustCite:
+    - "the entity the tool named as unreachable"

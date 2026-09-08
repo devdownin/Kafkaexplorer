@@ -36,6 +36,7 @@ const STATUS = {
   endpoint: 'http://localhost:8080/mcp',
   readonly: true,
   writeSurfaceOpen: false,
+  writeSurfaceExists: false,
   mutatingToolsExposed: [] as string[],
   authentication: 'none — anything that can reach the endpoint can call it (OAuth 2.1 is phase 5)',
   topicScope: ['*'],
@@ -175,15 +176,25 @@ describe("l'onglet Catalogue", () => {
     expect(await screen.findAllByRole('button', { name: 'Essayer' })).not.toHaveLength(0);
   });
 
-  it("affiche LECTURE SEULE tant qu'aucun outil mutant n'est exposé", async () => {
+  it("dit qu'aucune écriture n'existe, plutôt que de rassurer sur une garde sans objet", async () => {
+    // « Lecture seule » sur un ensemble vide est vrai et se lit comme « une surface d'écriture est
+    // retenue ». Aucun outil mutant n'existe dans cette version : c'est ce que la bannière dit.
     renderAt();
 
-    expect(await screen.findByText('LECTURE SEULE')).toBeInTheDocument();
+    expect(await screen.findByText(/AUCUNE ÉCRITURE N'EXISTE/)).toBeInTheDocument();
     expect(screen.queryByText('ÉCRITURE ACTIVE')).not.toBeInTheDocument();
   });
 
+  it('dit LECTURE SEULE, sans plus, dès que des outils mutants existent et sont retenus', async () => {
+    mockApi({ status: { ...STATUS, writeSurfaceExists: true } });
+    renderAt();
+
+    expect(await screen.findByText('LECTURE SEULE ⓘ')).toBeInTheDocument();
+    expect(screen.queryByText(/AUCUNE ÉCRITURE N'EXISTE/)).not.toBeInTheDocument();
+  });
+
   it("bascule sur ÉCRITURE ACTIVE dès qu'un outil mutant est réellement enregistré", async () => {
-    mockApi({ status: { ...STATUS, writeSurfaceOpen: true, readonly: false, mutatingToolsExposed: ['kex_produce_message'] } });
+    mockApi({ status: { ...STATUS, writeSurfaceOpen: true, writeSurfaceExists: true, readonly: false, mutatingToolsExposed: ['kex_produce_message'] } });
     renderAt();
 
     expect(await screen.findByText('ÉCRITURE ACTIVE')).toBeInTheDocument();

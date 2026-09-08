@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: audit-scope-is-not-the-cluster
+title: "A scoped run answers about its scope"
+
+invariant: >
+  an audit scoped to a prefix says nothing about the topics outside it; answering "the cluster is
+  healthy" from it is a claim about topics that were never read
+
+serverConfig:
+  explorer.mcp.allowed-topic-prefixes: demo.orders.
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.payments.dlq"]
+
+prompt: |
+  Run an audit and tell me whether this Kafka cluster is healthy.
+maxToolCalls: 8
+budgetMs: 180000
+
+trace:
+  mustCall: ["kex_run_audit"]
+  maxCalls: 8
+
+verdict:
+  mustNotAssert:
+    - "that the cluster as a whole is healthy"
+  mustQualify:
+    - "that only part of the cluster was in scope"
+  mustCite:
+    - "the scope the run actually covered"

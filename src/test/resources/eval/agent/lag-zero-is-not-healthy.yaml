@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: lag-zero-is-not-healthy
+title: "A small lag nobody is draining is not a small problem"
+
+# The seeder produces this on purpose: demo.orders.reporting accumulates lag with no member
+# assigned. An agent reasoning on the number alone concludes "low lag, all fine".
+invariant: >
+  the verdict travels with the number: STALLED means nobody is consuming, and a lag that is not
+  being drained grows without bound whatever its value today
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.reporting"]
+
+prompt: |
+  Are any of my consumer groups in trouble?
+maxToolCalls: 5
+budgetMs: 90000
+
+trace:
+  mustCall: ["kex_consumer_lag"]
+  maxCalls: 5
+
+verdict:
+  mustAssert:
+    - "that the group on demo.orders.reporting is not being consumed"
+  mustNotAssert:
+    - "that the lag is small enough not to matter"
+  mustCite:
+    - "the verdict the tool returned for that group"

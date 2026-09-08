@@ -455,8 +455,18 @@ const StatusBanner: FC<{
         <Tooltip content={`Outils mutants exposés : ${status.mutatingToolsExposed.join(', ')}`}>
           <Badge tone="warning">ÉCRITURE ACTIVE</Badge>
         </Tooltip>
+      ) : status.writeSurfaceExists ? (
+        <Tooltip content="Des outils mutants existent et sont retenus. La table du catalogue les nomme, avec le motif.">
+          <Badge tone="success">LECTURE SEULE ⓘ</Badge>
+        </Tooltip>
       ) : (
-        <Badge tone="success">LECTURE SEULE</Badge>
+        /* « Lecture seule » sur un ensemble vide est vrai et se lit comme « une surface d'écriture
+           est retenue » — une garantie à propos d'une garde qui n'a rien à garder. Aucun outil
+           mutant n'existe dans cette version, et c'est ce qu'on dit. Le jour où le premier arrive,
+           le serveur bascule la branche du dessus tout seul : il interroge le catalogue. */
+        <Tooltip content="Aucun outil mutant n'existe dans cette version : la lecture seule ne retient rien aujourd'hui. Le réglage est la posture pour le jour où le premier arrivera.">
+          <Badge tone="neutral">LECTURE SEULE — AUCUNE ÉCRITURE N'EXISTE ⓘ</Badge>
+        </Tooltip>
       )}
       <Fact label="Transports" value={status.transports.join(' + ') || '—'} />
       <Fact

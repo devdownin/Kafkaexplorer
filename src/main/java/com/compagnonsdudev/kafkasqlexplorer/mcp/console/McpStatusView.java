@@ -17,6 +17,10 @@ import java.util.List;
  * @param endpoint             the effective endpoint, null when the server is off or unbound
  * @param readonly             whether the write surface is closed
  * @param writeSurfaceOpen     whether any mutating tool is actually registered — the amber badge
+ * @param writeSurfaceExists   whether this build contains a mutating tool at all, registered or
+ *                             withheld. False today, and the banner needs the difference: read-only
+ *                             over an empty set is not the same claim as read-only over a surface
+ *                             being held back, and only the second is a guard doing anything
  * @param mutatingToolsExposed which ones, so the badge can name them on hover
  * @param authentication       how a caller is identified, in the operator's words
  * @param topicScope           the configured topic prefixes, or a single {@code *}
@@ -31,6 +35,7 @@ public record McpStatusView(
         String endpoint,
         boolean readonly,
         boolean writeSurfaceOpen,
+        boolean writeSurfaceExists,
         List<String> mutatingToolsExposed,
         String authentication,
         List<String> topicScope,
@@ -47,7 +52,7 @@ public record McpStatusView(
 
     /** The banner shown when {@code explorer.mcp.enabled} is false: off, and saying only that. */
     public static McpStatusView disabled() {
-        return new McpStatusView(false, List.of(), null, true, false, List.of(),
+        return new McpStatusView(false, List.of(), null, true, false, false, List.of(),
                 "not applicable — the server is disabled", List.of(), List.of(), false);
     }
 }

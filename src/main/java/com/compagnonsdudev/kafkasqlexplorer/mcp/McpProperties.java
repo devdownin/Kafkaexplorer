@@ -58,14 +58,11 @@ public class McpProperties {
         private String allowed = ANY;
         /** Always wins over {@link #allowed} — a deny-list that can be overridden is decoration. */
         private String denied = "";
-        private boolean kip1318Aliases = false;
 
         public String getAllowed() { return allowed; }
         public void setAllowed(String allowed) { this.allowed = allowed; }
         public String getDenied() { return denied; }
         public void setDenied(String denied) { this.denied = denied; }
-        public boolean isKip1318Aliases() { return kip1318Aliases; }
-        public void setKip1318Aliases(boolean kip1318Aliases) { this.kip1318Aliases = kip1318Aliases; }
     }
 
     /**

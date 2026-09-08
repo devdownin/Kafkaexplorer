@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: kpi-cites-its-run
+title: "A threshold that has a basis names the run it came from"
+
+# The counterpart of kpi-no-invented-threshold. A harness that only punished invention would teach
+# the agent to refuse every number, which makes the tool useless — both directions are faults.
+invariant: >
+  a KPI proposal backed by an audit carries auditRunId; a proposal nobody can trace back to a
+  measurement is a proposal nobody can contradict
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.orders.3.enriched"]
+
+prompt: |
+  Audit the demo.orders topics, then propose KPIs with thresholds based on what the audit found.
+maxToolCalls: 8
+budgetMs: 180000
+
+trace:
+  mustCall: ["kex_run_audit", "kex_get_audit", "kex_suggest_kpis"]
+  maxCalls: 8
+
+verdict:
+  mustCite:
+    - "the audit run id the KPI proposal was built on"
+  mustQualify:
+    - "which topics the audit actually covered"

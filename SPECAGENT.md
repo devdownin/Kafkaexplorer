@@ -263,6 +263,16 @@ sur le seul nombre conclut « faible retard, tout va bien ».
 | `dependency-down-is-not-a-guard` | `-32043` | l'agent conseille de desserrer un réglage ; aucun ne s'applique |
 | `tool-switched-off-mid-session` | `-32044` | l'agent redemande l'outil en boucle au lieu de rapporter |
 
+**Deux de ces cinq ne sont pas livrés, et pour des raisons différentes.**
+`dependency-down-is-not-a-guard` demande qu'une dépendance soit réellement injoignable — arrêter le
+broker sous le serveur — et non qu'un réglage soit posé : `serverConfig` ne peut pas l'armer, donc
+un scénario écrit aujourd'hui échouerait sur « la garde n'a pas tiré », une phrase vraie à propos
+d'un scénario qui n'a jamais pu la faire tirer. `tool-switched-off-mid-session` est le seul scénario
+dynamique : il demande un `POST /api/mcp/toggle/tool/{name}` **pendant** la session, et `AgentRunner`
+n'a pas de point d'accroche en cours de boucle. Les deux sont des ajouts au harnais, pas des
+fichiers YAML, et les écrire en YAML aujourd'hui produirait deux scénarios rouges pour la faute du
+harnais — exactement le rapport que le §7 interdit.
+
 `tool-switched-off-mid-session` est le seul scénario **dynamique** : le harnais coupe un outil via
 `POST /api/mcp/toggle/tool/{name}` pendant la session. Il vérifie la décision de conception de la
 phase 5 — un outil coupé refuse au lieu de disparaître, parce que le client garde `tools/list` en
@@ -283,23 +293,28 @@ cache — et que l'agent sait la lire.
 ```
 src/test/java/.../eval/agent/
 ├── McpAgentEvalTest.java        # le point d'entrée JUnit, un cas par scénario (@TestFactory)
-├── AgentScenario.java           # le record du YAML                              [livré]
-├── ScenarioLoader.java          # lecture + validation du répertoire             [livré]
-├── AgentRunner.java             # la boucle outil : modèle ↔ client MCP, bornée  [livré]
-├── AgentModel.java              # le modèle éprouvé, réduit à un tour            [livré]
-├── McpHttpClient.java           # le client MCP du harnais, HTTP streamable      [livré]
-├── ToolCall.java                # un appel, tel que le client du harnais l'a vu  [livré]
-├── ToolCallTrace.java           # la trace, et les assertions de §2.1            [livré]
-├── McpRefusal.java              # les codes KIP-1318 que le harnais lit          [livré]
+├── AgentScenario.java           # le record du YAML
+├── ScenarioLoader.java          # lecture + validation du répertoire
+├── AgentRunner.java             # la boucle outil : modèle ↔ client MCP, bornée
+├── AgentModel.java              # le modèle éprouvé, réduit à un tour
+├── AgentModels.java             # agent et juge depuis l'environnement, ou le motif du saut
+├── OpenAiToolCallingModel.java  # /chat/completions (OpenRouter, Ollama, compatibles)
+├── AnthropicToolCallingModel.java  # l'API Messages, blocs tool_use / tool_result
+├── McpHttpClient.java           # le client MCP du harnais, HTTP streamable
+├── ToolCall.java                # un appel, tel que le client du harnais l'a vu
+├── ToolCallTrace.java           # la trace, et les assertions de §2.1
+├── McpRefusal.java              # les codes KIP-1318 que le harnais lit
+├── StackReconfigurer.java       # applique serverConfig en recréant le conteneur
 ├── VerdictJudge.java            # le second appel modèle, sur la grille de §2.2
+├── JudgeVerdict.java            # ce que le juge a décidé, et ce qu'il n'a pas pu juger
 └── ScenarioReport.java          # le rapport, y compris pour un scénario vert
 
 src/test/resources/eval/agent/*.yaml
 docs/check-agent-scenarios.py    # résout fixture.requires contre setup-demo.sh   [livré]
 ```
 
-**L'ordre de construction n'est pas arbitraire : tout ce qui est déterministe arrive d'abord**, et
-tourne dans `mvn verify`. Le modèle de scénario, le lecteur et le verdict 1 n'appellent aucun modèle
+**L'ordre de construction n'a pas été arbitraire : tout ce qui est déterministe est arrivé
+d'abord**, et tourne dans `mvn verify`. Le modèle de scénario, le lecteur et le verdict 1 n'appellent aucun modèle
 et sont couverts par leurs propres tests unitaires — `ToolCallTraceTest` construit les traces qu'un
 agent produirait vraiment (un jeton de reprise ignoré, un appel refusé réémis sans sa contrainte,
 une reprise plus rapide que le délai annoncé, un nom d'outil absent de `tools/list`) et vérifie la
@@ -322,8 +337,21 @@ lui-même à la question que les scénarios de garde posent — et le prompt sys
 d'outil portent déjà la règle de lecture, et un prompt qui la répéterait mesurerait le prompt au lieu
 du serveur.
 
-**Reste à écrire** : les deux implémentations d'`AgentModel` (un client à appel d'outils, OpenAI-
-compatible et Anthropic), `VerdictJudge`, `ScenarioReport` et `McpAgentEvalTest`.
+**Le juge et le rapport le sont aussi.** `VerdictJudgeTest` fait jouer un juge scripté : il vérifie
+que le juge ne voit **que** la réponse et la grille — ni la trace, ni le titre, ni l'invariant, sans
+quoi on lui souffle la réponse — et surtout ce que le harnais fait d'une réponse qu'il ne peut pas
+lire. Une réponse non-JSON, une grille notée partiellement, des `index` renumérotés : **non jugé**,
+jamais cru à moitié. Combler avec « satisfait » fait passer un scénario que personne n'a noté ;
+combler avec « non satisfait » fait échouer l'agent pour l'erreur du juge — les deux sont le faux
+verdict, en sens opposés. `ScenarioReportTest` couvre le §7 : un saut n'est pas un vert, **chaque**
+tentative doit passer (trois sur cinq n'est pas vert, c'est une information), un échec ouvre sur
+l'invariant cassé, et le total garde les trois issues séparées.
+
+**Et `serverConfig` passe par le chemin de l'opérateur, ce qui a une conséquence testée.**
+`StackReconfigurer` lit `compose/mcp.yml` et **refuse** une clé que l'overlay ne publie pas : sans
+cela le conteneur reste sur sa valeur par défaut pendant que le scénario croit l'avoir changée — un
+run qui mesure le mauvais monde et en rend compte avec assurance. C'est cette règle qui a fait
+ajouter `EXPLORER_MCP_APPROVAL_REQUIRED_TOOLS` à l'overlay pour le scénario `-32042`.
 
 ### 5.1 Le client MCP est le vrai
 
@@ -426,10 +454,11 @@ harnais**, parce qu'il déplace la confiance sans la justifier.
 - **La qualité rédactionnelle des réponses.** §2.2 le dit : noter une formulation produit un test qui
   échoue sur une paraphrase.
 
-**État de la construction** : tout ce qui ne demande pas de modèle est livré (§5, colonne `[livré]`)
-et tourne dans `mvn verify` — le format et son lecteur, le verdict 1, le client MCP et la boucle
-bornée. Restent les deux implémentations d'`AgentModel`, `VerdictJudge`, `ScenarioReport`,
-`McpAgentEvalTest`, et douze des dix-huit scénarios du §4.
+**État de la construction** : le harnais est complet et **17 scénarios sur 19** sont livrés. Tout ce
+qui ne demande pas de modèle tourne dans `mvn verify` — le format et son lecteur, le verdict 1, le
+client MCP, la boucle bornée, les deux clients à appel d'outils, le juge, le rapport et
+l'application de `serverConfig`. Les deux scénarios manquants sont ceux du §4.5 que le harnais ne
+sait pas encore mettre en scène, et le §4.5 dit lequel manque de quoi.
 
 **Préalable levé** : `compose/mcp.yml` existe. Il pose `EXPLORER_MCP_ENABLED=true`, laisse chaque
 garde à la valeur qu'expédie `application.yml` et la publie en variable (`.env.example`), et ajoute

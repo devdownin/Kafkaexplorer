@@ -495,6 +495,16 @@ a real deployment. The module's headline posture is, for now, a claim about an e
 asserts the fact rather than the mechanism, so when the first write tool lands it is what says
 whether it stayed withheld.
 
+**And the console now says so, instead of reassuring about a guard with nothing to guard.**
+"READ-ONLY" over an empty set is true and reads as *a write surface is being held back*, which is a
+different and stronger claim than the one the deployment can make. `McpCatalogService` therefore
+answers two questions rather than one: `writeSurfaceOpen()` (is a mutating tool registered — the
+amber badge) and `writeSurfaceExists()` (does this build contain one at all, registered or
+withheld). Today the second is false and the banner reads "LECTURE SEULE — AUCUNE ÉCRITURE
+N'EXISTE", with the tooltip saying the setting is the posture for when the first one lands. Both
+flip on their own the day it does, because both ask the catalogue rather than a constant — and the
+"hidden by read-only" row stops being a branch only a test can reach.
+
 ### What phase 5 deliberately leaves
 
 **The taint guard is deferred, and its reason is the mirror of every other deferral here.** It

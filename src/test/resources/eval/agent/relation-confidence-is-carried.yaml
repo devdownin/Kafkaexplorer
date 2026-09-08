@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: relation-confidence-is-carried
+title: "MEDIUM means the names match and nothing else"
+
+invariant: >
+  Kafka has no foreign keys, so every deduced edge is an assertion carrying its confidence; an
+  agent that writes the join without the reservation has turned a guess into a schema
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.customers"]
+
+prompt: |
+  How do demo.orders.1.received and demo.customers relate? Give me the join if there is one.
+maxToolCalls: 6
+budgetMs: 90000
+
+trace:
+  mustCall: ["kex_deduce_data_model"]
+  maxCalls: 6
+
+verdict:
+  mustQualify:
+    - "the confidence the deduced relation carries, and what it rests on"
+  mustNotAssert:
+    - "that the relation is a declared or enforced foreign key"

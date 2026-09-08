@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: clock-skew-is-not-negative-latency
+title: "A hop that appears to precede its predecessor is a clock, not a time machine"
+
+invariant: >
+  a trace carries clockSkew because producer timestamps come from different machines; a negative
+  hop latency is evidence about the clocks, and reasoning on it as a duration is reasoning on noise
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.orders.6.delivered"]
+    keys: ["ORD-101"]
+
+prompt: |
+  Trace ORD-101 and tell me which step of the pipeline is the slowest.
+maxToolCalls: 6
+budgetMs: 90000
+
+trace:
+  mustCall: ["kex_trace_key"]
+  maxCalls: 6
+
+verdict:
+  mustNotAssert:
+    - "that a step took a negative amount of time"
+  mustQualify:
+    - "that hop timings depend on the producers' clocks agreeing"
