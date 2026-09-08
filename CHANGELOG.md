@@ -42,7 +42,7 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   On the lag side, `verdict` travels with every group because it is the reading an agent gets
   wrong: a lag of zero on a group with no assigned member is not "up to date", it is nothing
   reading a topic that is not moving. Groups are sorted worst first with the unreadable ones at the
-  *top*; a failed read raises `-32050` instead of returning zero groups, which would claim nobody
+  *top*; a failed read raises `-32043` instead of returning zero groups, which would claim nobody
   consumes the topic on the strength of a call that never answered; and `recordLag` and `lagMs`
   fail independently, so a known backlog of 40 000 records with an age compaction has made
   unknowable says exactly that. The age is opt-in (`includeTimeLag`) — it costs a partition read

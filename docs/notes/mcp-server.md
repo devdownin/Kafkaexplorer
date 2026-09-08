@@ -243,7 +243,7 @@ and sorting it last hides it under whatever the cap cut off.
 Three consequences of the same invariant, in that one tool:
 
 - **A failed read is a failure, not a topic nobody reads.** `TopicConsumers.available()` false
-  becomes `-32050 DEPENDENCY_UNAVAILABLE`; returning zero groups would state that nothing consumes
+  becomes `-32043 DEPENDENCY_UNAVAILABLE`; returning zero groups would state that nothing consumes
   the topic on the strength of a call that never answered.
 - **`recordLag` and `lagMs` fail independently.** Records come from committed offsets, which every
   broker answers; the age needs the record *at* that offset, which compaction or retention may have
