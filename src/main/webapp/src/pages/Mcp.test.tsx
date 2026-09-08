@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
@@ -401,5 +401,84 @@ describe('le rejeu depuis le topic d’audit', () => {
     await user.click(screen.getByRole('button', { name: 'Rejouer' }));
 
     expect(await screen.findByText(/ne prouve rien/)).toBeInTheDocument();
+  });
+});
+
+describe("le détail d'un appel", () => {
+  it("montre la corrélation, l'arrêt et les arguments rédigés quand on ouvre la ligne", async () => {
+    // Ils n'existaient que dans le CSV : il fallait exporter un fichier pour savoir pourquoi un
+    // appel s'était mal passé, ce qui est le geste qu'on fait en dernier.
+    const user = userEvent.setup();
+    renderAt('/mcp?tab=supervision');
+    await screen.findByText('kex_trace_key');
+
+    await user.click(screen.getByText('kex_trace_key'));
+
+    expect(await screen.findByText('a3f9')).toBeInTheDocument();
+    expect(screen.getByText('claude-code/1.4.2')).toBeInTheDocument();
+    expect(screen.getByText('TIME_BUDGET')).toBeInTheDocument();
+  });
+
+  it("dit qu'un arrêt autre qu'EXHAUSTED ne veut pas dire « n'existe pas »", async () => {
+    const user = userEvent.setup();
+    renderAt('/mcp?tab=supervision');
+    await screen.findByText('kex_trace_key');
+
+    await user.click(screen.getByText('kex_trace_key'));
+
+    // La même phrase existe déjà dans l'info-bulle de couverture de la ligne ; c'est celle du
+    // détail qui est nouvelle, donc on la cherche dans le détail.
+    const detail = (await screen.findByText('a3f9')).closest('td')!;
+    expect(within(detail).getByText(/pas trouvé dans ce qui a été lu/)).toBeInTheDocument();
+  });
+
+  it("n'ouvre qu'un appel à la fois : la question est « pourquoi celui-là »", async () => {
+    const user = userEvent.setup();
+    renderAt('/mcp?tab=supervision');
+    await screen.findByText('kex_trace_key');
+
+    await user.click(screen.getByText('kex_trace_key'));
+    expect(await screen.findByText('a3f9')).toBeInTheDocument();
+    await user.click(screen.getByText('kex_trace_key'));
+
+    await waitFor(() => expect(screen.queryByText('a3f9')).toBeNull());
+  });
+});
+
+describe('la table des outils', () => {
+  it('replie une description longue sur sa première phrase', async () => {
+    mockApi({
+      catalog: {
+        ...CATALOG,
+        tools: [{
+          ...CATALOG.tools[0],
+          description: 'Liste les topics. Puis une longue explication écrite pour le modèle.',
+        }],
+      },
+    });
+    renderAt();
+
+    expect(await screen.findByText('Liste les topics.')).toBeInTheDocument();
+    expect(screen.queryByText(/longue explication/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Tout lire' })).toBeInTheDocument();
+  });
+
+  it('ne propose pas de déplier une description qui tient en une phrase', async () => {
+    renderAt();
+
+    await screen.findByText('kex_list_topics');
+    expect(screen.queryByRole('button', { name: 'Tout lire' })).toBeNull();
+  });
+
+  it('filtre la table sur le nom', async () => {
+    // Quinze outils : la table cesse d'être balayable sans filtre.
+    const user = userEvent.setup();
+    renderAt();
+    await screen.findByText('kex_list_topics');
+
+    await user.type(screen.getByLabelText('Filtrer les outils'), 'produce');
+
+    await waitFor(() => expect(screen.queryByText('kex_list_topics')).toBeNull());
+    expect(screen.getByText('kex_produce_message')).toBeInTheDocument();
   });
 });

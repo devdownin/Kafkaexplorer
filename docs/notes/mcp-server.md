@@ -450,6 +450,18 @@ this application.
 window or a window it never reached, and a screen that shows only the empty list lets the reader
 pick the reassuring one.
 
+**Three smaller things the screen owed its reader.** A call's `redactedParams`, `correlationId`
+and `stopReason` existed only in the CSV — an operator had to export a file to find out why a call
+went wrong, which is the last gesture anyone makes, not the first; the row expands now. The tool
+descriptions are written for a model, which reads all twenty lines of them, and the table stacked
+fifteen of those: the row carries the first sentence and the rest unfolds, cut on the sentence
+rather than a character count because a truncation mid-word says "there is more" without teaching
+anything. And a denial code is KIP-1318's, which is its merit for an agent trained on that surface
+and its failure for a person: `explainDenial` gives the cause in a sentence and **names the setting
+that produced it**, which is the only action the card invites. It returns nothing on a code it does
+not know — a code this screen has never seen comes from a server newer than itself, and inventing a
+meaning would be worse than letting the number speak.
+
 ### What phase 5 deliberately leaves
 
 **The taint guard is deferred, and its reason is the mirror of every other deferral here.** It

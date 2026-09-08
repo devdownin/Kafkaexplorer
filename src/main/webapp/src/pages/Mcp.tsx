@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import type { FC } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
@@ -17,7 +17,8 @@ import type {
 import {
   DEFAULT_WINDOW, EMPTY_FILTERS, WINDOWS, callsToCsv, coverageLabel, deniedShare, filtersFromParams,
   filtersToParams, formatBytes, formatDuration, formatNumber, historyNotice, isWindow,
-  outcomeLabel, overrideBanner, replaySummary, sortTools, windowCaveat,
+  explainDenial, filterTools, firstSentence, hasMoreThanFirstSentence, outcomeLabel,
+  overrideBanner, replaySummary, sortTools, windowCaveat,
 } from './mcp/mcpConsoleLogic';
 import type { FeedFilters, McpWindow } from './mcp/mcpConsoleLogic';
 
@@ -520,6 +521,10 @@ const CatalogTab: FC<{
     [overrides],
   );
   const [trying, setTrying] = useState<McpToolRow | null>(null);
+  const [query, setQuery] = useState('');
+  /* Replié par défaut : ces descriptions sont écrites pour un modèle, qui les lit en entier.
+     L'opérateur balaie d'abord des noms et des états. */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void axios
@@ -533,6 +538,17 @@ const CatalogTab: FC<{
   return (
     <div className="space-y-4">
       <WindowNotice view={catalog} />
+
+      <Field label="Filtrer les outils" className="w-72">
+        {(field) => (
+          <Input
+            {...field}
+            value={query}
+            placeholder="nom, catégorie ou description"
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        )}
+      </Field>
 
       <Card className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -548,15 +564,31 @@ const CatalogTab: FC<{
             </tr>
           </thead>
           <tbody>
-            {sortTools(catalog.tools).map((tool) => (
+            {sortTools(filterTools(catalog.tools, query)).map((tool) => (
               <tr key={tool.name} className="border-t border-outline-variant align-top">
                 <td className="p-3">
                   <div className="font-mono text-xs">{tool.name}</div>
                   {/* La description de l'agent, à l'identique : la question de l'opérateur est
-                      « qu'a-t-on dit au modèle ? », et une reformulation répond à une autre. */}
+                      « qu'a-t-on dit au modèle ? », et une reformulation répond à une autre. Mais
+                      elle est repliée sur sa première phrase — vingt lignes par outil, quinze
+                      outils, et la table cesse d'être lisible. */}
                   <p className="mt-1 max-w-xl whitespace-pre-line text-xs text-on-surface-variant">
-                    {tool.description}
+                    {expanded.has(tool.name) ? tool.description : firstSentence(tool.description)}
                   </p>
+                  {hasMoreThanFirstSentence(tool.description) ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        setExpanded((current) => {
+                          const next = new Set(current);
+                          if (!next.delete(tool.name)) next.add(tool.name);
+                          return next;
+                        })}
+                    >
+                      {expanded.has(tool.name) ? 'Replier' : 'Tout lire'}
+                    </Button>
+                  ) : null}
                 </td>
                 <td className="p-3 text-xs">{tool.category}</td>
                 <td className="p-3">
@@ -804,6 +836,60 @@ const ReplayPanel: FC = () => {
   );
 };
 
+/**
+ * Ce qu'une ligne du flux ne montre pas et qu'on vient y chercher.
+ *
+ * `redactedParams`, `correlationId` et `stopReason` n'existaient que dans le CSV : il fallait
+ * exporter un fichier pour savoir pourquoi un appel s'était mal passé, ce qui est le geste qu'on
+ * fait en dernier et pas en premier. Ils sont ici, là où on regarde.
+ *
+ * Les arguments sont ceux **déjà rédigés** par la garde — c'est ce que le serveur a gardé, et
+ * l'écran ne peut pas montrer autre chose : le secret n'est jamais entré dans l'anneau. Le jeton
+ * d'approbation, lui, en a été retiré et non masqué, donc son absence est normale.
+ */
+const CallDetail: FC<{ call: McpCallView }> = ({ call }) => {
+  const why = explainDenial(call.jsonRpcErrorCode, call.deniedByGuard);
+  const params = Object.entries(call.redactedParams ?? {});
+  return (
+    <div className="grid gap-3 text-xs sm:grid-cols-2">
+      <div className="space-y-1">
+        <Fact label="Corrélation" value={call.correlationId} />
+        <Fact label="Client" value={call.clientInfo ?? 'non déclaré'} />
+        <Fact
+          label="Arrêt"
+          value={call.stopReason ?? "cet outil ne porte pas d'enveloppe"}
+          hint={
+            call.stopReason && call.stopReason !== 'EXHAUSTED'
+              ? "un résultat vide veut dire « pas trouvé dans ce qui a été lu », pas « n'existe pas »"
+              : undefined
+          }
+        />
+        <Fact label="Sortie" value={call.outputBytes.measured
+          ? formatBytes(call.outputBytes.value ?? 0)
+          : (call.outputBytes.reason ?? 'non mesurée')} />
+      </div>
+      <div className="space-y-1">
+        <div className="text-xs uppercase tracking-wide text-on-surface-variant">
+          Arguments (rédigés par la garde)
+        </div>
+        {params.length === 0 ? (
+          <p className="text-on-surface-variant">aucun argument</p>
+        ) : (
+          <pre className="max-h-40 overflow-auto rounded bg-surface-container-high p-2 text-[11px]">
+            {params.map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}
+          </pre>
+        )}
+        {why ? (
+          <p className="text-warning">
+            {call.jsonRpcErrorCode} — {why.sentence}
+            {why.setting ? ` (${why.setting})` : ''}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
 interface SupervisionProps {
   stats: McpStatsView | null;
   calls: McpCallView[];
@@ -826,6 +912,8 @@ const SupervisionTab: FC<SupervisionProps> = ({
     () => new Set(overrides.filter((o) => o.kind === 'QUARANTINE').map((o) => o.target ?? '')),
     [overrides],
   );
+  /* L'appel ouvert. Un seul à la fois : la question est « pourquoi celui-là », pas « comparons ». */
+  const [openCall, setOpenCall] = useState<string | null>(null);
   if (!stats) return null;
   const share = deniedShare(stats);
 
@@ -919,12 +1007,27 @@ const SupervisionTab: FC<SupervisionProps> = ({
         <Card className="p-4">
           <h3 className="mb-2 text-sm font-medium">Refusé, et pourquoi</h3>
           <ul className="space-y-1 text-xs">
-            {stats.denialsByCode.map((denial) => (
-              <li key={`${denial.jsonRpcErrorCode}-${denial.guard}`}>
-                <span className="font-mono">{denial.jsonRpcErrorCode}</span> · garde{' '}
-                <span className="font-mono">{denial.guard}</span> — {formatNumber(denial.count)} fois
-              </li>
-            ))}
+            {stats.denialsByCode.map((denial) => {
+              // Le code vient de KIP-1318 : un agent entraîné dessus le lit, un opérateur non.
+              const why = explainDenial(denial.jsonRpcErrorCode, denial.guard);
+              return (
+                <li key={`${denial.jsonRpcErrorCode}-${denial.guard}`}>
+                  <span className="font-mono">{denial.jsonRpcErrorCode}</span> · garde{' '}
+                  <span className="font-mono">{denial.guard}</span> —{' '}
+                  {formatNumber(denial.count)} fois
+                  {why ? (
+                    <>
+                      <div className="text-on-surface-variant">{why.sentence}</div>
+                      {why.setting ? (
+                        <div className="text-on-surface-variant">
+                          se règle dans <span className="font-mono">{why.setting}</span>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </Card>
       ) : null}
@@ -999,27 +1102,42 @@ const SupervisionTab: FC<SupervisionProps> = ({
             <tbody>
               {calls.map((call) => {
                 const coverage = coverageLabel(call);
+                const open = openCall === call.correlationId;
                 return (
-                  <tr key={call.correlationId} className="border-t border-outline-variant">
-                    <td className="p-2 font-mono">{new Date(call.startedAt).toLocaleTimeString('fr-FR')}</td>
-                    <td className="p-2">{call.origin.toLowerCase()}</td>
-                    <td className="p-2 font-mono">{call.identity ?? '—'}</td>
-                    <td className="p-2 font-mono">{call.tool}</td>
-                    <td className="p-2">
-                      <Badge tone={call.outcome === 'OK' ? 'success' : call.outcome === 'DENIED' ? 'warning' : 'error'}>
-                        {outcomeLabel(call)}
-                      </Badge>
-                    </td>
-                    <td className="p-2 text-right">{formatDuration(call.durationMs)}</td>
-                    <td className="p-2 text-right">
-                      <MeasuredValue value={call.recordsScanned} />
-                    </td>
-                    <td className="p-2 text-center">
-                      <Tooltip content={coverage.title}>
-                        <span aria-label={coverage.title}>{coverage.icon}</span>
-                      </Tooltip>
-                    </td>
-                  </tr>
+                  <Fragment key={call.correlationId}>
+                    <tr
+                      className="cursor-pointer border-t border-outline-variant hover:bg-surface-container"
+                      onClick={() => setOpenCall(open ? null : call.correlationId)}
+                    >
+                      <td className="p-2 font-mono">
+                        {new Date(call.startedAt).toLocaleTimeString('fr-FR')}
+                      </td>
+                      <td className="p-2">{call.origin.toLowerCase()}</td>
+                      <td className="p-2 font-mono">{call.identity ?? '—'}</td>
+                      <td className="p-2 font-mono">{call.tool}</td>
+                      <td className="p-2">
+                        <Badge tone={call.outcome === 'OK' ? 'success' : call.outcome === 'DENIED' ? 'warning' : 'error'}>
+                          {outcomeLabel(call)}
+                        </Badge>
+                      </td>
+                      <td className="p-2 text-right">{formatDuration(call.durationMs)}</td>
+                      <td className="p-2 text-right">
+                        <MeasuredValue value={call.recordsScanned} />
+                      </td>
+                      <td className="p-2 text-center">
+                        <Tooltip content={coverage.title}>
+                          <span aria-label={coverage.title}>{coverage.icon}</span>
+                        </Tooltip>
+                      </td>
+                    </tr>
+                    {open ? (
+                      <tr className="bg-surface-container-low">
+                        <td colSpan={8} className="p-3">
+                          <CallDetail call={call} />
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 );
               })}
             </tbody>
