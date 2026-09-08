@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.mcp.observability;
 
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolFilter;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,11 +40,15 @@ public class McpToolSpecificationPostProcessor implements BeanPostProcessor {
      * meter registry — into that phase, where instantiating them defeats their own configuration.
      */
     private final ObjectProvider<McpToolInterceptor> interceptor;
+    private final ObjectProvider<McpToolFilter> filter;
 
     private int wrapped;
+    private java.util.List<String> removed = List.of();
 
-    public McpToolSpecificationPostProcessor(ObjectProvider<McpToolInterceptor> interceptor) {
+    public McpToolSpecificationPostProcessor(ObjectProvider<McpToolInterceptor> interceptor,
+                                             ObjectProvider<McpToolFilter> filter) {
         this.interceptor = interceptor;
+        this.filter = filter;
     }
 
     @Override
@@ -55,18 +60,36 @@ public class McpToolSpecificationPostProcessor implements BeanPostProcessor {
             return bean;
         }
         McpToolInterceptor wrapper = interceptor.getObject();
-        List<SyncToolSpecification> instrumented = list.stream()
-                .map(SyncToolSpecification.class::cast)
-                .map(wrapper::wrap)
+        McpToolFilter allowed = filter.getObject();
+
+        List<SyncToolSpecification> all = list.stream().map(SyncToolSpecification.class::cast).toList();
+        // Removed rather than left in and refused: a denied tool that appears in tools/list is
+        // described to the model, chosen by it, and refused — a round trip spent on a surface that
+        // advertises what it will not do. Absence is the same guarantee readonly already gives.
+        List<SyncToolSpecification> permitted = all.stream()
+                .filter(spec -> allowed.permits(spec.tool().name()))
                 .toList();
+        removed = all.stream().map(spec -> spec.tool().name())
+                .filter(name -> !allowed.permits(name)).toList();
+
+        List<SyncToolSpecification> instrumented = permitted.stream().map(wrapper::wrap).toList();
         wrapped += instrumented.size();
         log.info("MCP: {} tool(s) instrumented — calls recorded, refusals carry their JSON-RPC "
                 + "code, output ceiling enforced", instrumented.size());
+        if (!removed.isEmpty()) {
+            log.info("MCP: {} tool(s) withheld by explorer.mcp.tools.allowed / .denied and absent "
+                    + "from tools/list: {}", removed.size(), removed);
+        }
         return instrumented;
     }
 
     /** How many tools were actually wrapped. Zero is what the startup check reports on. */
     public int wrappedCount() {
         return wrapped;
+    }
+
+    /** The tools the allow/deny lists kept out of {@code tools/list}, by name. */
+    public List<String> removedTools() {
+        return removed;
     }
 }

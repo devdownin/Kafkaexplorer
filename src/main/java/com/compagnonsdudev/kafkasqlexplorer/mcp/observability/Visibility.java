@@ -31,8 +31,8 @@ public record Visibility(State state, String reason) {
      */
     public static Visibility exposedWithApproval() {
         return new Visibility(State.EXPOSED_WITH_APPROVAL,
-                "declared in explorer.mcp.approval-required-tools; the token check is not "
-                        + "implemented yet, so nothing enforces it");
+                "declared in explorer.mcp.approval-required-tools: every call needs a token an "
+                        + "operator mints from this console, good for one call of this tool");
     }
 
     public static Visibility hiddenBy(String reason) {

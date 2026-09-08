@@ -36,7 +36,8 @@ class McpConsoleControllerTest {
     }
 
     private final McpConsoleController controller =
-            new McpConsoleController(absent(), absent(), new MockEnvironment());
+            new McpConsoleController(absent(), absent(), absent(), absent(), absent(),
+                    new MockEnvironment());
 
     @Test
     void with_the_server_disabled_the_status_says_so_rather_than_failing() {
@@ -107,7 +108,8 @@ class McpConsoleControllerTest {
     void turned_on_with_the_server_off_it_explains_instead_of_pretending() {
         MockEnvironment env = new MockEnvironment();
         env.setProperty("explorer.mcp.console.allow-try-it", "true");
-        var response = new McpConsoleController(absent(), absent(), env).tryTool("kex_list_topics", Map.of());
+        var response = new McpConsoleController(absent(), absent(), absent(), absent(), absent(), env)
+                .tryTool("kex_list_topics", Map.of());
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         assertThat(response.getBody()).isNotNull();
@@ -116,13 +118,43 @@ class McpConsoleControllerTest {
     }
 
     @Test
-    void replay_says_the_history_does_not_exist_yet_rather_than_404ing() {
+    void replay_with_the_server_off_says_nothing_was_appended_rather_than_404ing() {
         // The console offers the button the moment the ring evicts anything, so whoever presses it
-        // must learn that nothing is persisted — not go hunting for a broken route.
-        var response = controller.replay();
+        // must learn why there is no history — not go hunting for a broken route.
+        var response = controller.replay(null, null);
 
-        assertThat(response.getStatusCode().value()).isEqualTo(501);
-        assertThat(response.getBody()).contains("audit-topic");
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().calls()).isEmpty();
+        assertThat(response.getBody().topicExists()).isFalse();
+        assertThat(response.getBody().warnings()).anySatisfy(
+                warning -> assertThat(warning).contains("explorer.mcp.enabled=false"));
+    }
+
+    @Test
+    void a_replay_window_that_ends_before_it_starts_is_refused_rather_than_answered_empty() {
+        // An empty result for an impossible window would read as "nothing happened then".
+        var response = controller.replay("2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z");
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().warnings()).anySatisfy(
+                warning -> assertThat(warning).contains("must be before"));
+    }
+
+    @Test
+    void a_switch_with_the_server_off_says_there_is_nothing_to_switch() {
+        var response = controller.toggleReadonly(new McpSwitchRequest(true, "alice", "incident"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(200);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().applied()).isFalse();
+        assertThat(response.getBody().message()).contains("explorer.mcp.enabled=false");
+    }
+
+    @Test
+    void there_are_no_overrides_to_show_when_the_module_is_absent() {
+        assertThat(controller.overrides()).isEmpty();
     }
 
     @Test

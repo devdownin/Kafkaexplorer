@@ -3,6 +3,7 @@
 package com.compagnonsdudev.kafkasqlexplorer.mcp.observability;
 
 import com.compagnonsdudev.kafkasqlexplorer.mcp.McpProperties;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolFilter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.Coverage;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.ToolResult;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.MutatingMcpTools;
@@ -15,6 +16,10 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class McpCatalogServiceTest {
+
+    private static McpCatalogService catalogOf(McpProperties properties) {
+        return new McpCatalogService(properties, new McpToolFilter(properties));
+    }
 
     /** A stand-in read toolset — the introspection under test is reflective, so any bean will do. */
     static class FakeReadTools implements ReadOnlyMcpTools {
@@ -40,7 +45,7 @@ class McpCatalogServiceTest {
     void a_tool_withheld_by_read_only_mode_stays_in_the_catalogue_with_its_reason() {
         // The row IS the answer to "why does my agent not see kex_produce_message?". Omitting it
         // leaves an operator reading YAML and guessing which of four settings did it.
-        McpCatalogService catalog = new McpCatalogService(new McpProperties());
+        McpCatalogService catalog = catalogOf(new McpProperties());
         FakeReadTools read = new FakeReadTools();
         FakeWriteTools write = new FakeWriteTools();
 
@@ -63,7 +68,7 @@ class McpCatalogServiceTest {
     void the_write_badge_lights_only_when_a_mutating_tool_is_actually_registered() {
         McpProperties properties = new McpProperties();
         properties.setReadonly(false);
-        McpCatalogService catalog = new McpCatalogService(properties);
+        McpCatalogService catalog = new McpCatalogService(properties, new McpToolFilter(properties));
         FakeReadTools read = new FakeReadTools();
         FakeWriteTools write = new FakeWriteTools();
 
@@ -81,7 +86,7 @@ class McpCatalogServiceTest {
 
     @Test
     void the_description_is_the_agents_own_never_a_paraphrase() {
-        McpCatalogService catalog = new McpCatalogService(new McpProperties());
+        McpCatalogService catalog = catalogOf(new McpProperties());
         FakeReadTools read = new FakeReadTools();
 
         catalog.publish(List.of(read), List.of(read));
@@ -94,7 +99,7 @@ class McpCatalogServiceTest {
     void the_ceilings_shown_are_the_ones_the_guard_applies() {
         McpProperties properties = new McpProperties();
         properties.setHardMaxRows(250);
-        McpCatalogService catalog = new McpCatalogService(properties);
+        McpCatalogService catalog = new McpCatalogService(properties, new McpToolFilter(properties));
         FakeReadTools read = new FakeReadTools();
 
         catalog.publish(List.of(read), List.of(read));

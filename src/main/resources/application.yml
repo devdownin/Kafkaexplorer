@@ -265,11 +265,26 @@ explorer:
     readonly: true
 
     tools:
+      # Enforced by absence, not by refusal: a tool these lists keep out is not in tools/list at
+      # all, so it is never described to the model, chosen by it, and refused after a round trip.
+      # The deny-list always wins — a deny an allow-list can override is decoration, and the two
+      # are written by different people at different times.
       allowed: "*"
       denied: ""
       # Expose the KIP-1318 tool names (consume_messages, describe_topic, ...) as aliases, for
       # agents trained on that surface. Not implemented yet — see docs/notes/mcp-server.md.
       kip1318-aliases: false
+
+    # How many calls one identity may make. An operator clicks; a model loops — and a tool that
+    # answers "not found in what was scanned" invites another pass, so a model with a budget and no
+    # rate limit spends it on the cluster the UI shares. Per server instance, not per fleet: a
+    # distributed limiter needs a store this application does not have, and one that silently
+    # allowed N times the rate would be worse than none. Zero turns it off.
+    rate-limit:
+      calls-per-minute: 120
+      # An agent's opening moves are a burst by nature — list, describe, infer — and a limiter with
+      # no burst turns that ordinary sequence into a refusal.
+      burst: 20
 
     # Resource scope, checked before any Kafka call rather than after: a scope check that runs
     # after the read has already disclosed what it was refusing. "*" places no restriction; a list
@@ -277,6 +292,9 @@ explorer:
     allowed-topic-prefixes: "*"
     allowed-group-prefixes: "*"
 
+    # Every call of a tool named here needs a token an operator mints from the MCP console, good
+    # for one call of that one tool within fifteen minutes. Any tool may be listed, not only the
+    # mutating ones: a read is the sensitive gesture on a cluster whose payloads are regulated.
     approval-required-tools: "kex_produce_message,kex_set_cluster_target,kex_create_metric"
 
     # Ceilings a tool cannot be argued out of. A caller asking for more is clamped and *told* —
@@ -292,8 +310,12 @@ explorer:
     default-budget-ms: 20000
     hard-max-budget-ms: 60000
 
-    # Append-only topic for the call trail. Not written yet (phase 5); until it is, the console
-    # reports that nothing is being persisted rather than implying a history that does not exist.
+    # Append-only topic for the call trail: every call and every refusal, keyed by the caller's
+    # identity. The console's live feed is a bounded ring and answers "what is happening"; this
+    # answers "what happened", and /api/mcp/calls/replay reads it back. A failed append never fails
+    # the call — it increments explorer_mcp_audit_write_errors_total, and that gauge moving is the
+    # signal that the trail has holes. Configure the topic append-only for this application's
+    # identity; internal.audit.history stays dedicated to the functional audit reports.
     audit-topic: internal.mcp.audit
 
     console:
@@ -302,6 +324,12 @@ explorer:
       # is — and the console says "earlier history: replay from ..." rather than showing a list
       # that is short for reasons it does not mention.
       ring-buffer-size: 2000
+      # Whether an operator may throw the kill switch from the console: lock the surface
+      # read-only, switch one tool off, quarantine an identity, mint an approval. Every switch
+      # narrows and none of them expires — an expiry would restore a wider surface at an arbitrary
+      # moment, quietly — so each records who set it and why, and the console keeps a banner up
+      # naming every live one with its age. That banner is the pressure that gets a derogation
+      # lifted once its incident is over.
       allow-runtime-toggle: true
       # Whether the console may RUN a tool. Off, and that is the posture rather than caution:
       # "Try it" executes the real tool through the real guard over POST /api/mcp/try/{tool}, an

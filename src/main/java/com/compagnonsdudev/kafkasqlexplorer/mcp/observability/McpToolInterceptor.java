@@ -8,6 +8,9 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpErrorCode;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.Measured;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpGuard;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolException;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpApprovalStore;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRateLimiter;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRuntimeSwitches;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -61,10 +64,22 @@ public class McpToolInterceptor {
     /** What an unauthenticated local caller is called. stdio has no identity to read. */
     static final String LOCAL_IDENTITY = "local (stdio)";
 
+    /**
+     * The argument an approval token travels in.
+     *
+     * <p>Underscore-prefixed so it cannot collide with a tool parameter, and stripped before the
+     * call is recorded: a token is a bearer credential, and one sitting in the ring buffer or on
+     * the audit topic outlives the fifteen minutes it was meant to live.
+     */
+    public static final String APPROVAL_ARGUMENT = "_approvalToken";
+
     private final McpProperties properties;
     private final ToolGuard guard;
     private final DlpScrubber dlp;
     private final McpCallRecorder recorder;
+    private final McpRuntimeSwitches switches;
+    private final McpRateLimiter rateLimiter;
+    private final McpApprovalStore approvals;
 
     /**
      * Its own mapper, deliberately: this one only measures and reports, so it must not inherit
@@ -73,11 +88,15 @@ public class McpToolInterceptor {
     private final ObjectMapper sizer = new ObjectMapper();
 
     public McpToolInterceptor(McpProperties properties, ToolGuard guard, DlpScrubber dlp,
-                              McpCallRecorder recorder) {
+                              McpCallRecorder recorder, McpRuntimeSwitches switches,
+                              McpRateLimiter rateLimiter, McpApprovalStore approvals) {
         this.properties = properties;
         this.guard = guard;
         this.dlp = dlp;
         this.recorder = recorder;
+        this.switches = switches;
+        this.rateLimiter = rateLimiter;
+        this.approvals = approvals;
     }
 
     /** The same specification, with its call handler wrapped. */
@@ -99,12 +118,22 @@ public class McpToolInterceptor {
         String tool = request.name();
         String identity = identityOf(exchange);
         String clientInfo = clientInfoOf(exchange);
-        Map<String, Object> redactedParams = dlp.scrubParams(request.arguments());
+        Map<String, Object> arguments = request.arguments() == null ? Map.of() : request.arguments();
+        Map<String, Object> redactedParams = dlp.scrubParams(withoutApprovalToken(arguments));
 
         try {
-            // Quarantine is checked here rather than in each tool: it is about the caller, and the
-            // caller is only visible at this layer. A tool cannot see who invoked it.
-            guard.checkNotQuarantined(identity);
+            // KIP-1318's pipeline, in KIP-1318's order and fail-closed. The steps that decide
+            // whether a tool exists at all — the deny-list, the allow-list, read-only — ran at
+            // registration: a tool that is not in tools/list cannot be called, which is a stronger
+            // guarantee than a refusal and the reason those are not repeated here.
+            //
+            // These four are about the caller and the moment, which only this layer can see: a
+            // tool cannot know who invoked it, how often, or what an operator switched off a
+            // second ago.
+            checkNotQuarantined(identity);
+            checkNotDisabled(tool);
+            approvals.spend(tool, approvalToken(arguments));
+            rateLimiter.check(identity);
 
             CallToolResult result = delegate.apply(exchange, request);
             Measured<Long> outputBytes = sizeOf(result);
@@ -147,6 +176,56 @@ public class McpToolInterceptor {
             log.warn("MCP tool {} failed for correlationId={}", tool, correlationId, e);
             throw e;
         }
+    }
+
+    /**
+     * The quarantine, checked against both the runtime switch and the guard's own set.
+     *
+     * <p>Two sources because they are set from two places — the console's kill switch and
+     * {@code ToolGuard.quarantine} — and an identity quarantined through either must be stopped.
+     * The switch's message names the operator and the reason, which is what an agent's owner needs
+     * in order to ask for it to be lifted.
+     */
+    private void checkNotQuarantined(String identity) {
+        switches.quarantineOf(identity).ifPresent(override -> {
+            throw new McpToolException(McpErrorCode.QUARANTINED, McpGuard.QUARANTINE,
+                    ("%s was quarantined by %s: %s. An operator lifts it from the MCP console.")
+                            .formatted(identity, override.actor(), override.reason()));
+        });
+        guard.checkNotQuarantined(identity);
+    }
+
+    /**
+     * A tool an operator switched off since the client last listed the tools.
+     *
+     * <p>Refused here rather than removed from {@code tools/list}, and the difference is not
+     * inconsistency with the deny-list: a client caches the tool list from its {@code initialize},
+     * so a tool that vanishes mid-session is one the model keeps calling and cannot be told about.
+     * A refusal naming the operator and the reason is the only form this can take that the caller
+     * can actually read. {@code -32044} because an operator's decision is what a policy denial is.
+     */
+    private void checkNotDisabled(String tool) {
+        switches.toolDisabled(tool).ifPresent(override -> {
+            throw new McpToolException(McpErrorCode.POLICY_DENIED, McpGuard.DENY_LIST,
+                    ("%s was switched off by %s: %s. It is still listed because your client cached "
+                            + "the tool list; an operator re-enables it from the MCP console.")
+                            .formatted(tool, override.actor(), override.reason()));
+        });
+    }
+
+    private static String approvalToken(Map<String, Object> arguments) {
+        Object token = arguments.get(APPROVAL_ARGUMENT);
+        return token == null ? null : String.valueOf(token);
+    }
+
+    /** The arguments as they get recorded — the bearer credential removed, not masked. */
+    private static Map<String, Object> withoutApprovalToken(Map<String, Object> arguments) {
+        if (!arguments.containsKey(APPROVAL_ARGUMENT)) {
+            return arguments;
+        }
+        Map<String, Object> copy = new java.util.LinkedHashMap<>(arguments);
+        copy.remove(APPROVAL_ARGUMENT);
+        return copy;
     }
 
     /**

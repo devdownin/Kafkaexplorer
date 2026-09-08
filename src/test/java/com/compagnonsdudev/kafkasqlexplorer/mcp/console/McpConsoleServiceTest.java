@@ -3,6 +3,7 @@
 package com.compagnonsdudev.kafkasqlexplorer.mcp.console;
 
 import com.compagnonsdudev.kafkasqlexplorer.mcp.McpProperties;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolFilter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.Coverage;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.Measured;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.StopReason;
@@ -56,7 +57,7 @@ class McpConsoleServiceTest {
     void setUp() {
         properties = new McpProperties();
         properties.setEnabled(true);
-        catalog = new McpCatalogService(properties);
+        catalog = new McpCatalogService(properties, new McpToolFilter(properties));
         ReadTools read = new ReadTools();
         catalog.publish(List.of(read, new WriteTools()), List.of(read));
         recorder = new McpCallRecorder(properties, null, new SimpleMeterRegistry());

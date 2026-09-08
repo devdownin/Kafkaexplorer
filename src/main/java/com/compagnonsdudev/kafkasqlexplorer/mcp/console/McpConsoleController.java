@@ -2,6 +2,9 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.mcp.console;
 
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpApprovalStore;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRuntimeSwitches;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolException;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCallFilter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCallRecord;
 import org.springframework.beans.factory.ObjectProvider;
@@ -45,13 +48,22 @@ public class McpConsoleController {
      */
     private final ObjectProvider<McpConsoleService> console;
     private final ObjectProvider<McpToolInvoker> invoker;
+    private final ObjectProvider<McpRuntimeSwitches> switches;
+    private final ObjectProvider<McpApprovalStore> approvals;
+    private final ObjectProvider<McpAuditReplayService> replay;
     private final org.springframework.core.env.Environment environment;
 
     public McpConsoleController(ObjectProvider<McpConsoleService> console,
                                 ObjectProvider<McpToolInvoker> invoker,
+                                ObjectProvider<McpRuntimeSwitches> switches,
+                                ObjectProvider<McpApprovalStore> approvals,
+                                ObjectProvider<McpAuditReplayService> replay,
                                 org.springframework.core.env.Environment environment) {
         this.console = console;
         this.invoker = invoker;
+        this.switches = switches;
+        this.approvals = approvals;
+        this.replay = replay;
         this.environment = environment;
     }
 
@@ -146,19 +158,173 @@ public class McpConsoleController {
     }
 
     /**
-     * Replay from the append-only audit topic — phase 5.
+     * Replay from the append-only audit topic.
      *
-     * <p>Answered with 501 and a sentence rather than left unmapped. The console offers this button
-     * the moment the live ring has evicted anything, so an operator who presses it has to learn
-     * that the history is not kept yet — a 404 would read as a broken page and send them looking
-     * for a bug instead of at the setting.
+     * <p>The live feed is a bounded ring and answers "what is happening"; this answers "what
+     * happened". The window defaults to the last 24 hours, and the response says whether the scan
+     * actually reached its start — an empty window the scan never reached is the opposite
+     * conclusion from an empty window it did.
      */
     @GetMapping("/calls/replay")
-    public ResponseEntity<String> replay() {
-        return ResponseEntity.status(501).body(
-                "Replay is not implemented yet (phase 5). Nothing is written to "
-                        + "explorer.mcp.audit-topic, so there is no history to replay: what the "
-                        + "live feed holds is all there is.");
+    public ResponseEntity<McpAuditReplayService.Replay> replay(
+            @RequestParam(value = "from", required = false) String from,
+            @RequestParam(value = "to", required = false) String to) {
+
+        // The window is checked first, before whether this process has a trail to read: it is a
+        // fault in the request either way, and answering "nothing was appended" to an impossible
+        // window would let a caller read the wrong reason for the empty list.
+        Instant end = parseInstant(to, Instant.now());
+        Instant start = parseInstant(from, end.minus(DEFAULT_WINDOW));
+        if (!start.isBefore(end)) {
+            return ResponseEntity.badRequest().body(new McpAuditReplayService.Replay(
+                    List.of(), 0, false, true,
+                    List.of("`from` must be before `to`; nothing can have happened in a window that "
+                            + "ends before it starts.")));
+        }
+
+        McpAuditReplayService service = replay.getIfAvailable();
+        if (service == null) {
+            return ResponseEntity.ok(new McpAuditReplayService.Replay(List.of(), 0, false, false,
+                    List.of("The MCP server is disabled (explorer.mcp.enabled=false), so nothing "
+                            + "has been appended to the audit topic by this process.")));
+        }
+        return ResponseEntity.ok(service.replay(start, end));
+    }
+
+    /**
+     * The kill switch, and the one direction it turns.
+     *
+     * <p>Every switch here narrows. Read-only can be turned on when the configuration has it off,
+     * never off when the configuration has it on: the write surface is decided at bean
+     * registration, so a toggle could not open it, and a control that appears to and does not is
+     * worse than none. The console sends who is throwing the switch and why — as claimed, not as
+     * verified, since this application authenticates nobody — and the banner names both, which is
+     * the pressure that gets a derogation lifted once its incident is over.
+     */
+    @PostMapping("/toggle/readonly")
+    public ResponseEntity<McpSwitchResult> toggleReadonly(@RequestBody McpSwitchRequest request) {
+        return withSwitches(runtime -> {
+            if (request.enable()) {
+                if (runtime.readonlyIsConfigured()) {
+                    return McpSwitchResult.noop("this deployment is already read-only by "
+                            + "configuration (explorer.mcp.readonly=true); there is nothing to lock");
+                }
+                McpRuntimeSwitches.Override lock =
+                        runtime.lockReadonly(request.actorOrAnonymous(), request.reasonOrNone());
+                return McpSwitchResult.applied("the MCP surface is read-only until this is lifted",
+                        lock);
+            }
+            boolean lifted = runtime.unlockReadonly();
+            return lifted
+                    ? McpSwitchResult.applied("the read-only lock is lifted; the configured posture "
+                            + "applies again", null)
+                    : McpSwitchResult.noop(runtime.readonlyIsConfigured()
+                            ? "the surface stays read-only: that is the configured posture "
+                                    + "(explorer.mcp.readonly=true), which no runtime switch can open"
+                            : "no read-only lock was in force");
+        });
+    }
+
+    @PostMapping("/toggle/tool/{name}")
+    public ResponseEntity<McpSwitchResult> toggleTool(@PathVariable("name") String name,
+                                                      @RequestBody McpSwitchRequest request) {
+        return withSwitches(runtime -> {
+            if (request.enable()) {
+                return runtime.enableTool(name)
+                        ? McpSwitchResult.applied(name + " is callable again", null)
+                        : McpSwitchResult.noop(name + " was not switched off");
+            }
+            McpRuntimeSwitches.Override off =
+                    runtime.disableTool(name, request.actorOrAnonymous(), request.reasonOrNone());
+            // Still listed, deliberately: a client caches tools/list from its initialize, so a tool
+            // that vanished mid-session is one the model keeps calling with nothing to read.
+            return McpSwitchResult.applied(name + " now refuses every call with -32044. It stays in "
+                    + "tools/list, because a client caches that list and a tool that vanished "
+                    + "mid-session could not tell the model why.", off);
+        });
+    }
+
+    @PostMapping("/quarantine/{identity}")
+    public ResponseEntity<McpSwitchResult> quarantine(@PathVariable("identity") String identity,
+                                                      @RequestBody McpSwitchRequest request) {
+        return withSwitches(runtime -> {
+            if (request.enable()) {
+                McpRuntimeSwitches.Override held =
+                        runtime.quarantine(identity, request.actorOrAnonymous(), request.reasonOrNone());
+                return McpSwitchResult.applied(identity + " is refused with -32047 on every call", held);
+            }
+            return runtime.releaseQuarantine(identity)
+                    ? McpSwitchResult.applied(identity + " may call again", null)
+                    : McpSwitchResult.noop(identity + " was not quarantined");
+        });
+    }
+
+    /**
+     * Mints an approval token for one call of one tool.
+     *
+     * <p>Behind {@code allow-runtime-toggle} like the switches, and for the same reason: on a
+     * deployment where this application is reachable by more people than may approve, an open
+     * minting endpoint is the approval control defeating itself.
+     */
+    @PostMapping("/approve/{tool}")
+    public ResponseEntity<McpApprovalResult> approve(@PathVariable("tool") String tool,
+                                                     @RequestBody McpSwitchRequest request) {
+        McpApprovalStore store = approvals.getIfAvailable();
+        McpRuntimeSwitches runtime = switches.getIfAvailable();
+        if (store == null || runtime == null) {
+            return ResponseEntity.ok(McpApprovalResult.refused(
+                    "the MCP server is disabled (explorer.mcp.enabled=false)"));
+        }
+        if (!runtime.togglesAllowed()) {
+            return ResponseEntity.status(403).body(McpApprovalResult.refused(
+                    "minting approvals from the console is off "
+                            + "(explorer.mcp.console.allow-runtime-toggle=false)"));
+        }
+        if (!store.requiresApproval(tool)) {
+            return ResponseEntity.ok(McpApprovalResult.refused(tool + " does not require approval: "
+                    + "it is not named in explorer.mcp.approval-required-tools, so a token would "
+                    + "grant nothing that is not already allowed"));
+        }
+        return ResponseEntity.ok(McpApprovalResult.minted(
+                store.mint(tool, request.actorOrAnonymous()), tool,
+                McpApprovalStore.TTL.toMinutes()));
+    }
+
+    /** Every live override, so the console can keep a banner up while any of them is in force. */
+    @GetMapping("/overrides")
+    public List<McpOverrideView> overrides() {
+        McpRuntimeSwitches runtime = switches.getIfAvailable();
+        return runtime == null ? List.of()
+                : runtime.active().stream().map(McpOverrideView::of).toList();
+    }
+
+    private ResponseEntity<McpSwitchResult> withSwitches(
+            java.util.function.Function<McpRuntimeSwitches, McpSwitchResult> action) {
+        McpRuntimeSwitches runtime = switches.getIfAvailable();
+        if (runtime == null) {
+            return ResponseEntity.ok(McpSwitchResult.noop(
+                    "the MCP server is disabled (explorer.mcp.enabled=false), so there is nothing "
+                            + "to switch"));
+        }
+        try {
+            return ResponseEntity.ok(action.apply(runtime));
+        } catch (McpToolException e) {
+            // The only thing thrown here is the toggles-are-off refusal, which is a 403 rather
+            // than a 500: the caller did nothing wrong, the deployment says no.
+            return ResponseEntity.status(403).body(McpSwitchResult.noop(e.getMessage()));
+        }
+    }
+
+    /** An ISO-8601 instant, or the fallback. A malformed one falls back rather than 400s. */
+    private static Instant parseInstant(String value, Instant fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Instant.parse(value.trim());
+        } catch (java.time.format.DateTimeParseException e) {
+            return fallback;
+        }
     }
 
     /** The window a console request covers, defaulting to 24 h and refusing nothing. */
