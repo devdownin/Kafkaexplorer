@@ -269,12 +269,38 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   | `docker-compose.yml` | base | Kafka 4.3 KRaft + explorer + demo seeder. The one everything layers onto. |
   | `compose/schema-registry.yml` | overlay | Schema Registry + the Avro seeder. Was `docker-compose-kafka4.yml`. |
   | `compose/ollama.yml` | overlay | A local Ollama model for Process Mining. Was `docker-compose-llm.yml`. |
+  | `compose/mcp.yml` | overlay | The MCP server on, its guards as variables, and a smoke probe. |
   | `compose/image.yml` | overlay | Run the published image instead of building. Was `docker-compose.release.yml`. |
   | `compose/limits.yml` | overlay | Opt-in `mem_limit` / `cpus`. |
   | `compose/ci.yml` | overlay | CI-only, layered on `image.yml`. |
   | `compose/dev.yml` | standalone | Hot reload: broker + `spring-boot:run` + Vite. |
   | `compose/build.yml` | standalone | One-shot toolchain (`run --rm`), not a stack. |
   | `compose/spectra-hub.yml` + `.gpu` / `.ingest` / `.limits` | standalone + overlays | The SpectraLLM pair, from published images. |
+
+  **`compose/mcp.yml` is the only overlay whose main switch is NOT a variable.** Every guard it
+  sets is interpolated — the scope prefixes, the deny-list, the rate limit, the DLP mode, the
+  console's "Try it" — at exactly the value `application.yml` ships, so a scenario moves one of
+  them from `.env` and the rest stay where the posture put them. `EXPLORER_MCP_ENABLED=true` is
+  written flat, because a file named `mcp.yml` that could be layered with MCP off would be a name
+  that is a suggestion. What the overlay does *not* add is authentication: `SPEC-MCP.md` puts
+  OAuth 2.1 in front of `/mcp` and this application authenticates nothing, so the surface it opens
+  is protected by `BIND_ADDR` and by nothing else.
+
+  **And it ships a probe, because a failed scenario has two causes with one symptom.** The
+  `mcp-probe` one-shot (profile `probe`, so `up -d` never starts it) does the full JSON-RPC
+  handshake, a `tools/list`, and one real `kex_list_topics` call, then asserts that the answer
+  carries a `coverage` envelope. It reads the JSON with `grep` and that is deliberate: it asserts
+  a field is *present*, never what it holds — what the values mean is the agent harness's question
+  (`SPECAGENT.md`), and a parser written in `sh` would be a second, worse one. The two failures it
+  names are the two that actually happen: the overlay was not layered, so `/mcp` is not bound at
+  all; and a deny-list emptied `tools/list`. It also unescapes once before reading, since a tool
+  answer is a JSON document carried inside a JSON string. **Its failures are what is tested**, by
+  `mcp-probe.test.sh` (nine cases, the `mcp-probe-logic` job, python3 and curl and nothing else),
+  because a diagnostic that reports OK against a server which answered nothing useful is worse
+  than none: it moves the blame for a failed scenario onto the model. Both shapes of a correct
+  answer are covered rather than one — streamable HTTP may reply with an SSE frame or with plain
+  JSON, the server chooses, and reading only one of them is a probe that works until the transport
+  is reconfigured.
 
   **The `kafka4` name was a lie worth removing.** Every stack here runs Kafka 4.3 in KRaft —
   `docker-compose.yml` included — so a file named for that advertised a choice that had stopped

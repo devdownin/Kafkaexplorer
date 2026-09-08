@@ -35,7 +35,13 @@
 			something (an undefined property reaches the plugin as its literal `${...}` text), and
 			so the `llm-eval` profile has one place to flip them.
 		-->
-		<test.excluded.groups>llm-eval</test.excluded.groups>
+		<!--
+		  Both evals that call a real model are excluded from the default build, and for the
+		  same reason: they cost money, need the network, and their verdict depends on which
+		  model is configured. `mcp-agent-eval` additionally needs the Docker stack up with
+		  MCP on (compose/mcp.yml), which `mvn verify` has no business starting.
+		-->
+		<test.excluded.groups>llm-eval,mcp-agent-eval</test.excluded.groups>
 		<test.groups />
 		<!--
 			Spring AI 2.0.1 is built against Spring Boot 4.1.1 — the exact parent version above.
@@ -280,6 +286,26 @@
 			<properties>
 				<test.excluded.groups />
 				<test.groups>llm-eval</test.groups>
+			</properties>
+		</profile>
+		<!--
+		  Runs the MCP agent harness, and only it — symmetric with `llm-eval` above, on the same
+		  argument. It puts a real model in front of the real /mcp endpoint and scores what the
+		  model *concludes*, which is the one thing 1 442 unit tests cannot reach. See SPECAGENT.md.
+
+		  It needs the stack up and seeded:
+		    docker compose -f docker-compose.yml -f compose/mcp.yml up -d
+		  and, like `llm-eval`, it skips rather than fails when nothing is configured.
+
+		  Not in ci.yml: a scenario that calls a real model is not deterministic in the sense a CI
+		  gate requires, and letting it guard a pull request would hand a third party's weather a
+		  vote on a merge.
+		-->
+		<profile>
+			<id>mcp-agent-eval</id>
+			<properties>
+				<test.excluded.groups />
+				<test.groups>mcp-agent-eval</test.groups>
 			</properties>
 		</profile>
 		<profile>

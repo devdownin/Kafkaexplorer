@@ -82,6 +82,7 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
 
 - **Avec Confluent Schema Registry** (topics Avro) : `docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d`
 - **Avec un LLM local pré-câblé** (Ollama) : `docker compose -f docker-compose.yml -f compose/ollama.yml up -d`
+- **Avec le serveur MCP activé** (pour un agent) : `docker compose -f docker-compose.yml -f compose/mcp.yml up -d` — l'endpoint est `http://localhost:8080/mcp`, la console est la page **MCP** de l'application, et chaque garde est une variable `.env`. Il n'authentifie rien : garder `BIND_ADDR` sur la loopback. Vérifier qu'il répond : `docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe`.
 - **Avec une IA privée à côté** (SpectraLLM, images seules — rien n'est construit, aucun checkout de SpectraLLM) : `docker compose -f compose/spectra-hub.yml up -d` — l'explorateur sur 8080, l'interface SpectraLLM sur 8088. Le premier démarrage télécharge ~4,8 Go de poids en arrière-plan, et rien ne l'attend. Des overlays voisins ajoutent le GPU (`.gpu.yml`), les limites mémoire (`.limits.yml`), ou font indexer les topics eux-mêmes par SpectraLLM (`.ingest.yml`). Pour un portable, quatre lignes de `.env` remplacent le modèle 7B par un 3B — voir `.env.example`.
 - **La même stack, mais en tirant l'image publiée au lieu de la construire** : `docker compose -f docker-compose.yml -f compose/image.yml up -d`
 - **Depuis les sources** (JDK 25) : lancez Kafka avec `docker compose up -d kafka`, puis `./mvnw spring-boot:run`

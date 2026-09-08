@@ -675,7 +675,7 @@ jobs:
           # NAMED here, so an omission is structural rather than a string search over a list
           # of command lines.
           declare -A OVERLAYS=(
-            [docker-compose.yml]="compose/schema-registry.yml compose/ollama.yml compose/image.yml compose/limits.yml compose/ci.yml"
+            [docker-compose.yml]="compose/schema-registry.yml compose/ollama.yml compose/mcp.yml compose/image.yml compose/limits.yml compose/ci.yml"
             [compose/dev.yml]=""
             [compose/build.yml]=""
             [compose/spectra-hub.yml]="compose/spectra-hub.ingest.yml compose/spectra-hub.gpu.yml compose/spectra-hub.limits.yml"
@@ -754,6 +754,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Run every decision of seed-demo-once.sh
         run: ./seed-demo-once.test.sh
+
+  # Same argument, one script over: mcp-probe.sh is a diagnostic, and a diagnostic that reports
+  # OK against a server which answered nothing useful is worse than none — it moves the blame for
+  # a failed agent scenario onto the model. So its FAILURES are what is asserted, against a stub
+  # that fixes one shape of answer per case. No daemon, no broker, no toolchain: python3 and curl.
+  mcp-probe-logic:
+    name: The MCP probe's decisions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Run every decision of mcp-probe.sh
+        run: ./mcp-probe.test.sh
 
   hub-changes:
     name: Does this change touch the published-images stack?

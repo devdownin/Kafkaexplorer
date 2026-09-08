@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: resume-until-exhausted
+title: "A resume token is followed, not noted"
+
+invariant: >
+  a returned resumeToken is the server saying "there is more, and here is where to pick it up";
+  concluding without following it is the partial-coverage fault wearing a different hat
+
+serverConfig:
+  explorer.mcp.hard-max-topics: 2
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.orders.6.delivered"]
+    keys: ["ORD-101"]
+
+prompt: |
+  Trace ORD-101 through every step of the demo order pipeline and tell me where it ended up.
+maxToolCalls: 8
+budgetMs: 90000
+
+trace:
+  mustCall: ["kex_trace_key"]
+  onResumeTokenReturned: mustCall(kex_resume_trace)
+  maxCalls: 8
+
+verdict:
+  mustAssert:
+    - "ORD-101 reached demo.orders.6.delivered"
+  mustCite:
+    - "the topics the trace passed through"

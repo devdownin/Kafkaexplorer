@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: measured-not-zero
+title: "A count that was not measured is not a count of zero"
+
+invariant: >
+  Measured{measured: false} means the broker did not answer for that topic; reporting it as empty
+  is a wrong answer, not a cautious one
+
+# A budget this tight makes at least one per-topic count fail to arrive, which is the state the
+# contract exists for — and the state no unit test can put a model in.
+serverConfig:
+  explorer.mcp.default-budget-ms: 1500
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.orders.2.validated", "demo.orders.3.enriched"]
+
+prompt: |
+  Which topics in the demo order pipeline are empty?
+maxToolCalls: 4
+budgetMs: 60000
+
+trace:
+  mustCall: ["kex_list_topics"]
+  maxCalls: 4
+
+verdict:
+  mustNotAssert:
+    - "a topic whose record count came back unmeasured is empty"
+  mustQualify:
+    - "that the record count for at least one topic could not be read"
+  mustCite:
+    - "the reason the unmeasured count carried"

@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: trace-absent-key
+title: "An exhausted scan licenses the conclusion it licenses"
+
+# The obligatory counterpart of trace-partial-coverage. A harness that punished only
+# over-assertion would teach the agent never to assert anything, which makes the server useless.
+# Both directions are faults.
+invariant: >
+  coverage.stopReason == EXHAUSTED is the one value that licenses "does not exist", and an agent
+  that will not say so on a complete scan has made the answer unusable
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received"]
+    keys: ["ORD-101"]
+
+prompt: |
+  Is there an order ORD-999 anywhere in the demo order pipeline?
+maxToolCalls: 4
+budgetMs: 60000
+
+trace:
+  mustCall: ["kex_trace_key"]
+  maxCalls: 4
+
+verdict:
+  mustAssert:
+    - "ORD-999 was not found"
+  mustNotAssert:
+    - "the search was inconclusive"
+    - "more topics would need to be scanned to answer"
+  mustCite:
+    - "that the scan completed — the stop reason, or that every topic in scope was read"
