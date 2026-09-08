@@ -12,7 +12,10 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCallRecorder;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCatalogService;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpToolInterceptor;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpToolSpecificationPostProcessor;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.AuditMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ConsumerLagMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.DataModelMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.KpiMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.McpToolset;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.McpTraceStore;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.MutatingMcpTools;
@@ -21,11 +24,15 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SchemaMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SqlMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.StreamFlowMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.TopicMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
+import com.compagnonsdudev.kafkasqlexplorer.service.DataModelService;
+import com.compagnonsdudev.kafkasqlexplorer.service.DataModelSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.DdlGeneratorService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkTableStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.MessageFormatterService;
+import com.compagnonsdudev.kafkasqlexplorer.service.MetricSuggestionService;
 import com.compagnonsdudev.kafkasqlexplorer.service.SchemaInferenceService;
 import com.compagnonsdudev.kafkasqlexplorer.service.StreamFlowService;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -157,6 +164,28 @@ public class McpServerConfiguration {
     @Bean
     SqlMcpTools sqlMcpTools(FlinkSqlService flink, FlinkTableStore tableStore, ToolGuard guard) {
         return new SqlMcpTools(flink, tableStore, guard);
+    }
+
+    @Bean
+    DataModelMcpTools dataModelMcpTools(DataModelService dataModel, DataModelSqlService sql,
+                                        ToolGuard guard) {
+        return new DataModelMcpTools(dataModel, sql, guard);
+    }
+
+    /**
+     * The audit pair. {@code AuditService} holds one run at a time for the whole process, which is
+     * why {@code kex_run_audit} reports having <em>attached</em> to a run rather than started one:
+     * an agent and an operator share that runtime, and a second caller silently reading the first
+     * one's scope is the failure this module exists to prevent.
+     */
+    @Bean
+    AuditMcpTools auditMcpTools(AuditService audit, ToolGuard guard) {
+        return new AuditMcpTools(audit, guard);
+    }
+
+    @Bean
+    KpiMcpTools kpiMcpTools(MetricSuggestionService suggestions, ToolGuard guard) {
+        return new KpiMcpTools(suggestions, guard);
     }
 
     /**

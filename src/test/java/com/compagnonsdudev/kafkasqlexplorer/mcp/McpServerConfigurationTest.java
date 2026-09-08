@@ -21,6 +21,10 @@ import com.compagnonsdudev.kafkasqlexplorer.service.FlinkTableStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.MessageFormatterService;
 import com.compagnonsdudev.kafkasqlexplorer.service.SchemaInferenceService;
+import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
+import com.compagnonsdudev.kafkasqlexplorer.service.DataModelService;
+import com.compagnonsdudev.kafkasqlexplorer.service.DataModelSqlService;
+import com.compagnonsdudev.kafkasqlexplorer.service.MetricSuggestionService;
 import com.compagnonsdudev.kafkasqlexplorer.service.StreamFlowService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -60,6 +64,10 @@ class McpServerConfigurationTest {
         @Bean FlinkSqlService flinkSqlService() { return mock(FlinkSqlService.class); }
         @Bean FlinkTableStore flinkTableStore() { return mock(FlinkTableStore.class); }
         @Bean StreamFlowService streamFlowService() { return mock(StreamFlowService.class); }
+        @Bean DataModelService dataModelService() { return mock(DataModelService.class); }
+        @Bean DataModelSqlService dataModelSqlService() { return new DataModelSqlService(); }
+        @Bean AuditService auditService() { return mock(AuditService.class); }
+        @Bean MetricSuggestionService metricSuggestionService() { return mock(MetricSuggestionService.class); }
         @Bean MeterRegistry meterRegistry() { return new SimpleMeterRegistry(); }
         @Bean FakeWriteTools fakeWriteTools() { return new FakeWriteTools(); }
     }
@@ -100,7 +108,8 @@ class McpServerConfigurationTest {
                     .contains("kex_list_topics", "kex_describe_topic", "kex_preview_messages",
                             "kex_infer_schema", "kex_sql_query", "kex_list_tables",
                             "kex_trace_key", "kex_resume_trace", "kex_compare_traces",
-                            "kex_consumer_lag")
+                            "kex_consumer_lag", "kex_deduce_data_model", "kex_build_join",
+                            "kex_run_audit", "kex_get_audit", "kex_suggest_kpis")
                     .doesNotContain("kex_produce_message");
 
             // Withheld, not vanished: the catalogue keeps the row so the console can say why.

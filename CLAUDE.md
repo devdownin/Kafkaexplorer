@@ -288,7 +288,7 @@ it is obvious from the code that remains.
 of it and why. **Off by default** (`explorer.mcp.enabled=false`) and **read-only when on**
 (`explorer.mcp.readonly=true`), both of which are the posture rather than a convenience.
 
-Three rules bind before that note has been read:
+Four rules bind before that note has been read:
 
 - **The read-only guard is at registration, not invocation, and the framework leaves no choice.**
   Spring AI scans `@McpTool` methods on *every* bean in the context, so a tool that exists as a
@@ -313,6 +313,15 @@ Three rules bind before that note has been read:
   believes one field is being read, and the wider answer carries nothing that contradicts them.
   `kex_analyze_dead_letters` is absent for the converse reason — its pairing rule exists only in
   `deadLetterSupervision.ts`, so the tool would be that logic written a second time.
+- **`DataModelSqlService` and `dataModelGraph.ts` are one rule read twice, on purpose.** The join
+  builder and the Mermaid export had to reach `kex_build_join` without a second implementation
+  under `mcp/` and without putting the page's join preview — a `useMemo` that recomputes as the
+  selection changes — behind a round trip. So they follow the precedent `ConsumerGroupLag.Health`
+  and `topicConsumers.ts` set: two readings kept in step by `DataModelSqlServiceTest`, which runs
+  the same cases as `dataModelGraph.test.ts`. **Edit the two together.** It is defensible here and
+  not for the dead-letter rule because this is deterministic graph-and-string work — two readings
+  cannot disagree about what a breadth-first traversal found, where pairing heuristics drift on the
+  first ambiguous case.
 
 ## Security
 
