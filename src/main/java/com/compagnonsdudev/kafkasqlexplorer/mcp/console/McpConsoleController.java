@@ -124,10 +124,17 @@ public class McpConsoleController {
     @PostMapping("/try/{tool}")
     public ResponseEntity<McpTryResult> tryTool(@PathVariable("tool") String tool,
                                                 @RequestBody(required = false) java.util.Map<String, Object> arguments) {
-        if (!environment.getProperty("explorer.mcp.console.allow-try-it", Boolean.class, true)) {
+        // Read from the Environment rather than McpProperties because that bean does not exist
+        // when the module is off — and the default here must match McpProperties.Console, which is
+        // false. Defaulting to true would open the bypass this setting exists to keep shut,
+        // silently, for any deployment that never wrote the property.
+        if (!environment.getProperty("explorer.mcp.console.allow-try-it", Boolean.class, false)) {
             return ResponseEntity.status(403).body(McpTryResult.notInvocable(tool,
-                    "running a tool from the console is disabled "
-                            + "(explorer.mcp.console.allow-try-it=false)"));
+                    "running a tool from the console is off by default: this endpoint executes the "
+                            + "real tool over an application URL that carries no authentication, so "
+                            + "leaving it open would bypass whatever guards the MCP endpoint itself. "
+                            + "Set explorer.mcp.console.allow-try-it=true once the application is "
+                            + "reachable only by people who may run these tools."));
         }
         McpToolInvoker tools = invoker.getIfAvailable();
         if (tools == null) {

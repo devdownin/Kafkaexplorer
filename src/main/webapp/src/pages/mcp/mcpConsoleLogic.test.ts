@@ -53,6 +53,14 @@ describe('les avertissements de fenêtre', () => {
     expect(caveat).toContain('412');
   });
 
+  it('nomme le moment où commence ce qui reste, quand il est connu', () => {
+    // « ces chiffres portent sur ce qu'il reste » ne dit rien tant qu'on ne sait pas depuis quand.
+    const caveat = windowCaveat(
+      window_({ droppedFromRing: 5, oldestCallAt: '2026-09-07T14:02:31.000Z' }),
+    );
+    expect(caveat).toMatch(/commence à \d{2}:\d{2}/);
+  });
+
   it('signale séparément que rien ne survit à un redémarrage', () => {
     // Deux faits distincts : « il reste de la place » et « rien n'est persisté » sont vrais
     // indépendamment l'un de l'autre.

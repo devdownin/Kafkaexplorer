@@ -74,7 +74,23 @@ public class McpProperties {
          */
         private int ringBufferSize = 2000;
         private boolean allowRuntimeToggle = true;
-        private boolean allowTryIt = true;
+
+        /**
+         * Whether the console may run a tool.
+         *
+         * <p><b>False, and that is the security posture rather than caution.</b> "Try it" executes
+         * the real tool through the real guard, which is what makes it useful — and it does so over
+         * {@code POST /api/mcp/try/{tool}}, an application endpoint. This application ships with no
+         * authentication (see {@code SECURITY.md}), while the specification puts OAuth 2.1 in front
+         * of {@code /mcp}. An operator who wires that up in phase 5 would reasonably believe the
+         * tool surface is closed, and this endpoint would be a complete bypass of it — same JVM,
+         * same guard, no bearer token, and with {@code readonly=false} the mutating tools too.
+         *
+         * <p>The console is fully usable without it: the catalogue, the feed and the cards are all
+         * reads. Turning this on is a deliberate act, and the refusal names the property so nobody
+         * mistakes an off switch for a broken button.
+         */
+        private boolean allowTryIt = false;
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }

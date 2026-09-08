@@ -300,7 +300,14 @@ explorer:
       # that is short for reasons it does not mention.
       ring-buffer-size: 2000
       allow-runtime-toggle: true
-      allow-try-it: true
+      # Whether the console may RUN a tool. Off, and that is the posture rather than caution:
+      # "Try it" executes the real tool through the real guard over POST /api/mcp/try/{tool}, an
+      # application endpoint — and this application ships without authentication (SECURITY.md)
+      # while the MCP endpoint itself is specified behind OAuth 2.1. An operator who wires that up
+      # would reasonably believe the tool surface is closed; this endpoint would bypass it entirely,
+      # and with readonly=false that includes the mutating tools. The console is fully usable
+      # without it — the catalogue, the feed and the cards are all reads.
+      allow-try-it: false
 
     dlp:
       # redact | block | off.

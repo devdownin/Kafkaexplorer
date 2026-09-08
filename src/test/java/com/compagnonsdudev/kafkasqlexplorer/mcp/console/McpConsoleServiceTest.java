@@ -76,6 +76,16 @@ class McpConsoleServiceTest {
         assertThat(status.endpoint()).isNull();
         // Phase 5 brings OAuth. Until then the banner has to say there is no caller authentication.
         assertThat(status.authentication()).containsIgnoringCase("none");
+        // And the page has to know the button would be refused, so it can hide it rather than
+        // offer one that answers 403.
+        assertThat(status.tryItEnabled()).isFalse();
+    }
+
+    @Test
+    void the_banner_reports_try_it_once_it_is_turned_on() {
+        properties.getConsole().setAllowTryIt(true);
+
+        assertThat(console.status().tryItEnabled()).isTrue();
     }
 
     @Test

@@ -39,6 +39,7 @@ const STATUS = {
   authentication: 'none — anything that can reach the endpoint can call it (OAuth 2.1 is phase 5)',
   topicScope: ['*'],
   groupScope: ['*'],
+  tryItEnabled: false,
 };
 
 const CATALOG = {
@@ -153,6 +154,23 @@ describe("l'onglet Catalogue", () => {
     expect(screen.getAllByText('non mesuré').length).toBeGreaterThan(0);
   });
 
+  it("n'offre pas « Essayer » quand le serveur le refuserait, et dit pourquoi", async () => {
+    // Masqué plutôt que désactivé : un bouton qui a l'air disponible et répond 403 apprend à se
+    // méfier de l'écran, sur la page dont le sujet est de dire ce qui est réellement en vigueur.
+    renderAt();
+
+    expect(await screen.findByText('kex_list_topics')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Essayer' })).not.toBeInTheDocument();
+    expect(screen.getByText(/allow-try-it/)).toBeInTheDocument();
+  });
+
+  it('offre « Essayer » une fois le réglage posé', async () => {
+    mockApi({ status: { ...STATUS, tryItEnabled: true } });
+    renderAt();
+
+    expect(await screen.findAllByRole('button', { name: 'Essayer' })).not.toHaveLength(0);
+  });
+
   it("affiche LECTURE SEULE tant qu'aucun outil mutant n'est exposé", async () => {
     renderAt();
 
@@ -190,6 +208,20 @@ describe("l'onglet Supervision", () => {
 
     expect(await screen.findByText(/dont 1 refusés/)).toBeInTheDocument();
     expect(screen.getByText('SCOPE')).toBeInTheDocument();
+  });
+
+  it("compte les erreurs à part des refus, sur la même carte", async () => {
+    // Trois états, trois nombres : un appel tombé pour une raison qu'aucune garde n'a choisie est
+    // le seul des trois qui ne se règle pas dans le YAML, et il disparaissait entre les deux autres.
+    renderAt('/mcp?tab=supervision');
+
+    expect(await screen.findByText(/0 en erreur/)).toBeInTheDocument();
+  });
+
+  it('nomme les outils les plus appelés', async () => {
+    renderAt('/mcp?tab=supervision');
+
+    expect(await screen.findByText('Outils les plus appelés')).toBeInTheDocument();
   });
 });
 

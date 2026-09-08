@@ -1316,6 +1316,7 @@ export interface McpStatusView {
   authentication: string;
   topicScope: string[];
   groupScope: string[];
+  tryItEnabled: boolean;
 }
 
 /** @java McpToolRow */

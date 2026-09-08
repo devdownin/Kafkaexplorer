@@ -73,7 +73,8 @@ public class McpConsoleService {
                 // at all, and the banner is where an operator would find that out.
                 "none — anything that can reach the endpoint can call it (OAuth 2.1 is phase 5)",
                 properties.getAllowedTopicPrefixes(),
-                properties.getAllowedGroupPrefixes());
+                properties.getAllowedGroupPrefixes(),
+                properties.getConsole().isAllowTryIt());
     }
 
     public McpCatalogView catalog(Duration window) {

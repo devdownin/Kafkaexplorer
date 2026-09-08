@@ -177,6 +177,12 @@ Three smaller decisions worth knowing:
 - **The controller answers even when the module is absent**, which is the shipped default. A 404
   would leave the screen unable to tell "the server is off" from "this build is too old"; the empty
   state that explains itself is the reason the screen exists at all.
+- **"Try it" is off by default, because it is an authentication bypass waiting to happen.** The
+  endpoint executes the real tool over an application URL, and this application authenticates
+  nothing while `SPEC-MCP.md` puts OAuth 2.1 in front of `/mcp`. Leaving it on would mean that
+  wiring up that OAuth — the phase 5 work — buys nothing, since the same tools stay reachable one
+  path over with no token, mutating ones included once `readonly` is cleared. The console does not
+  need it: everything else on both tabs is a read.
 - **"Try it" runs the real specification.** `McpToolInvoker` resolves the tool out of the same list
   the transport serves — already wrapped by the interceptor — so the scope check, the ceilings, the
   redaction and the recording all apply. Only the attribution differs: `McpCallOrigin` marks it

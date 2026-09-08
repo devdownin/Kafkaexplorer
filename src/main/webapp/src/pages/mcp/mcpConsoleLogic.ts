@@ -35,9 +35,13 @@ export function isWindow(value: string | null): value is McpWindow {
  */
 export function windowCaveat(window: ObservedWindow): string | null {
   if (window.droppedFromRing === 0) return null;
+  const since = window.oldestCallAt
+    ? ` Ce qui reste commence à ${new Date(window.oldestCallAt).toLocaleTimeString('fr-FR')}.`
+    : '';
   return (
     `Le flux vif ne garde que ${window.ringCapacity} appels : ${window.droppedFromRing} ont été ` +
-    `évincés depuis le démarrage. Ces chiffres portent sur ce qu'il reste, pas sur toute la fenêtre.`
+    `évincés depuis le démarrage. Ces chiffres portent sur ce qu'il reste, pas sur toute la ` +
+    `fenêtre.${since}`
   );
 }
 

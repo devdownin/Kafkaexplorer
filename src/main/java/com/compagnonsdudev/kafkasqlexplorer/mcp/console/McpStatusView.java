@@ -21,6 +21,9 @@ import java.util.List;
  * @param authentication       how a caller is identified, in the operator's words
  * @param topicScope           the configured topic prefixes, or a single {@code *}
  * @param groupScope           the configured consumer-group prefixes
+ * @param tryItEnabled         whether the console may run a tool. Reported so the page can hide the
+ *                             button rather than offer one that answers 403 — a control that looks
+ *                             available and is not teaches an operator to distrust the screen
  */
 public record McpStatusView(
         boolean enabled,
@@ -31,7 +34,8 @@ public record McpStatusView(
         List<String> mutatingToolsExposed,
         String authentication,
         List<String> topicScope,
-        List<String> groupScope
+        List<String> groupScope,
+        boolean tryItEnabled
 ) {
 
     public McpStatusView {
@@ -44,6 +48,6 @@ public record McpStatusView(
     /** The banner shown when {@code explorer.mcp.enabled} is false: off, and saying only that. */
     public static McpStatusView disabled() {
         return new McpStatusView(false, List.of(), null, true, false, List.of(),
-                "not applicable — the server is disabled", List.of(), List.of());
+                "not applicable — the server is disabled", List.of(), List.of(), false);
     }
 }

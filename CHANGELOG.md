@@ -22,6 +22,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`explorer.mcp.console.allow-try-it` ships `false`, and the banner says so.** "Try it" executes
+  the real tool through the real guard — which is what makes it useful — over
+  `POST /api/mcp/try/{tool}`, an application URL. This application carries no authentication
+  (`SECURITY.md`), while the MCP endpoint itself is specified behind OAuth 2.1: an operator who
+  wires that up would reasonably believe the tool surface is closed, and this endpoint would be a
+  complete bypass of it, mutating tools included when `readonly=false`. Off by default, the console
+  is still fully usable — the catalogue, the feed and the cards are all reads — and the page hides
+  the button rather than offering one that answers 403.
 - **An MCP console — the screen at `/mcp`, and `/api/mcp/**` behind it.** Two tabs: *Catalogue*
   answers "what does this server offer an agent, exactly, right now?" and *Supervision* answers
   "what have the agents done with it, and what was refused?". It is the visible counterpart of the
@@ -41,6 +49,17 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   screen says when the ring evicted rather than showing a list that is short for reasons it does
   not mention. A p95 over fewer than twenty calls is `non mesuré` with its reason, never `0 ms`:
   below that it is just the slowest call, usually a cold start.
+- **The console counts errors apart from refusals.** `stats.errors` was computed, serialised and
+  rendered nowhere, so a call that failed for a reason no guard chose — a broker that was away —
+  vanished between "calls" and "denied" on the head card. It is the one of the three that cannot be
+  fixed in the YAML, which makes it the one worth seeing. `maxMs`, `topTools` and the moment the
+  surviving ring data starts are shown for the same reason: each was computed and sent to a page
+  that ignored it.
+- **The client-config snippet says what a caller needs instead of leaving it null.** `tokenHint`
+  shipped always null while its own javadoc claimed it named where a credential goes — a field
+  asserting information it never carried. It now states the deployment's real posture: nothing is
+  checked, so no token belongs in the snippet, and the network is what has to be restricted. That
+  is the screen where somebody is about to wire an agent to this endpoint.
 - **`<MeasuredValue>`**, shared by the console and available to the Metrics and Dead Letter screens:
   one component that renders a measurement or says it was not taken and why. The dash a table
   renders by default says nothing — not "zero", not "unread", not "this tool does not count" — and

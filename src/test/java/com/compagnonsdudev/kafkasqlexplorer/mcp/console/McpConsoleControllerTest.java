@@ -61,6 +61,17 @@ class McpConsoleControllerTest {
     }
 
     @Test
+    void the_client_config_says_what_a_caller_needs_instead_of_leaving_it_null() {
+        // The field shipped always null while its javadoc claimed it named where a credential goes:
+        // a field asserting information it never carried. What it says now is the deployment's real
+        // posture, on the screen where somebody is about to wire an agent to this endpoint.
+        McpClientConfig config = controller.clientConfig("claude-code");
+
+        assertThat(config.tokenHint()).isNotNull();
+        assertThat(config.tokenHint()).contains("no authentication");
+    }
+
+    @Test
     void the_client_config_snippet_never_contains_a_credential() {
         // A generated snippet is pasted into a dotfile, a chat, a ticket. Putting a token in it
         // would make this console the thing that leaked one.
@@ -80,24 +91,28 @@ class McpConsoleControllerTest {
     }
 
     @Test
-    void trying_a_tool_with_the_server_off_explains_instead_of_pretending() {
+    void running_a_tool_from_the_console_is_off_unless_it_was_turned_on() {
+        // The default, and it is the security posture: POST /api/mcp/try/{tool} executes the real
+        // tool over an application endpoint this application does not authenticate, while the MCP
+        // endpoint itself is specified behind OAuth. On by default, it would be a bypass of that
+        // for every deployment that never wrote the property.
         var response = controller.tryTool("kex_list_topics", Map.of());
+
+        assertThat(response.getStatusCode().value()).isEqualTo(403);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().message()).contains("allow-try-it");
+    }
+
+    @Test
+    void turned_on_with_the_server_off_it_explains_instead_of_pretending() {
+        MockEnvironment env = new MockEnvironment();
+        env.setProperty("explorer.mcp.console.allow-try-it", "true");
+        var response = new McpConsoleController(absent(), absent(), env).tryTool("kex_list_topics", Map.of());
 
         assertThat(response.getStatusCode().value()).isEqualTo(200);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().invoked()).isFalse();
         assertThat(response.getBody().message()).contains("explorer.mcp.enabled=false");
-    }
-
-    @Test
-    void try_it_can_be_turned_off_and_the_refusal_names_the_setting() {
-        MockEnvironment env = new MockEnvironment();
-        env.setProperty("explorer.mcp.console.allow-try-it", "false");
-        var response = new McpConsoleController(absent(), absent(), env).tryTool("kex_list_topics", Map.of());
-
-        assertThat(response.getStatusCode().value()).isEqualTo(403);
-        assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().message()).contains("allow-try-it");
     }
 
     @Test

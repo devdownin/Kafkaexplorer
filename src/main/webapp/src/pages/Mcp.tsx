@@ -166,7 +166,11 @@ const Mcp: FC = () => {
           description="explorer.mcp.enabled=false — aucun outil n'est enregistré et aucun endpoint n'écoute. C'est le défaut livré : brancher un modèle sur un cluster est une décision qui se prend."
         />
       ) : tab === 'catalog' ? (
-        <CatalogTab catalog={catalog} endpoint={status?.endpoint ?? null} />
+        <CatalogTab
+          catalog={catalog}
+          endpoint={status?.endpoint ?? null}
+          tryItEnabled={status?.tryItEnabled ?? false}
+        />
       ) : (
         <SupervisionTab
           stats={stats}
@@ -232,10 +236,11 @@ const WindowNotice: FC<{ view: McpCatalogView | McpStatsView }> = ({ view }) => 
   );
 };
 
-const CatalogTab: FC<{ catalog: McpCatalogView | null; endpoint: string | null }> = ({
-  catalog,
-  endpoint,
-}) => {
+const CatalogTab: FC<{
+  catalog: McpCatalogView | null;
+  endpoint: string | null;
+  tryItEnabled: boolean;
+}> = ({ catalog, endpoint, tryItEnabled }) => {
   const [config, setConfig] = useState<McpClientConfig | null>(null);
   const [client, setClient] = useState('claude-code');
   const [trying, setTrying] = useState<McpToolRow | null>(null);
@@ -297,7 +302,9 @@ const CatalogTab: FC<{ catalog: McpCatalogView | null; endpoint: string | null }
                   <MeasuredValue value={tool.p95Ms} unit="ms" />
                 </td>
                 <td className="p-3">
-                  {tool.visibility.state !== 'HIDDEN' ? (
+                  {/* Masqué plutôt que désactivé quand le serveur refuserait : un bouton qui a
+                      l'air disponible et répond 403 apprend à se méfier de l'écran. */}
+                  {tool.visibility.state !== 'HIDDEN' && tryItEnabled ? (
                     <Button size="sm" variant="outline" onClick={() => setTrying(tool)}>
                       Essayer
                     </Button>
@@ -335,6 +342,14 @@ const CatalogTab: FC<{ catalog: McpCatalogView | null; endpoint: string | null }
           </>
         ) : null}
       </Card>
+
+      {!tryItEnabled ? (
+        <p className="text-xs text-on-surface-variant">
+          Exécuter un outil depuis la console est désactivé (<code>explorer.mcp.console.allow-try-it</code>).
+          C'est le défaut : cet endpoint exécute le vrai outil sur une URL applicative qui ne porte
+          aucune authentification, donc l'ouvrir contournerait ce qui protège l'endpoint MCP lui-même.
+        </p>
+      ) : null}
 
       {trying ? <TryPanel tool={trying} onClose={() => setTrying(null)} /> : null}
     </div>
@@ -476,16 +491,30 @@ const SupervisionTab: FC<SupervisionProps> = ({
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {/* Les refus sur la même carte que les succès : relégués ailleurs, un contrôle qui bloque
             deux cents fois par heure reste invisible jusqu'à ce qu'on aille le chercher. */}
+        {/* Trois états, trois nombres. `errors` était calculé et affiché nulle part : un appel
+            tombé pour une raison qu'aucune garde n'a choisie — un broker absent — disparaissait
+            entre « appels » et « refusés », alors que c'est le seul des trois qui ne se règle pas
+            dans le YAML. */}
         <Stat
           label="Appels"
           value={formatNumber(stats.calls)}
-          hint={share === null ? 'aucun appel dans cette fenêtre' : `dont ${formatNumber(stats.denied)} refusés (${share.toFixed(1)} %)`}
-          tone={stats.denied > 0 ? 'warning' : 'none'}
+          hint={
+            share === null
+              ? 'aucun appel dans cette fenêtre'
+              : `dont ${formatNumber(stats.denied)} refusés (${share.toFixed(1)} %) et ${formatNumber(stats.errors)} en erreur`
+          }
+          tone={stats.errors > 0 ? 'error' : stats.denied > 0 ? 'warning' : 'none'}
         />
         <Stat
           label="Latence"
           value={<MeasuredValue value={stats.p95Ms} unit="ms" />}
-          hint={stats.slowestTool ? `p50 ${stats.p50Ms.measured ? `${stats.p50Ms.value} ms` : 'non mesuré'} · le plus lent : ${stats.slowestTool}` : undefined}
+          hint={
+            <>
+              p50 <MeasuredValue value={stats.p50Ms} unit="ms" /> · max{' '}
+              <MeasuredValue value={stats.maxMs} unit="ms" />
+              {stats.slowestTool ? ` · le plus lent : ${stats.slowestTool}` : ''}
+            </>
+          }
         />
         <Stat
           label="Charge induite"
@@ -498,6 +527,19 @@ const SupervisionTab: FC<SupervisionProps> = ({
           hint="identités distinctes — reconstruites côté écran, le transport HTTP est sans état"
         />
       </div>
+
+      {stats.topTools.length > 0 ? (
+        <Card className="p-4">
+          <h3 className="mb-2 text-sm font-medium">Outils les plus appelés</h3>
+          <ul className="space-y-1 text-xs">
+            {stats.topTools.map((tool) => (
+              <li key={tool.tool}>
+                <span className="font-mono">{tool.tool}</span> — {formatNumber(tool.calls)} appels
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
 
       {stats.denialsByCode.length > 0 ? (
         <Card className="p-4">
