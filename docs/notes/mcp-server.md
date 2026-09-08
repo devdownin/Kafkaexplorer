@@ -4,7 +4,9 @@ Copyright (C) 2026 Kafka Explorer Contributors
 -->
 # The MCP server — plan, and why each piece is shaped the way it is
 
-`SPEC-MCP.md` at the root is the specification. This note is the *implementation* record: what
+`SPEC-MCP.md` at the root is the specification, and `SPECAGENT.md` beside it specifies the agent
+harness that would put its honesty contracts to the test — not yet built. This note is the
+*implementation* record: what
 has shipped, in what order, and which of the spec's decisions had to be re-decided against the
 code that actually exists. Read it before touching anything under
 `src/main/java/com/compagnonsdudev/kafkasqlexplorer/mcp/`.
