@@ -286,6 +286,9 @@ explorer:
     hard-max-records: 50
     hard-max-output-bytes: 1048576
     hard-max-topics: 200
+    # Its own ceiling rather than hard-max-topics: a consumer group costs an offsets read per
+    # partition, where a topic costs one listing entry.
+    hard-max-groups: 50
     default-budget-ms: 20000
     hard-max-budget-ms: 60000
 

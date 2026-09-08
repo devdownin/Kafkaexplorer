@@ -12,11 +12,14 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCallRecorder;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCatalogService;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpToolInterceptor;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpToolSpecificationPostProcessor;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ConsumerLagMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.McpToolset;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.McpTraceStore;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.MutatingMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ReadOnlyMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SchemaMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SqlMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.StreamFlowMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.TopicMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.service.DdlGeneratorService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
@@ -24,6 +27,7 @@ import com.compagnonsdudev.kafkasqlexplorer.service.FlinkTableStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.MessageFormatterService;
 import com.compagnonsdudev.kafkasqlexplorer.service.SchemaInferenceService;
+import com.compagnonsdudev.kafkasqlexplorer.service.StreamFlowService;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -153,6 +157,30 @@ public class McpServerConfiguration {
     @Bean
     SqlMcpTools sqlMcpTools(FlinkSqlService flink, FlinkTableStore tableStore, ToolGuard guard) {
         return new SqlMcpTools(flink, tableStore, guard);
+    }
+
+    /**
+     * One store per deployment, holding what a paused trace needs to be continued.
+     *
+     * <p>The module prefers stateless tools, and this is the deliberate exception: a resume token
+     * that carried the hits it had already found would be a payload of hundreds of records passing
+     * through the model's context twice, costing more than re-running the trace. Bounded and
+     * expiring — see {@link McpTraceStore}.
+     */
+    @Bean
+    McpTraceStore mcpTraceStore() {
+        return new McpTraceStore();
+    }
+
+    @Bean
+    StreamFlowMcpTools streamFlowMcpTools(StreamFlowService streamFlow, ToolGuard guard,
+                                          McpTraceStore traces) {
+        return new StreamFlowMcpTools(streamFlow, guard, traces);
+    }
+
+    @Bean
+    ConsumerLagMcpTools consumerLagMcpTools(KafkaAdminService kafka, ToolGuard guard) {
+        return new ConsumerLagMcpTools(kafka, guard);
     }
 
     /**

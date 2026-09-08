@@ -24,7 +24,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ToolAnnotationsTest {
 
     private static final List<Class<?>> READ_ONLY_TOOLSETS =
-            List.of(TopicMcpTools.class, SchemaMcpTools.class, SqlMcpTools.class);
+            List.of(TopicMcpTools.class, SchemaMcpTools.class, SqlMcpTools.class,
+                    StreamFlowMcpTools.class, ConsumerLagMcpTools.class);
 
     @Test
     void every_read_only_tool_declares_itself_read_only_and_non_destructive() {
@@ -33,7 +34,7 @@ class ToolAnnotationsTest {
                 .filter(method -> method.isAnnotationPresent(McpTool.class))
                 .toList();
 
-        assertThat(tools).hasSize(6);
+        assertThat(tools).hasSize(10);
         assertThat(tools).allSatisfy(method -> {
             McpTool tool = method.getAnnotation(McpTool.class);
             assertThat(tool.annotations().readOnlyHint())

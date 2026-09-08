@@ -22,6 +22,38 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Four MCP tools that follow a key across the cluster, and one that grades every consumer group
+  on a topic.** `kex_trace_key` answers "where did ORD-1042 go?" in one call — the ordered hops,
+  the latency between each, and the hop where the time went — where every other Kafka MCP server
+  answers it with N `consume_messages` calls and the model's own correlation. `kex_resume_trace`
+  continues a pass that ran out of budget, `kex_compare_traces` puts two keys side by side, and
+  `kex_consumer_lag` reports each group's backlog *with the verdict spelled out*.
+  A trace is always partial, so the envelope carries what it missed: an empty `hops` with a
+  `stopReason` other than `EXHAUSTED` means "not found in what was scanned", which is a different
+  sentence from "does not exist", and `topicsNotReached` names the difference. A hop that appears
+  to precede the one before it is reported as clock skew in a sentence rather than hidden or
+  "corrected" — the record did not travel backwards, two brokers disagree about the time, and a
+  model given only the numbers reasons about a negative delay.
+  The resume token is held server-side, which reverses the module's stateless preference on
+  purpose: the browser hands its own prior hits back in the next request, but an agent's prior hits
+  are hundreds of records that would cross its context twice to come back truncated. Bounded to 50
+  entries and fifteen minutes, and an unknown or expired token is **reported as unknown** rather
+  than answered with an empty second pass claiming "nothing more found" about topics never read.
+  On the lag side, `verdict` travels with every group because it is the reading an agent gets
+  wrong: a lag of zero on a group with no assigned member is not "up to date", it is nothing
+  reading a topic that is not moving. Groups are sorted worst first with the unreadable ones at the
+  *top*; a failed read raises `-32043` instead of returning zero groups, which would claim nobody
+  consumes the topic on the strength of a call that never answered; and `recordLag` and `lagMs`
+  fail independently, so a known backlog of 40 000 records with an age compaction has made
+  unknowable says exactly that. The age is opt-in (`includeTimeLag`) — it costs a partition read
+  per partition per group, where the record count is one offsets call for all of them — and so is
+  the per-partition detail (`includePartitions`), which is nonetheless there because the summary is
+  exactly where a stuck partition hides: a group blocked on one partition of forty contributes
+  almost nothing to the total and reads as very slightly behind. Each row carries its own
+  measured-ness, so a partition with no commit holds *no position* rather than offset zero.
+  New setting: `explorer.mcp.hard-max-groups` (50), its own ceiling rather than the topic one — a
+  group costs an offsets read per partition where a topic costs a listing entry.
+
 - **`explorer.mcp.console.allow-try-it` ships `false`, and the banner says so.** "Try it" executes
   the real tool through the real guard — which is what makes it useful — over
   `POST /api/mcp/try/{tool}`, an application URL. This application carries no authentication

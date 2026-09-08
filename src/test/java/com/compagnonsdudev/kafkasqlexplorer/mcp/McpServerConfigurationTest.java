@@ -21,6 +21,7 @@ import com.compagnonsdudev.kafkasqlexplorer.service.FlinkTableStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.MessageFormatterService;
 import com.compagnonsdudev.kafkasqlexplorer.service.SchemaInferenceService;
+import com.compagnonsdudev.kafkasqlexplorer.service.StreamFlowService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,7 @@ class McpServerConfigurationTest {
         @Bean DdlGeneratorService ddlGeneratorService() { return mock(DdlGeneratorService.class); }
         @Bean FlinkSqlService flinkSqlService() { return mock(FlinkSqlService.class); }
         @Bean FlinkTableStore flinkTableStore() { return mock(FlinkTableStore.class); }
+        @Bean StreamFlowService streamFlowService() { return mock(StreamFlowService.class); }
         @Bean MeterRegistry meterRegistry() { return new SimpleMeterRegistry(); }
         @Bean FakeWriteTools fakeWriteTools() { return new FakeWriteTools(); }
     }
@@ -96,7 +98,9 @@ class McpServerConfigurationTest {
             assertThat(catalog.writeSurfaceOpen()).isFalse();
             assertThat(catalog.exposed()).extracting(ToolDescriptor::name)
                     .contains("kex_list_topics", "kex_describe_topic", "kex_preview_messages",
-                            "kex_infer_schema", "kex_sql_query", "kex_list_tables")
+                            "kex_infer_schema", "kex_sql_query", "kex_list_tables",
+                            "kex_trace_key", "kex_resume_trace", "kex_compare_traces",
+                            "kex_consumer_lag")
                     .doesNotContain("kex_produce_message");
 
             // Withheld, not vanished: the catalogue keeps the row so the console can say why.
