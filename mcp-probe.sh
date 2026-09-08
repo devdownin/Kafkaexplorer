@@ -44,8 +44,15 @@ call() {
 
 # A streamable-HTTP answer may arrive as an SSE frame. Unwrap it to the JSON payload; a plain
 # JSON answer passes through untouched.
+#
+# The space after `data:` is OPTIONAL in the SSE grammar, and a real frame carries `id:` and
+# `event:` lines beside the payload. The previous form required the space, so against the real
+# server it matched nothing and fell through to `cat` — and every check below being a substring
+# grep, it still found what it needed. It worked by accident, which is not the same as working:
+# the accident holds only while no `id:` or `event:` line ever contains a string one of those
+# greps is looking for. This unwraps the frame on purpose instead.
 payload() {
-    if grep -q '^data: ' "$1"; then sed -n 's/^data: //p' "$1"; else cat "$1"; fi
+    if grep -q '^data:' "$1"; then sed -n 's/^data: \{0,1\}//p' "$1"; else cat "$1"; fi
 }
 
 echo "→ waiting for $BASE to answer"

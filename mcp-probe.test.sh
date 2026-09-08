@@ -82,6 +82,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         body = json.dumps({"jsonrpc": "2.0", "id": request.get("id"), "result": result})
         if MODE == "plain-json":
             raw, content_type = body.encode(), "application/json"
+        elif MODE == "sse-as-the-server-writes-it":
+            # An id: line beside the payload, and NO space after `data:` — both legal, and both
+            # what the real server emits. A probe that only reads the shape its own stub produces
+            # reports a healthy server as silent.
+            raw = ("id: 81cde0f6\nevent: message\ndata:" + body + "\n\n").encode()
+            content_type = "text/event-stream"
         else:
             raw, content_type = ("event: message\ndata: " + body + "\n\n").encode(), "text/event-stream"
         self.send_header("Content-Type", content_type)
@@ -142,6 +148,12 @@ expect() {
 # A server that answers correctly, in each of the two shapes streamable HTTP allows.
 expect "an SSE answer is read"                    ok         0 "3 tools listed"
 expect "a plain JSON answer is read"              plain-json 0 "3 tools listed"
+# The shape the real server writes: an id: line beside the payload and no space after `data:`.
+# NOTE what this case does and does not prove. It passes against the stricter `payload()` this
+# probe used to carry, because that one fell through to `cat` and every check here is a substring
+# grep — so the frame was read by accident rather than by design. It is kept as a description of
+# the shape the server actually sends, not as a guard: a case that cannot fail is not a guard.
+expect "an SSE frame as the server writes it is read" sse-as-the-server-writes-it 0 "3 tools listed"
 # The coverage envelope is the contract, so the probe reports what it found rather than only OK.
 expect "the stop reason is reported"              ok         0 "stopReason: EXHAUSTED"
 expect "the session id is reported"               ok         0 "probe-test-session"
