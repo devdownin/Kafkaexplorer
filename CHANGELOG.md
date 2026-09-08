@@ -22,6 +22,19 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Three things the MCP console owed its reader.** A call row expands to show what only the CSV
+  held — `redactedParams`, `correlationId` and `stopReason` — because exporting a file to find out
+  why a call went wrong is the last gesture anyone makes, not the first; and a stop reason other
+  than `EXHAUSTED` says there, in words, that an empty result means "not found in what was scanned".
+  The tool descriptions are written for a model, which reads all twenty lines of them, and the table
+  stacked fifteen of those: the row now carries the first sentence with the rest behind a toggle,
+  cut on the sentence rather than a character count, and a filter searches name, category and
+  description. And a denial code is KIP-1318's — its merit for an agent trained on that surface, its
+  failure for a person — so each one now carries the cause in a sentence and **the setting that
+  produced it**, which is the only action the card invites. An unknown code gets no sentence at all:
+  it comes from a server newer than this screen, and inventing a meaning would be worse than letting
+  the number speak.
+
 - **The MCP guard pipeline is complete, and five settings that shipped enforced by nothing now
   enforce something.** `explorer.mcp.tools.allowed` / `.denied` withhold a tool **by absence** — it
   is not in `tools/list` at all, rather than listed and refusing, because a denied tool that appears

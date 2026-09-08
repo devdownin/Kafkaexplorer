@@ -8,7 +8,8 @@ import type {
 import {
   DEFAULT_WINDOW, callsToCsv, coverageLabel, deniedShare, filtersFromParams, filtersToParams,
   formatBytes, formatMeasured, historyNotice, isWindow, outcomeLabel, overrideAge,
-  overrideBanner, replaySummary, sortTools, windowCaveat,
+  explainDenial, filterTools, firstSentence, hasMoreThanFirstSentence, overrideBanner,
+  replaySummary, sortTools, windowCaveat,
 } from './mcpConsoleLogic';
 
 const measured = (value: number): Measured<number> => ({ value, measured: true, reason: null });
@@ -238,5 +239,67 @@ describe('replaySummary', () => {
     const summary = replaySummary(replay({ calls: [{ a: 1 }, { b: 2 }], recordsScanned: 40 }));
     expect(summary).toContain('2 appel(s)');
     expect(summary).toContain('40 enregistrement(s)');
+  });
+});
+
+describe('explainDenial', () => {
+  it('traduit un code KIP-1318 et dit où se règle ce qui l\'a produit', () => {
+    // « -32041 · garde SCOPE » ne répond à la question de la carte que pour qui connaît la table.
+    const why = explainDenial(-32041, 'SCOPE')!;
+    expect(why.sentence).toContain('portée');
+    expect(why.setting).toContain('allowed-topic-prefixes');
+  });
+
+  it('distingue les deux causes qui partagent -32044, qui se règlent à deux endroits', () => {
+    expect(explainDenial(-32044, 'DENY_LIST')!.setting).toContain('commutateur');
+    expect(explainDenial(-32044, 'POLICY')!.setting).toContain('allow-runtime-toggle');
+  });
+
+  it('dit qu’une dépendance absente n’est pas une garde à desserrer', () => {
+    const why = explainDenial(-32043, null)!;
+    expect(why.sentence).toContain("n'est pas une garde");
+    expect(why.setting).toBeNull();
+  });
+
+  it('rend null sur un code inconnu plutôt qu’une phrase inventée', () => {
+    // Un code que cet écran ignore vient d'un serveur plus récent que lui.
+    expect(explainDenial(-32099, null)).toBeNull();
+    expect(explainDenial(null, null)).toBeNull();
+  });
+});
+
+describe('filterTools / firstSentence', () => {
+  const tool = (name: string, description: string, category = 'EXPLORATION'): McpToolRow => ({
+    name, category, description,
+    visibility: { state: 'EXPOSED', reason: null },
+    defaultBudgetMs: null, hardMaxRecords: null, hardMaxRows: null, hardMaxBytes: 1,
+    calls: 0, denied: 0, p95Ms: { value: null, measured: false, reason: 'x' },
+  } as McpToolRow);
+
+  it('filtre sur le nom, la catégorie et la description', () => {
+    const tools = [tool('kex_trace_key', 'Suit une clé.'), tool('kex_run_audit', 'Lance un audit.')];
+    expect(filterTools(tools, 'trace')).toHaveLength(1);
+    expect(filterTools(tools, 'AUDIT')).toHaveLength(1);
+    expect(filterTools(tools, 'exploration')).toHaveLength(2);
+  });
+
+  it('ne filtre rien sur une requête vide', () => {
+    const tools = [tool('a', 'x'), tool('b', 'y')];
+    expect(filterTools(tools, '   ')).toHaveLength(2);
+  });
+
+  it('coupe sur la phrase, pas sur un nombre de caractères', () => {
+    // Une troncature au milieu d'un mot dit « il y a plus » sans rien apprendre.
+    expect(firstSentence('Suit une clé. Puis autre chose.')).toBe('Suit une clé.');
+  });
+
+  it('aplatit les retours à la ligne pour la ligne repliée', () => {
+    expect(firstSentence('Suit une clé\n  à travers le cluster. Reste.'))
+      .toBe('Suit une clé à travers le cluster.');
+  });
+
+  it('ne propose de déplier que lorsqu’il y a réellement plus à lire', () => {
+    expect(hasMoreThanFirstSentence('Une seule phrase.')).toBe(false);
+    expect(hasMoreThanFirstSentence('Une phrase. Et une autre.')).toBe(true);
   });
 });

@@ -244,3 +244,116 @@ export function replaySummary(replay: McpReplay): string {
     : `${found} Le balayage n'a PAS atteint le début de la fenêtre — la rétention en a retiré des `
       + 'enregistrements, donc une absence ici ne prouve rien.';
 }
+
+/**
+ * Ce qu'un code de refus veut dire, et où se règle ce qui l'a produit.
+ *
+ * Les codes viennent de KIP-1318 et c'est leur mérite : un agent entraîné sur cette surface les
+ * lit. Un opérateur, non — `-32041 · garde SCOPE` demande de connaître la table pour être compris,
+ * et la carte « Refusé, et pourquoi » ne répondait donc à sa propre question que pour qui savait
+ * déjà. La phrase dit la cause ; `setting` dit où la changer, ce qui est la seule action que la
+ * carte appelle.
+ *
+ * `null` sur un code inconnu plutôt qu'une phrase générique : un code que cet écran ne connaît pas
+ * vient d'une version du serveur plus récente que lui, et inventer un sens serait pire que de
+ * laisser le nombre parler.
+ */
+export function explainDenial(code: number | null, guard: string | null): DenialExplanation | null {
+  switch (code) {
+    case -32001:
+      return { sentence: "l'appelant ne s'est pas authentifié", setting: null };
+    case -32029:
+      return {
+        sentence: "l'identité a dépassé son quota d'appels ; le refus dit combien de temps attendre",
+        setting: 'explorer.mcp.rate-limit.calls-per-minute',
+      };
+    case -32040:
+      return {
+        sentence: 'une valeur lue dans le cluster servait d\'argument à un outil mutant',
+        setting: null,
+      };
+    case -32041:
+      return {
+        sentence: "l'appel visait un topic ou un groupe hors de la portée configurée",
+        setting: 'explorer.mcp.allowed-topic-prefixes / allowed-group-prefixes',
+      };
+    case -32042:
+      return {
+        sentence: 'cet outil exige une approbation et aucun jeton valide n\'accompagnait l\'appel',
+        setting: 'explorer.mcp.approval-required-tools',
+      };
+    case -32043:
+      return {
+        sentence: "une dépendance n'a pas répondu — le broker, Flink ou le registre de schémas. "
+          + "Ce n'est pas une garde : rien à desserrer dans le YAML",
+        setting: null,
+      };
+    case -32044:
+      // Deux causes sous un même code, et elles se règlent à deux endroits opposés.
+      return guard === 'DENY_LIST'
+        ? {
+            sentence: 'un opérateur a coupé cet outil à chaud ; il reste listé parce que le client '
+              + 'garde sa liste en cache',
+            setting: 'le commutateur de cet écran',
+          }
+        : {
+            sentence: 'refusé par une décision d\'opérateur',
+            setting: 'explorer.mcp.console.allow-runtime-toggle',
+          };
+    case -32045:
+      return {
+        sentence: 'la réponse portait des données que le mode DLP interdit de laisser sortir',
+        setting: 'explorer.mcp.dlp.mode',
+      };
+    case -32046:
+      return { sentence: "les arguments de l'appel n'étaient pas valides", setting: null };
+    case -32047:
+      return {
+        sentence: 'cette identité est en quarantaine',
+        setting: 'le commutateur de cet écran',
+      };
+    default:
+      return null;
+  }
+}
+
+export interface DenialExplanation {
+  /** La cause, en une phrase. */
+  sentence: string;
+  /** Où se règle ce qui a produit ce refus, ou `null` quand rien ne se règle. */
+  setting: string | null;
+}
+
+/** Les outils que le filtre de la table laisse passer — nom et description, sans casse. */
+export function filterTools(tools: McpToolRow[], query: string): McpToolRow[] {
+  const needle = query.trim().toLowerCase();
+  if (needle === '') return tools;
+  return tools.filter(
+    (tool) =>
+      tool.name.toLowerCase().includes(needle)
+      || tool.category.toLowerCase().includes(needle)
+      || tool.description.toLowerCase().includes(needle),
+  );
+}
+
+/**
+ * La première phrase d'une description d'outil, pour la ligne repliée.
+ *
+ * Les descriptions des phases 3 et 4 font vingt lignes : elles sont écrites pour un modèle, qui
+ * les lit entièrement, et la table les empilait telles quelles. L'opérateur, lui, balaie d'abord
+ * des noms et des états — donc la ligne porte la première phrase et le reste se déplie.
+ *
+ * Coupé sur la phrase et non sur un nombre de caractères : une troncature au milieu d'un mot dit
+ * « il y a plus » sans rien apprendre, là où une première phrase est une réponse complète à
+ * « qu'est-ce que c'est ? ».
+ */
+export function firstSentence(description: string): string {
+  const flat = description.replace(/\s+/g, ' ').trim();
+  const stop = flat.search(/\.\s/);
+  return stop === -1 ? flat : flat.slice(0, stop + 1);
+}
+
+/** Vrai quand replier la description cache réellement quelque chose. */
+export function hasMoreThanFirstSentence(description: string): boolean {
+  return firstSentence(description).length < description.replace(/\s+/g, ' ').trim().length;
+}
