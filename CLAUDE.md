@@ -196,7 +196,7 @@ parser/       JSON, XML and Avro (via Confluent Schema Registry) schema inferenc
 ### Frontend
 
 `docs/notes/frontend.md` carries the app shell, the design system, the graph viewport and the
-rationale for each page. Four rules bind before that note has been read:
+rationale for each page. Five rules bind before that note has been read:
 
 - **The three SVG graphs share one viewport** — `components/graph/useGraphViewport.ts`, used by
   `Lineage`, `StreamFlow` and `DataModel`. Never re-implement panning or zooming in a page: the
@@ -322,6 +322,16 @@ Four rules bind before that note has been read:
   not for the dead-letter rule because this is deterministic graph-and-string work — two readings
   cannot disagree about what a breadth-first traversal found, where pairing heuristics drift on the
   first ambiguous case.
+- **A control that narrows is registered where it cannot be argued with; a control about the caller
+  is applied at the interception layer.** `explorer.mcp.tools.allowed` / `.denied` remove a tool
+  from the specification list, so it is absent from `tools/list` rather than listed-and-refusing —
+  a denied tool that appears is described to the model, chosen, then refused, a round trip spent on
+  a surface advertising what it will not do. But quarantine, the runtime tool switch, the approval
+  token and the rate limit are checked in `McpToolInterceptor`, because a tool cannot see who
+  invoked it, how often, or what an operator switched off a second ago. **A runtime switch refuses
+  rather than removing**, and that is not inconsistency: a client caches `tools/list` from its
+  `initialize`, so a tool that vanished mid-session is one the model keeps calling with nothing to
+  read.
 
 ## Security
 

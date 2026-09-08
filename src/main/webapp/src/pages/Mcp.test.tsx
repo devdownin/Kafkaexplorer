@@ -111,7 +111,7 @@ const CALLS = [
   },
 ];
 
-function mockApi(over: { status?: unknown; catalog?: unknown } = {}) {
+function mockApi(over: { status?: unknown; catalog?: unknown; overrides?: unknown } = {}) {
   mockedAxios.get.mockImplementation((url: string) => {
     if (url.startsWith('/api/mcp/status')) return Promise.resolve({ data: over.status ?? STATUS });
     if (url.startsWith('/api/mcp/catalog/client-config')) {
@@ -123,6 +123,7 @@ function mockApi(over: { status?: unknown; catalog?: unknown } = {}) {
     if (url.startsWith('/api/mcp/stats')) return Promise.resolve({ data: STATS });
     if (url.startsWith('/api/mcp/calls')) return Promise.resolve({ data: CALLS });
     if (url.startsWith('/api/mcp/clients')) return Promise.resolve({ data: [] });
+    if (url.startsWith('/api/mcp/overrides')) return Promise.resolve({ data: over.overrides ?? [] });
     return Promise.reject(new Error(`unexpected ${url}`));
   });
 }
@@ -234,5 +235,46 @@ describe('le serveur désactivé', () => {
 
     expect(await screen.findByText('Le serveur MCP est désactivé')).toBeInTheDocument();
     expect(screen.getByText(/explorer\.mcp\.enabled=false/)).toBeInTheDocument();
+  });
+});
+
+describe('le bandeau des dérogations', () => {
+  it("ne s'affiche pas quand aucune dérogation ne tient", async () => {
+    renderAt();
+
+    await screen.findByText('kex_list_topics');
+    expect(screen.queryByText(/dérogation est active|dérogations sont actives/)).toBeNull();
+  });
+
+  it('nomme chaque dérogation, son auteur et son âge, et ne se referme pas', async () => {
+    // Le pire mode de défaillance du commutateur est une dérogation qui survit à son incident ;
+    // un bandeau refermable serait fermé le premier jour et la dérogation resterait.
+    mockApi({
+      overrides: [
+        {
+          kind: 'TOOL', target: 'kex_sql_query', actor: 'alice', reason: 'une boucle folle',
+          since: '2026-09-08T05:00:00Z', ageMs: 3_600_000,
+        },
+      ],
+    });
+    renderAt();
+
+    expect(await screen.findByText('Une dérogation est active')).toBeInTheDocument();
+    expect(screen.getByText(/kex_sql_query.*alice.*depuis 1 h.*boucle folle/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /fermer/i })).toBeNull();
+  });
+
+  it("dit qu'elles ne s'effacent pas d'elles-mêmes", async () => {
+    mockApi({
+      overrides: [
+        {
+          kind: 'READONLY', target: null, actor: 'bob', reason: 'incident',
+          since: '2026-09-08T05:00:00Z', ageMs: 60_000,
+        },
+      ],
+    });
+    renderAt();
+
+    expect(await screen.findByText(/ne s'effacent pas d'elles-mêmes/)).toBeInTheDocument();
   });
 });

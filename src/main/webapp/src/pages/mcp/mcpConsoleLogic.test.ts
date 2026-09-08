@@ -2,10 +2,11 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { describe, expect, it } from 'vitest';
-import type { McpCallView, McpStatsView, McpToolRow, Measured, ObservedWindow } from '../../api/types';
+import type { McpCallView, McpStatsView, McpToolRow, Measured, ObservedWindow, McpOverrideView } from '../../api/types';
 import {
   DEFAULT_WINDOW, callsToCsv, coverageLabel, deniedShare, filtersFromParams, filtersToParams,
-  formatBytes, formatMeasured, historyNotice, isWindow, outcomeLabel, sortTools, windowCaveat,
+  formatBytes, formatMeasured, historyNotice, isWindow, outcomeLabel, overrideAge,
+  overrideBanner, sortTools, windowCaveat,
 } from './mcpConsoleLogic';
 
 const measured = (value: number): Measured<number> => ({ value, measured: true, reason: null });
@@ -159,5 +160,50 @@ describe('les octets', () => {
   it('rend les plafonds dans leur unité', () => {
     expect(formatBytes(512)).toBe('512 o');
     expect(formatBytes(1_048_576)).toBe('1.0 Mio');
+  });
+});
+
+describe('overrideBanner / describeOverride / overrideAge', () => {
+  const override = (over: Partial<McpOverrideView> = {}): McpOverrideView => ({
+    kind: 'TOOL', target: 'kex_sql_query', actor: 'alice', reason: 'une boucle folle',
+    since: '2026-09-08T05:00:00Z', ageMs: 120_000, ...over,
+  });
+
+  it('ne rend rien quand aucune dérogation ne tient', () => {
+    expect(overrideBanner([])).toBeNull();
+  });
+
+  it('nomme le levier, sa cible, son auteur, son âge et sa raison', () => {
+    const [line] = overrideBanner([override()])!;
+    expect(line).toContain('kex_sql_query');
+    expect(line).toContain('alice');
+    expect(line).toContain('depuis 2 min');
+    expect(line).toContain('boucle folle');
+  });
+
+  it('dit le verrou global sans cible', () => {
+    const [line] = overrideBanner([override({ kind: 'READONLY', target: null })])!;
+    expect(line).toContain('lecture seule');
+    expect(line).not.toContain('null');
+  });
+
+  it('dit la quarantaine par identité', () => {
+    const [line] = overrideBanner([override({ kind: 'QUARANTINE', target: 'agent-7' })])!;
+    expect(line).toContain('agent-7');
+    expect(line).toContain('quarantaine');
+  });
+
+  it("remplace un auteur ou une raison absents plutôt que d'afficher un vide", () => {
+    // Une colonne vide se lit comme un défaut de la page, pas comme une question à poser.
+    const [line] = overrideBanner([override({ actor: null, reason: null })])!;
+    expect(line).toContain('non nommé');
+    expect(line).toContain('sans raison');
+  });
+
+  it('échelonne l’âge : une dérogation vieille d’un jour se lit d’un coup d’œil', () => {
+    expect(overrideAge(30_000)).toBe("à l'instant");
+    expect(overrideAge(45 * 60_000)).toBe('depuis 45 min');
+    expect(overrideAge(5 * 3_600_000)).toBe('depuis 5 h');
+    expect(overrideAge(50 * 3_600_000)).toBe('depuis 2 j');
   });
 });

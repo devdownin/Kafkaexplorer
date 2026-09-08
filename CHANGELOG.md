@@ -22,6 +22,51 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The MCP guard pipeline is complete, and five settings that shipped enforced by nothing now
+  enforce something.** `explorer.mcp.tools.allowed` / `.denied` withhold a tool **by absence** — it
+  is not in `tools/list` at all, rather than listed and refusing, because a denied tool that appears
+  is described to the model, chosen by it, and refused after a round trip on a surface advertising
+  what it will not do. The deny-list always wins: the two are written by different people at
+  different times, and the safe resolution of a disagreement is the restrictive one. A name in
+  either that no tool carries is logged as the typo it is — a deny-list with a typo silences nothing
+  while reading as though it did.
+  **`explorer.mcp.approval-required-tools` is enforced**: single use, bound to one tool, fifteen
+  minutes, unguessable, compared in constant time — each of those answers a way an approval can be
+  defeated. It applies to any tool an operator lists, not only the mutating ones, since a read is
+  the sensitive gesture on a cluster whose payloads are regulated. The refusal never says which of
+  the three ways it failed, because telling a caller holding a stolen token which part to change
+  helps only them. The token is **removed, not masked,** before the call is recorded.
+  **Rate limiting arrives** (`-32029`): a token bucket per identity, refilled continuously rather
+  than reset on a boundary — a fixed window lets a caller spend the whole allowance in the last
+  second of one minute and again in the first second of the next. An operator clicks; a model loops.
+  The refusal names the wait, because a bare "rate limited" teaches a model to retry immediately,
+  which is what the limit exists to stop.
+- **A kill switch, with a banner that will not go away.** An operator can lock the surface
+  read-only, switch one tool off, quarantine an identity or mint an approval, each taking effect on
+  the next call — because "an agent is hammering the cluster" is otherwise answered by a redeploy in
+  minutes, and the minutes are the problem. Every switch **narrows**: read-only can be turned on
+  when the configuration has it off, never off when the configuration has it on, since the write
+  surface is decided at bean registration and a control that appears to open it and does not is
+  worse than none.
+  Every override records who set it, when and why, and **none of them expires** — an expiry would
+  restore a wider surface at an arbitrary moment, quietly. They persist until lifted, and the
+  console carries a banner naming each live one with its age, which cannot be dismissed: the worst
+  failure mode of a kill switch is a derogation that outlives its incident and becomes the permanent
+  configuration nobody remembers choosing, and a banner that could be closed would be closed on the
+  first day.
+  A tool switched off is **refused, not removed**: a client caches the tool list from its
+  `initialize`, so a tool that vanished mid-session is one the model keeps calling with nothing to
+  read. The refusal names the operator and the reason.
+- **The MCP call trail is written and can be replayed.** Every call *and every refusal* is appended
+  to `explorer.mcp.audit-topic` — a control that blocks silently is a control nobody ever tunes, and
+  the refusals are the half an incident review needs. A failed append never fails the call: it
+  increments `explorer_mcp_audit_write_errors_total`, and that gauge moving is the signal the trail
+  has holes; refusing the tool instead would turn an unreachable broker into an outage of the whole
+  MCP surface. `GET /api/mcp/calls/replay` reads a window back instead of answering 501, seeking on
+  the broker's own time index — and **says whether the scan reached the window's start**, because an
+  empty window the scan never reached and an empty window it did are opposite conclusions from the
+  same empty list.
+
 - **Five MCP tools that model the cluster, audit it, and propose KPIs that cite their evidence.**
   `kex_deduce_data_model` reads several topics as tables and returns the entities, the deduced
   relations and a Mermaid `erDiagram`; `kex_build_join` writes the SQL that joins them;

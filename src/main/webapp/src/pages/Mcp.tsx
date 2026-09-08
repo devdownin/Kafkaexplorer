@@ -11,13 +11,13 @@ import {
   Stat, Textarea, Tooltip,
 } from '../components/ui';
 import type {
-  McpCallView, McpCatalogView, McpClientConfig, McpClientRow, McpStatsView, McpStatusView,
-  McpToolRow, McpTryResult,
+  McpCallView, McpCatalogView, McpClientConfig, McpClientRow, McpOverrideView, McpStatsView,
+  McpStatusView, McpSwitchResult, McpToolRow, McpTryResult,
 } from '../api/types';
 import {
   DEFAULT_WINDOW, EMPTY_FILTERS, WINDOWS, callsToCsv, coverageLabel, deniedShare, filtersFromParams,
   filtersToParams, formatBytes, formatDuration, formatNumber, historyNotice, isWindow,
-  outcomeLabel, sortTools, windowCaveat,
+  outcomeLabel, overrideBanner, sortTools, windowCaveat,
 } from './mcp/mcpConsoleLogic';
 import type { FeedFilters, McpWindow } from './mcp/mcpConsoleLogic';
 
@@ -51,6 +51,7 @@ const Mcp: FC = () => {
   const [stats, setStats] = useState<McpStatsView | null>(null);
   const [calls, setCalls] = useState<McpCallView[]>([]);
   const [clients, setClients] = useState<McpClientRow[]>([]);
+  const [overrides, setOverrides] = useState<McpOverrideView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -74,18 +75,21 @@ const Mcp: FC = () => {
       const feed = new URLSearchParams({ limit: '200' });
       for (const [key, value] of Object.entries(filters)) if (value) feed.set(key, value);
 
-      const [statusRes, catalogRes, statsRes, callsRes, clientsRes] = await Promise.all([
-        axios.get<McpStatusView>('/api/mcp/status'),
-        axios.get<McpCatalogView>(`/api/mcp/catalog?${query}`),
-        axios.get<McpStatsView>(`/api/mcp/stats?${query}`),
-        axios.get<McpCallView[]>(`/api/mcp/calls?${feed}`),
-        axios.get<McpClientRow[]>(`/api/mcp/clients?${query}`),
-      ]);
+      const [statusRes, catalogRes, statsRes, callsRes, clientsRes, overridesRes] =
+        await Promise.all([
+          axios.get<McpStatusView>('/api/mcp/status'),
+          axios.get<McpCatalogView>(`/api/mcp/catalog?${query}`),
+          axios.get<McpStatsView>(`/api/mcp/stats?${query}`),
+          axios.get<McpCallView[]>(`/api/mcp/calls?${feed}`),
+          axios.get<McpClientRow[]>(`/api/mcp/clients?${query}`),
+          axios.get<McpOverrideView[]>('/api/mcp/overrides'),
+        ]);
       setStatus(statusRes.data);
       setCatalog(catalogRes.data);
       setStats(statsRes.data);
       setCalls(callsRes.data);
       setClients(clientsRes.data);
+      setOverrides(overridesRes.data);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'la console MCP est injoignable');
@@ -158,6 +162,7 @@ const Mcp: FC = () => {
       />
 
       {status ? <StatusBanner status={status} /> : null}
+      <OverrideBanner overrides={overrides} />
 
       {status && !status.enabled ? (
         <EmptyState
@@ -170,6 +175,8 @@ const Mcp: FC = () => {
           catalog={catalog}
           endpoint={status?.endpoint ?? null}
           tryItEnabled={status?.tryItEnabled ?? false}
+          overrides={overrides}
+          onSwitched={() => void load()}
         />
       ) : (
         <SupervisionTab
@@ -189,6 +196,86 @@ const Mcp: FC = () => {
 };
 
 /** Six faits, lus du runtime — l'endpoint est l'adresse liée, pas la propriété. */
+/**
+ * Les dérogations en cours, en permanence tant qu'il en tient une.
+ *
+ * Non refermable, et c'est tout son intérêt : le pire mode de défaillance du commutateur est une
+ * dérogation qui survit à l'incident qu'elle répondait et devient la configuration permanente que
+ * personne ne se souvient d'avoir choisie. Un bandeau qu'on peut fermer serait fermé le premier
+ * jour, et la dérogation resterait.
+ */
+const OverrideBanner: FC<{ overrides: McpOverrideView[] }> = ({ overrides }) => {
+  const lines = overrideBanner(overrides);
+  if (!lines) return null;
+  return (
+    <Card className="border-warning bg-warning-container p-4">
+      <div className="flex items-start gap-3">
+        <span className="material-symbols-outlined text-warning" aria-hidden="true">
+          shield_lock
+        </span>
+        <div className="space-y-1 text-sm">
+          <p className="font-medium">
+            {lines.length === 1 ? 'Une dérogation est active' : `${lines.length} dérogations sont actives`}
+          </p>
+          <ul className="space-y-1 text-xs text-on-surface-variant">
+            {lines.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <p className="text-xs text-on-surface-variant">
+            Elles ne s'effacent pas d'elles-mêmes : une expiration rouvrirait la surface à un moment
+            arbitraire, sans que personne le décide.
+          </p>
+        </div>
+      </div>
+    </Card>
+  );
+};
+
+/**
+ * Le levier par outil.
+ *
+ * Il coupe, il ne supprime pas : un client garde en cache la liste d'outils de son `initialize`,
+ * donc un outil qui disparaît en cours de session est un outil que le modèle continue d'appeler
+ * sans rien pouvoir lire. Coupé, il refuse avec `-32044` en nommant l'opérateur et sa raison.
+ *
+ * La raison est demandée, pas facultative : c'est elle qui, dans le bandeau, fait lever la
+ * dérogation quand l'incident est passé.
+ */
+const ToolSwitch: FC<{ tool: string; off: boolean; onSwitched: () => void }> = ({
+  tool, off, onSwitched,
+}) => {
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const flip = async () => {
+    const reason = off ? '' : globalThis.prompt(`Pourquoi couper ${tool} ?`) ?? '';
+    if (!off && reason.trim() === '') return;
+    const actor = off ? '' : globalThis.prompt('Qui coupe ? (déclaré, non vérifié)') ?? '';
+    setBusy(true);
+    try {
+      const res = await axios.post<McpSwitchResult>(`/api/mcp/toggle/tool/${tool}`, {
+        enable: off, actor, reason,
+      });
+      setProblem(res.data.applied ? null : res.data.message);
+      onSwitched();
+    } catch (e) {
+      setProblem(e instanceof Error ? e.message : 'le levier est injoignable');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="text-right">
+      <Button size="sm" variant={off ? 'outline' : 'ghost'} disabled={busy} onClick={() => void flip()}>
+        {off ? 'Rétablir' : 'Couper'}
+      </Button>
+      {problem ? <p className="mt-1 text-xs text-error">{problem}</p> : null}
+    </div>
+  );
+};
+
 const StatusBanner: FC<{ status: McpStatusView }> = ({ status }) => (
   <Card className="p-4">
     <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
@@ -240,9 +327,17 @@ const CatalogTab: FC<{
   catalog: McpCatalogView | null;
   endpoint: string | null;
   tryItEnabled: boolean;
-}> = ({ catalog, endpoint, tryItEnabled }) => {
+  overrides: McpOverrideView[];
+  onSwitched: () => void;
+}> = ({ catalog, endpoint, tryItEnabled, overrides, onSwitched }) => {
   const [config, setConfig] = useState<McpClientConfig | null>(null);
   const [client, setClient] = useState('claude-code');
+  /* Les outils coupés à chaud, tirés du bandeau plutôt que d'un second appel : la même vérité,
+     lue une fois. */
+  const switchedOff = useMemo(
+    () => new Set(overrides.filter((o) => o.kind === 'TOOL').map((o) => o.target ?? '')),
+    [overrides],
+  );
   const [trying, setTrying] = useState<McpToolRow | null>(null);
 
   useEffect(() => {
@@ -302,13 +397,22 @@ const CatalogTab: FC<{
                   <MeasuredValue value={tool.p95Ms} unit="ms" />
                 </td>
                 <td className="p-3">
-                  {/* Masqué plutôt que désactivé quand le serveur refuserait : un bouton qui a
-                      l'air disponible et répond 403 apprend à se méfier de l'écran. */}
-                  {tool.visibility.state !== 'HIDDEN' && tryItEnabled ? (
-                    <Button size="sm" variant="outline" onClick={() => setTrying(tool)}>
-                      Essayer
-                    </Button>
-                  ) : null}
+                  <div className="flex justify-end gap-2">
+                    {/* Masqué plutôt que désactivé quand le serveur refuserait : un bouton qui a
+                        l'air disponible et répond 403 apprend à se méfier de l'écran. */}
+                    {tool.visibility.state !== 'HIDDEN' && tryItEnabled ? (
+                      <Button size="sm" variant="outline" onClick={() => setTrying(tool)}>
+                        Essayer
+                      </Button>
+                    ) : null}
+                    {tool.visibility.state !== 'HIDDEN' ? (
+                      <ToolSwitch
+                        tool={tool.name}
+                        off={switchedOff.has(tool.name)}
+                        onSwitched={onSwitched}
+                      />
+                    ) : null}
+                  </div>
                 </td>
               </tr>
             ))}

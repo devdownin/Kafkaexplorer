@@ -1334,6 +1334,31 @@ export interface McpToolRow {
   p95Ms: Measured<number>;
 }
 
+/** @java McpOverrideView */
+export interface McpOverrideView {
+  kind: string;
+  target: string | null;
+  actor: string | null;
+  reason: string | null;
+  since: string;
+  ageMs: number;
+}
+
+/** @java McpSwitchResult */
+export interface McpSwitchResult {
+  applied: boolean;
+  message: string | null;
+  override: McpOverrideView | null;
+}
+
+/** @java McpApprovalResult */
+export interface McpApprovalResult {
+  token: string | null;
+  tool: string | null;
+  expiresInMinutes: number;
+  message: string | null;
+}
+
 /** @java McpCatalogView */
 export interface McpCatalogView {
   tools: McpToolRow[];

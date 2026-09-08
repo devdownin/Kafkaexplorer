@@ -272,6 +272,23 @@ Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, 
   `kex_infer_schema` (columns, types and a ready `CREATE TABLE`, with the sample size that backs
   them), `kex_sql_query` (the whitelist and the engine that actually answered, `FLINK` or
   `KAFKA_DIRECT`, with any predicate the direct reader could not apply), and `kex_list_tables`.
+- **A kill switch, and a banner that will not go away.** Lock the surface read-only, switch one tool
+  off, quarantine an identity — each takes effect on the next call, because "an agent is hammering
+  the cluster" is otherwise answered by a redeploy in minutes. Every switch *narrows*, never widens.
+  Every override records who set it and why and **none of them expires**, because the worst failure
+  mode of a kill switch is a derogation that outlives its incident and becomes the permanent
+  configuration nobody remembers choosing; the console's banner names each live one with its age and
+  cannot be dismissed.
+- **Approval tokens and a rate limit.** A tool named in `explorer.mcp.approval-required-tools` needs
+  a token a human mints from the console — single use, bound to that one tool, fifteen minutes. And
+  a token bucket per identity bounds the *sequence* where the ceilings bound one call: an operator
+  clicks, a model loops, and a tool that answers "not found in what was scanned" invites another
+  pass.
+- **A call trail that survives the ring.** Every call and every refusal is appended to
+  `internal.mcp.audit`, and `/api/mcp/calls/replay` reads a window back — saying whether the scan
+  reached that window's start, since an empty window the scan never reached and an empty window it
+  did are opposite conclusions from the same empty list. A failed append never fails the call; it
+  moves a counter the console shows, which is how you learn the trail has holes.
 - **The guard is KIP-1318's, in KIP-1318's order.** Resource scope is checked **before** any Kafka
   call — a scope check that runs after the read has already disclosed what it was refusing — and
   the error codes (`-32041` out of scope, `-32046` validation, `-32047` quarantine…) are adopted

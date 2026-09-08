@@ -11,6 +11,7 @@
  */
 import type {
   McpCallView,
+  McpOverrideView,
   McpStatsView,
   McpToolRow,
   Measured,
@@ -186,4 +187,39 @@ export function callsToCsv(calls: McpCallView[]): string {
     ].map(escape).join(','),
   );
   return [header.join(','), ...rows].join('\n');
+}
+
+/** L'âge d'une dérogation, en clair. C'est le chiffre qui rend une dérogation oubliée visible. */
+export function overrideAge(ageMs: number): string {
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 1) return "à l'instant";
+  if (minutes < 60) return `depuis ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `depuis ${hours} h`;
+  return `depuis ${Math.floor(hours / 24)} j`;
+}
+
+/** Ce que dit une ligne du bandeau : le levier, sa cible, qui l'a mis et pourquoi. */
+export function describeOverride(override: McpOverrideView): string {
+  const what =
+    override.kind === 'READONLY'
+      ? 'Surface verrouillée en lecture seule'
+      : override.kind === 'TOOL'
+        ? `Outil ${override.target} coupé`
+        : `Identité ${override.target} en quarantaine`;
+  return `${what} par ${override.actor ?? 'un opérateur non nommé'} ${overrideAge(override.ageMs)} — ${
+    override.reason ?? 'sans raison donnée'
+  }`;
+}
+
+/**
+ * Le bandeau des dérogations actives, ou `null`.
+ *
+ * Il ne disparaît jamais tant qu'une dérogation tient, et c'est tout son intérêt : le pire mode de
+ * défaillance de ce commutateur est une dérogation qui survit à l'incident qu'elle répondait et
+ * devient la configuration permanente que personne ne se souvient d'avoir choisie. Un bandeau qu'on
+ * peut fermer serait fermé le premier jour.
+ */
+export function overrideBanner(overrides: McpOverrideView[]): string[] | null {
+  return overrides.length === 0 ? null : overrides.map(describeOverride);
 }
