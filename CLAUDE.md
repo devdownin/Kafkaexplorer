@@ -288,7 +288,7 @@ it is obvious from the code that remains.
 of it and why. **Off by default** (`explorer.mcp.enabled=false`) and **read-only when on**
 (`explorer.mcp.readonly=true`), both of which are the posture rather than a convenience.
 
-Two rules bind before that note has been read:
+Three rules bind before that note has been read:
 
 - **The read-only guard is at registration, not invocation, and the framework leaves no choice.**
   Spring AI scans `@McpTool` methods on *every* bean in the context, so a tool that exists as a
@@ -304,6 +304,15 @@ Two rules bind before that note has been read:
   saying what was read, what was not *by name*, and why it stopped — an empty result with
   `stopReason != EXHAUSTED` means "not found in what was scanned", which is a different sentence
   from "does not exist".
+- **A tool is an adapter, and a mode the service already infers is not the tool's to name.**
+  `kex_trace_key` takes `mode=FIELD` plus a `path` rather than the spec's three path modes, because
+  `StreamFlowService` decides dotted / JSONPath / XPath from the path's own shape — three names
+  would give the caller a parameter to disagree with the path about, silently resolved in the
+  shape's favour. On the same reading a locator given for a mode that has no use for it is
+  *refused*, not ignored: ignoring `path` on `mode=ANY` scans the whole record while the caller
+  believes one field is being read, and the wider answer carries nothing that contradicts them.
+  `kex_analyze_dead_letters` is absent for the converse reason — its pairing rule exists only in
+  `deadLetterSupervision.ts`, so the tool would be that logic written a second time.
 
 ## Security
 

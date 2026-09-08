@@ -190,13 +190,96 @@ Three smaller decisions worth knowing:
   application cannot add a parameter to. A "Try it" that bypassed the guard would answer a different
   question from the one the button asks.
 
+## Phase 3 — the four tools nothing else offers
+
+Every other Kafka MCP server answers "where did ORD-1042 go?" with N `consume_messages` calls and
+the model's own correlation: thousands of records through a context window, an answer that costs
+more than the question, and nothing in the reply saying which topics were never looked at. Phase 3
+is the part of this server that has no equivalent, and it is where the module's honesty contracts
+stop being an ornament — a trace is *always* partial, so a trace that does not say what it missed
+is worse than none.
+
+**`kex_trace_key` collapses four modes into one, because the service already infers three of them.**
+The spec named `DOT_PATH`, `JSONPATH` and `XPATH` as separate modes; `StreamFlowService.buildCriteria`
+decides between them from the path's own shape (a leading `/` is XPath, `..` or `[?` needs the full
+JSONPath engine, anything else rides the streaming walker). Keeping three names would have given the
+caller a third parameter to disagree with the path about, and the disagreement would have been
+resolved silently in favour of the shape. So the tool takes `mode=FIELD` plus a `path`, and both
+`headerName` and `path` are **refused when the mode has no use for them** rather than ignored:
+ignoring `path` on `mode=ANY` scans the whole record for the value while the caller believes one
+field is being read, and the answer — plausible, wider than asked for — carries nothing that
+contradicts them.
+
+**The resume token is server-side, which reverses this module's stateless preference on purpose.**
+The UI hands its own prior hits back in the next request precisely so the server keeps no session;
+that works for a browser and fails for an agent, whose prior hits are hundreds of records that would
+cross the model's context twice to come back truncated. `McpTraceStore` holds them instead, bounded
+to 50 entries and 15 minutes. Its one weakness — a token can expire — is one the caller can be told
+about, and is: an unknown or expired token is **reported as unknown**, never answered with an empty
+second pass, which would claim "nothing more found" about topics that were never read. Unknown and
+expired are deliberately the same answer, since neither one changes what the caller must do next.
+
+**A scan that finished is not necessarily exhausted.** `stopReason()` maps the service's `COMPLETE`
+to `PARTIAL_FAILURE` when any topic failed or was skipped: `EXHAUSTED` is the single value that
+licenses reading an empty result as "does not exist", so a pass that could not read four topics must
+not claim it. And a hop that appears to precede the one before it is reported as `clockSkew` in a
+sentence — not hidden, not "corrected" — because the record did not travel backwards, the brokers
+disagree about the time, and a model given only the numbers reasons about a negative delay.
+
+**`kex_compare_traces` reports deltas, never absolute timestamps**, and carries no resume token.
+Two keys produced at different moments have every timestamp different, so comparing those is noise
+shaped like signal; and continuing one half of a comparison would leave it half-refreshed with
+nothing saying which half. When either pass fell short, a `PARTIAL_COMPARISON` warning says that a
+topic reached by only one key may simply not have been scanned for the other — the divergence the
+tool exists to find is exactly what a spent budget counterfeits.
+
+**`kex_consumer_lag` carries the verdict, not just the numbers.** The domain already grades this
+(`ConsumerGroupLag.Health`) and the grade is what an agent gets wrong: a lag of zero on a group with
+no assigned member is not "up to date", it is nothing reading a topic that is not moving. So
+`verdict` and a sentence explaining it travel with every group, and the groups are sorted worst
+first with `UNKNOWN` at the *top* — a group nobody could read is what an operator most needs to see,
+and sorting it last hides it under whatever the cap cut off.
+
+Three consequences of the same invariant, in that one tool:
+
+- **A failed read is a failure, not a topic nobody reads.** `TopicConsumers.available()` false
+  becomes `-32050 DEPENDENCY_UNAVAILABLE`; returning zero groups would state that nothing consumes
+  the topic on the strength of a call that never answered.
+- **`recordLag` and `lagMs` fail independently.** Records come from committed offsets, which every
+  broker answers; the age needs the record *at* that offset, which compaction or retention may have
+  removed. A known backlog of 40 000 records with an unknowable age is a real state, and the pair
+  says so rather than reporting a zero for the half that failed.
+- **The age is opt-in.** It costs one partition read per partition per group where the record count
+  is a single offsets call for all of them — on a topic with fifty groups, an agent asking "who is
+  behind" would have paid for a full diagnosis of every one of them. `includeTimeLag` defaults to
+  false and the unmeasured `lagMs` names the parameter that would measure it.
+
+**Two deliberate departures from the spec's tool table, both in `kex_consumer_lag`.** The spec asks
+for `topics[]` and per-partition `Measured` values; this takes **one** topic, because the coverage
+envelope is what makes the answer readable and a fan-out over topics turns "what did you not read"
+into a question with several answers. And the per-partition rows are **opt-in**
+(`includePartitions`): a topic with fifty partitions and ten groups is five hundred rows, and the
+verdict answers the question in almost every case. They are opt-in rather than dropped because the
+summary is exactly where a stuck partition hides — a group blocked on one partition of forty
+contributes almost nothing to the total and reads as very slightly behind — so the detail has to be
+reachable, and each row carries its own measured-ness: a partition with no commit holds *no
+position*, which is not offset zero. When both flags are set the age is read **once** and used for
+the total and the rows alike, so the detail cannot contradict the sum it was drawn from.
+
+`kex_analyze_dead_letters` is **not** in this phase. Its pairing-and-verdict rule is 666 lines of
+`src/main/webapp/src/pages/deadLetterSupervision.ts` with no Java counterpart, so an MCP tool for it
+is not an adapter — it is that logic written a second time, which is the one thing this module's
+first rule forbids. It waits for the rule to move into a service, and the phase table says so
+rather than letting the omission read as an oversight.
+
 ## Phases
 
 | Phase | Content | State |
 |---|---|---|
 | 1 — Socle honnête | `Coverage`/`Measured`/`ToolResult`, `McpProperties`, `ToolGuard`, `McpCallRecorder` + metrics, `McpCatalogService`, `McpToolInterceptor`, tools `kex_list_topics` / `kex_describe_topic` / `kex_preview_messages` / `kex_infer_schema` / `kex_sql_query` / `kex_list_tables` | **done** |
 | 2 — Écran MCP | `/api/mcp/status`, `/catalog`, `/calls`, `/stats`, `/clients`, `/catalog/client-config`, `/try/{tool}`; the React page with its Catalogue and Supervision tabs | **done** |
-| 3 — Différenciation | `kex_trace_key`, `kex_resume_trace`, `kex_analyze_dead_letters`, `kex_consumer_lag` | not started |
+| 3 — Différenciation | `kex_trace_key`, `kex_resume_trace`, `kex_compare_traces`, `kex_consumer_lag` | **done** |
+| 3b — `kex_analyze_dead_letters` | blocked: the pairing rule lives only in `deadLetterSupervision.ts`; it needs a Java service first | not started |
 | 4 — Modélisation | `kex_deduce_data_model`, `kex_build_join`, `kex_run_audit`/`kex_get_audit`, `kex_suggest_kpis` | not started |
 | 5 — Entreprise | OAuth 2.1, taint guard, approval token, audit topic + replay, kill switch | not started |
 

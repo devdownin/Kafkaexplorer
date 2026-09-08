@@ -109,6 +109,14 @@ public class ToolGuard {
         return clamp(requested, properties.getHardMaxTopics());
     }
 
+    /**
+     * A ceiling of its own rather than the topic one: a group costs an offsets read per partition
+     * where a topic costs one listing, so the number that is generous for topics is expensive here.
+     */
+    public int clampGroups(Integer requested) {
+        return clamp(requested, properties.getHardMaxGroups());
+    }
+
     private static int clamp(Integer requested, int ceiling) {
         return requested == null ? ceiling : Math.max(1, Math.min(requested, ceiling));
     }

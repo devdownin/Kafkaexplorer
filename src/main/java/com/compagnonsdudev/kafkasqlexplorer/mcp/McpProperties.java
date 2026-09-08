@@ -46,6 +46,7 @@ public class McpProperties {
     private int hardMaxRecords = 50;
     private int hardMaxOutputBytes = 1_048_576;
     private int hardMaxTopics = 200;
+    private int hardMaxGroups = 50;
     private long defaultBudgetMs = 20_000L;
     private long hardMaxBudgetMs = 60_000L;
 
@@ -155,6 +156,8 @@ public class McpProperties {
     public void setHardMaxOutputBytes(int hardMaxOutputBytes) { this.hardMaxOutputBytes = hardMaxOutputBytes; }
     public int getHardMaxTopics() { return hardMaxTopics; }
     public void setHardMaxTopics(int hardMaxTopics) { this.hardMaxTopics = hardMaxTopics; }
+    public int getHardMaxGroups() { return hardMaxGroups; }
+    public void setHardMaxGroups(int hardMaxGroups) { this.hardMaxGroups = hardMaxGroups; }
     public long getDefaultBudgetMs() { return defaultBudgetMs; }
     public void setDefaultBudgetMs(long defaultBudgetMs) { this.defaultBudgetMs = defaultBudgetMs; }
     public long getHardMaxBudgetMs() { return hardMaxBudgetMs; }

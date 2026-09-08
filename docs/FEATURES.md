@@ -238,6 +238,20 @@ Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, 
 - **A measurement that failed is never zero.** Values that a broker may decline to answer arrive as
   `{"value": null, "measured": false, "reason": "..."}`, never as a `0` a model would publish as a
   fact, and never as a bare `null` it would resolve to the same thing.
+- **Follow one key across the cluster, in one call.** `kex_trace_key` returns the ordered hops a
+  business key took, the latency between each and the hop where the time went; `kex_resume_trace`
+  continues a pass that ran out of budget, and `kex_compare_traces` puts two keys side by side and
+  reports the *differences* per hop — two keys produced at different moments have every timestamp
+  different, so the absolute numbers are noise shaped like signal. Every other Kafka MCP server
+  answers this question with N `consume_messages` calls and the model's own correlation.
+  A hop that appears to precede the one before it is reported as clock skew, in a sentence, rather
+  than hidden or "corrected".
+- **Consumer lag with the verdict, not just the number.** `kex_consumer_lag` grades every group on
+  a topic — `CAUGHT_UP`, `BEHIND`, `STALLED`, `PARTIAL`, `AHEAD`, `UNKNOWN` — because the reading is
+  what an agent gets wrong: a lag of zero on a group with no assigned member is not "up to date",
+  it is nothing reading a topic that is not moving. The record count and the *age* of the backlog
+  fail independently, so a known backlog of 40 000 records whose age compaction has made unknowable
+  says exactly that instead of reporting a zero for the half that failed.
 - **Tools, phase 1** — `kex_list_topics`, `kex_describe_topic`, `kex_preview_messages` (bounded and
   redacted, with the partition and offset of every record so any sample can be re-read),
   `kex_infer_schema` (columns, types and a ready `CREATE TABLE`, with the sample size that backs
