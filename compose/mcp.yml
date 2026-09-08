@@ -55,6 +55,15 @@ services:
       - EXPLORER_MCP_RATE_LIMIT_CALLS_PER_MINUTE=${EXPLORER_MCP_RATE_LIMIT_CALLS_PER_MINUTE:-120}
       - EXPLORER_MCP_RATE_LIMIT_BURST=${EXPLORER_MCP_RATE_LIMIT_BURST:-20}
 
+      # The two ceilings a scenario moves to put the agent in a state no unit test can reach: a scan
+      # that stopped short. Lowering hard-max-topics on a seeded cluster forces a partial coverage,
+      # and a tight default budget forces a per-topic count to arrive unmeasured — which is exactly
+      # how an operator would produce both. They are published here rather than left to
+      # application.yml because SPECAGENT's harness recreates this service with one of them moved,
+      # and a setting compose does not pass is one the container never sees.
+      - EXPLORER_MCP_HARD_MAX_TOPICS=${EXPLORER_MCP_HARD_MAX_TOPICS:-200}
+      - EXPLORER_MCP_DEFAULT_BUDGET_MS=${EXPLORER_MCP_DEFAULT_BUDGET_MS:-20000}
+
       # redact | block | off. `block` refuses a payload carrying a credential outright (-32045)
       # rather than returning it masked; the demo topics carry no secrets, so a scenario that wants
       # to see either behaviour has to produce one.

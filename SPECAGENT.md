@@ -174,6 +174,24 @@ verdict:
 testerait un serveur que personne ne déploie. Forcer une couverture partielle se fait en abaissant
 `hard-max-topics`, comme un opérateur le ferait — pas en injectant un `Coverage` truqué.
 
+**Et il est appliqué par le chemin de l'opérateur : la recréation du conteneur.** Aucun endpoint ne
+pose un `explorer.mcp.*` arbitraire à chaud, et il ne faut pas en ajouter un — ce serait précisément
+la porte dérobée que le paragraphe ci-dessus interdit. `compose/mcp.yml` publie donc chaque garde en
+variable, et `AgentRunner` recrée le service `explorer` avec la variable posée
+(`docker compose up -d --force-recreate explorer`) ; les scénarios partageant une configuration
+partagent un démarrage, ce qui ramène le coût à une dizaine de secondes par configuration distincte
+plutôt que par scénario. **La contrainte que cela impose est de règle** : toute clé citée dans un
+`serverConfig` doit être publiée en variable par l'overlay, faute de quoi le conteneur ne la voit
+jamais et le scénario tourne contre les valeurs par défaut en croyant les avoir changées — un faux
+vert de la famille exacte que le §7 traque. `EXPLORER_MCP_HARD_MAX_TOPICS` et
+`EXPLORER_MCP_DEFAULT_BUDGET_MS` ont été ajoutées à l'overlay pour les scénarios livrés.
+
+L'alternative écartée était de démarrer l'application depuis le test (`@SpringBootTest`,
+`@DynamicPropertySource`) contre le broker de la stack : la reconfiguration y est instantanée, mais
+l'application éprouvée n'est plus celle de l'image, et le §5.1 tient précisément à ce que ce soit la
+surface d'un agent tiers qui soit en jeu — l'enregistrement Spring AI, l'intercepteur, la
+sérialisation Jackson 3 du transport.
+
 ---
 
 ## 4. Catalogue des scénarios
@@ -265,16 +283,47 @@ cache — et que l'agent sait la lire.
 ```
 src/test/java/.../eval/agent/
 ├── McpAgentEvalTest.java        # le point d'entrée JUnit, un cas par scénario (@TestFactory)
-├── AgentScenario.java           # le record du YAML
-├── ScenarioLoader.java          # lecture + validation du répertoire
-├── AgentRunner.java             # la boucle outil : modèle ↔ client MCP, bornée
-├── ToolCallTrace.java           # la trace, et les assertions de §2.1
+├── AgentScenario.java           # le record du YAML                              [livré]
+├── ScenarioLoader.java          # lecture + validation du répertoire             [livré]
+├── AgentRunner.java             # la boucle outil : modèle ↔ client MCP, bornée  [livré]
+├── AgentModel.java              # le modèle éprouvé, réduit à un tour            [livré]
+├── McpHttpClient.java           # le client MCP du harnais, HTTP streamable      [livré]
+├── ToolCall.java                # un appel, tel que le client du harnais l'a vu  [livré]
+├── ToolCallTrace.java           # la trace, et les assertions de §2.1            [livré]
+├── McpRefusal.java              # les codes KIP-1318 que le harnais lit          [livré]
 ├── VerdictJudge.java            # le second appel modèle, sur la grille de §2.2
 └── ScenarioReport.java          # le rapport, y compris pour un scénario vert
 
 src/test/resources/eval/agent/*.yaml
-docs/check-agent-scenarios.py    # résout fixture.requires contre setup-demo.sh
+docs/check-agent-scenarios.py    # résout fixture.requires contre setup-demo.sh   [livré]
 ```
+
+**L'ordre de construction n'est pas arbitraire : tout ce qui est déterministe arrive d'abord**, et
+tourne dans `mvn verify`. Le modèle de scénario, le lecteur et le verdict 1 n'appellent aucun modèle
+et sont couverts par leurs propres tests unitaires — `ToolCallTraceTest` construit les traces qu'un
+agent produirait vraiment (un jeton de reprise ignoré, un appel refusé réémis sans sa contrainte,
+une reprise plus rapide que le délai annoncé, un nom d'outil absent de `tools/list`) et vérifie la
+phrase que le harnais imprime pour chacune. Tant que `AgentRunner` et `VerdictJudge` n'existent pas,
+il n'y a aucun test `@Tag("mcp-agent-eval")` à lancer, et le tag est déjà exclu de surefire et de
+`verify-offline.sh` pour qu'en ajouter un ne change aucun défaut.
+
+**Le client et la boucle sont eux aussi éprouvés hors modèle.** `McpHttpClient` est un client tiers
+— JSON-RPC sur HTTP, réponses lues comme du texte, jamais un bean ni un type du SDK serveur : c'est
+ce qui lui permet de remarquer que le transport Jackson 3 a perdu un `Measured` que la surface REST
+en Jackson 2 sérialise encore. `McpHttpClientTest` l'oppose à un serveur bouchon sur les formes qui
+coûtent cher quand on les lit mal : une trame SSE contre du JSON simple (le transport choisit, et un
+client qui n'en lit qu'une marche jusqu'au jour où on le reconfigure), une réponse d'outil qui est un
+document JSON *dans* une chaîne JSON, et les **deux** canaux d'erreur de MCP — ne lire que le
+JSON-RPC ferait passer un refus d'exécution pour un appel réussi. `AgentRunnerTest` fait jouer un
+modèle scripté à travers ce vrai client : le plafond arrête la boucle et est **rapporté** (§5.2), le
+refus est **rendu au modèle** comme contenu plutôt qu'absorbé — sans quoi le harnais répondrait
+lui-même à la question que les scénarios de garde posent — et le prompt système ne prononce ni
+`coverage`, ni `stopReason`, ni `measured`, ni `EXHAUSTED`, ce qui est asserté : les descriptions
+d'outil portent déjà la règle de lecture, et un prompt qui la répéterait mesurerait le prompt au lieu
+du serveur.
+
+**Reste à écrire** : les deux implémentations d'`AgentModel` (un client à appel d'outils, OpenAI-
+compatible et Anthropic), `VerdictJudge`, `ScenarioReport` et `McpAgentEvalTest`.
 
 ### 5.1 Le client MCP est le vrai
 
@@ -376,6 +425,11 @@ harnais**, parce qu'il déplace la confiance sans la justifier.
   que `/actuator/prometheus` expose déjà.
 - **La qualité rédactionnelle des réponses.** §2.2 le dit : noter une formulation produit un test qui
   échoue sur une paraphrase.
+
+**État de la construction** : tout ce qui ne demande pas de modèle est livré (§5, colonne `[livré]`)
+et tourne dans `mvn verify` — le format et son lecteur, le verdict 1, le client MCP et la boucle
+bornée. Restent les deux implémentations d'`AgentModel`, `VerdictJudge`, `ScenarioReport`,
+`McpAgentEvalTest`, et douze des dix-huit scénarios du §4.
 
 **Préalable levé** : `compose/mcp.yml` existe. Il pose `EXPLORER_MCP_ENABLED=true`, laisse chaque
 garde à la valeur qu'expédie `application.yml` et la publie en variable (`.env.example`), et ajoute

@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: trace-partial-coverage
+title: "A partial scan does not read as « it does not exist »"
+
+invariant: >
+  coverage.stopReason != EXHAUSTED means an empty result is "not found in what was read",
+  never "does not exist"
+
+# A partial scan is forced the way an operator would force it — by lowering a published ceiling.
+# Injecting a rigged Coverage would test a server nobody deploys.
+serverConfig:
+  explorer.mcp.hard-max-topics: 2
+  explorer.mcp.default-budget-ms: 2000
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.orders.6.delivered"]
+    keys: ["ORD-101"]
+
+prompt: |
+  Did order ORD-101 make it all the way to delivery?
+maxToolCalls: 6
+budgetMs: 60000
+
+trace:
+  mustCall: ["kex_trace_key"]
+  # Correlating by hand across topics is the anti-pattern this server replaces; an agent that
+  # falls back to it has routed around the contract rather than reading it.
+  mustNotCall: ["kex_preview_messages"]
+  onResumeTokenReturned: mustCall(kex_resume_trace)
+  maxCalls: 6
+
+verdict:
+  mustNotAssert:
+    - "ORD-101 did not reach demo.orders.6.delivered"
+    - "demo.orders.6.delivered does not contain ORD-101"
+  mustQualify:
+    - "that the scan did not cover every topic"
+  mustCite:
+    - "at least one topic name taken from coverage.topicsNotReached"

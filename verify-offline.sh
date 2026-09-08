@@ -134,5 +134,6 @@ java -cp "$CONSOLE:$WORK/classes:$WORK/testclasses:src/main/resources:src/test/r
   org.junit.platform.console.ConsoleLauncher execute \
   --scan-classpath="$WORK/testclasses" \
   --exclude-tag=llm-eval \
+  --exclude-tag=mcp-agent-eval \
   --details=summary \
   "$@"

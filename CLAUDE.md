@@ -287,7 +287,8 @@ it is obvious from the code that remains.
 
 `SPEC-MCP.md` at the root is the specification and `SPECAGENT.md` beside it specifies the agent
 that puts the honesty contracts to the test; `docs/notes/mcp-server.md` is what has been built
-of it and why. **Off by default** (`explorer.mcp.enabled=false`) and **read-only when on**
+of it and why, and `docs/notes/ci-and-checks.md` covers the agent harness under `eval/agent/` —
+deterministic half first, `@Tag("mcp-agent-eval")` excluded from every default build. **Off by default** (`explorer.mcp.enabled=false`) and **read-only when on**
 (`explorer.mcp.readonly=true`), both of which are the posture rather than a convenience.
 `compose/mcp.yml` is the only way to run it from this repository without editing YAML: it turns
 MCP on flat, publishes every guard as a variable (`.env.example`), and ships an `mcp-probe`
