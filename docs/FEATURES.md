@@ -252,6 +252,21 @@ Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, 
   it is nothing reading a topic that is not moving. The record count and the *age* of the backlog
   fail independently, so a known backlog of 40 000 records whose age compaction has made unknowable
   says exactly that instead of reporting a zero for the half that failed.
+- **The cluster as a model, and a join it refuses to fake.** `kex_deduce_data_model` reads several
+  topics as tables and returns entities, columns, the deduced relations and a Mermaid `erDiagram` —
+  each relation with its confidence *and the sentence behind it*, because `MEDIUM` means the names
+  agree and nothing else does. `kex_build_join` writes the SQL joining them and **refuses rather
+  than inventing a predicate**: a selection the relations do not connect comes back with no query
+  and the unreachable entity named, which is exactly the mistake a model makes when handed a list
+  of tables and asked to join them.
+- **An audit an agent can start and read, and KPIs that cite their evidence.** `kex_run_audit` and
+  `kex_get_audit` are two calls because a full run takes minutes — and the pair reports what a
+  single status could not: that a call *attached* to a run already in flight, whose scope is not the
+  one it asked for. `kex_suggest_kpis` proposes metrics naming the run and the measurement behind
+  each, and **invents no threshold**: where nothing measured supports one there is no number, only
+  what would have to be measured first. "Suggest KPIs for my Kafka cluster" is a question a language
+  model answers fluently from nothing, and every number in that answer is an invention about a
+  cluster it has never read.
 - **Tools, phase 1** — `kex_list_topics`, `kex_describe_topic`, `kex_preview_messages` (bounded and
   redacted, with the partition and offset of every record so any sample can be re-read),
   `kex_infer_schema` (columns, types and a ready `CREATE TABLE`, with the sample size that backs

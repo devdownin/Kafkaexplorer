@@ -272,6 +272,69 @@ is not an adapter — it is that logic written a second time, which is the one t
 first rule forbids. It waits for the rule to move into a service, and the phase table says so
 rather than letting the omission read as an oversight.
 
+## Phase 4 — the model, the audit, and the KPIs that cite their evidence
+
+Phase 3 answered "where did this go?". Phase 4 answers the three questions that come before and
+after it: what is in this cluster, is any of it wrong, and what should be watched.
+
+**`kex_build_join` needed a rule that lived only in TypeScript, and that is why
+`DataModelSqlService` exists.** `buildMultiJoinSql` in `dataModelGraph.ts` is the one place the
+spanning tree, the alias arbitration and the projection cap are written down. Three ways out were
+available and two are wrong: a second implementation under `mcp/` is the thing this module's first
+rule forbids, and moving the rule server-side would put the page's join preview — a `useMemo` that
+recomputes as the selection changes — behind a round trip, turning a preview that keeps up with the
+pointer into one that lags it. The third is what `ConsumerGroupLag.Health` and
+`topicConsumers.ts` already do here: **two readings of one deterministic rule, kept in step by a
+test suite that runs the same cases on both sides.** `DataModelSqlServiceTest` is that suite, case
+for case with `dataModelGraph.test.ts`, so a divergence fails on one side or the other. It is
+defensible here and was not for `kex_analyze_dead_letters` because this is graph-and-string work
+with no judgement call in it: two readings cannot disagree about what a breadth-first traversal
+found, where 666 lines of pairing heuristics would drift on the first ambiguous case.
+
+The rule that survived the port intact is the one that matters: **it refuses rather than inventing
+a predicate.** A selection the deduced relations do not connect comes back with `sql: null` and the
+unreachable entity named. That is the specific mistake a model makes when handed a list of tables
+and asked to join them, and the refusal is the tool's whole value over asking the model directly.
+One departure from the TypeScript, deliberate: an entity id the model does not hold is **named**
+rather than filtered out. The page cannot produce one — its ids come from the model it is
+displaying — but a caller can, and silently joining two of the three tables asked for would answer
+a question nobody put.
+
+**Every relation carries its confidence and the sentence behind it**, because `MEDIUM` means the
+names agree and nothing else does, and a model told only "there is a relation" writes a join on it
+as readily as on a `HIGH`. On the same reading a column named like a foreign key that resolves to
+nothing is `referencesUnresolved` — the spec's `?` — rather than being dropped or promoted: "points
+at orders" and "is named like something that would point somewhere, and points nowhere we found"
+are different facts, and only the first is a relation.
+
+**The audit is two tools because a full run takes minutes.** A tool that blocked on it would hit
+the caller's own timeout and return nothing, having spent the whole scan — so `kex_run_audit` hands
+back an id and `kex_get_audit` answers with whatever the run has, saying which it is. Three
+consequences, all of them the same invariant applied to a long-running read:
+
+- **`started: false` means this call *attached* to a run already in flight**, whose scope is the one
+  that run chose. `AuditService` holds one run per process — an agent and an operator share it — so
+  without that field a second caller reads the first one's findings as an answer to its own
+  question. The scope of the run it attached to is reported, not the one asked for.
+- **An unscoped run on a scoped deployment is restricted, not refused**, when exactly one prefix is
+  allowed: an unscoped audit would read precisely what the prefixes withhold. With several allowed
+  prefixes the tool asks for one instead of picking, since an audit run takes a single prefix and
+  choosing would answer about a slice nobody named.
+- **`RUNNING` is `TIME_BUDGET` in the envelope, and healthy topics are not listed.** The two
+  together are what make an empty `findings` readable: on a `COMPLETED` run over forty topics it is
+  good news, and on a `RUNNING` one it is not news at all.
+
+**`kex_suggest_kpis` exists for one refusal: no threshold is invented.** "Suggest KPIs for my Kafka
+cluster" is a question a language model answers fluently from nothing — p99 under 200 ms, lag under
+1 000, error rate under 1 % — and every number in that answer is a plausible invention about a
+cluster it has never read. Here `thresholdBasis` is `Measured`: it names the observation a threshold
+would rest on, or it is unmeasured with the reason none does, and in that second case there is no
+number to publish. The tool description says so in as many words, because the model reads the
+description before the payload. `auditRunId` names the run each proposal rests on, so a caller can
+read that run rather than take the KPI on trust; without an audit the coverage stops at
+`PARTIAL_FAILURE` rather than `EXHAUSTED`, since a short list because nothing has been measured is a
+different answer from a short list because the cluster is simple.
+
 ## Phases
 
 | Phase | Content | State |
@@ -280,7 +343,7 @@ rather than letting the omission read as an oversight.
 | 2 — Écran MCP | `/api/mcp/status`, `/catalog`, `/calls`, `/stats`, `/clients`, `/catalog/client-config`, `/try/{tool}`; the React page with its Catalogue and Supervision tabs | **done** |
 | 3 — Différenciation | `kex_trace_key`, `kex_resume_trace`, `kex_compare_traces`, `kex_consumer_lag` | **done** |
 | 3b — `kex_analyze_dead_letters` | blocked: the pairing rule lives only in `deadLetterSupervision.ts`; it needs a Java service first | not started |
-| 4 — Modélisation | `kex_deduce_data_model`, `kex_build_join`, `kex_run_audit`/`kex_get_audit`, `kex_suggest_kpis` | not started |
+| 4 — Modélisation | `kex_deduce_data_model`, `kex_build_join`, `kex_run_audit`/`kex_get_audit`, `kex_suggest_kpis` | **done** |
 | 5 — Entreprise | OAuth 2.1, taint guard, approval token, audit topic + replay, kill switch | not started |
 
 Phase 2 before phase 3 is the spec's ordering and it is kept: instrumentation added after the

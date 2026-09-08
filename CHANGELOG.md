@@ -22,6 +22,41 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Five MCP tools that model the cluster, audit it, and propose KPIs that cite their evidence.**
+  `kex_deduce_data_model` reads several topics as tables and returns the entities, the deduced
+  relations and a Mermaid `erDiagram`; `kex_build_join` writes the SQL that joins them;
+  `kex_run_audit` and `kex_get_audit` start a cluster audit and read its findings; and
+  `kex_suggest_kpis` proposes metrics with the run and the measurement behind each.
+  **Every relation carries its confidence and the sentence that produced it**, because `MEDIUM`
+  means the names agree and nothing else does — and a model told only "there is a relation" writes
+  a join on it as readily as on a `HIGH`, which is a guess wearing a schema's authority. A column
+  named like a foreign key that resolves to nothing is flagged rather than dropped or promoted:
+  "points at orders" and "is named like something that would point somewhere, and points nowhere we
+  found" are different facts.
+  **The join refuses rather than inventing a predicate.** A selection the deduced relations do not
+  connect comes back with no SQL and the unreachable entity named — which is the exact mistake a
+  model makes when handed a list of tables and asked to join them, and the reason to ask this tool
+  rather than the model.
+  **The audit is two calls because a full run takes minutes**, and a tool that blocked on it would
+  hit the caller's timeout having spent the whole scan. Three things the pair reports that a single
+  status could not: `started: false` means the call *attached* to a run already in flight, whose
+  scope is the one that run chose and not the one asked for; an unscoped run on a deployment with
+  one allowed prefix is restricted to it rather than reading precisely what the scope withholds,
+  and with several it asks which; and a `RUNNING` report is `TIME_BUDGET` in the envelope, so an
+  empty findings list reads as good news on a finished run and as no news at all on a live one.
+  **And no KPI threshold is invented.** "Suggest KPIs for my Kafka cluster" is a question a language
+  model answers fluently from nothing — p99 under 200 ms, lag under 1 000 — and every number in that
+  answer is an invention about a cluster it never read. `thresholdBasis` names the observation a
+  threshold would rest on, or is unmeasured with the reason none does, and then there is no number
+  to publish; `auditRunId` names the run to check the proposal against.
+- **`DataModelSqlService`: the join builder and the Mermaid ER export, in Java.** They existed only
+  in `dataModelGraph.ts`, and `kex_build_join` needed them without either a second implementation
+  inside the MCP module or putting the page's join preview — which recomputes as the selection
+  changes — behind a round trip. So they follow the precedent already in the tree for
+  `ConsumerGroupLag.Health` and `topicConsumers.ts`: two readings of one deterministic rule, kept in
+  step by `DataModelSqlServiceTest`, which runs the same sixteen cases as `dataModelGraph.test.ts`.
+  The page is unchanged.
+
 - **Four MCP tools that follow a key across the cluster, and one that grades every consumer group
   on a topic.** `kex_trace_key` answers "where did ORD-1042 go?" in one call — the ordered hops,
   the latency between each, and the hop where the time went — where every other Kafka MCP server
