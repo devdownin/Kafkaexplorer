@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { describe, expect, it } from 'vitest';
-import type { McpCallView, McpStatsView, McpToolRow, Measured, ObservedWindow, McpOverrideView } from '../../api/types';
+import type {
+  McpCallView, McpOverrideView, McpReplay, McpStatsView, McpToolRow, Measured, ObservedWindow,
+} from '../../api/types';
 import {
   DEFAULT_WINDOW, callsToCsv, coverageLabel, deniedShare, filtersFromParams, filtersToParams,
   formatBytes, formatMeasured, historyNotice, isWindow, outcomeLabel, overrideAge,
