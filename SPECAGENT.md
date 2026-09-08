@@ -284,8 +284,12 @@ que voit un agent tiers qui est en jeu, y compris l'enregistrement Spring AI, l'
 sérialisation Jackson 3 du transport — dont `Measured<T>` dépend, et que `SPEC-MCP.md` §5.3 signale
 comme le piège de sérialisation le plus coûteux du module.
 
-Cela impose la stack Docker : `docker-compose.yml` + une overlay `compose/mcp.yml` qui pose
-`EXPLORER_MCP_ENABLED=true`. Cette overlay n'existe pas encore et le §8 la nomme comme préalable.
+Cela impose la stack Docker : `docker-compose.yml` + l'overlay `compose/mcp.yml`, qui pose
+`EXPLORER_MCP_ENABLED=true` et expose chaque garde en variable — c'est ce qui permet à un scénario
+de déplacer *un* réglage (un préfixe de scope, un quota, une liste de refus) sans éditer de YAML.
+Le one-shot `mcp-probe` de cette overlay fait la poignée de main, un `tools/list` et un appel réel
+avant que le harnais démarre : un run rouge sépare alors « le serveur ne répond pas » de « le
+modèle a mal raisonné », qui sont le même symptôme vus de l'intérieur d'un scénario.
 
 ### 5.2 La boucle est bornée, et la borne est une assertion
 
@@ -373,6 +377,6 @@ harnais**, parce qu'il déplace la confiance sans la justifier.
 - **La qualité rédactionnelle des réponses.** §2.2 le dit : noter une formulation produit un test qui
   échoue sur une paraphrase.
 
-**Préalable identifié** : `compose/mcp.yml` n'existe pas. Aucune overlay ne pose
-`EXPLORER_MCP_ENABLED=true`, donc essayer le serveur MCP demande aujourd'hui d'éditer le YAML à la
-main. Ce fichier est une dépendance de §5.1 avant que ce harnais puisse tourner.
+**Préalable levé** : `compose/mcp.yml` existe. Il pose `EXPLORER_MCP_ENABLED=true`, laisse chaque
+garde à la valeur qu'expédie `application.yml` et la publie en variable (`.env.example`), et ajoute
+le one-shot `mcp-probe` décrit au §5.1. Reste à écrire le harnais lui-même.

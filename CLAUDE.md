@@ -95,6 +95,7 @@ Zookeeper anywhere). There is **one base file at the repository root** and every
 
 ```bash
 docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d  # + Schema Registry
+docker compose -f docker-compose.yml -f compose/mcp.yml up -d               # + the MCP server (off elsewhere)
 docker compose up -d                                                       # base: broker + app + demo topics
 ./setup-demo.sh localhost:9092                                             # demo data (79 topics)
 ./setup-demo-avro.sh localhost:9092 http://localhost:8081                  # Avro topics (needs Schema Registry)
@@ -288,6 +289,10 @@ it is obvious from the code that remains.
 that puts the honesty contracts to the test; `docs/notes/mcp-server.md` is what has been built
 of it and why. **Off by default** (`explorer.mcp.enabled=false`) and **read-only when on**
 (`explorer.mcp.readonly=true`), both of which are the posture rather than a convenience.
+`compose/mcp.yml` is the only way to run it from this repository without editing YAML: it turns
+MCP on flat, publishes every guard as a variable (`.env.example`), and ships an `mcp-probe`
+one-shot (`--profile probe run --rm mcp-probe`) that checks the surface answers — so a failed
+agent scenario is not blamed on a model when the server was never bound.
 
 Four rules bind before that note has been read:
 

@@ -82,6 +82,7 @@ Then open **http://localhost:8080** and start clicking. That's it.
 
 - **With Confluent Schema Registry** (Avro topics): `docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d`
 - **With a local LLM pre-wired** (Ollama): `docker compose -f docker-compose.yml -f compose/ollama.yml up -d`
+- **With the MCP server on** (for an agent): `docker compose -f docker-compose.yml -f compose/mcp.yml up -d` — the endpoint is `http://localhost:8080/mcp`, the console is the app's own **MCP** page, and every guard is an `.env` variable. It has no authentication: keep `BIND_ADDR` on the loopback. Check it answers with `docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe`.
 - **With a private AI stack beside it** (SpectraLLM, images only — nothing built, no SpectraLLM checkout): `docker compose -f compose/spectra-hub.yml up -d` — Explorer on 8080, SpectraLLM UI on 8088. The first boot downloads ~4.8 GB of model weights in the background and nothing waits for it. Overlays next to it add a GPU (`.gpu.yml`), memory limits (`.limits.yml`), or have SpectraLLM index the topics themselves (`.ingest.yml`). For a laptop, four `.env` lines swap the 7B chat model for a 3B — see `.env.example`.
 - **The same stack, but pulling the published image instead of building it**: `docker compose -f docker-compose.yml -f compose/image.yml up -d`
 - **From source** (JDK 25): start Kafka with `docker compose up -d kafka`, then `./mvnw spring-boot:run`
