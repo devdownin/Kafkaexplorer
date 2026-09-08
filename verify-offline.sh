@@ -105,13 +105,21 @@ public class KafkaAvroDeserializer {
 }
 EOF
 
+# `-parameters`, because Maven passes it and this script stands in for Maven. Spring Boot's parent
+# POM sets it by default, and without it the bytecode carries no parameter names — which is not a
+# cosmetic difference here: Spring AI derives every @McpTool's JSON schema from the method
+# signature, so the whole tool surface came out declaring `arg0`, `arg1`… and a client calling
+# `kex_describe_topic` with `{"topic": …}` was refused by the input validator. Measured, not
+# assumed: `McpTransportContractTest` failed on `required property 'arg0' not found` here and
+# nowhere else. A harness that compiles differently from the build it replaces reports failures
+# that do not exist and hides ones that do.
 echo "==> Compiling main sources"
-javac -proc:none -nowarn -d "$WORK/classes" -cp "$CP" \
+javac -parameters -proc:none -nowarn -d "$WORK/classes" -cp "$CP" \
   $(find "$WORK/stubs" -name '*.java') \
   $(find src/main/java -name '*.java')
 
 echo "==> Compiling test sources"
-javac -proc:none -nowarn -d "$WORK/testclasses" -cp "$WORK/classes:$CP" \
+javac -parameters -proc:none -nowarn -d "$WORK/testclasses" -cp "$WORK/classes:$CP" \
   $(find src/test/java -name '*.java')
 
 CONSOLE="$HOME/.m2/repository/org/junit/platform/junit-platform-console-standalone/${CONSOLE_VERSION}/junit-platform-console-standalone-${CONSOLE_VERSION}.jar"

@@ -19,6 +19,13 @@ spring:
         # tools/list. Reading explorer.mcp.enabled here means the feature has exactly one place to
         # be turned on, and it is the property whose name says what it does.
         enabled: ${explorer.mcp.enabled:false}
+        # Named explicitly, and measured rather than assumed. Spring AI documents `streamable` as
+        # this property's default, and the context binds the SSE transport when it is absent: the
+        # only router function created was `webMvcSseServerRouterFunction`, so the endpoint every
+        # other file here advertises (`/mcp`) was bound by nothing at all. Fifteen tools registered,
+        # no way to call them. Found by McpTransportContractTest, which is the first thing in this
+        # module to speak to the server over a socket instead of reading its beans.
+        protocol: STREAMABLE
         name: kafka-explorer-mcp
         # Restated by hand, and that is a known weakness: the application's version is not exposed
         # as a property this file can interpolate. Revisit if the build ever filters resources.

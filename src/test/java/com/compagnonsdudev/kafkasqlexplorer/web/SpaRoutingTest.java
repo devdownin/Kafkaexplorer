@@ -13,8 +13,10 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.core.env.Environment;
 import org.springframework.web.context.WebApplicationContext;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -59,6 +61,9 @@ class SpaRoutingTest {
      */
     @Autowired
     private WebApplicationContext context;
+
+    @Autowired
+    private Environment environment;
 
     private MockMvc mockMvc;
 
@@ -132,4 +137,39 @@ class SpaRoutingTest {
             .andExpect(status().isNotFound())
             .andExpect(forwardedUrl(null));
     }
+    /**
+     * The catch-all must not swallow the MCP endpoint, and this is the guard for it.
+     *
+     * <p>It did, and the MCP server shipped unreachable because of it: the transport is a
+     * {@code RouterFunction}, an annotated mapping outranks one ({@code
+     * RequestMappingHandlerMapping} is order 0, {@code RouterFunctionMapping} order 3), and a
+     * {@code POST} forwarded to {@code index.html} reached the static resource handler and answered
+     * 405. Asserted on {@code GET} because that is what MockMvc can decide here without the
+     * transport bean: a client route forwards to the SPA, and {@code /mcp} must <b>not</b> — if it
+     * forwards, the exclusion has been lost and every MCP client is broken again.
+     *
+     * <p>The path is read from {@link SpaController#MCP_ENDPOINT} rather than written again, and
+     * that constant is resolved against Spring AI's own property below, so the two cannot drift.
+     */
+    @Test
+    void theCatchAllDoesNotSwallowTheMcpEndpoint() throws Exception {
+        mockMvc.perform(get("/" + SpaController.MCP_ENDPOINT))
+                .andExpect(forwardedUrl(null));
+    }
+
+    /**
+     * And the path the exclusion names is the path the transport is actually bound on.
+     *
+     * <p>Two copies of a path is two things to keep in step, and this one is written in a Java
+     * constant on one side and a Spring AI property on the other. The property's default is
+     * {@code /mcp}; if a deployment moves it, this fails rather than letting the SPA silently
+     * reclaim the endpoint.
+     */
+    @Test
+    void theExcludedPathIsTheOneTheTransportBindsOn() {
+        assertThat(environment.getProperty(
+                "spring.ai.mcp.server.streamable-http.mcp-endpoint", "/mcp"))
+                .isEqualTo("/" + SpaController.MCP_ENDPOINT);
+    }
+
 }

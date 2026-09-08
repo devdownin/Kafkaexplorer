@@ -24,14 +24,43 @@ import org.springframework.web.server.ResponseStatusException;
  * <p>Pinned by {@code SpaRoutingTest}, which walks the router of {@code App.tsx} and also asserts
  * the other direction, the one {@link #unmappedApi()} exists to make true: the catch-all must not
  * swallow {@code /api/**}.
+ *
+ * <p><b>And it must not swallow {@code /mcp} either, which it did.</b> The MCP transport is a
+ * {@code RouterFunction}, and an annotated mapping outranks one whatever the pattern:
+ * {@code RequestMappingHandlerMapping} is order 0 and {@code RouterFunctionMapping} order 3. So
+ * every request to the endpoint this application advertises — in its console, its README,
+ * {@code compose/mcp.yml} and {@code mcp-probe.sh} — came here instead, and a {@code POST}
+ * forwarded to {@code index.html} reached the static resource handler, which serves GET and HEAD,
+ * and answered <b>405</b>. Fifteen tools registered and no way to call any of them, shipped that
+ * way, because five phases of MCP tests read beans and none of them ever crossed a socket.
+ *
+ * <p>The exclusion is in the <b>pattern</b>, and it has to be: restricting the catch-all to GET and
+ * HEAD was tried first and changed nothing, because a path that matches with an unsupported method
+ * is a terminal 405 inside {@code RequestMappingHandlerMapping} — it does not fall through to the
+ * next {@code HandlerMapping}. A path this controller must not serve has to stop <em>matching</em>,
+ * not stop being allowed. {@code MCP_ENDPOINT} is therefore the one place the path is written on
+ * this side; it agrees with {@code spring.ai.mcp.server.streamable-http.mcp-endpoint}, which
+ * {@code application.yml} leaves at its default, and {@code SpaRoutingTest} asserts the two have
+ * not drifted apart.
  */
 @Controller
 public class SpaController {
 
+    /**
+     * The MCP transport's path, excluded from the catch-all below.
+     *
+     * <p>A constant because {@code @RequestMapping} takes compile-time values, and one place
+     * because two copies of a path are two things to keep in step. {@code SpaRoutingTest} resolves
+     * it against the property Spring AI actually binds.
+     */
+    static final String MCP_ENDPOINT = "mcp";
+
     @RequestMapping(value = {
         "/",
-        "/{path:[^\\.]*}",
-        "/**/{path:[^\\.]*}",
+        // Every dotless path except the MCP endpoint, which belongs to a RouterFunction this
+        // mapping would otherwise outrank — see the class comment.
+        "/{path:(?!" + MCP_ENDPOINT + "$)[^\\.]*}",
+        "/**/{path:(?!" + MCP_ENDPOINT + "$)[^\\.]*}",
         // The Topic Explorer: its parameter is a topic name, which legitimately carries dots.
         "/topic/**",
     })
