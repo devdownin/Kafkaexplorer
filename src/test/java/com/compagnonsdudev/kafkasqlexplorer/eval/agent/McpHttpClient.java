@@ -257,8 +257,10 @@ final class McpHttpClient implements AutoCloseable {
     private JsonNode resultOf(JsonNode envelope, String method) {
         JsonNode error = envelope.path("error");
         if (!error.isMissingNode() && !error.isNull()) {
-            throw new IllegalStateException(method + " was refused: " + error.path("message").asText()
-                    + " (code " + error.path("code").asText("?") + ")");
+            // The whole envelope, not just message and code: a server is free to put its reason
+            // anywhere in the error object, and a refusal rendered as "was refused:  (code ?)" —
+            // which is what an empty message produces — tells the reader nothing at all.
+            throw new IllegalStateException(method + " was refused: " + abbreviate(envelope.toString()));
         }
         JsonNode result = envelope.path("result");
         if (result.isMissingNode()) {
