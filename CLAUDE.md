@@ -284,7 +284,8 @@ it is obvious from the code that remains.
 
 ## MCP server
 
-`SPEC-MCP.md` at the root is the specification; `docs/notes/mcp-server.md` is what has been built
+`SPEC-MCP.md` at the root is the specification and `SPECAGENT.md` beside it specifies the agent
+that puts the honesty contracts to the test; `docs/notes/mcp-server.md` is what has been built
 of it and why. **Off by default** (`explorer.mcp.enabled=false`) and **read-only when on**
 (`explorer.mcp.readonly=true`), both of which are the posture rather than a convenience.
 
