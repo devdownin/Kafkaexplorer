@@ -67,6 +67,7 @@ public class McpConsoleService {
                 endpoints.endpoint(),
                 properties.isReadonly(),
                 !mutating.isEmpty(),
+                catalog.writeSurfaceExists(),
                 mutating,
                 // Named as the absence it is. Phase 5 brings OAuth 2.1; until then a deployment
                 // that exposes this endpoint beyond a trusted network has no caller authentication

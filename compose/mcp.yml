@@ -69,6 +69,12 @@ services:
       # to see either behaviour has to produce one.
       - EXPLORER_MCP_DLP_MODE=${EXPLORER_MCP_DLP_MODE:-redact}
 
+      # Which tools need an approval token an operator mints from the console: single-use, bound to
+      # one tool, fifteen minutes. It applies to any tool listed, not only mutating ones — a read is
+      # the sensitive gesture on a regulated cluster. Naming a READ tool here is also the only way
+      # -32042 is reachable at all today, which is what the agent harness's guard scenario does.
+      - EXPLORER_MCP_APPROVAL_REQUIRED_TOOLS=${EXPLORER_MCP_APPROVAL_REQUIRED_TOOLS:-kex_produce_message,kex_set_cluster_target,kex_create_metric}
+
       # OFF, and the default is the posture rather than caution: "Try it" executes the real tool
       # over POST /api/mcp/try/{tool}, an application endpoint on a stack with no authentication —
       # an operator who put OAuth in front of /mcp would reasonably believe the tool surface was

@@ -66,7 +66,7 @@ Tous les serveurs recensés sont des processus opaques : la surface se découvre
 
 **P4 — In-process.** Le serveur MCP est un module du même JAR Spring Boot, pas un second processus. Il réutilise `KafkaAdminService`, `FlinkSqlService`, `AuditService`, `StreamFlowService`, `DataModelService`, le cache Caffeine, les budgets et les timeouts existants. Aucun second client Kafka, aucune configuration dupliquée, aucune dérive entre l'UI et l'agent. C'est aussi ce qui rend l'écran de supervision possible sans infrastructure supplémentaire.
 
-**P5 — Compatibilité KIP-1318.** Ressources `kafka://` et codes d'erreur `-32040`…`-32047` repris à l'identique. Un profil `kip1318-aliases` expose en plus les noms d'outils standards (`consume_messages`, `describe_topic`…) pour les agents entraînés sur cette surface.
+**P5 — Compatibilité KIP-1318.** Ressources `kafka://` et codes d'erreur `-32040`…`-32047` repris à l'identique. Un profil `kip1318-aliases` exposerait en plus les noms d'outils standards (`consume_messages`, `describe_topic`…) pour les agents entraînés sur cette surface — **proposé, pas livré** : le réglage a existé un temps dans `application.yml`, accepté et suivi d'aucun effet, et a été retiré plutôt que laissé en promesse réglable.
 
 **P6 — Sortie bornée.** Plafonds non contournables sur le nombre d'enregistrements, de lignes SQL et d'octets. Toute troncature est signalée dans l'enveloppe et comptée en métrique.
 
@@ -244,7 +244,6 @@ explorer:
     tools:
       allowed: "*"
       denied: ""
-      kip1318-aliases: false
     allowed-topic-prefixes: "*"     # ex: "demo.,sandbox."
     allowed-group-prefixes: "*"
     approval-required-tools: "kex_produce_message,kex_set_cluster_target,kex_create_metric"

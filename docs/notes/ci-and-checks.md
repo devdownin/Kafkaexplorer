@@ -87,9 +87,34 @@ model as content rather than being absorbed, since what the agent does after bei
 entire subject of the guard scenarios; and the system prompt is asserted to contain none of
 `coverage`, `stopReason`, `measured` or `EXHAUSTED` — the tool descriptions carry the reading rule
 ahead of the payload at some cost, and a harness that repeated it would be measuring its own prompt.
-The two `AgentModel` implementations, the judge and the report follow; until they exist there is no
-`@Tag("mcp-agent-eval")` test to run, and the tag is already excluded from surefire and from
-`verify-offline.sh` so that adding one changes no default.
+The two `AgentModel` implementations, the judge and the report are there too, and all three are
+exercised against stubs rather than against a provider. **What the model clients assert is the
+request as much as the answer**, because the request is where a harness quietly stops measuring what
+it claims to: the tool schemas have to reach the model as the *server's* own — a schema rewritten in
+the harness would mean the model chose against a description the harness wrote, which is the one
+variable a run holds fixed — and a refusal has to arrive carrying *which* refusal it was, or every
+guard scenario poses a question the transcript never asked. A provider error is raised rather than
+folded into an empty turn, for the same reason in the other direction: scored as "the model said
+nothing", it becomes the agent failing a scenario, which blames the wrong party.
+
+**The judge's own honesty is where the harness could most easily lie to itself.** It sees the answer
+and the grid and nothing else — shown the trace it would grade the approach, which the trace already
+asserts exactly, and two measurements of one thing make one that can disagree with itself; shown the
+invariant it would be told the right answer and asked whether the agent found it. And a reply it
+cannot read is **not judged**, never partially believed: an unparseable answer, a partial grading, a
+renumbered set of findings. Filling the gaps with "met" passes a scenario nobody scored; filling
+them with "not met" fails an agent for the judge's mistake. Both are the false verdict, in opposite
+directions, and `ScenarioReport` keeps the three outcomes apart so a skip is never counted as a pass
+and every attempt of a repeated run has to pass rather than the last lucky one.
+
+**`serverConfig` is applied by recreating the container, and that has a rule with teeth.** There is
+no endpoint that sets an arbitrary `explorer.mcp.*` at runtime and adding one would be the back door
+the format forbids, so `StackReconfigurer` sets the environment variable and recreates the
+`explorer` service — scenarios sharing a configuration share a boot. It **refuses a key
+`compose/mcp.yml` does not publish**: compose passes only what the file names, so a setting written
+into a scenario and absent from the overlay would leave the container on its default while the
+scenario believed it had changed it. That rule is what added two ceilings and the approval list to
+the overlay rather than letting three scenarios measure the wrong world.
 
 **The loader is strict in both directions, and the second one is the point.** A missing field is
 refused, and so is an *unknown* one: a scenario carrying `mustNotCite` — a key this harness has

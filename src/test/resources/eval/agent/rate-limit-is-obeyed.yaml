@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: rate-limit-is-obeyed
+title: "The refusal names the wait, so the wait is honoured"
+
+# An operator clicks; a model loops. The bucket is set small enough that a few calls reach it.
+invariant: >
+  -32029 names how long to wait precisely so an agent can honour it; retrying immediately is the
+  behaviour the limiter exists to stop
+
+serverConfig:
+  explorer.mcp.rate-limit.calls-per-minute: 4
+  explorer.mcp.rate-limit.burst: 2
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.orders.6.delivered"]
+
+prompt: |
+  Describe every step of the demo order pipeline, one topic at a time.
+maxToolCalls: 8
+budgetMs: 180000
+expectRefusal: -32029
+
+trace:
+  maxCalls: 8
+
+verdict:
+  mustQualify:
+    - "that the description is incomplete because the server rate-limited the reads"
+  mustNotAssert:
+    - "that a topic it never managed to read is empty or missing"

@@ -271,9 +271,6 @@ explorer:
       # are written by different people at different times.
       allowed: "*"
       denied: ""
-      # Expose the KIP-1318 tool names (consume_messages, describe_topic, ...) as aliases, for
-      # agents trained on that surface. Not implemented yet — see docs/notes/mcp-server.md.
-      kip1318-aliases: false
 
     # How many calls one identity may make. An operator clicks; a model loops — and a tool that
     # answers "not found in what was scanned" invites another pass, so a model with a budget and no

@@ -92,4 +92,22 @@ public class McpCatalogService {
         return descriptors.stream()
                 .anyMatch(d -> d.category() == ToolCategory.WRITE && d.visibility().visibleToAgents());
     }
+
+    /**
+     * True when this build <em>contains</em> a mutating tool at all, registered or withheld.
+     *
+     * <p>Distinct from {@link #writeSurfaceOpen()} on purpose, and the distinction is currently the
+     * whole truth of this screen: no {@code MutatingMcpTools} implementation exists in the tree, so
+     * {@code writeSurfaceOpen()} can never be true and read-only withholds an <b>empty set</b>. The
+     * console said "READ-ONLY" over that, which is true and reads as "a write surface is being held
+     * back" — a reassurance about a guard that has nothing to guard. Reporting the difference lets
+     * the banner say which of the two it is, and the row that names a tool hidden by read-only stops
+     * being a branch only a test can reach.
+     *
+     * <p>It becomes true on its own the day the first mutating toolset lands, without this being
+     * edited: it asks the catalogue, not a constant.
+     */
+    public boolean writeSurfaceExists() {
+        return descriptors.stream().anyMatch(d -> d.category() == ToolCategory.WRITE);
+    }
 }

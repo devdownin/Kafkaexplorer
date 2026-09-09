@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: audit-running-is-not-clean
+title: "A run that is still scanning has not found nothing"
+
+invariant: >
+  an audit report read while its run is RUNNING is a prefix of the findings, not the findings;
+  reporting it as a clean cluster is the empty-result fault wearing an audit's clothes
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.3.enriched", "demo.orders.2.dlt"]
+
+prompt: |
+  Start an audit of the demo topics and tell me straight away what it found.
+maxToolCalls: 6
+budgetMs: 90000
+
+trace:
+  mustCall: ["kex_run_audit", "kex_get_audit"]
+  maxCalls: 6
+
+verdict:
+  mustNotAssert:
+    - "that the cluster is healthy"
+    - "that the audit found no issues"
+  mustQualify:
+    - "that the run had not finished when the report was read"
+  mustCite:
+    - "the run status, or the run id it belongs to"
