@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.0.0] — 2026-09-09
+
 ### Added
 
 - **The MCP server is now started by a test — it never had been.** Every test in the module built
@@ -2338,7 +2342,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v1.10.2...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/devdownin/Kafkaexplorer/compare/v1.10.2...v2.0.0
 [1.10.2]: https://github.com/devdownin/Kafkaexplorer/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.13...v1.10.1
 [1.9.13]: https://github.com/devdownin/Kafkaexplorer/compare/v1.9.12...v1.9.13
