@@ -55,6 +55,17 @@ services:
       - EXPLORER_MCP_RATE_LIMIT_CALLS_PER_MINUTE=${EXPLORER_MCP_RATE_LIMIT_CALLS_PER_MINUTE:-120}
       - EXPLORER_MCP_RATE_LIMIT_BURST=${EXPLORER_MCP_RATE_LIMIT_BURST:-20}
 
+      # The broker address, as a variable rather than the base file's literal. Same default, so
+      # layering this overlay changes nothing — what it adds is the one way to make a dependency
+      # genuinely unavailable: point the application at an address nothing answers. That is an
+      # operator's gesture on a published deployment setting, not a reach into internal state, and
+      # it is what lets the agent harness put an agent in front of a -32043 at all.
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-kafka:29092}
+
+      # The runtime kill switch, which the harness needs ON to switch a tool off mid-session — the
+      # one scenario shape that cannot be set up before the agent starts.
+      - EXPLORER_MCP_CONSOLE_ALLOW_RUNTIME_TOGGLE=${EXPLORER_MCP_CONSOLE_ALLOW_RUNTIME_TOGGLE:-true}
+
       # The two ceilings a scenario moves to put the agent in a state no unit test can reach: a scan
       # that stopped short. Lowering hard-max-topics on a seeded cluster forces a partial coverage,
       # and a tight default budget forces a per-topic count to arrive unmeasured — which is exactly

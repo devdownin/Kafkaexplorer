@@ -42,7 +42,22 @@ final class ScenarioLoader {
 
     private static final List<String> TOP_LEVEL = List.of(
             "id", "title", "invariant", "serverConfig", "fixture", "prompt",
-            "maxToolCalls", "budgetMs", "trace", "verdict", "expectRefusal");
+            "maxToolCalls", "budgetMs", "trace", "verdict", "expectRefusal", "midSession");
+    private static final List<String> MID_SESSION_KEYS =
+            List.of("afterCalls", "disableTool", "reason");
+
+    /**
+     * The one setting outside {@code explorer.mcp.*} a scenario may move, named rather than a
+     * pattern.
+     *
+     * <p>{@code dependency-down-is-not-a-guard} needs a dependency that is genuinely unreachable,
+     * which no {@code explorer.mcp.*} value can produce — and §4.5 recorded that as the reason the
+     * scenario could not be written. Pointing the application at an address nothing answers is how
+     * an operator makes a dependency unavailable; it is a published deployment setting, not the
+     * internal state §3 forbids reaching into. It is a list of exactly one so that widening it is a
+     * decision somebody makes on purpose.
+     */
+    private static final List<String> SETTINGS_OUTSIDE_MCP = List.of("kafka.bootstrap-servers");
     private static final List<String> FIXTURE_KEYS = List.of("seeder", "requires");
     private static final List<String> REQUIRES_KEYS = List.of("topics", "keys");
     private static final List<String> TRACE_KEYS =
@@ -110,6 +125,7 @@ final class ScenarioLoader {
         AgentScenario.Verdict verdict = verdict(root, origin);
         Integer expectRefusal = root.get("expectRefusal") == null
                 ? null : requireInt(root, "expectRefusal", origin);
+        AgentScenario.MidSession midSession = midSession(root, origin);
 
         AgentScenario scenario = new AgentScenario(
                 id,
@@ -122,7 +138,8 @@ final class ScenarioLoader {
                 requireInt(root, "budgetMs", origin),
                 trace,
                 verdict,
-                expectRefusal);
+                expectRefusal,
+                midSession);
 
         validate(scenario, origin);
         return scenario;
@@ -155,11 +172,38 @@ final class ScenarioLoader {
                     origin + ": the scenario asserts nothing — no mustCall, no verdict grid and no "
                             + "expectRefusal, so it would report green having measured nothing");
         }
+        if (s.midSession() != null && s.midSession().afterCalls() >= s.effectiveMaxCalls()) {
+            throw new IllegalArgumentException(
+                    origin + ": midSession.afterCalls (" + s.midSession().afterCalls()
+                            + ") leaves no call for the agent to make after the switch, so the "
+                            + "scenario would assert nothing about how it reads the refusal");
+        }
         if (s.fixture().topics().isEmpty() && s.fixture().keys().isEmpty()) {
             throw new IllegalArgumentException(
                     origin + ": fixture.requires names neither a topic nor a key, so nothing "
                             + "resolves it against the seeder");
         }
+    }
+
+    private static AgentScenario.MidSession midSession(Map<String, Object> root, String origin) {
+        Object raw = root.get("midSession");
+        if (raw == null) {
+            return null;
+        }
+        Map<String, Object> block = requireMap(root, "midSession", origin);
+        rejectUnknownKeys(block, MID_SESSION_KEYS, origin, "midSession");
+        int afterCalls = requireInt(block, "afterCalls", origin);
+        if (afterCalls < 1) {
+            // Zero would fire before the agent has called anything, which is a serverConfig with
+            // extra steps — and would test the registration-time path this scenario exists to tell
+            // apart from the runtime one.
+            throw new IllegalArgumentException(
+                    origin + ": midSession.afterCalls must be at least 1, so the gesture lands "
+                            + "during the session rather than before it");
+        }
+        return new AgentScenario.MidSession(afterCalls,
+                requireText(block, "disableTool", origin),
+                requireText(block, "reason", origin));
     }
 
     private static AgentScenario.Fixture fixture(Map<String, Object> root, String origin) {
@@ -227,11 +271,14 @@ final class ScenarioLoader {
                 throw new IllegalArgumentException(
                         origin + ": serverConfig." + key + " has no value");
             }
-            if (!key.startsWith("explorer.mcp.")) {
+            if (!key.startsWith("explorer.mcp.") && !SETTINGS_OUTSIDE_MCP.contains(key)) {
                 // §3: the harness knows no back door. A setting outside the module's own prefix
-                // would be reconfiguring the application around the surface under test.
+                // would be reconfiguring the application around the surface under test — except for
+                // the one named in SETTINGS_OUTSIDE_MCP, and the exception is a list rather than a
+                // pattern so that adding to it is a decision.
                 throw new IllegalArgumentException(
-                        origin + ": serverConfig only accepts explorer.mcp.* settings, not " + key);
+                        origin + ": serverConfig accepts explorer.mcp.* and " + SETTINGS_OUTSIDE_MCP
+                                + ", not " + key);
             }
             flat.put(key, String.valueOf(value));
         });

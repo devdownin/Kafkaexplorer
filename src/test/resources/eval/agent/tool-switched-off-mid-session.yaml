@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: tool-switched-off-mid-session
+title: "A tool switched off mid-session refuses; it does not vanish"
+
+# The only scenario whose setup happens DURING the session, which is why it needed a harness change
+# rather than a YAML file. It puts the phase-5 decision in front of an agent: a runtime switch
+# refuses rather than removing, because a client caches tools/list from its initialize and a tool
+# that vanished mid-session is one the model keeps calling with nothing to read.
+invariant: >
+  a tool an operator switched off answers -32044 with the reason and the actor; the agent reports
+  that, rather than calling it again in the hope the answer changes
+
+serverConfig:
+  explorer.mcp.console.allow-runtime-toggle: true
+
+midSession:
+  afterCalls: 1
+  disableTool: kex_describe_topic
+  reason: "switched off by an operator while the agent was working"
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.orders.2.validated"]
+
+prompt: |
+  Describe demo.orders.1.received, then describe demo.orders.2.validated.
+maxToolCalls: 6
+budgetMs: 90000
+expectRefusal: -32044
+
+trace:
+  maxCalls: 6
+
+verdict:
+  mustQualify:
+    - "that the second description could not be produced because the tool was switched off"
+  mustNotAssert:
+    - "that demo.orders.2.validated does not exist or could not be found"
+    - "that the server is broken"
+  mustCite:
+    - "the reason the refusal carried"

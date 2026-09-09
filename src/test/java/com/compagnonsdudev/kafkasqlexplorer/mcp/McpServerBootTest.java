@@ -35,8 +35,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code ToolResult<T>} over records that nest other records and a generic {@code Measured<T>};
  * none of that was ever put in front of the scanner.
  *
- * <p>{@code webEnvironment} stays {@code MOCK} (the default): the assertions are about the tools the
- * framework registered, and binding a port would add a listener without adding a fact.
+ * <p>{@code webEnvironment} stays {@code MOCK} (the default), and the reason is narrower than it
+ * used to be stated. The assertions here are about the tools the framework <em>registered</em>, and
+ * a bound port adds nothing to those. It does not follow that nothing needs one: this comment used
+ * to end "binding a port would add a listener without adding a fact", and under that reading the
+ * server shipped with no reachable endpoint at all — the SSE transport bound where {@code /mcp} was
+ * advertised, and the SPA catch-all swallowing the path. Fifteen tools registered, none callable.
+ * {@code McpTransportContractTest} is the test that speaks to a bound port as a third-party client;
+ * registration and reachability are two facts, and this class asserts one of them.
  */
 @ExplorerContextTest
 @TestPropertySource(properties = {

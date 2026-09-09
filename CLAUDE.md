@@ -340,12 +340,18 @@ Four rules bind before that note has been read:
   rather than removing**, and that is not inconsistency: a client caches `tools/list` from its
   `initialize`, so a tool that vanished mid-session is one the model keeps calling with nothing to
   read.
-- **`McpServerBootTest` is the only test that starts the server, and it has to stay that way round.**
-  Every other test in the module builds its tool specifications by hand, which is right for what
-  they assert and blind to the one thing only a real boot shows: Spring AI derives each tool's JSON
-  schema *from its method signature*, so a parameter or return type it cannot express is a startup
-  failure or a silently missing tool. A new `@McpTool` therefore goes in that test's expected list —
-  a tool the framework refused to register is otherwise indistinguishable from one nobody added.
+- **Registration and reachability are two facts, and a tool needs both asserted.**
+  `McpServerBootTest` starts the context and reads the specification beans: Spring AI derives each
+  tool's JSON schema *from its method signature*, so a parameter or return type it cannot express is
+  a startup failure or a silently missing tool, and a new `@McpTool` goes in that test's expected
+  list. **`McpTransportContractTest` is the other half**, and it exists because this rule used to
+  say the boot test was the only one that should start the server — justifying `webEnvironment =
+  MOCK` on the grounds that a bound port "would add a listener without adding a fact". That was
+  right about the tools and wrong about the surface: **the server shipped with no reachable
+  endpoint** (SSE bound where `/mcp` was advertised, and the SPA catch-all swallowing the path), and
+  ~1500 tests reading beans could not see it. So one test talks to a bound port as a third-party
+  client — the handshake, `tools/list`, a real call — and the two together are what "the tool works"
+  means. `docs/notes/mcp-server.md` carries what each found.
 
 ## Security
 

@@ -34,7 +34,7 @@ class ToolCallTraceTest {
                 new AgentScenario.Fixture("setup-demo.sh", List.of("demo.orders.1.received"), List.of()),
                 "prompt", 10, 60_000, trace,
                 new AgentScenario.Verdict(List.of(), List.of(), List.of(), List.of()),
-                expectRefusal);
+                expectRefusal, null);
     }
 
     private static AgentScenario.Trace trace(List<String> mustCall, List<String> mustNotCall,

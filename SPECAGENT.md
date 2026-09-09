@@ -263,15 +263,31 @@ sur le seul nombre conclut « faible retard, tout va bien ».
 | `dependency-down-is-not-a-guard` | `-32043` | l'agent conseille de desserrer un réglage ; aucun ne s'applique |
 | `tool-switched-off-mid-session` | `-32044` | l'agent redemande l'outil en boucle au lieu de rapporter |
 
-**Deux de ces cinq ne sont pas livrés, et pour des raisons différentes.**
-`dependency-down-is-not-a-guard` demande qu'une dépendance soit réellement injoignable — arrêter le
-broker sous le serveur — et non qu'un réglage soit posé : `serverConfig` ne peut pas l'armer, donc
-un scénario écrit aujourd'hui échouerait sur « la garde n'a pas tiré », une phrase vraie à propos
-d'un scénario qui n'a jamais pu la faire tirer. `tool-switched-off-mid-session` est le seul scénario
-dynamique : il demande un `POST /api/mcp/toggle/tool/{name}` **pendant** la session, et `AgentRunner`
-n'a pas de point d'accroche en cours de boucle. Les deux sont des ajouts au harnais, pas des
-fichiers YAML, et les écrire en YAML aujourd'hui produirait deux scénarios rouges pour la faute du
-harnais — exactement le rapport que le §7 interdit.
+**Ces deux-là ont demandé une capacité du harnais, pas un fichier YAML — et les deux sont livrées.**
+
+`dependency-down-is-not-a-guard` exige une dépendance réellement injoignable, ce qu'aucune valeur
+d'`explorer.mcp.*` ne produit. Le chemin honnête est celui de l'opérateur : pointer l'application
+sur une adresse à laquelle rien ne répond. `ScenarioLoader` autorise donc **une** clé hors
+`explorer.mcp.*`, `kafka.bootstrap-servers`, nommée dans une liste plutôt que dans un motif pour que
+l'élargir soit une décision ; c'est un réglage de déploiement publié, pas l'état interne que le §3
+interdit d'atteindre. `compose/mcp.yml` la publie en variable, même défaut que la stack de base.
+
+`tool-switched-off-mid-session` est le seul scénario dont la mise en scène a lieu **pendant** la
+session, et c'est tout son sujet : l'agent a déjà lu et mis en cache `tools/list`, donc l'outil qu'il
+appelle ensuite est un outil qu'il a toute raison de croire présent. C'est précisément la décision
+de la phase 5 — un interrupteur d'exécution **refuse au lieu de retirer** — mise devant un agent. Le
+bloc `midSession` (`afterCalls`, `disableTool`, `reason`) dit quand le geste tombe ; `AgentRunner`
+le joue après le Nième appel, à travers `OperatorConsole`, qui poste sur
+`/api/mcp/toggle/tool/{name}` — la même surface HTTP que le bouton de la console, un harnais qui
+basculerait un bean éprouvant un geste qu'aucun opérateur ne peut faire. Et l'outil est **remis en
+service dans un `finally`** : le §7 le demande, aucune dérogation n'expirant d'elle-même.
+
+Deux gardes empêchent ces scénarios de mentir. Le lecteur refuse `afterCalls` supérieur ou égal au
+plafond d'appels — le geste tomberait sans qu'aucun appel ne suive, donc sans rien affirmer sur la
+façon dont l'agent lit le refus — et `AgentRunner` **échoue** plutôt que de sauter un geste
+configuré quand aucune console ne lui a été donnée : ne pas le jouer en silence ferait tourner le
+scénario contre un monde que personne n'a changé, en rendant compte de l'agent comme s'il avait été
+éprouvé.
 
 `tool-switched-off-mid-session` est le seul scénario **dynamique** : le harnais coupe un outil via
 `POST /api/mcp/toggle/tool/{name}` pendant la session. Il vérifie la décision de conception de la
@@ -305,6 +321,7 @@ src/test/java/.../eval/agent/
 ├── ToolCallTrace.java           # la trace, et les assertions de §2.1
 ├── McpRefusal.java              # les codes KIP-1318 que le harnais lit
 ├── StackReconfigurer.java       # applique serverConfig en recréant le conteneur
+├── OperatorConsole.java         # les gestes d'opérateur, joués pendant la session
 ├── VerdictJudge.java            # le second appel modèle, sur la grille de §2.2
 ├── JudgeVerdict.java            # ce que le juge a décidé, et ce qu'il n'a pas pu juger
 └── ScenarioReport.java          # le rapport, y compris pour un scénario vert
@@ -454,11 +471,18 @@ harnais**, parce qu'il déplace la confiance sans la justifier.
 - **La qualité rédactionnelle des réponses.** §2.2 le dit : noter une formulation produit un test qui
   échoue sur une paraphrase.
 
-**État de la construction** : le harnais est complet et **17 scénarios sur 19** sont livrés. Tout ce
+**État de la construction** : le harnais est complet et **les 19 scénarios sont livrés**. Tout ce
 qui ne demande pas de modèle tourne dans `mvn verify` — le format et son lecteur, le verdict 1, le
-client MCP, la boucle bornée, les deux clients à appel d'outils, le juge, le rapport et
-l'application de `serverConfig`. Les deux scénarios manquants sont ceux du §4.5 que le harnais ne
-sait pas encore mettre en scène, et le §4.5 dit lequel manque de quoi.
+client MCP, la boucle bornée, les deux clients à appel d'outils, le juge, le rapport, l'application
+de `serverConfig` et le geste `midSession`.
+
+**Ce qui n'a pas encore tourné, et qu'aucun de ces tests ne remplace** : l'épreuve elle-même, contre
+un modèle réel et une stack semée. Le chemin de saut, lui, est vérifié de bout en bout —
+`./verify-offline.sh --include-tag=mcp-agent-eval` sans rien de configuré rend
+`0 passed, 0 failed, 19 skipped — a skipped scenario is not a passing one`, ce qui est la règle du
+§7 rendue visible. Tant que l'épreuve n'a pas tourné, **la calibration des scénarios est inconnue** :
+un scénario qu'aucun modèle ne passe est cassé, un que tous passent ne mesure rien, et ni l'un ni
+l'autre ne se voit d'ici.
 
 **Préalable levé** : `compose/mcp.yml` existe. Il pose `EXPLORER_MCP_ENABLED=true`, laisse chaque
 garde à la valeur qu'expédie `application.yml` et la publie en variable (`.env.example`), et ajoute
