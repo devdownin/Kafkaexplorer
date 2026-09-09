@@ -39,10 +39,16 @@ final class AgentRunner {
 
     private final AgentModel model;
     private final McpHttpClient mcp;
+    private final OperatorConsole console;
 
     AgentRunner(AgentModel model, McpHttpClient mcp) {
+        this(model, mcp, null);
+    }
+
+    AgentRunner(AgentModel model, McpHttpClient mcp, OperatorConsole console) {
         this.model = model;
         this.mcp = mcp;
+        this.console = console;
     }
 
     /**
@@ -53,6 +59,33 @@ final class AgentRunner {
      * @param overrun    the bound that was hit, or null when the agent finished on its own
      */
     record Session(String answer, ToolCallTrace trace, String overrun) {
+    }
+
+    /**
+     * An operator switches a tool off while the agent is mid-conversation.
+     *
+     * <p>Played <b>after</b> the Nth call rather than before the session, which is the whole shape
+     * of the scenario: the agent has already read {@code tools/list} and cached it, so the tool it
+     * calls next is one it has every reason to believe exists. That is why the phase-5 decision was
+     * that a runtime switch refuses rather than removing — and this is what puts an agent in front
+     * of that refusal.
+     *
+     * <p>A configured gesture with no console is a failure, not a skip: silently not playing it
+     * would run the scenario against an unchanged world and report on the agent as though it had
+     * been tested.
+     */
+    private void playMidSession(AgentScenario scenario, int spent) {
+        AgentScenario.MidSession gesture = scenario.midSession();
+        if (gesture == null || spent != gesture.afterCalls()) {
+            return;
+        }
+        if (console == null) {
+            throw new IllegalStateException(scenario.id()
+                    + " declares a midSession gesture and this runner was built without a console, "
+                    + "so the switch would never be thrown and the scenario would measure an "
+                    + "unchanged server");
+        }
+        console.disableTool(gesture.disableTool(), "the agent harness", gesture.reason());
     }
 
     Session run(AgentScenario scenario) {
@@ -91,6 +124,7 @@ final class AgentRunner {
                 McpHttpClient.ToolAnswer result =
                         mcp.callTool(requested.name(), requested.arguments());
                 spent++;
+                playMidSession(scenario, spent);
                 // The refusal goes back to the model as content. Absorbing it here would answer
                 // the question the guard scenarios exist to ask.
                 transcript.add(new AgentModel.Exchange.ToolResult(requested.id(), requested.name(),

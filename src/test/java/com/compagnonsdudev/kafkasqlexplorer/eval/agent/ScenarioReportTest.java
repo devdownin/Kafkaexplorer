@@ -26,7 +26,7 @@ class ScenarioReportTest {
             "prompt", 6, 60_000,
             new AgentScenario.Trace(List.of(), List.of(), null, 0),
             new AgentScenario.Verdict(List.of(), List.of(), List.of(), List.of()),
-            null);
+            null, null);
 
     private static ScenarioReport.Attempt passing(int number) {
         return new ScenarioReport.Attempt(number, List.of(), JudgeVerdict.nothingToJudge(),

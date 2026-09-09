@@ -104,6 +104,8 @@ class McpAgentEvalTest {
         // connection pool and a selector thread for every scenario.
         AgentModel agent = unconfigured.isEmpty() ? models.agent() : null;
         VerdictJudge judge = unconfigured.isEmpty() ? new VerdictJudge(models.judge()) : null;
+        // The console lives at the application's root, which the MCP endpoint hangs off.
+        OperatorConsole operator = new OperatorConsole.Http(endpoint, Duration.ofSeconds(20));
 
         Stream<DynamicTest> cases = scenarios.stream().map(scenario ->
                 DynamicTest.dynamicTest(scenario.id(), () -> {
@@ -112,7 +114,8 @@ class McpAgentEvalTest {
                         reports.add(skipped);
                         abort(skipped.render());
                     }
-                    ScenarioReport report = run(scenario, agent, judge, endpoint, repeats);
+                    ScenarioReport report =
+                            run(scenario, agent, judge, operator, endpoint, repeats);
                     reports.add(report);
                     if (report.outcome() == ScenarioReport.Outcome.SKIPPED) {
                         abort(report.render());
@@ -135,7 +138,7 @@ class McpAgentEvalTest {
     }
 
     private ScenarioReport run(AgentScenario scenario, AgentModel agent, VerdictJudge judge,
-                               URI endpoint, int repeats) {
+                               OperatorConsole operator, URI endpoint, int repeats) {
         try {
             stack.applyTo(scenario);
         } catch (RuntimeException e) {
@@ -148,7 +151,8 @@ class McpAgentEvalTest {
         for (int attempt = 1; attempt <= repeats; attempt++) {
             try (McpHttpClient mcp = new McpHttpClient(endpoint, Duration.ofSeconds(20))) {
                 mcp.initialize();
-                AgentRunner.Session session = new AgentRunner(agent, mcp).run(scenario);
+                AgentRunner.Session session =
+                        new AgentRunner(agent, mcp, operator).run(scenario);
                 attempts.add(new ScenarioReport.Attempt(attempt,
                         session.trace().failures(scenario),
                         judge.score(scenario.verdict(), session.answer()),
@@ -163,6 +167,15 @@ class McpAgentEvalTest {
                                 + "). Is the stack up with compose/mcp.yml? Try: docker compose "
                                 + "-f docker-compose.yml -f compose/mcp.yml --profile probe run "
                                 + "--rm mcp-probe");
+            } finally {
+                // §7: an override outlives the scenario that set it, and none of them expire. A
+                // scenario that switched a tool off and died leaving it off fails its neighbour for
+                // a reason that does not belong to it — the fault the two FlinkSqlService suites
+                // already paid for. Restored per attempt, since a repeated run switches it off
+                // again on the next one.
+                if (scenario.midSession() != null) {
+                    operator.enableTool(scenario.midSession().disableTool());
+                }
             }
         }
         return ScenarioReport.of(scenario, attempts);

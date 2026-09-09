@@ -47,7 +47,21 @@ GUARD_SETTINGS = {
     -32041: ("explorer.mcp.allowed-topic-prefixes", "explorer.mcp.allowed-group-prefixes"),
     -32042: ("explorer.mcp.approval-required-tools",),
     -32029: ("explorer.mcp.rate-limit.calls-per-minute", "explorer.mcp.rate-limit.burst"),
-    -32044: ("explorer.mcp.tools.denied",),
+    -32044: ("explorer.mcp.tools.denied", "explorer.mcp.console.allow-runtime-toggle"),
+    # Not a policy, and that is the point of the scenario that expects it: -32043 says a dependency
+    # is unavailable, so what arms it is an address nothing answers rather than a guard being
+    # tightened. It is the one arming setting outside `explorer.mcp.*`, matching the single
+    # exception ScenarioLoader names.
+    -32043: ("kafka.bootstrap-servers",),
+}
+
+# A refusal a scenario arms by DOING something during the session rather than by setting anything.
+# -32044 has both shapes: a deny-list set in advance, and an operator throwing the runtime switch
+# mid-session. A check that knew only the first would reject the second as unarmed — which is a
+# true sentence about a scenario that arms its guard perfectly well, and the kind of false negative
+# that teaches people to delete a check.
+ARMED_BY_ACTION = {
+    -32044: "midSession",
 }
 
 
@@ -142,8 +156,11 @@ def main() -> int:
                                 "to see armed — add it to GUARD_SETTINGS with the setting that "
                                 "arms it")
             elif not any(setting in body for setting in settings):
-                problems.append(f"{name}: expects {code} but serverConfig arms none of "
-                                f"{', '.join(settings)}, so the guard cannot fire")
+                action = ARMED_BY_ACTION.get(code)
+                if not (action and re.search(rf"^{action}\s*:\s*$", body, re.MULTILINE)):
+                    ways = list(settings) + ([f"a {action} block"] if action else [])
+                    problems.append(f"{name}: expects {code} but arms none of "
+                                    f"{', '.join(ways)}, so the guard cannot fire")
 
     if problems:
         for problem in problems:

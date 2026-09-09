@@ -132,16 +132,41 @@ fi
 # never `java -jar`. With -jar the system classpath holds only the launcher, and Flink's
 # job-graph deserialization then cannot see flink-table-runtime: every SELECT fails to
 # submit, the planner circuit breaker trips, and a dozen tests fail for no real reason.
-# The LLM half of the Process Mining eval is excluded here for the same reason surefire excludes
-# it: it calls a real endpoint, so it costs money and needs the network, and this harness exists
-# precisely for a machine that cannot reach one. It skips itself without a configured provider,
-# but a skip still builds the prompt and a filter says so up front. Pass
-# `--include-tag=llm-eval` after `--` to run it deliberately; a later --include-tag wins.
+# The two evals that call a real endpoint are excluded here for the same reason surefire excludes
+# them: they cost money and need the network, and this harness exists precisely for a machine that
+# cannot reach one.
+#
+# ASKING FOR ONE BACK IS A FILTER THE SCRIPT APPLIES, not one JUnit resolves. This block used to
+# claim "a later --include-tag wins" and pass both flags unconditionally; measured, that is false —
+# JUnit's exclude-tag beats any include-tag, so `--include-tag=llm-eval` found **0 tests**, as did
+# `--include-tag=mcp-agent-eval`. The documented way to run either eval deliberately had never
+# worked, on a comment nobody had executed. So the exclusion is now dropped for exactly the tag the
+# caller asked for:
+#
+#   ./verify-offline.sh --include-tag=mcp-agent-eval
+#
+# The `=` form is the one recognised, which is the form every invocation in this repository uses.
 echo "==> Running tests"
-java -cp "$CONSOLE:$WORK/classes:$WORK/testclasses:src/main/resources:src/test/resources:$CP" \
+EXCLUDE_TAGS=""
+for tag in llm-eval mcp-agent-eval; do
+  case " $* " in
+    *" --include-tag=$tag "*) echo "==> $tag requested: not excluding it" ;;
+    *) EXCLUDE_TAGS="$EXCLUDE_TAGS --exclude-tag=$tag" ;;
+  esac
+done
+
+# shellcheck disable=SC2086 - EXCLUDE_TAGS is a deliberate word list, built just above.
+# stdout.encoding, and NOT file.encoding — which is the whole point of naming it here. A failure
+# message is this harness's product, and on a runner with no LANG the JVM wrote a literal `?` for
+# every non-ASCII character: the agent report's summary came out as "17 skipped ? a skipped scenario
+# is not a passing one". `-Dfile.encoding=UTF-8` was tried first and changed nothing, because since
+# Java 18 it is already UTF-8; what follows the native locale is `stdout.encoding`
+# (ANSI_X3.4-1968 here, measured with -XshowSettings:properties). The sentences that suffer are
+# exactly the ones written to be read on a red run.
+java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 \
+  -cp "$CONSOLE:$WORK/classes:$WORK/testclasses:src/main/resources:src/test/resources:$CP" \
   org.junit.platform.console.ConsoleLauncher execute \
   --scan-classpath="$WORK/testclasses" \
-  --exclude-tag=llm-eval \
-  --exclude-tag=mcp-agent-eval \
+  $EXCLUDE_TAGS \
   --details=summary \
   "$@"

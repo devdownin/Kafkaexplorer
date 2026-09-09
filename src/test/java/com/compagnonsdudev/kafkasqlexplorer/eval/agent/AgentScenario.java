@@ -33,6 +33,9 @@ import java.util.Map;
  * @param budgetMs     the same, in time
  * @param expectRefusal the JSON-RPC code a guard scenario expects ({@code -32041}, {@code -32042},
  *                     {@code -32029}…), or null when the scenario expects the tools to run
+ * @param midSession   an operator's gesture, played <b>during</b> the session, or null. The one
+ *                     scenario shape that cannot be set up in advance: a tool switched off while
+ *                     the agent is already talking to the server
  */
 record AgentScenario(
         String id,
@@ -45,7 +48,8 @@ record AgentScenario(
         long budgetMs,
         Trace trace,
         Verdict verdict,
-        Integer expectRefusal) {
+        Integer expectRefusal,
+        MidSession midSession) {
 
     /**
      * What the scenario assumes the seeded cluster holds.
@@ -56,6 +60,23 @@ record AgentScenario(
      * not fail, it evaluates the wrong thing, confidently.
      */
     record Fixture(String seeder, List<String> topics, List<String> keys) {
+    }
+
+    /**
+     * What an operator does in the middle of the session.
+     *
+     * <p>{@code SPECAGENT.md} §4.5 calls {@code tool-switched-off-mid-session} the only dynamic
+     * scenario, and this is why it needed a harness change rather than a YAML file: every other
+     * setup is applied before the agent starts. Here the point is precisely that the world changes
+     * under the agent — the phase-5 decision being that a runtime switch <b>refuses rather than
+     * removing</b>, since a client caches {@code tools/list} from its {@code initialize} and a tool
+     * that vanished mid-session is one the model keeps calling with nothing to read.
+     *
+     * @param afterCalls  how many tool calls to let through first; the gesture lands after the Nth
+     * @param disableTool the tool an operator switches off
+     * @param reason      what the operator gives as the reason, which the refusal then carries
+     */
+    record MidSession(int afterCalls, String disableTool, String reason) {
     }
 
     /**

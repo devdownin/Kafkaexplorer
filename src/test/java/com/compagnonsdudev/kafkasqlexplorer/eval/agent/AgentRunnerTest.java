@@ -107,7 +107,7 @@ class AgentRunnerTest {
                 "Did ORD-101 get delivered?", maxToolCalls, budgetMs,
                 new AgentScenario.Trace(List.of(), List.of(), null, 0),
                 new AgentScenario.Verdict(List.of(), List.of(), List.of(), List.of()),
-                null);
+                null, null);
     }
 
     private static AgentModel.Turn calling(String tool, Map<String, Object> arguments) {
@@ -179,6 +179,89 @@ class AgentRunnerTest {
             assertThat(session.trace().calls())
                     .withFailMessage("the budget stopped nothing: all ten calls were made")
                     .hasSizeLessThan(10);
+        }
+    }
+
+    /** Records the operator's gestures and when they landed, so the ordering can be asserted. */
+    private static final class RecordingConsole implements OperatorConsole {
+        private final List<String> gestures = new java.util.ArrayList<>();
+
+        @Override
+        public void disableTool(String tool, String actor, String reason) {
+            gestures.add("off:" + tool + ":" + reason);
+        }
+
+        @Override
+        public void enableTool(String tool) {
+            gestures.add("on:" + tool);
+        }
+    }
+
+    private static AgentScenario withMidSession(AgentScenario.MidSession gesture) {
+        return new AgentScenario("tool-switched-off-mid-session", "t", "i", Map.of(),
+                new AgentScenario.Fixture("setup-demo.sh", List.of("demo.orders.1.received"), List.of()),
+                "prompt", 6, 60_000,
+                new AgentScenario.Trace(List.of(), List.of(), null, 0),
+                new AgentScenario.Verdict(List.of(), List.of(), List.of(), List.of()),
+                null, gesture);
+    }
+
+    @Test
+    @DisplayName("the operator's switch lands after the Nth call, not before the session")
+    void playsTheMidSessionGestureInTheMiddle() throws IOException {
+        // The whole shape of the scenario: the agent has already read tools/list and cached it, so
+        // the tool it calls next is one it has every reason to believe exists.
+        RecordingConsole operator = new RecordingConsole();
+        ScriptedModel model = new ScriptedModel(
+                calling("kex_list_topics", Map.of()),
+                calling("kex_trace_key", Map.of()),
+                new AgentModel.Turn("done", List.of()));
+
+        try (McpHttpClient mcp = new McpHttpClient(serve(OK_RESULT), Duration.ofSeconds(5))) {
+            mcp.initialize();
+            new AgentRunner(model, mcp, operator).run(withMidSession(
+                    new AgentScenario.MidSession(1, "kex_describe_topic", "an operator switched it off")));
+
+            assertThat(operator.gestures)
+                    .containsExactly("off:kex_describe_topic:an operator switched it off");
+        }
+    }
+
+    @Test
+    @DisplayName("the gesture is played once, however many calls follow")
+    void playsItOnlyOnce() throws IOException {
+        RecordingConsole operator = new RecordingConsole();
+        ScriptedModel model = new ScriptedModel(
+                calling("kex_list_topics", Map.of()),
+                calling("kex_list_topics", Map.of()),
+                calling("kex_list_topics", Map.of()),
+                new AgentModel.Turn("done", List.of()));
+
+        try (McpHttpClient mcp = new McpHttpClient(serve(OK_RESULT), Duration.ofSeconds(5))) {
+            mcp.initialize();
+            new AgentRunner(model, mcp, operator).run(withMidSession(
+                    new AgentScenario.MidSession(1, "kex_describe_topic", "off")));
+
+            assertThat(operator.gestures).hasSize(1);
+        }
+    }
+
+    @Test
+    @DisplayName("a gesture with no console fails rather than measuring an unchanged server")
+    void refusesToRunAMidSessionScenarioWithoutAConsole() throws IOException {
+        // Silently not playing it would run the scenario against a world nobody changed and report
+        // on the agent as though it had been tested.
+        ScriptedModel model = new ScriptedModel(calling("kex_list_topics", Map.of()));
+
+        try (McpHttpClient mcp = new McpHttpClient(serve(OK_RESULT), Duration.ofSeconds(5))) {
+            mcp.initialize();
+            AgentRunner runner = new AgentRunner(model, mcp);
+            AgentScenario scenario = withMidSession(
+                    new AgentScenario.MidSession(1, "kex_describe_topic", "off"));
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> runner.run(scenario))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("would measure an unchanged server");
         }
     }
 

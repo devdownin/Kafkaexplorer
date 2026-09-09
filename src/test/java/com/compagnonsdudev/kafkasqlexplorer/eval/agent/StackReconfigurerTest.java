@@ -30,7 +30,7 @@ class StackReconfigurerTest {
                 new AgentScenario.Fixture("setup-demo.sh", List.of("demo.orders.1.received"), List.of()),
                 "prompt", 4, 60_000,
                 new AgentScenario.Trace(List.of(), List.of(), null, 0),
-                new AgentScenario.Verdict(List.of(), List.of(), List.of(), List.of()), null);
+                new AgentScenario.Verdict(List.of(), List.of(), List.of(), List.of()), null, null);
     }
 
     @Test
