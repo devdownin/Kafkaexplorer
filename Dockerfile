@@ -42,7 +42,7 @@ RUN ./node_modules/.bin/tsc \
  && ./node_modules/.bin/vite build --outDir /app/dist --emptyOutDir
 
 # --- Stage 2: Build Backend ---
-FROM maven:3-eclipse-temurin-26@sha256:166ca19b6b5fe1e924ab2d66b64ba9854c739f16210b94bbe0074b036c5c7992 AS backend-builder
+FROM maven:3-eclipse-temurin-26@sha256:2bc6924d954a6efefde0a9629228914acf72e4abcdb927b68f19edd1135a0cb1 AS backend-builder
 WORKDIR /app
 
 # The dependency tree resolved in its own layer, keyed on pom.xml alone, so it is
@@ -90,7 +90,7 @@ RUN cp target/kafka-sql-explorer-*.jar app.jar \
  && java -Djarmode=tools -jar app.jar extract --layers --launcher --destination extracted
 
 # --- Stage 3: Runtime ---
-FROM eclipse-temurin:25-jre-alpine@sha256:3137541deb3cac6626b5d9a4a2187bc0d6a34312f858bd2c67dd01e732e6b682
+FROM eclipse-temurin:26-jre-alpine@sha256:2c984601c59ac93f97947ce66d03df25c2e16bed97a28289fbc0ab157087f1b5
 WORKDIR /app
 
 # The app writes two things under its working directory: logs/kafkaexplorer.log
