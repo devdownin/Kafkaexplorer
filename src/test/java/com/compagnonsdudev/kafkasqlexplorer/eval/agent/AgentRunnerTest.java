@@ -157,16 +157,28 @@ class AgentRunnerTest {
     @Test
     @DisplayName("an exhausted budget stops the loop and says which bound was hit")
     void stopsAtTheBudget() throws IOException {
-        ScriptedModel model = new ScriptedModel(
-                calling("kex_list_topics", Map.of()),
-                calling("kex_list_topics", Map.of()));
+        // Ten calling turns for a one-millisecond budget, and the count is the fix rather than
+        // padding. With two, this raced and went red in CI having passed 1536/1536 locally: the
+        // deadline is `start + 1`, the guard is `now > deadline`, so a second call beginning at
+        // exactly `start + 1` slips through — both calls run, the script is exhausted, the next
+        // turn is final, and the loop leaves with no bound ever hit. A script the budget cannot
+        // outlast removes the race instead of making it rarer: the only way `overrun` stays null
+        // now is ten HTTP round trips inside one millisecond, and if that ever happens the test is
+        // reporting something real.
+        AgentModel.Turn[] script = new AgentModel.Turn[10];
+        java.util.Arrays.setAll(script, i -> calling("kex_list_topics", Map.of()));
+        ScriptedModel model = new ScriptedModel(script);
 
         try (McpHttpClient mcp = new McpHttpClient(serve(OK_RESULT), Duration.ofSeconds(5))) {
             mcp.initialize();
-            // A budget already spent by the time the second call is considered.
-            AgentRunner.Session session = new AgentRunner(model, mcp).run(scenario(6, 1));
+            // A ceiling high enough that it cannot fire first: this asserts the budget, and a
+            // scenario where both bounds could bind would not say which one did.
+            AgentRunner.Session session = new AgentRunner(model, mcp).run(scenario(20, 1));
 
             assertThat(session.overrun()).contains("ms budget");
+            assertThat(session.trace().calls())
+                    .withFailMessage("the budget stopped nothing: all ten calls were made")
+                    .hasSizeLessThan(10);
         }
     }
 
