@@ -127,6 +127,18 @@ message), a `trace.maxCalls` above `maxToolCalls` (a bound that can never bind),
 `explorer.mcp.*` and refuses everything else: the harness knows no back door, and forcing a partial
 scan is done by lowering a published ceiling, exactly as an operator would.
 
+**`verify-offline.sh` compiles with `-parameters`, and that one flag is the difference between a
+stand-in and a lie.** Maven passes it — Spring Boot's parent POM sets it by default — and the
+script did not, so the bytecode it produced carried no parameter names. That is not cosmetic here:
+Spring AI derives every `@McpTool`'s JSON schema *from the method signature*, so under the offline
+harness the whole tool surface declared `arg0`, `arg1`, … and a client calling
+`kex_describe_topic` with `{"topic": …}` was refused by the input validator for a missing
+`arg0`. It was found the way such things are — a new test failed for a reason that made no sense
+against the real build, and checking the flag came before believing the failure. A harness that
+compiles differently from the build it replaces reports defects that do not exist and hides ones
+that do, and this one would have hidden exactly the class of defect `McpServerBootTest` exists to
+catch.
+
 `KafkaClusterIntegrationTest` carries `withStartupAttempts(2)` and a three-minute startup timeout, and neither is decoration: a launch that fails is not a test that failed, and it took the whole `mvn verify` down twice in twelve hours on hosted runners — once on a pull request, once on a push to main — with this class's own assertions never having run. That is survivable on a pull request, where a re-run costs minutes; it is not on `release.yml`, which gates a tag on the same `verify` and offers no retry short of cutting the version again. The retry covers the *launch* only — a broker that started and then misbehaved is a finding, and retrying that would hide exactly what the class exists to catch.
 
 **The third failure came *with* that retry already in place**, which is what took the diagnosis past "flaky": two attempts inside the same minute failing identically is not a random hiccup. Two things followed. `src/test/resources/logback-test.xml` raises the Kafka clients to WARN **for tests only** and leaves `org.testcontainers` at INFO — when the container does not start, every consumer and admin client still open spends its teardown retrying against an address that answers nothing, thousands of lines of it, and the Testcontainers exception naming the cause ends up above the tail GitHub's job-log API serves; all three diagnoses had had to stop at "the container did not start". And the `build` job now authenticates to Docker Hub when the secrets exist (same guard as `release.yml`, so a fork skips it and a refused login cannot fail the build), on the hypothesis that anonymous pulls from a shared runner IP were hitting the per-IP rate limit — which is what an immediate retry does not forgive.

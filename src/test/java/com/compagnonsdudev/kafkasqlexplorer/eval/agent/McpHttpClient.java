@@ -230,14 +230,26 @@ final class McpHttpClient implements AutoCloseable {
         }
     }
 
-    /** The JSON-RPC envelope, whether it arrived as JSON or wrapped in an SSE frame. */
+    /**
+     * The JSON-RPC envelope, whether it arrived as JSON or wrapped in an SSE frame.
+     *
+     * <p>The SSE reading is the field's, not a convenience: a real frame carries {@code id:} and
+     * {@code event:} lines beside the payload, and the space after {@code data:} is <b>optional</b>
+     * in the specification. This client was first written against a stub that emitted
+     * {@code "data: "} with a space and nothing else, and it worked until it met the server — which
+     * emits an {@code id:} line and no space, so every answer came back as "not JSON". A parser
+     * shaped by its own fixture is the failure a stub cannot show you.
+     */
     private JsonNode body(HttpResponse<String> response) {
         String raw = response.body() == null ? "" : response.body();
-        if (raw.contains("data: ")) {
+        if (raw.startsWith("data:") || raw.contains("\ndata:")) {
             StringBuilder data = new StringBuilder();
-            for (String line : raw.split("\n")) {
-                if (line.startsWith("data: ")) {
-                    data.append(line, "data: ".length(), line.length());
+            for (String line : raw.split("\r?\n")) {
+                if (line.startsWith("data:")) {
+                    // Exactly one optional space, per the SSE grammar: anything beyond it is
+                    // payload, and trimming would corrupt a JSON string that starts with one.
+                    String payload = line.substring("data:".length());
+                    data.append(payload.startsWith(" ") ? payload.substring(1) : payload);
                 }
             }
             raw = data.toString();
