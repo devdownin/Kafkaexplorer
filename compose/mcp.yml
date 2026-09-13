@@ -1,6 +1,11 @@
 # The MCP server, as an OVERLAY on docker-compose.yml.
-# Local endpoint: http://localhost:${EXPLORER_PORT:-8080}/mcp. Production requires TLS; this local
-# overlay explicitly opts out because it is a development stack.
+#
+#   docker compose -f docker-compose.yml -f compose/mcp.yml up -d
+#   ./setup-demo.sh localhost:9092            # if the seeder has not finished yet
+#   docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe
+#
+# The endpoint is `http://localhost:${EXPLORER_PORT:-8080}/mcp` for local development. Production
+# MCP requires TLS; the local overlay below explicitly opts out because it is a development stack.
 services:
   explorer:
     environment:
