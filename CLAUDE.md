@@ -28,7 +28,7 @@ one of these areas without reading its note is how a correction gets un-correcte
 The audit reports themselves are at the root: `AUDIT-FEATURE-REVIEW.md`, `DOCKER-AUDIT.md`,
 `FLINK-JOBS-AUDIT.md`, `INSERT-SCOPE.md`, `METRICS-TWO-QUERY-AUDIT.md`,
 `MOBILE-LAYOUT-SCOPE.md`, `PROCESS-MINING-LLM-SCOPE.md`, `PROCESS-MINING-LLM-CALLS-AUDIT.md`,
-`SQL-EDITOR-AUDIT.md`, `CODE-SIMPLIFICATION-AUDIT.md`.
+`SQL-EDITOR-AUDIT.md`, `CODE-SIMPLIFICATION-AUDIT.md`, `MCP-AUDIT.md`.
 
 ## Commands
 

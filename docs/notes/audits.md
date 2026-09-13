@@ -481,3 +481,20 @@ the decision should turn on — a submitted job lives in an embedded MiniCluster
 ~6 MB of heap apiece) and dies with the process, so no store can make it survive a deploy. And it
 names the real decision as a product one rather than a technical one: `POST /api/query/jobs`
 widens an unauthenticated surface from reads to writes on the user's cluster.
+
+`MCP-AUDIT.md` (2026-09) is the review of the MCP module and of the security boundary added to it
+late — the bearer filter, `require-tls`, `McpCallerContext`. It implemented nothing: it is a
+finding list, and it starts from a red build. Six MCP tests fail on `main` and the probe's own
+suite fails ten of ten, and each failure is a symptom rather than a flake. Four findings are P0:
+`McpHttpAuthFilter.shouldNotFilter` has its two `/api/mcp/**` branches inverted, so the console's
+reads answer 401 while `try` / `toggle` / `quarantine` / `approve` take no token; `/mcp` refuses
+every request in a deployment configured the way `application.yml` documents, which is also why
+`McpTransportContractTest` — the only test that crosses a socket — no longer connects, leaving the
+wire-level `Measured` / `Coverage` contract unverified; `kex_sql_query` calls no scope check at
+all, so `allowed-topic-prefixes` is bypassed by one SELECT while the console still displays the
+prefix list as the posture; and the DLP scrub reaches that tool's warnings but not its rows. Below
+those: one identity model for the trace store (the bearer fingerprint) and another for quarantine,
+the rate limit and the audit key (the MCP session id, which a reconnect changes);
+`explorer_mcp_audit_write_errors_total` counting only the synchronous append failure; and a
+development credential shipped in `compose/mcp.yml` and `.env.example` under a note that says none
+exists.
