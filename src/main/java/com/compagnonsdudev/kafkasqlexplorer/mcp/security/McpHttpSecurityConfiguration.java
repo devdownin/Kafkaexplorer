@@ -7,12 +7,17 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
+
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(prefix="explorer.mcp",name="enabled",havingValue="true")
 public class McpHttpSecurityConfiguration {
- @Bean FilterRegistrationBean<McpHttpAuthFilter> mcpHttpAuthFilter(McpProperties p){
-  FilterRegistrationBean<McpHttpAuthFilter> r=new FilterRegistrationBean<>();
-  r.setFilter(new McpHttpAuthFilter(p.getAuthToken(),p.isRequireTls())); r.addUrlPatterns("/mcp","/mcp/*","/api/mcp/*");
-  r.setOrder(Ordered.HIGHEST_PRECEDENCE); r.setName("mcpHttpAuthFilter"); return r;
- }
+    @Bean
+    FilterRegistrationBean<McpHttpAuthFilter> mcpHttpAuthFilter(McpProperties properties) {
+        FilterRegistrationBean<McpHttpAuthFilter> registration = new FilterRegistrationBean<>();
+        registration.setFilter(new McpHttpAuthFilter(properties.getAuthToken(), properties.isRequireTls()));
+        registration.addUrlPatterns("/mcp", "/mcp/*", "/api/mcp/*");
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        registration.setName("mcpHttpAuthFilter");
+        return registration;
+    }
 }
