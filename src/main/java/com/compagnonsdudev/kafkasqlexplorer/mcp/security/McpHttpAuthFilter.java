@@ -13,20 +13,23 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
-/** Minimal bearer-token boundary for the HTTP MCP surface. TLS is required by default. */
+/**
+ * Fail-closed bearer-token and transport-security boundary for the HTTP MCP surface.
+ * Production MCP requires TLS; local compose explicitly opts out for loopback development.
+ */
 public final class McpHttpAuthFilter extends OncePerRequestFilter {
     public static final String IDENTITY_ATTRIBUTE = McpHttpAuthFilter.class.getName() + ".identity";
     private final String configuredToken;
     private final boolean requireTls;
 
     public McpHttpAuthFilter(String configuredToken) { this(configuredToken, true); }
+
     public McpHttpAuthFilter(String configuredToken, boolean requireTls) {
         this.configuredToken = configuredToken == null ? "" : configuredToken.trim();
         this.requireTls = requireTls;
     }
 
-    @Override
-    protected boolean shouldNotFilter(HttpServletRequest request) {
+    @Override protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
         String context = request.getContextPath();
         if (context != null && !context.isEmpty() && path.startsWith(context)) path = path.substring(context.length());
@@ -37,9 +40,8 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
                 || path.startsWith("/api/mcp/quarantine/") || path.startsWith("/api/mcp/approve/");
     }
 
-    @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
-                                    FilterChain filterChain) throws ServletException, IOException {
+    @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
+                                                FilterChain filterChain) throws ServletException, IOException {
         if (requireTls && !request.isSecure()) {
             response.setStatus(HttpServletResponse.SC_UPGRADE_REQUIRED);
             response.setHeader("Upgrade", "TLS/1.2, TLS/1.3");
