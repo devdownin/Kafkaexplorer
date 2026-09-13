@@ -498,3 +498,12 @@ the rate limit and the audit key (the MCP session id, which a reconnect changes)
 `explorer_mcp_audit_write_errors_total` counting only the synchronous append failure; and a
 development credential shipped in `compose/mcp.yml` and `.env.example` under a note that says none
 exists.
+
+The four P0s, the probe harness and the rate-limiter assertion are **fixed on that branch** — the
+MCP suite goes from 6 failures in 231 cases to 0 in 246, and `mcp-probe.test.sh` from ten failures
+to eleven passes; `docs/notes/mcp-server.md` carries the rules that came out of them, since each is
+something the next change has to keep. What the report leaves open is the identity split (P1-5:
+quarantine, the rate limit and the audit key are keyed on the MCP session id, which a reconnect
+changes, while only `McpTraceStore` reads the authenticated fingerprint), the audit-write counter
+that misses the asynchronous append failure (P1-6), and an approval token bound to a tool but not
+to a caller (P3-10).

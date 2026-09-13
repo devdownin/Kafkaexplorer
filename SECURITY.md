@@ -105,6 +105,13 @@ plainly because it decides how the app must be deployed:
   DDL embeds Kafka client properties — so that file can hold credentials too, and is written
   with the same permissions. This is the store's own copy: everything that leaves through the
   API still passes through `DdlGeneratorService.maskSensitiveProperties()`.
+- **The MCP server is the one exception, and it is a narrow one.** When
+  `explorer.mcp.enabled=true`, `/mcp` and every state-changing `/api/mcp/**` call require a bearer
+  token (`explorer.mcp.auth-token` / `EXPLORER_MCP_AUTH_TOKEN`) over TLS
+  (`explorer.mcp.require-tls`, true by default). With no token configured the endpoint answers 503
+  rather than opening. That token authenticates an *agent*, not a person: the console's own reads
+  are unauthenticated like the rest of this application, and the paragraph above still decides how
+  the whole thing must be deployed.
 - Every bundled compose stack therefore publishes its ports on `${BIND_ADDR:-127.0.0.1}`,
   the loopback interface, rather than Docker's usual `0.0.0.0`.
 

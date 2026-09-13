@@ -9,25 +9,25 @@ Full review of `src/main/java/com/compagnonsdudev/kafkasqlexplorer/mcp/**` (7 39
 `application.yml`, `docs/notes/mcp-server.md`, `docs/notes/mcp-security-p0.md` /
 `mcp-security-p1.md`, and the SPA page `pages/Mcp.tsx`.
 
-Nothing here is fixed yet: this report is the finding list. Each item names the file, what it
-costs, and the shape of the fix.
+**Everything marked *fixed* is fixed on this branch**, with the tests that pin it named beside it;
+everything marked *open* is a finding and nothing more. The build was red when this started and
+every red test was in this module — each of those failures is one of the findings below, which is
+the part worth saying first: the suite already knew.
 
 ## What was run
 
-| Evidence | Result |
-|---|---|
-| `./verify-offline.sh "--include-classname=.*Mcp.*"` on this tree | 231 tests, **6 failed**, 1 aborted |
-| CI run 945 on `main` (`4426490`), job `build` | **BUILD FAILURE** — the same 6, inside 1 563 tests |
-| CI run 945, job *The MCP probe's decisions* | **10 of 10 cases failed** |
-| `sh mcp-probe.test.sh` locally | **10 of 10 cases failed**, all `FAIL: MCP_AUTH_TOKEN is required` |
+| Evidence | Before | After |
+|---|---|---|
+| `./verify-offline.sh "--include-classname=.*Mcp.*"` | 231 tests, **6 failed** | 247 tests, **0 failed** (1 aborted, the deliberate no-cluster `assumeTrue`) |
+| CI run 945 on `main` (`4426490`), job `build` | **BUILD FAILURE** — the same 6 inside 1 563 tests | — |
+| `sh mcp-probe.test.sh` | **10 of 10 cases failed** | 11 cases, all pass |
 
-`main` is red, and every red test is in this module. The failures are not flakes — they reproduce
-identically offline and in CI, and each one is a symptom of a finding below (P0-1, P0-2, P2-9,
-P1-7).
+The failures were not flakes — they reproduced identically offline and in CI, and each was a symptom
+of a finding below (P0-1, P0-2, P1-7, P2-9).
 
 ## P0 — the MCP surface is inside out
 
-### P0-1 · `McpHttpAuthFilter.shouldNotFilter` protects the reads and leaves the writes open
+### P0-1 · `McpHttpAuthFilter.shouldNotFilter` protected the reads and left the writes open — **fixed**
 
 `src/main/java/com/compagnonsdudev/kafkasqlexplorer/mcp/security/McpHttpAuthFilter.java:32-40`
 
@@ -58,11 +58,20 @@ The module's own test says the opposite and fails:
 McpHttpAuthFilterTest.privilegedEndpointsAreProtected:72 expected: <401> but was: <200>
 ```
 
-The test is right and the filter is wrong; the two branches need their return values swapped
-(`return false` for the privileged paths, `true` for the ordinary console GETs). A single assertion
-per path, as the test already writes them, keeps it fixed.
+The test was right and the filter was wrong. **Fixed**: under `/api/mcp/**` privilege is now
+decided by exclusion — every non-GET is covered, plus `/calls/replay`, and the ordinary console
+reads are not. By exclusion rather than by a list of paths, so the endpoint added next is covered
+by default instead of open by omission; `McpHttpAuthFilterTest` asserts both directions and an
+unknown future `POST`.
 
-### P0-2 · `/mcp` answers nothing in a deployment configured the documented way
+**One consequence, deliberate and worth stating.** The console's own write gestures — the toggles,
+quarantine, the approval mint, the replay — now answer 401 in a browser, which holds no token. That
+is the posture `docs/notes/mcp-security-p0.md` asks for, and the page says so instead of rendering
+axios's "Request failed with status code 401": `explainHttpRefusal` names the setting and what to
+do. Giving the console a way to hold a credential is a feature, not an audit fix, and it is the
+obvious follow-up.
+
+### P0-2 · `/mcp` answered nothing in a deployment configured the documented way — **fixed**
 
 `McpProperties.requireTls` defaults `true` and `McpProperties.authToken` defaults `null`, and
 **neither appears in `application.yml`** — the file that documents every other `explorer.mcp.*`
@@ -90,13 +99,18 @@ McpTransportContractTest.aDependencyFailureIsARefusalThatNamesItself:154 ... ans
 ```
 
 So the transport, the wire-level `Measured` / `Coverage` serialisation (the Jackson 2 vs Jackson 3
-trap `CLAUDE.md` names as this module's most expensive pitfall), and the JSON-RPC refusal path are
-all **currently unverified**. Fix: give that test class `explorer.mcp.require-tls=false` and
-`explorer.mcp.auth-token=<fixture>` and have `McpHttpClient` send the bearer header — the test then
-covers the auth boundary instead of being blocked by it. Then document both properties in
-`application.yml` beside `enabled` and `readonly`.
+trap `CLAUDE.md` names as this module's most expensive pitfall), and the JSON-RPC refusal path were
+all **unverified**, by a suite that looked busy.
 
-### P0-3 · `kex_sql_query` ignores `allowed-topic-prefixes` entirely
+**Fixed** in two halves. The test class configures the token and `require-tls=false`, and
+`McpHttpClient` carries a bearer header — read back from the context rather than restated, so the
+two cannot drift — which puts all six cases back in front of the wire; a new case asserts that an
+anonymous client is refused, so the boundary is now a fact the transport test owns rather than an
+obstacle to it. `mcp-probe.sh` and the agent harness take `MCP_AUTH_TOKEN` the same way. And both
+properties are documented in `application.yml` beside `enabled` and `readonly`, with what an
+ingress that terminates TLS has to forward for `require-tls` to mean what it says.
+
+### P0-3 · `kex_sql_query` ignored `allowed-topic-prefixes` entirely — **fixed**
 
 `src/main/java/com/compagnonsdudev/kafkasqlexplorer/mcp/tools/SqlMcpTools.java:81-126`
 
@@ -122,14 +136,26 @@ this module's notes keep removing elsewhere.
 `kex_list_tables` has the same hole in the quieter direction: it returns the names, columns and
 DDL of every table registered in the process, including those an out-of-scope query registered.
 
-Fix: in `sqlQuery`, resolve the sources with `SqlAst.read(sql)` / `SqlAst.tableNames(read)` (both
-public, and already the parser `FlinkSqlService` trusts), map each to its topic the way
-`registerSourceTable` does (`toTableName(topic).equals(reference)`), and call
-`guard.checkTopicScope(...)` **before** `flink.executeSync`. Where the scope is restricted and a
-source resolves to no topic, refuse rather than let auto-registration decide — a name that cannot
-be resolved cannot be proven in scope. `listTables` filters its rows by the same rule.
+**Fixed** by `SqlSourceScope`, called before `flink.executeSync`. The sources come from
+`SqlAst.read` — the parser `FlinkSqlService` already trusts — and each is matched back to the topic
+it would register (`toTableName(topic).equals(reference)`), because a prefix is written in topic
+terms and a statement names Flink tables, where a dot has become an underscore: comparing the
+written name against the prefix would let `internal_mcp_audit` through while refusing
+`internal.mcp.audit`. Four rules came out of it, each with its case in `SqlMcpToolsTest`:
 
-### P0-4 · DLP never reaches the rows `kex_sql_query` returns
+- a source that resolves to **no** topic is refused, not read: a hand-written table carries its own
+  `'topic'` option, which is the one way left out of the scope once every reference is resolved;
+- a `CREATE TABLE` naming a topic is refused on the literal, before anything is listed;
+- a `DESCRIBE` is scoped like the read it is — it registers the table, which samples the records;
+- a statement whose sources the parser cannot read is refused **while the scope is restricted**,
+  since otherwise an unparseable statement is the way around the guard, and a broker that cannot be
+  listed fails the check closed rather than open.
+
+Nothing of this runs when the scope is `"*"`, the shipped default, so the common deployment pays
+neither the parse nor the topic listing. `kex_list_tables` filters its rows by the same rule and
+says how many it withheld — counted, never named.
+
+### P0-4 · DLP never reached the rows `kex_sql_query` returns — **fixed**
 
 `SqlMcpTools.java:110` scrubs `result.warnings()`. `result.rows()` — the payload — is returned
 verbatim at line 112. `kex_preview_messages` scrubs key and value (`TopicMcpTools:231-232`) and
@@ -137,15 +163,14 @@ verbatim at line 112. `kex_preview_messages` scrubs key and value (`TopicMcpTool
 on the small readers and not on the one that can read a whole topic. `dlp.mode=block`, which is
 specified to refuse rather than mask, therefore cannot fire on a SQL result either.
 
-Fix: run `guard.dlp().scrub(...)` over the string values of each row before building
-`SqlView.SqlAnswer` (and let `BLOCK` raise from there, as `DlpScrubber.blockOrReturn` already
-does). Note that this is the one place where a per-cell scrub has a cost worth measuring — a 1 000
-row × 20 column answer is 20 000 regex passes; scrubbing only `String` cells, as `scrubValue`
-already does for parameters, keeps it to the columns that can carry a secret.
+**Fixed**: every string cell goes through `guard.dlp().scrub` before the answer is built, and
+`BLOCK` raises `-32045` from there rather than returning a masked row. Strings only, as
+`DlpScrubber.scrubParams` already does for arguments — a 1 000 row × 20 column answer is 20 000
+regex passes otherwise, and a number carries neither a credential nor an address.
 
 ## P1 — controls that do not bind what they claim
 
-### P1-5 · Two identity models, and the guards use the weaker one
+### P1-5 · Two identity models, and the guards use the weaker one — **open**
 
 `McpToolInterceptor.identityOf` (`:336-342`) names the caller `session:<exchange.sessionId()>`.
 `McpCallerContext` (`security/McpCallerContext.java`) holds `bearer:<sha256>` — the authenticated
@@ -170,7 +195,7 @@ thread. If it ever does not, every paused trace is owned by `local` and the P0 r
 isolation silently becomes no isolation. The only test that could see it is
 `McpTransportContractTest`, which does not currently connect (P0-2).
 
-### P1-6 · `explorer_mcp_audit_write_errors_total` misses the ordinary hole
+### P1-6 · `explorer_mcp_audit_write_errors_total` misses the ordinary hole — **open**
 
 `McpCallRecorder:96-99` increments the counter when `auditSink.append` **throws** — a
 serialisation failure, or `send()` refusing synchronously. The ordinary failure — the broker
@@ -188,16 +213,20 @@ promises; and `closeProducer()` runs from the producer's own callback thread on 
 broker outage rebuilds a `KafkaProducer` per call (threads, metadata fetch, 500 ms `MAX_BLOCK_MS`)
 on the thread serving tool calls.
 
-### P1-7 · The probe's own test suite does not pass a token, so all 10 cases fail
+### P1-7 · The probe's own test suite passed no token, so all 10 cases failed — **fixed**
 
 `mcp-probe.sh:27` now hard-requires `MCP_AUTH_TOKEN`; `mcp-probe.test.sh` never sets one, so every
-case exits 1 before reaching the decision it asserts. Reproduced locally and in CI. The suite tests
-the probe's *decisions* (how it reports MCP off, a deny-list, a tool error, a missing coverage
-envelope), none of which need a live server — so the fix is one `MCP_AUTH_TOKEN=test-token` export
-in the harness, plus one new case asserting the missing-token refusal that is now being tested by
-accident.
+case exits 1 before reaching the decision it asserts. Reproduced locally and in CI.
 
-### P1-8 · A default credential ships, and a note says it does not
+**Fixed**: the harness exports a token, and the missing-token refusal — which was being tested by
+accident, ten times over — gets a case of its own. One case then failed for a better reason: the
+probe answered a 404 with "Is EXPLORER_MCP_AUTH_TOKEN correct?", so an endpoint that is not bound
+read as a credential problem. It reads the status now — 401 and 403 the credential, 426 the
+transport, 503 a server with no token, 404 and 405 nothing bound — because a message listing every
+possibility sends an operator to check three settings when the server already said which. Eleven
+cases, all passing.
+
+### P1-8 · A default credential ships, and a note said it does not — **fixed in the note**
 
 `docs/notes/mcp-security-p0.md:16` — *"The bundled MCP compose overlay requires
 `EXPLORER_MCP_AUTH_TOKEN` explicitly with Docker Compose's `:?` interpolation. There is no
@@ -208,19 +237,20 @@ development default credential."*
 `.env.example:70` — `EXPLORER_MCP_AUTH_TOKEN=dev-only-mcp-token`
 
 The `:?` was replaced by `:-` in `11c9f18` so the compose-configuration check could run
-self-contained. That is a reasonable trade for CI and it makes the note false, which is the part
-that has to change: a shared secret with a published value protects nothing, and the note is what
-an operator reads before deciding whether to set one. Either restore `:?` and give the checker its
-own `.env`, or say plainly in the note that the overlay carries a development credential that a
-shared deployment must override.
+self-contained. That is a reasonable trade for CI and it made the note false, which is the half
+that was fixed: **the note now says the overlay ships a development credential** and that any stack
+reachable by more than its author must export its own. The compose default is left alone — a shared
+secret with a published value protects nothing, but a check that cannot run is worse, and the
+honest sentence is cheaper than either. Restoring `:?` with a `.env` of the checker's own stays
+available if the default ever reads as an endorsement.
 
 ## P2 / P3 — smaller, and each with a one-line fix
 
-**P2-9 · `McpRateLimiterBoundTest` asserts a bound Caffeine does not promise synchronously.**
-`identityCardinalityIsBoundedAgainstMemoryExhaustion` inserts 10 500 identities and asserts
-`estimatedSize() <= 10 000`. Caffeine evicts asynchronously, so the assertion is timing-dependent —
-it fails here and in CI. The limiter is fine; the test needs `buckets.cleanUp()` inside
-`identityCount()` (test-visible accessor) before estimating.
+**P2-9 · `McpRateLimiterBoundTest` asserted a bound Caffeine does not promise synchronously —
+fixed.** `identityCardinalityIsBoundedAgainstMemoryExhaustion` inserts 10 500 identities and asserts
+`estimatedSize() <= 10 000`. Caffeine evicts on later reads and writes, so the assertion was
+timing-dependent and failed here and in CI. The limiter was never wrong; `identityCount()` drains
+the cache before estimating, which makes the bound the test reads the bound the cache keeps.
 
 **P3-10 · An approval token is bound to a tool, never to a caller.** `McpApprovalStore.spend`
 checks `tool` and TTL. Any caller may spend a token minted for any other, which matters on the

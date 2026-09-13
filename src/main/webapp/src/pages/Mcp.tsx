@@ -17,10 +17,22 @@ import type {
 import {
   DEFAULT_WINDOW, EMPTY_FILTERS, WINDOWS, callsToCsv, coverageLabel, deniedShare, filtersFromParams,
   filtersToParams, formatBytes, formatDuration, formatNumber, historyNotice, isWindow,
-  explainDenial, filterTools, firstSentence, hasMoreThanFirstSentence, outcomeLabel,
+  explainDenial, explainHttpRefusal, filterTools, firstSentence, hasMoreThanFirstSentence,
+  outcomeLabel,
   overrideBanner, replaySummary, sortTools, windowCaveat,
 } from './mcp/mcpConsoleLogic';
 import type { FeedFilters, McpWindow } from './mcp/mcpConsoleLogic';
+
+/**
+ * Le message d'un refus HTTP, ou celui de l'erreur elle-même.
+ *
+ * Les statuts que le garde MCP produit ont chacun un geste derrière eux ; tout le reste garde son
+ * message d'origine, qui est encore la meilleure description de ce qui s'est passé.
+ */
+const refusalMessage = (e: unknown, fallback: string): string => {
+  const status = axios.isAxiosError(e) ? e.response?.status : undefined;
+  return explainHttpRefusal(status) ?? (e instanceof Error ? e.message : fallback);
+};
 
 /**
  * L'écran MCP : ce que ce serveur offre à un agent, et ce que les agents en ont fait.
@@ -336,7 +348,7 @@ const OverrideSwitch: FC<{
       setOpen(false);
       onSwitched();
     } catch (e) {
-      setProblem(e instanceof Error ? e.message : 'le levier est injoignable');
+      setProblem(refusalMessage(e, 'le levier est injoignable'));
     }
   };
 
@@ -408,7 +420,7 @@ const ApprovalMint: FC<{ tool: string }> = ({ tool }) => {
     } catch (e) {
       setResult({
         token: null, tool: null, expiresInMinutes: 0,
-        message: e instanceof Error ? e.message : 'la frappe est injoignable',
+        message: refusalMessage(e, 'la frappe est injoignable'),
       });
     }
   };
@@ -730,7 +742,18 @@ const TryPanel: FC<{ tool: McpToolRow; onClose: () => void }> = ({ tool, onClose
     const res = await axios.post<McpTryResult>(`/api/mcp/try/${tool.name}`, parsed, {
       validateStatus: () => true,
     });
-    setResult(res.data);
+    // Un refus du garde HTTP n'a pas la forme d'un McpTryResult : l'afficher tel quel rendrait un
+    // panneau vide là où il y a une phrase à lire. Le 403 « try-it est désactivé », lui, en est un
+    // — c'est le contrôleur qui répond — et il reste affiché tel quel, sa phrase étant la bonne.
+    const answered = typeof (res.data as Partial<McpTryResult> | null)?.invoked === 'boolean';
+    setResult(answered ? res.data : {
+      tool: tool.name,
+      invoked: false,
+      isError: true,
+      jsonRpcErrorCode: null,
+      message: explainHttpRefusal(res.status) ?? `le serveur a répondu ${res.status}`,
+      structuredContent: null,
+    });
   };
 
   return (
@@ -797,7 +820,7 @@ const ReplayPanel: FC = () => {
       const res = await axios.get<McpReplay>(`/api/mcp/calls/replay?${query}`);
       setReplay(res.data);
     } catch (e) {
-      setProblem(e instanceof Error ? e.message : "le topic d'audit est injoignable");
+      setProblem(refusalMessage(e, "le topic d'audit est injoignable"));
     } finally {
       setBusy(false);
     }

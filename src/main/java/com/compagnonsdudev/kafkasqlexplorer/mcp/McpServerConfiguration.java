@@ -205,9 +205,16 @@ public class McpServerConfiguration {
         return new SchemaMcpTools(schemas, ddl, guard);
     }
 
+    /**
+     * The SQL pair. {@code KafkaAdminService} is here for the scope check rather than for a read:
+     * a statement names Flink tables and a prefix is written in topic terms, so the two can only be
+     * compared by resolving the reference back to the topic it would register — see
+     * {@code SqlSourceScope}.
+     */
     @Bean
-    SqlMcpTools sqlMcpTools(FlinkSqlService flink, FlinkTableStore tableStore, ToolGuard guard) {
-        return new SqlMcpTools(flink, tableStore, guard);
+    SqlMcpTools sqlMcpTools(FlinkSqlService flink, FlinkTableStore tableStore,
+                            KafkaAdminService kafka, ToolGuard guard) {
+        return new SqlMcpTools(flink, tableStore, kafka, guard);
     }
 
     @Bean

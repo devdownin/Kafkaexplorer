@@ -15,10 +15,12 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.ToolCategory;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkTableStore;
+import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -49,10 +51,22 @@ public class SqlMcpTools implements ReadOnlyMcpTools {
     private final FlinkTableStore tableStore;
     private final ToolGuard guard;
 
-    public SqlMcpTools(FlinkSqlService flink, FlinkTableStore tableStore, ToolGuard guard) {
+    /**
+     * The scope guard for a statement, as opposed to for a topic name.
+     *
+     * <p>This tool takes SQL, so {@code checkTopicScope} has nothing to be handed until the
+     * statement's sources have been read out of it and matched back to topics. That is the whole of
+     * {@link SqlSourceScope}, and its absence was how {@code explorer.mcp.allowed-topic-prefixes}
+     * came to be enforced by every tool except the one that can read a whole topic.
+     */
+    private final SqlSourceScope scope;
+
+    public SqlMcpTools(FlinkSqlService flink, FlinkTableStore tableStore, KafkaAdminService kafka,
+                       ToolGuard guard) {
         this.flink = flink;
         this.tableStore = tableStore;
         this.guard = guard;
+        this.scope = new SqlSourceScope(kafka, guard);
     }
 
     @Override
@@ -93,6 +107,10 @@ public class SqlMcpTools implements ReadOnlyMcpTools {
                     "sql is required");
         }
 
+        // Before the read, not after it: the whole point of a scope check is that what it refuses
+        // was never fetched. -32041 here, with the offending name, exactly as every other tool.
+        scope.check(sql);
+
         int rowCap = guard.clampRows(maxRows);
         long budget = guard.clampBudget(timeoutMs);
         List<Warning> warnings = new ArrayList<>(guard.clampWarnings("maxRows", maxRows, rowCap));
@@ -109,7 +127,10 @@ public class SqlMcpTools implements ReadOnlyMcpTools {
 
         result.warnings().forEach(w -> warnings.add(Warning.warn("ENGINE", guard.dlp().scrub(w))));
 
-        List<Map<String, Object>> rows = result.rows() == null ? List.of() : result.rows();
+        // The rows are the payload, and until now they were the one payload in this module that
+        // left unredacted: `dlp.mode` reached this tool's warnings and not its result set, so the
+        // setting held on kex_preview_messages and lapsed on the tool that can read a whole topic.
+        List<Map<String, Object>> rows = scrub(result.rows());
         boolean atCap = rows.size() >= rowCap;
         long elapsed = System.currentTimeMillis() - startedAt;
 
@@ -155,7 +176,16 @@ public class SqlMcpTools implements ReadOnlyMcpTools {
 
         List<Warning> warnings = new ArrayList<>();
         List<SqlView.RegisteredTable> tables = new ArrayList<>();
+        // The registry is process-wide and shared with the UI, so it can hold a table an operator
+        // registered for a topic this deployment does not expose. Listing it with its columns and
+        // its DDL would describe, to the row, what the prefixes withhold.
+        List<String> topics = scope.topicsForFiltering();
+        int withheld = 0;
         for (String name : names) {
+            if (!scope.tableIsInScope(name, topics)) {
+                withheld++;
+                continue;
+            }
             Map<String, String> columns;
             try {
                 columns = flink.getTableSchema(name);
@@ -166,8 +196,40 @@ public class SqlMcpTools implements ReadOnlyMcpTools {
             }
             tables.add(new SqlView.RegisteredTable(name, columns, guard.dlp().scrubDdl(storedDdl.get(name))));
         }
+        if (withheld > 0) {
+            // Counted, never named: the count says the list is a slice — which an empty answer would
+            // otherwise deny — while the names are the very thing the scope withholds.
+            warnings.add(Warning.warn("SCOPE",
+                    ("%d registered table(s) are outside explorer.mcp.allowed-topic-prefixes (%s) "
+                            + "and are not listed. They are not absent from this server, they are "
+                            + "out of your scope.")
+                            .formatted(withheld,
+                                    String.join(", ", guard.properties().getAllowedTopicPrefixes()))));
+        }
 
         return ToolResult.of(tables,
                 Coverage.exhausted(tables.size(), 0L, System.currentTimeMillis() - startedAt), warnings);
+    }
+
+    /**
+     * Every string cell through the redactor, the rest untouched.
+     *
+     * <p>Strings only, as {@code DlpScrubber.scrubParams} already does for arguments: a number
+     * carries no credential and no address, and running three regexes over a thousand rows of them
+     * would be paid on every query for nothing. In {@code dlp.mode=block} the scrubber raises
+     * {@code -32045} from here rather than returning a masked row, which is what that mode means.
+     */
+    private List<Map<String, Object>> scrub(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty() || !guard.dlp().active()) {
+            return rows == null ? List.of() : rows;
+        }
+        List<Map<String, Object>> out = new ArrayList<>(rows.size());
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> scrubbed = new LinkedHashMap<>();
+            row.forEach((column, value) -> scrubbed.put(column,
+                    value instanceof String text ? guard.dlp().scrub(text) : value));
+            out.add(scrubbed);
+        }
+        return List.copyOf(out);
     }
 }

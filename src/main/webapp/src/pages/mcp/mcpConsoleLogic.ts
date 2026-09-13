@@ -357,3 +357,33 @@ export function firstSentence(description: string): string {
 export function hasMoreThanFirstSentence(description: string): boolean {
   return firstSentence(description).length < description.replace(/\s+/g, ' ').trim().length;
 }
+
+/**
+ * Ce qu'un refus HTTP de `/api/mcp/**` veut dire, et ce que l'opérateur peut y faire.
+ *
+ * Les gestes qui changent l'état — verrouiller, éteindre un outil, mettre en quarantaine, frapper
+ * une approbation, rejouer le trail — passent derrière le jeton bearer du serveur MCP, et cette
+ * page n'en détient aucun : un navigateur n'a rien à présenter. « Request failed with status code
+ * 401 » est exact et n'apprend rien à qui doit décider quoi faire dans l'incident en cours.
+ *
+ * `null` sur tout le reste, pour la raison qui vaut déjà pour `explainDenial` : un statut que cet
+ * écran ne sait pas interpréter est mieux servi par le message d'origine que par une phrase
+ * inventée.
+ */
+export function explainHttpRefusal(status: number | undefined): string | null {
+  switch (status) {
+    case 401:
+    case 403:
+      return "ce geste demande le jeton MCP (explorer.mcp.auth-token) et cette page n'en envoie "
+        + "aucun : un navigateur n'en détient pas. Lancez-le depuis un client authentifié, ou "
+        + "depuis la machine qui garde le jeton.";
+    case 426:
+      return "le serveur exige TLS sur cette adresse (explorer.mcp.require-tls). Passez par "
+        + "l'adresse HTTPS, ou mettez le réglage à false pour une pile de développement locale.";
+    case 503:
+      return "le serveur MCP n'a pas de jeton configuré (EXPLORER_MCP_AUTH_TOKEN), donc il refuse "
+        + "de servir plutôt que de s'ouvrir.";
+    default:
+      return null;
+  }
+}

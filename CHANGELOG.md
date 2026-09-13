@@ -20,7 +20,44 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **The MCP HTTP boundary protected the console's reads and left its write gestures open.**
+  `McpHttpAuthFilter.shouldNotFilter` had its two `/api/mcp/**` branches inverted: `try`, the
+  toggles, quarantine, approval minting and the audit replay took no token, while `/status`,
+  `/catalog`, `/calls`, `/stats`, `/clients` and `/overrides` answered 401 to a page that holds
+  none. The module's own test asserted the opposite and had failed on every build since the
+  boundary landed. Privilege is now decided by exclusion — every non-GET under `/api/mcp/**` is
+  covered, plus `/calls/replay` — so the endpoint added next is covered by default rather than left
+  open by omission. The console's write gestures consequently need the token a browser does not
+  have, and the page says which setting refused it instead of showing "status code 401".
+- **`/mcp` refused every request in a deployment configured the way `application.yml` documents**,
+  because `explorer.mcp.auth-token` and `explorer.mcp.require-tls` were enforced and documented
+  nowhere in it — 503, then 426. Both are documented now, including what an ingress that terminates
+  TLS has to forward. The same gap had stopped `McpTransportContractTest`, the only test that
+  crosses a socket, at its handshake: four cases failing and two erroring, with the wire-level
+  `Measured` / `Coverage` serialisation it exists to check going unverified. It carries the
+  credential now and asserts the refusal of an anonymous client as a fact of its own.
+- **`kex_sql_query` applied no scope check at all**, so `explorer.mcp.allowed-topic-prefixes`
+  stopped `kex_preview_messages` on a topic and one `SELECT` read it — while the console displayed
+  the prefix list as the deployment's posture. `SqlSourceScope` resolves each source back to the
+  topic it would register and refuses before the read: a reference that matches no topic, a
+  `CREATE TABLE` naming a topic, a `DESCRIBE`, and (while the scope is restricted) a statement
+  whose sources cannot be parsed. `kex_list_tables` filters by the same rule and counts what it
+  withheld. Nothing of it runs on the default `"*"`.
+- **The DLP scrub reached that tool's warnings and not its rows**, so `dlp.mode` held on the
+  readers that return a handful of records and lapsed on the one that can return a whole topic.
+  Every string cell is redacted now, and `block` refuses with `-32045` rather than masking.
+- **`mcp-probe.sh` required a credential its own test suite never passed**, failing all ten cases;
+  and it answered a 404 with "is EXPLORER_MCP_AUTH_TOKEN correct?", so an endpoint that was not
+  bound read as a credential problem. The harness passes a token, the missing-token refusal has a
+  case of its own, and the probe reads the status to name the cause.
+- **`McpRateLimiterBoundTest` asserted a bound Caffeine does not promise synchronously.** The
+  limiter was never wrong; `identityCount()` drains the cache before estimating.
+
+`MCP-AUDIT.md` is the report these came out of, and it carries what is still open — chiefly that
+quarantine and the rate limit are keyed on the MCP session id, which a reconnect changes, while
+only the trace store reads the authenticated identity.
 
 ## [2.0.0] — 2026-09-09
 

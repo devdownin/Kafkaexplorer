@@ -29,15 +29,32 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
         this.requireTls = requireTls;
     }
 
+    /**
+     * Which requests this boundary covers. {@code true} means <em>skip the filter</em>, and reading
+     * that the other way round is what shipped: the {@code /api/mcp/**} branch returned {@code true}
+     * — no token — for {@code try}, {@code toggle}, {@code quarantine} and {@code approve}, the four
+     * endpoints that change what this server does, while every ordinary console read answered 401 to
+     * a page that sends no header. {@code McpHttpAuthFilterTest} asserted the opposite from the
+     * first commit and failed on every build since.
+     *
+     * <p>So: {@code /mcp} is always covered. Under {@code /api/mcp/**} a privileged request is
+     * covered and an ordinary console read is not — the console is this application's own screen and
+     * answers to whatever protects the application, while a browser has no bearer token to offer.
+     *
+     * <p><b>Privilege is decided by exclusion, not by a list of paths.</b> Any non-GET under
+     * {@code /api/mcp/**} changes state, so an endpoint added later is covered by default rather
+     * than left open by an omission nobody notices. The one privileged read is named instead:
+     * {@code /calls/replay} reads the audit topic — every call and every refusal, not the live ring
+     * the screen already shows.
+     */
     @Override protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = request.getRequestURI();
         String context = request.getContextPath();
         if (context != null && !context.isEmpty() && path.startsWith(context)) path = path.substring(context.length());
         if ("/mcp".equals(path) || path.startsWith("/mcp/")) return false;
         if (!path.startsWith("/api/mcp/")) return true;
-        if ("GET".equalsIgnoreCase(request.getMethod())) return "/api/mcp/calls/replay".equals(path);
-        return path.startsWith("/api/mcp/try/") || path.startsWith("/api/mcp/toggle/")
-                || path.startsWith("/api/mcp/quarantine/") || path.startsWith("/api/mcp/approve/");
+        if (!"GET".equalsIgnoreCase(request.getMethod())) return false;
+        return !"/api/mcp/calls/replay".equals(path);
     }
 
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
