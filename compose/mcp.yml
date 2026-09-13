@@ -16,9 +16,10 @@
 # is the `/mcp` page of the same application — no second port is published, because there is no
 # second server: the tools run in the process that serves the UI, on its caches and its budgets.
 #
-# WHAT IS DELIBERATELY NOT HERE. Authentication. `SPEC-MCP.md` puts OAuth 2.1 in front of `/mcp`
-# and this application authenticates nothing (SECURITY.md), so the surface this overlay opens is
-# protected by BIND_ADDR and by nothing else. Keep it on the loopback.
+# The MCP transport and privileged console actions require a bearer token. Compose deliberately
+# refuses to start this overlay without one: authentication must not silently fall back to an
+# unauthenticated development default. Set EXPLORER_MCP_AUTH_TOKEN in the environment or .env.
+# The normal read-only console GET endpoints remain available without the token.
 #
 # Relative paths resolve against the PROJECT directory — the directory of the FIRST `-f` file,
 # which is the repository root since docker-compose.yml always comes first. That is why
@@ -29,6 +30,10 @@ services:
       # The single switch. Not interpolated: an overlay named `mcp.yml` that could be layered
       # with MCP off would be a file whose name is a suggestion.
       - EXPLORER_MCP_ENABLED=true
+
+      # HTTP MCP authentication. The `:?` form is intentional: an absent secret is a deployment
+      # error, never a reason to expose the endpoint anonymously.
+      - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:?set EXPLORER_MCP_AUTH_TOKEN before starting the MCP overlay}
 
       # Read-only is enforced at REGISTRATION: with this true a mutating tool is not a bean, so
       # it is absent from tools/list and cannot be invoked by name whatever a prompt says. Set it
@@ -87,13 +92,10 @@ services:
       - EXPLORER_MCP_APPROVAL_REQUIRED_TOOLS=${EXPLORER_MCP_APPROVAL_REQUIRED_TOOLS:-kex_produce_message,kex_set_cluster_target,kex_create_metric}
 
       # OFF, and the default is the posture rather than caution: "Try it" executes the real tool
-      # over POST /api/mcp/try/{tool}, an application endpoint on a stack with no authentication —
-      # an operator who put OAuth in front of /mcp would reasonably believe the tool surface was
-      # closed, and this would bypass it. The console is fully usable without it. Turn it on only
-      # on the loopback, when driving the guard by hand is the point.
+      # over POST /api/mcp/try/{tool}. It is now behind the same bearer boundary as the MCP transport.
       - EXPLORER_MCP_CONSOLE_ALLOW_TRY_IT=${EXPLORER_MCP_CONSOLE_ALLOW_TRY_IT:-false}
 
-      # The call trail (`/api/mcp/calls/replay` reads it back). Not created here: the broker in
+      # The call trail (`/api/mcp/calls/replay` reads it). Not created here: the broker in
       # this stack has auto-creation on, and a failed append never fails the call — it increments
       # explorer_mcp_audit_write_errors_total, and that counter moving is the signal that the trail
       # has holes. On a cluster without auto-creation, create it append-only before starting.
@@ -123,6 +125,7 @@ services:
     environment:
       - MCP_BASE_URL=http://explorer:8080
       - MCP_PROBE_TOPIC_PREFIX=${MCP_PROBE_TOPIC_PREFIX:-demo.}
+      - MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:?set EXPLORER_MCP_AUTH_TOKEN before starting the MCP probe}
     # Copied out of the read-only mount before the CRLF strip, exactly as the demo seeders do: a
     # checkout with `core.autocrlf=true` otherwise hands `sh` a script whose every line ends in a
     # character it reads as part of the command.

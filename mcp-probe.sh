@@ -5,7 +5,7 @@
 # Smoke probe for the MCP server: the JSON-RPC handshake, tools/list, and one real tool call.
 # Entrypoint of the `mcp-probe` service in compose/mcp.yml, and runnable from a host too:
 #
-#     MCP_BASE_URL=http://localhost:8080 sh mcp-probe.sh
+#     MCP_BASE_URL=http://localhost:8080 MCP_AUTH_TOKEN=... sh mcp-probe.sh
 #
 # WHY IT EXISTS. A scenario that fails against this server has two causes with one symptom — the
 # model reasoned badly, or the surface was never there. This separates them before the harness
@@ -22,6 +22,9 @@ ENDPOINT="$BASE/mcp"
 PREFIX="${MCP_PROBE_TOPIC_PREFIX:-demo.}"
 PROTOCOL_VERSION="2025-06-18"
 WAIT_SECONDS="${MCP_PROBE_WAIT_SECONDS:-120}"
+AUTH_TOKEN="${MCP_AUTH_TOKEN:-}"
+
+[ -n "$AUTH_TOKEN" ] || { echo "FAIL: MCP_AUTH_TOKEN is required" >&2; exit 1; }
 
 WORK="${TMPDIR:-/tmp}/mcp-probe.$$"
 mkdir -p "$WORK"
@@ -37,6 +40,7 @@ call() {
         -H 'Content-Type: application/json' \
         -H 'Accept: application/json, text/event-stream' \
         -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
+        -H "Authorization: Bearer $AUTH_TOKEN" \
         -D "$_headers" -o "$_out" --data-binary "$_body"
     [ -n "${SESSION:-}" ] && set -- "$@" -H "Mcp-Session-Id: $SESSION"
     curl "$@"
@@ -44,13 +48,6 @@ call() {
 
 # A streamable-HTTP answer may arrive as an SSE frame. Unwrap it to the JSON payload; a plain
 # JSON answer passes through untouched.
-#
-# The space after `data:` is OPTIONAL in the SSE grammar, and a real frame carries `id:` and
-# `event:` lines beside the payload. The previous form required the space, so against the real
-# server it matched nothing and fell through to `cat` — and every check below being a substring
-# grep, it still found what it needed. It worked by accident, which is not the same as working:
-# the accident holds only while no `id:` or `event:` line ever contains a string one of those
-# greps is looking for. This unwraps the frame on purpose instead.
 payload() {
     if grep -q '^data:' "$1"; then sed -n 's/^data: \{0,1\}//p' "$1"; else cat "$1"; fi
 }
@@ -68,13 +65,10 @@ call '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
      "$WORK/init.json" "$WORK/init.headers"
 
 grep -q '"result"' "$WORK/init.json" || {
-    # The commonest cause by far, and worth naming rather than dumping the body: the overlay was
-    # not layered, so explorer.mcp.enabled is still false and /mcp is not bound at all.
     echo "   response: $(payload "$WORK/init.json")" >&2
-    fail "initialize was refused. Is compose/mcp.yml layered (EXPLORER_MCP_ENABLED=true)?"
+    fail "initialize was refused. Is EXPLORER_MCP_AUTH_TOKEN correct and is the MCP overlay layered?"
 }
 
-# Header names are case-insensitive on the wire and servers differ on the casing they send.
 SESSION=$(tr -d '\r' < "$WORK/init.headers" | sed -n 's/^[Mm][Cc][Pp]-[Ss]ession-[Ii][Dd]: *//p' | tail -1)
 echo "   server: $(payload "$WORK/init.json" | grep -o '"serverInfo"[^}]*}' || echo '(unnamed)')"
 echo "   session: ${SESSION:-none (stateless)}"
@@ -97,23 +91,15 @@ call '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"kex_list_t
      "$WORK/call.json" "$WORK/call.headers"
 RESULT=$(payload "$WORK/call.json")
 
-# An MCP tool reports its own failure INSIDE a successful JSON-RPC response, so a 200 proves
-# nothing on its own — `isError` is the field that says whether the tool ran.
 case "$RESULT" in
     *'"isError":true'* | *'"isError": true'*) echo "   $RESULT" >&2; fail "kex_list_topics answered an error" ;;
     *'"error"'*)        echo "   $RESULT" >&2; fail "tools/call was refused at the protocol level" ;;
 esac
 
-# A tool answer is a JSON document carried inside a JSON string, so every quote in it arrives
-# escaped. Unescape once, and the two greps below read the same text a client would.
 PLAIN=$(printf '%s' "$RESULT" | sed 's/\\"/"/g')
-
-# The two contracts this whole module exists for. Their ABSENCE is a defect worth failing on: a
-# response with no coverage is one that cannot say what it did not read, and the empty list it
-# might carry would then be indistinguishable from an exhausted scan.
 echo "$PLAIN" | grep -q '"coverage"' || fail "the response carries no coverage envelope"
 echo "   stopReason: $(echo "$PLAIN" | grep -o '"stopReason" *: *"[A-Z_]*' | sed 's/.*"//' | head -1)"
 echo "   $(printf '%s' "$RESULT" | wc -c | tr -d ' ') bytes returned"
 
 echo
-echo "OK — the MCP surface answers at $ENDPOINT"
+echo "OK — the authenticated MCP surface answers at $ENDPOINT"
