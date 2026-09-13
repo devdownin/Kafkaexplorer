@@ -1,11 +1,18 @@
-# MCP server overlay. Production HTTP MCP requires TLS; this local overlay explicitly opts out
-# because the endpoint is published only on the local compose network/host for development.
+# The MCP server, as an OVERLAY on docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f compose/mcp.yml up -d
+#   ./setup-demo.sh localhost:9092            # if the seeder has not finished yet
+#   docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe
+#
+# The endpoint is `http://localhost:${EXPLORER_PORT:-8080}/mcp` for local development. Production
+# MCP requires TLS; the local overlay below explicitly opts out because it is a development stack.
 services:
   explorer:
     environment:
       - EXPLORER_MCP_ENABLED=true
+      # HTTP MCP authentication. The `:?` form is intentional: an absent secret is a deployment error.
       - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:?set EXPLORER_MCP_AUTH_TOKEN before starting the MCP overlay}
-      # Development-only cleartext exception. Production deployments must omit this override.
+      # Explicit development-only cleartext exception. Production must use the secure default.
       - EXPLORER_MCP_REQUIRE_TLS=false
       - EXPLORER_MCP_READONLY=${EXPLORER_MCP_READONLY:-true}
       - EXPLORER_MCP_ALLOWED_TOPIC_PREFIXES=${EXPLORER_MCP_ALLOWED_TOPIC_PREFIXES:-*}
