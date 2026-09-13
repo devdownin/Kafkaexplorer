@@ -10,8 +10,8 @@ services:
   explorer:
     environment:
       - EXPLORER_MCP_ENABLED=true
-      # HTTP MCP authentication. The `:?` form is intentional: an absent secret is a deployment error.
-      - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:?set EXPLORER_MCP_AUTH_TOKEN before starting the MCP overlay}
+      # Development/CI fallback only. Production/shared environments must inject a real secret.
+      - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
       # Explicit development-only cleartext exception. Production must use the secure default.
       - EXPLORER_MCP_REQUIRE_TLS=false
       - EXPLORER_MCP_READONLY=${EXPLORER_MCP_READONLY:-true}
@@ -40,5 +40,5 @@ services:
     environment:
       - MCP_BASE_URL=http://explorer:8080
       - MCP_PROBE_TOPIC_PREFIX=${MCP_PROBE_TOPIC_PREFIX:-demo.}
-      - MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:?set EXPLORER_MCP_AUTH_TOKEN before starting the MCP probe}
+      - MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
     entrypoint: ["sh", "-c", "sed 's/\\r$//' /data/mcp-probe.sh > /tmp/mcp-probe.sh && sh /tmp/mcp-probe.sh"]
