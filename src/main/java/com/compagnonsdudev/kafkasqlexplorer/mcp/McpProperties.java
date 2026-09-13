@@ -28,6 +28,13 @@ public class McpProperties {
     private boolean enabled = false;
     private boolean readonly = true;
 
+    /**
+     * Bearer credential for the network MCP transport and privileged console actions. Never log or
+     * expose this value. The HTTP security boundary fails closed when MCP is enabled but this is
+     * missing, so enabling MCP can never accidentally recreate the previous unauthenticated surface.
+     */
+    private String authToken;
+
     private Tools tools = new Tools();
     private RateLimit rateLimit = new RateLimit();
     private Console console = new Console();
@@ -155,6 +162,8 @@ public class McpProperties {
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public boolean isReadonly() { return readonly; }
     public void setReadonly(boolean readonly) { this.readonly = readonly; }
+    public String getAuthToken() { return authToken; }
+    public void setAuthToken(String authToken) { this.authToken = authToken; }
     public Tools getTools() { return tools; }
     public void setTools(Tools tools) { this.tools = tools; }
     public Console getConsole() { return console; }

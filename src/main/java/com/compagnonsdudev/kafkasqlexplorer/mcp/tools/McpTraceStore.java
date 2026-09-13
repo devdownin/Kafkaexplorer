@@ -5,6 +5,7 @@ package com.compagnonsdudev.kafkasqlexplorer.mcp.tools;
 import com.compagnonsdudev.kafkasqlexplorer.domain.StreamFlowCoverage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.StreamFlowHit;
 import com.compagnonsdudev.kafkasqlexplorer.domain.StreamFlowRequest;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.security.McpCallerContext;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -32,6 +33,11 @@ import java.util.UUID;
  * <p>Bounded by count and by age, on the same reasoning as the call ring. A paused trace nobody
  * resumed is not worth a megabyte an hour later, and an agent that abandons one abandons it within
  * seconds.
+ *
+ * <p>Every paused trace is also bound to the authenticated MCP caller that created it. The bearer
+ * token itself never enters the token or the audit record; only its one-way identity fingerprint is
+ * retained. A different principal therefore cannot redeem a valid-looking token from another
+ * session.
  */
 public class McpTraceStore {
 
@@ -44,20 +50,20 @@ public class McpTraceStore {
     /**
      * A trace that stopped before it had read everything.
      *
-     * @param request       the original request, so the criterion is reused verbatim rather than
-     *                      rebuilt from a description of itself
+     * @param request         the original request
      * @param remainingTopics what was never read, in the order it would have been
-     * @param hits          what has been found so far, to be merged into the continued chain
-     * @param coverage      what the earlier passes already covered, so the sums describe the whole
-     *                      trace rather than only its last leg
-     * @param createdAt     for the TTL
+     * @param hits            what has been found so far
+     * @param coverage        what the earlier passes already covered
+     * @param createdAt       for the TTL
+     * @param ownerIdentity   one-way identity of the caller that created the token
      */
     public record PausedTrace(
             StreamFlowRequest request,
             List<String> remainingTopics,
             List<StreamFlowHit> hits,
             StreamFlowCoverage coverage,
-            Instant createdAt
+            Instant createdAt,
+            String ownerIdentity
     ) {}
 
     private final Map<String, PausedTrace> paused = new LinkedHashMap<>();
@@ -71,20 +77,25 @@ public class McpTraceStore {
         }
         String token = "rt-" + UUID.randomUUID().toString().substring(0, 8);
         paused.put(token, new PausedTrace(request, List.copyOf(remainingTopics), List.copyOf(hits),
-                coverage, Instant.now()));
+                coverage, Instant.now(), McpCallerContext.identity()));
         return token;
     }
 
     /**
-     * The paused trace for a token, or empty when it is unknown or has expired.
+     * Returns and consumes a token only for the caller that created it.
      *
-     * <p>The two are deliberately one answer. Distinguishing them would tell a caller whether a
-     * token it invented ever existed, and the caller has nothing to do differently either way: the
-     * trace has to be run again from the start.
+     * <p>Unknown, expired and cross-principal tokens intentionally have the same externally visible
+     * result. A failed ownership check must not reveal whether an attacker guessed a token that
+     * belongs to somebody else.
      */
     public synchronized Optional<PausedTrace> take(String token) {
         evictExpired();
-        return Optional.ofNullable(paused.remove(token));
+        PausedTrace trace = paused.get(token);
+        if (trace == null || !trace.ownerIdentity().equals(McpCallerContext.identity())) {
+            return Optional.empty();
+        }
+        paused.remove(token);
+        return Optional.of(trace);
     }
 
     private void evictExpired() {
