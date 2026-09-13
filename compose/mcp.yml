@@ -4,116 +4,31 @@
 #   ./setup-demo.sh localhost:9092            # if the seeder has not finished yet
 #   docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe
 #
-# WHY THIS FILE EXISTS. `explorer.mcp.enabled` is false in application.yml and that default is
-# the posture, not an oversight — pointing a language model at a Kafka cluster is a decision an
-# operator makes deliberately. The consequence was that trying the MCP surface meant editing YAML
-# by hand, so the one thing five phases of work built could not be run from this repository at
-# all. This overlay is that decision written down once: MCP on, every guard left at the value
-# application.yml ships, and each of them exposed as a variable so a scenario can move ONE of them
-# without touching a file. `SPECAGENT.md` §5.1 names this file as its prerequisite.
-#
-# The endpoint is `http://localhost:${EXPLORER_PORT:-8080}/mcp` (streamable HTTP) and the console
-# is the `/mcp` page of the same application — no second port is published, because there is no
-# second server: the tools run in the process that serves the UI, on its caches and its budgets.
-#
-# The MCP transport and privileged console actions require a bearer token. Compose deliberately
-# refuses to start this overlay without one: authentication must not silently fall back to an
-# unauthenticated development default. Set EXPLORER_MCP_AUTH_TOKEN in the environment or .env.
-# The normal read-only console GET endpoints remain available without the token.
-#
-# Relative paths resolve against the PROJECT directory — the directory of the FIRST `-f` file,
-# which is the repository root since docker-compose.yml always comes first. That is why
-# `./mcp-probe.sh` below is written from the root and not from here.
+# The endpoint is `http://localhost:${EXPLORER_PORT:-8080}/mcp` for local development. Production
+# MCP requires TLS; the local overlay below explicitly opts out because it is a development stack.
 services:
   explorer:
     environment:
-      # The single switch. Not interpolated: an overlay named `mcp.yml` that could be layered
-      # with MCP off would be a file whose name is a suggestion.
       - EXPLORER_MCP_ENABLED=true
-
-      # HTTP MCP authentication. The `:?` form is intentional: an absent secret is a deployment
-      # error, never a reason to expose the endpoint anonymously.
+      # HTTP MCP authentication. The `:?` form is intentional: an absent secret is a deployment error.
       - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:?set EXPLORER_MCP_AUTH_TOKEN before starting the MCP overlay}
-
-      # Read-only is enforced at REGISTRATION: with this true a mutating tool is not a bean, so
-      # it is absent from tools/list and cannot be invoked by name whatever a prompt says. Set it
-      # false and the write surface is registered — today that surface is empty (no mutating tool
-      # has been written yet), so flipping it changes what the console reports and nothing else.
+      # Explicit development-only cleartext exception. Production must use the secure default.
+      - EXPLORER_MCP_REQUIRE_TLS=false
       - EXPLORER_MCP_READONLY=${EXPLORER_MCP_READONLY:-true}
-
-      # Scope, checked before any Kafka call rather than after — a scope check that runs after the
-      # read has already disclosed what it was refusing. `*` places no restriction. This is the
-      # knob a scope scenario moves: `EXPLORER_MCP_ALLOWED_TOPIC_PREFIXES=demo.orders.` makes every
-      # tool refuse `demo.payments.dlq` with -32041 and say so by name.
       - EXPLORER_MCP_ALLOWED_TOPIC_PREFIXES=${EXPLORER_MCP_ALLOWED_TOPIC_PREFIXES:-*}
       - EXPLORER_MCP_ALLOWED_GROUP_PREFIXES=${EXPLORER_MCP_ALLOWED_GROUP_PREFIXES:-*}
-
-      # Enforced by ABSENCE: a denied tool is filtered out of the specification list before the
-      # transport sees it, so it is never described to the model, chosen, and then refused after a
-      # round trip. `EXPLORER_MCP_TOOLS_DENIED=kex_sql_query` is how a scenario asks whether the
-      # agent notices a capability it does not have instead of inventing one.
       - EXPLORER_MCP_TOOLS_DENIED=${EXPLORER_MCP_TOOLS_DENIED:-}
-
-      # An operator clicks; a model loops. Drop the two to something small
-      # (`..._CALLS_PER_MINUTE=4`, `..._BURST=2`) and the -32029 refusal — which names how long to
-      # wait — becomes reachable in a scenario instead of only in a unit test. Zero turns it off.
       - EXPLORER_MCP_RATE_LIMIT_CALLS_PER_MINUTE=${EXPLORER_MCP_RATE_LIMIT_CALLS_PER_MINUTE:-120}
       - EXPLORER_MCP_RATE_LIMIT_BURST=${EXPLORER_MCP_RATE_LIMIT_BURST:-20}
-
-      # The broker address, as a variable rather than the base file's literal. Same default, so
-      # layering this overlay changes nothing — what it adds is the one way to make a dependency
-      # genuinely unavailable: point the application at an address nothing answers. That is an
-      # operator's gesture on a published deployment setting, not a reach into internal state, and
-      # it is what lets the agent harness put an agent in front of a -32043 at all.
       - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-kafka:29092}
-
-      # The runtime kill switch, which the harness needs ON to switch a tool off mid-session — the
-      # one scenario shape that cannot be set up before the agent starts.
       - EXPLORER_MCP_CONSOLE_ALLOW_RUNTIME_TOGGLE=${EXPLORER_MCP_CONSOLE_ALLOW_RUNTIME_TOGGLE:-true}
-
-      # The two ceilings a scenario moves to put the agent in a state no unit test can reach: a scan
-      # that stopped short. Lowering hard-max-topics on a seeded cluster forces a partial coverage,
-      # and a tight default budget forces a per-topic count to arrive unmeasured — which is exactly
-      # how an operator would produce both. They are published here rather than left to
-      # application.yml because SPECAGENT's harness recreates this service with one of them moved,
-      # and a setting compose does not pass is one the container never sees.
       - EXPLORER_MCP_HARD_MAX_TOPICS=${EXPLORER_MCP_HARD_MAX_TOPICS:-200}
       - EXPLORER_MCP_DEFAULT_BUDGET_MS=${EXPLORER_MCP_DEFAULT_BUDGET_MS:-20000}
-
-      # redact | block | off. `block` refuses a payload carrying a credential outright (-32045)
-      # rather than returning it masked; the demo topics carry no secrets, so a scenario that wants
-      # to see either behaviour has to produce one.
       - EXPLORER_MCP_DLP_MODE=${EXPLORER_MCP_DLP_MODE:-redact}
-
-      # Which tools need an approval token an operator mints from the console: single-use, bound to
-      # one tool, fifteen minutes. It applies to any tool listed, not only mutating ones — a read is
-      # the sensitive gesture on a regulated cluster. Naming a READ tool here is also the only way
-      # -32042 is reachable at all today, which is what the agent harness's guard scenario does.
       - EXPLORER_MCP_APPROVAL_REQUIRED_TOOLS=${EXPLORER_MCP_APPROVAL_REQUIRED_TOOLS:-kex_produce_message,kex_set_cluster_target,kex_create_metric}
-
-      # OFF, and the default is the posture rather than caution: "Try it" executes the real tool
-      # over POST /api/mcp/try/{tool}. It is now behind the same bearer boundary as the MCP transport.
       - EXPLORER_MCP_CONSOLE_ALLOW_TRY_IT=${EXPLORER_MCP_CONSOLE_ALLOW_TRY_IT:-false}
-
-      # The call trail (`/api/mcp/calls/replay` reads it). Not created here: the broker in
-      # this stack has auto-creation on, and a failed append never fails the call — it increments
-      # explorer_mcp_audit_write_errors_total, and that counter moving is the signal that the trail
-      # has holes. On a cluster without auto-creation, create it append-only before starting.
       - EXPLORER_MCP_AUDIT_TOPIC=${EXPLORER_MCP_AUDIT_TOPIC:-internal.mcp.audit}
 
-  # ── Smoke probe ───────────────────────────────────────────────────────────────────────
-  # Under a profile, so `up -d` never starts it: it is a one-shot, and `run --rm` is how a one-shot
-  # is invoked in this repository (compose/build.yml sets the precedent).
-  #
-  #   docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe
-  #
-  # It answers the one question an agent harness cannot answer for you when it fails: is the
-  # surface there at all? Full JSON-RPC handshake, tools/list, and one real call whose `coverage`
-  # it prints — so a red harness run separates "the server is not answering" from "the model
-  # reasoned badly", which are the same symptom from inside a scenario.
-  #
-  # Same pinned curl image as compose/ollama.yml. `depends_on` is not enough — the base `explorer`
-  # has no healthcheck — so the script waits on /actuator/health itself.
   mcp-probe:
     image: curlimages/curl:8.21.0
     profiles: ["probe"]
@@ -126,7 +41,4 @@ services:
       - MCP_BASE_URL=http://explorer:8080
       - MCP_PROBE_TOPIC_PREFIX=${MCP_PROBE_TOPIC_PREFIX:-demo.}
       - MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:?set EXPLORER_MCP_AUTH_TOKEN before starting the MCP probe}
-    # Copied out of the read-only mount before the CRLF strip, exactly as the demo seeders do: a
-    # checkout with `core.autocrlf=true` otherwise hands `sh` a script whose every line ends in a
-    # character it reads as part of the command.
     entrypoint: ["sh", "-c", "sed 's/\\r$//' /data/mcp-probe.sh > /tmp/mcp-probe.sh && sh /tmp/mcp-probe.sh"]

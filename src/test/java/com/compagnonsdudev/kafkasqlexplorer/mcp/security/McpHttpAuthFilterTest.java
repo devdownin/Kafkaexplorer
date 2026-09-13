@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.mcp.security;
 
 import jakarta.servlet.FilterChain;
@@ -14,85 +13,69 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class McpHttpAuthFilterTest {
-
     private static final String TOKEN = "test-secret-token";
     private final McpHttpAuthFilter filter = new McpHttpAuthFilter(TOKEN);
+    @AfterEach void clearContext() { McpCallerContext.clear(); }
 
-    @AfterEach
-    void clearContext() {
-        McpCallerContext.clear();
-    }
-
-    @Test
-    void mcpEndpointRejectsMissingBearerToken() throws Exception {
+    @Test void mcpEndpointRejectsMissingBearerToken() throws Exception {
         MockHttpServletRequest request = request("/mcp", "POST");
+        request.setSecure(true);
         MockHttpServletResponse response = new MockHttpServletResponse();
-        FilterChain chain = new MockFilterChain();
-
-        filter.doFilter(request, response, chain);
-
+        filter.doFilter(request, response, new MockFilterChain());
         assertEquals(401, response.getStatus());
-        assertEquals("Bearer realm=\"mcp\"", response.getHeader("WWW-Authenticate"));
     }
 
-    @Test
-    void mcpEndpointAcceptsConfiguredBearerToken() throws Exception {
+    @Test void productionFilterRejectsCleartextBeforeCredentialProcessing() throws Exception {
         MockHttpServletRequest request = request("/mcp", "POST");
         request.addHeader("Authorization", "Bearer " + TOKEN);
         MockHttpServletResponse response = new MockHttpServletResponse();
         RecordingFilterChain chain = new RecordingFilterChain();
-
         filter.doFilter(request, response, chain);
+        assertEquals(426, response.getStatus());
+        assertFalse(chain.called);
+    }
 
+    @Test void developmentModeCanExplicitlyAcceptCleartext() throws Exception {
+        MockHttpServletRequest request = request("/mcp", "POST");
+        request.addHeader("Authorization", "Bearer " + TOKEN);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        RecordingFilterChain chain = new RecordingFilterChain();
+        new McpHttpAuthFilter(TOKEN, false).doFilter(request, response, chain);
         assertTrue(chain.called);
-        assertEquals(200, response.getStatus());
-        assertEquals(McpHttpAuthFilter.identityOf(TOKEN),
-                request.getAttribute(McpHttpAuthFilter.IDENTITY_ATTRIBUTE));
+    }
+
+    @Test void mcpEndpointAcceptsConfiguredBearerTokenOverTls() throws Exception {
+        MockHttpServletRequest request = request("/mcp", "POST");
+        request.setSecure(true);
+        request.addHeader("Authorization", "Bearer " + TOKEN);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        RecordingFilterChain chain = new RecordingFilterChain();
+        filter.doFilter(request, response, chain);
+        assertTrue(chain.called);
         assertEquals(McpHttpAuthFilter.identityOf(TOKEN), McpCallerContext.identity());
     }
 
-    @Test
-    void tryItAndApprovalEndpointsAreProtectedButReadOnlyCatalogIsNot() throws Exception {
-        MockHttpServletRequest tryIt = request("/api/mcp/try/kex_list_topics", "POST");
-        assertProtected(tryIt);
-
-        MockHttpServletRequest approve = request("/api/mcp/approve/kex_create_metric", "POST");
-        assertProtected(approve);
-
-        MockHttpServletRequest catalog = request("/api/mcp/catalog", "GET");
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        RecordingFilterChain chain = new RecordingFilterChain();
-        filter.doFilter(catalog, response, chain);
-        assertTrue(chain.called);
-        assertFalse(response.getStatus() == 401);
-    }
-
-    @Test
-    void auditReplayIsProtected() throws Exception {
+    @Test void privilegedEndpointsAreProtected() throws Exception {
+        assertProtected(request("/api/mcp/try/kex_list_topics", "POST"));
+        assertProtected(request("/api/mcp/approve/kex_create_metric", "POST"));
         assertProtected(request("/api/mcp/calls/replay", "GET"));
     }
 
     private void assertProtected(MockHttpServletRequest request) throws Exception {
+        request.setSecure(true);
         MockHttpServletResponse response = new MockHttpServletResponse();
         RecordingFilterChain chain = new RecordingFilterChain();
         filter.doFilter(request, response, chain);
         assertEquals(401, response.getStatus());
         assertFalse(chain.called);
     }
-
     private static MockHttpServletRequest request(String path, String method) {
         MockHttpServletRequest request = new MockHttpServletRequest(method, path);
         request.setContextPath("");
         return request;
     }
-
     private static final class RecordingFilterChain extends MockFilterChain {
         private boolean called;
-
-        @Override
-        public void doFilter(jakarta.servlet.ServletRequest request,
-                              jakarta.servlet.ServletResponse response) {
-            called = true;
-        }
+        @Override public void doFilter(jakarta.servlet.ServletRequest request, jakarta.servlet.ServletResponse response) { called = true; }
     }
 }

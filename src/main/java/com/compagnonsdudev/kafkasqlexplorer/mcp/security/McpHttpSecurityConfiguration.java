@@ -9,15 +9,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 
-/** Security boundary for the network MCP transport and privileged console actions. */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(prefix = "explorer.mcp", name = "enabled", havingValue = "true")
 public class McpHttpSecurityConfiguration {
-
     @Bean
     FilterRegistrationBean<McpHttpAuthFilter> mcpHttpAuthFilter(McpProperties properties) {
         FilterRegistrationBean<McpHttpAuthFilter> registration = new FilterRegistrationBean<>();
-        registration.setFilter(new McpHttpAuthFilter(properties.getAuthToken()));
+        registration.setFilter(new McpHttpAuthFilter(properties.getAuthToken(), properties.isRequireTls()));
         registration.addUrlPatterns("/mcp", "/mcp/*", "/api/mcp/*");
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
         registration.setName("mcpHttpAuthFilter");
