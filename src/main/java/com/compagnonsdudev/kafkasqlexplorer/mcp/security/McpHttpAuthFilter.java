@@ -79,7 +79,6 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
         String token = authorization.substring(separator + 1).trim();
         return token.isEmpty() ? null : token;
     }
-
     static String identityOf(String token) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8));
@@ -88,7 +87,6 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
             return "bearer:" + hex;
         } catch (NoSuchAlgorithmException e) { throw new IllegalStateException("JDK SHA-256 is required", e); }
     }
-
     private static boolean constantTimeEquals(String expected, String supplied) {
         return MessageDigest.isEqual(expected.getBytes(StandardCharsets.UTF_8), supplied.getBytes(StandardCharsets.UTF_8));
     }

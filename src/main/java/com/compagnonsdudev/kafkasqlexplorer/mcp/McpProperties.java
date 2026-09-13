@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.mcp;
-
 import org.springframework.boot.context.properties.ConfigurationProperties;
-
 import java.util.List;
 import java.util.Set;
 

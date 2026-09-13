@@ -1,17 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package com.compagnonsdudev.kafkasqlexplorer.mcp.security;
-
 import jakarta.servlet.FilterChain;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
-import org.springframework.mock.web.MockHttpServletRequest;
-import org.springframework.mock.web.MockHttpServletResponse;
-import org.springframework.mock.web.MockFilterChain;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
+import org.junit.jupiter.api.AfterEach; import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockHttpServletRequest; import org.springframework.mock.web.MockHttpServletResponse; import org.springframework.mock.web.MockFilterChain;
+import static org.junit.jupiter.api.Assertions.*;
 class McpHttpAuthFilterTest {
     private static final String TOKEN = "test-secret-token";
     private final McpHttpAuthFilter filter = new McpHttpAuthFilter(TOKEN);
