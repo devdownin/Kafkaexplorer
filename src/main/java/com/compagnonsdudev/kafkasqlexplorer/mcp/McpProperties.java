@@ -3,16 +3,18 @@
 package com.compagnonsdudev.kafkasqlexplorer.mcp;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+
 import java.util.List;
 import java.util.Set;
 
+/** Everything {@code explorer.mcp.*} controls. */
 @ConfigurationProperties(prefix = "explorer.mcp")
 public class McpProperties {
     public static final String ANY = "*";
     private boolean enabled = false;
     private boolean readonly = true;
     private String authToken;
-    /** Production HTTP MCP requires TLS. Local compose explicitly opts out for loopback development. */
+    /** Production HTTP MCP requires TLS; local development may explicitly opt out. */
     private boolean requireTls = true;
     private Tools tools = new Tools();
     private RateLimit rateLimit = new RateLimit();
@@ -21,50 +23,88 @@ public class McpProperties {
     private List<String> allowedTopicPrefixes = List.of(ANY);
     private List<String> allowedGroupPrefixes = List.of(ANY);
     private Set<String> approvalRequiredTools = Set.of("kex_produce_message", "kex_set_cluster_target", "kex_create_metric");
-    private int hardMaxRows = 1000, hardMaxRecords = 50, hardMaxOutputBytes = 1_048_576, hardMaxTopics = 200, hardMaxGroups = 50;
-    private long defaultBudgetMs = 20_000L, hardMaxBudgetMs = 60_000L;
+    private int hardMaxRows = 1000;
+    private int hardMaxRecords = 50;
+    private int hardMaxOutputBytes = 1_048_576;
+    private int hardMaxTopics = 200;
+    private int hardMaxGroups = 50;
+    private long defaultBudgetMs = 20_000L;
+    private long hardMaxBudgetMs = 60_000L;
     private String auditTopic = "internal.mcp.audit";
 
     public static class Tools {
-        private String allowed = ANY; private String denied = "";
-        public String getAllowed() { return allowed; } public void setAllowed(String v) { allowed = v; }
-        public String getDenied() { return denied; } public void setDenied(String v) { denied = v; }
+        private String allowed = ANY;
+        private String denied = "";
+        public String getAllowed() { return allowed; }
+        public void setAllowed(String allowed) { this.allowed = allowed; }
+        public String getDenied() { return denied; }
+        public void setDenied(String denied) { this.denied = denied; }
     }
     public static class RateLimit {
-        private int callsPerMinute = 120, burst = 20;
-        public int getCallsPerMinute() { return callsPerMinute; } public void setCallsPerMinute(int v) { callsPerMinute = v; }
-        public int getBurst() { return burst; } public void setBurst(int v) { burst = v; }
+        private int callsPerMinute = 120;
+        private int burst = 20;
+        public int getCallsPerMinute() { return callsPerMinute; }
+        public void setCallsPerMinute(int callsPerMinute) { this.callsPerMinute = callsPerMinute; }
+        public int getBurst() { return burst; }
+        public void setBurst(int burst) { this.burst = burst; }
     }
     public static class Console {
-        private boolean enabled = true, allowRuntimeToggle = true, allowTryIt = false; private int ringBufferSize = 2000;
-        public boolean isEnabled() { return enabled; } public void setEnabled(boolean v) { enabled = v; }
-        public int getRingBufferSize() { return ringBufferSize; } public void setRingBufferSize(int v) { ringBufferSize = v; }
-        public boolean isAllowRuntimeToggle() { return allowRuntimeToggle; } public void setAllowRuntimeToggle(boolean v) { allowRuntimeToggle = v; }
-        public boolean isAllowTryIt() { return allowTryIt; } public void setAllowTryIt(boolean v) { allowTryIt = v; }
+        private boolean enabled = true;
+        private int ringBufferSize = 2000;
+        private boolean allowRuntimeToggle = true;
+        private boolean allowTryIt = false;
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public int getRingBufferSize() { return ringBufferSize; }
+        public void setRingBufferSize(int ringBufferSize) { this.ringBufferSize = ringBufferSize; }
+        public boolean isAllowRuntimeToggle() { return allowRuntimeToggle; }
+        public void setAllowRuntimeToggle(boolean allowRuntimeToggle) { this.allowRuntimeToggle = allowRuntimeToggle; }
+        public boolean isAllowTryIt() { return allowTryIt; }
+        public void setAllowTryIt(boolean allowTryIt) { this.allowTryIt = allowTryIt; }
     }
     public static class Dlp {
         public enum Mode { REDACT, BLOCK, OFF }
         private Mode mode = Mode.REDACT;
-        public Mode getMode() { return mode; } public void setMode(Mode v) { mode = v; }
+        public Mode getMode() { return mode; }
+        public void setMode(Mode mode) { this.mode = mode; }
     }
     public static boolean unrestricted(List<String> prefixes) { return prefixes == null || prefixes.isEmpty() || prefixes.contains(ANY); }
-    public boolean isEnabled() { return enabled; } public void setEnabled(boolean v) { enabled = v; }
-    public boolean isReadonly() { return readonly; } public void setReadonly(boolean v) { readonly = v; }
-    public String getAuthToken() { return authToken; } public void setAuthToken(String v) { authToken = v; }
-    public boolean isRequireTls() { return requireTls; } public void setRequireTls(boolean v) { requireTls = v; }
-    public Tools getTools() { return tools; } public void setTools(Tools v) { tools = v; }
-    public RateLimit getRateLimit() { return rateLimit; } public void setRateLimit(RateLimit v) { rateLimit = v; }
-    public Console getConsole() { return console; } public void setConsole(Console v) { console = v; }
-    public Dlp getDlp() { return dlp; } public void setDlp(Dlp v) { dlp = v; }
-    public List<String> getAllowedTopicPrefixes() { return allowedTopicPrefixes; } public void setAllowedTopicPrefixes(List<String> v) { allowedTopicPrefixes = v; }
-    public List<String> getAllowedGroupPrefixes() { return allowedGroupPrefixes; } public void setAllowedGroupPrefixes(List<String> v) { allowedGroupPrefixes = v; }
-    public Set<String> getApprovalRequiredTools() { return approvalRequiredTools; } public void setApprovalRequiredTools(Set<String> v) { approvalRequiredTools = v; }
-    public int getHardMaxRows() { return hardMaxRows; } public void setHardMaxRows(int v) { hardMaxRows = v; }
-    public int getHardMaxRecords() { return hardMaxRecords; } public void setHardMaxRecords(int v) { hardMaxRecords = v; }
-    public int getHardMaxOutputBytes() { return hardMaxOutputBytes; } public void setHardMaxOutputBytes(int v) { hardMaxOutputBytes = v; }
-    public int getHardMaxTopics() { return hardMaxTopics; } public void setHardMaxTopics(int v) { hardMaxTopics = v; }
-    public int getHardMaxGroups() { return hardMaxGroups; } public void setHardMaxGroups(int v) { hardMaxGroups = v; }
-    public long getDefaultBudgetMs() { return defaultBudgetMs; } public void setDefaultBudgetMs(long v) { defaultBudgetMs = v; }
-    public long getHardMaxBudgetMs() { return hardMaxBudgetMs; } public void setHardMaxBudgetMs(long v) { hardMaxBudgetMs = v; }
-    public String getAuditTopic() { return auditTopic; } public void setAuditTopic(String v) { auditTopic = v; }
+    public boolean isEnabled() { return enabled; }
+    public void setEnabled(boolean enabled) { this.enabled = enabled; }
+    public boolean isReadonly() { return readonly; }
+    public void setReadonly(boolean readonly) { this.readonly = readonly; }
+    public String getAuthToken() { return authToken; }
+    public void setAuthToken(String authToken) { this.authToken = authToken; }
+    public boolean isRequireTls() { return requireTls; }
+    public void setRequireTls(boolean requireTls) { this.requireTls = requireTls; }
+    public Tools getTools() { return tools; }
+    public void setTools(Tools tools) { this.tools = tools; }
+    public Console getConsole() { return console; }
+    public void setConsole(Console console) { this.console = console; }
+    public Dlp getDlp() { return dlp; }
+    public void setDlp(Dlp dlp) { this.dlp = dlp; }
+    public List<String> getAllowedTopicPrefixes() { return allowedTopicPrefixes; }
+    public void setAllowedTopicPrefixes(List<String> allowedTopicPrefixes) { this.allowedTopicPrefixes = allowedTopicPrefixes; }
+    public List<String> getAllowedGroupPrefixes() { return allowedGroupPrefixes; }
+    public void setAllowedGroupPrefixes(List<String> allowedGroupPrefixes) { this.allowedGroupPrefixes = allowedGroupPrefixes; }
+    public Set<String> getApprovalRequiredTools() { return approvalRequiredTools; }
+    public void setApprovalRequiredTools(Set<String> approvalRequiredTools) { this.approvalRequiredTools = approvalRequiredTools; }
+    public int getHardMaxRows() { return hardMaxRows; }
+    public void setHardMaxRows(int hardMaxRows) { this.hardMaxRows = hardMaxRows; }
+    public int getHardMaxRecords() { return hardMaxRecords; }
+    public void setHardMaxRecords(int hardMaxRecords) { this.hardMaxRecords = hardMaxRecords; }
+    public int getHardMaxOutputBytes() { return hardMaxOutputBytes; }
+    public void setHardMaxOutputBytes(int hardMaxOutputBytes) { this.hardMaxOutputBytes = hardMaxOutputBytes; }
+    public int getHardMaxTopics() { return hardMaxTopics; }
+    public void setHardMaxTopics(int hardMaxTopics) { this.hardMaxTopics = hardMaxTopics; }
+    public int getHardMaxGroups() { return hardMaxGroups; }
+    public void setHardMaxGroups(int hardMaxGroups) { this.hardMaxGroups = hardMaxGroups; }
+    public long getDefaultBudgetMs() { return defaultBudgetMs; }
+    public void setDefaultBudgetMs(long defaultBudgetMs) { this.defaultBudgetMs = defaultBudgetMs; }
+    public long getHardMaxBudgetMs() { return hardMaxBudgetMs; }
+    public void setHardMaxBudgetMs(long hardMaxBudgetMs) { this.hardMaxBudgetMs = hardMaxBudgetMs; }
+    public RateLimit getRateLimit() { return rateLimit; }
+    public void setRateLimit(RateLimit rateLimit) { this.rateLimit = rateLimit; }
+    public String getAuditTopic() { return auditTopic; }
+    public void setAuditTopic(String auditTopic) { this.auditTopic = auditTopic; }
 }
