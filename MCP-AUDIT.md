@@ -18,7 +18,8 @@ the part worth saying first: the suite already knew.
 
 | Evidence | Before | After |
 |---|---|---|
-| `./verify-offline.sh "--include-classname=.*Mcp.*"` | 231 tests, **6 failed** | 254 tests, **0 failed** (1 aborted, the deliberate no-cluster `assumeTrue`) |
+| `./verify-offline.sh "--include-classname=.*Mcp.*"` | 231 tests, **6 failed** | 257 tests, **0 failed** (1 aborted, the deliberate no-cluster `assumeTrue`) |
+| `./verify-offline.sh` (the whole backend) | — | 1 572 tests, **0 failed** |
 | CI run 945 on `main` (`4426490`), job `build` | **BUILD FAILURE** — the same 6 inside 1 563 tests | — |
 | `sh mcp-probe.test.sh` | **10 of 10 cases failed** | 11 cases, all pass |
 
