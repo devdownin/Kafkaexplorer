@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -52,6 +53,13 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
             "explorer.settings-store-path=${java.io.tmpdir}/kse-transport-settings.json",
             "explorer.mcp.enabled=true",
             "explorer.mcp.readonly=true",
+            // The bearer boundary is part of the surface a third-party client meets, so the client
+            // below carries the credential rather than the server being asked to drop it. Without
+            // these two the whole class stopped at the handshake — `426 mcp_tls_required`, then
+            // `503 mcp_auth_not_configured` — and everything it exists to assert about the wire
+            // went unverified while the suite looked busy.
+            "explorer.mcp.auth-token=transport-contract-token",
+            "explorer.mcp.require-tls=false",
             // Small, so a tool that cannot reach a broker gives up quickly and answers rather than
             // spending the suite's time discovering what is already known here.
             "explorer.mcp.default-budget-ms=2000",
@@ -89,8 +97,12 @@ class McpTransportContractTest {
 
     private McpHttpClient client() {
         if (client == null) {
+            // Read back from the context rather than restated here: a literal in both places is
+            // two values that can drift, and the drift would look like the boundary refusing a
+            // correct credential.
             client = new McpHttpClient(URI.create("http://localhost:" + port + "/mcp"),
-                    Duration.ofSeconds(20));
+                    Duration.ofSeconds(20),
+                    context.getEnvironment().getProperty("explorer.mcp.auth-token"));
             serverName = client.initialize();
         }
         return client;
@@ -119,6 +131,23 @@ class McpTransportContractTest {
         // Nothing had ever done this: every other test reads beans or a stub.
         client();
         assertThat(serverName).isNotBlank();
+    }
+
+    /**
+     * The other half of the same fact: the handshake above works because a credential was
+     * presented, not because the endpoint is open. Asserted from the wire, since the filter's own
+     * unit test can only see a mock request — and the one thing this class exists for is what the
+     * transport actually does.
+     */
+    @Test
+    @DisplayName("an anonymous client is refused at the transport, not at the tool")
+    void refusesAClientWithNoCredential() {
+        try (McpHttpClient anonymous = new McpHttpClient(
+                URI.create("http://localhost:" + port + "/mcp"), Duration.ofSeconds(20))) {
+            assertThatThrownBy(anonymous::initialize)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("mcp_unauthorized");
+        }
     }
 
     @Test
@@ -156,6 +185,27 @@ class McpTransportContractTest {
                 .withFailMessage("the refusal reached the client without naming its cause: %s",
                         abbreviate(answer.text()))
                 .containsAnyOf("kafka", "broker", "timed out", "timeout", "unavailable");
+    }
+
+    @Test
+    @DisplayName("the call is recorded against the credential, not against the connection")
+    void theRecordedIdentityIsTheAuthenticatedOne() {
+        // The one place this can be asserted. The identity is installed by a servlet filter and
+        // read by the interceptor, and whether the two see the same thread is a fact about the
+        // transport that no unit test can reach: with the wrong answer the guards fall back to the
+        // MCP session id, which a reconnect changes, and the audit topic is keyed by connection.
+        client().callTool("kex_list_topics", Map.of("prefix", "demo."));
+
+        var recorder = context.getBean(
+                com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCallRecorder.class);
+        assertThat(recorder.snapshot())
+                .withFailMessage("the call crossed the wire but was not recorded at all")
+                .isNotEmpty();
+        assertThat(recorder.snapshot().getLast().identity())
+                .withFailMessage("the call was recorded against the connection rather than the "
+                        + "credential, so quarantine and the rate limit are one reconnect from "
+                        + "being reset")
+                .startsWith("bearer:");
     }
 
     @Test

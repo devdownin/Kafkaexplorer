@@ -72,6 +72,37 @@ class McpHttpAuthFilterTest {
         assertProtected(request("/api/mcp/try/kex_list_topics", "POST"));
         assertProtected(request("/api/mcp/approve/kex_create_metric", "POST"));
         assertProtected(request("/api/mcp/calls/replay", "GET"));
+        assertProtected(request("/api/mcp/toggle/readonly", "POST"));
+        assertProtected(request("/api/mcp/quarantine/session%3Aabc", "POST"));
+    }
+
+    /**
+     * Privilege is decided by exclusion, so an endpoint this filter has never heard of is covered
+     * the moment it changes state — the failure mode a list of paths has is that nobody adds to it.
+     */
+    @Test
+    void anEndpointAddedLaterIsProtectedByDefault() throws Exception {
+        assertProtected(request("/api/mcp/some-future-switch", "POST"));
+        assertProtected(request("/api/mcp/catalog", "DELETE"));
+    }
+
+    /**
+     * The console's reads carry no token because the page cannot hold one: it is this application's
+     * own screen, served to a browser, and protecting it here would only make the MCP screen answer
+     * 401 to itself.
+     */
+    @Test
+    void consoleReadsAreLeftToTheApplicationsOwnAccessControl() throws Exception {
+        for (String path : new String[] {"/api/mcp/status", "/api/mcp/catalog", "/api/mcp/calls",
+                "/api/mcp/stats", "/api/mcp/clients", "/api/mcp/overrides"}) {
+            MockHttpServletRequest request = request(path, "GET");
+            request.setSecure(true);
+            MockHttpServletResponse response = new MockHttpServletResponse();
+            RecordingFilterChain chain = new RecordingFilterChain();
+            filter.doFilter(request, response, chain);
+            assertTrue(chain.called, path + " must reach the controller without a bearer token");
+            assertEquals(200, response.getStatus());
+        }
     }
 
     private void assertProtected(MockHttpServletRequest request) throws Exception {

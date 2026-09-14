@@ -20,7 +20,70 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **The MCP HTTP boundary protected the console's reads and left its write gestures open.**
+  `McpHttpAuthFilter.shouldNotFilter` had its two `/api/mcp/**` branches inverted: `try`, the
+  toggles, quarantine, approval minting and the audit replay took no token, while `/status`,
+  `/catalog`, `/calls`, `/stats`, `/clients` and `/overrides` answered 401 to a page that holds
+  none. The module's own test asserted the opposite and had failed on every build since the
+  boundary landed. Privilege is now decided by exclusion — every non-GET under `/api/mcp/**` is
+  covered, plus `/calls/replay` — so the endpoint added next is covered by default rather than left
+  open by omission. The console's write gestures consequently need the token a browser does not
+  have, and the page says which setting refused it instead of showing "status code 401".
+- **`/mcp` refused every request in a deployment configured the way `application.yml` documents**,
+  because `explorer.mcp.auth-token` and `explorer.mcp.require-tls` were enforced and documented
+  nowhere in it — 503, then 426. Both are documented now, including what an ingress that terminates
+  TLS has to forward. The same gap had stopped `McpTransportContractTest`, the only test that
+  crosses a socket, at its handshake: four cases failing and two erroring, with the wire-level
+  `Measured` / `Coverage` serialisation it exists to check going unverified. It carries the
+  credential now and asserts the refusal of an anonymous client as a fact of its own.
+- **`kex_sql_query` applied no scope check at all**, so `explorer.mcp.allowed-topic-prefixes`
+  stopped `kex_preview_messages` on a topic and one `SELECT` read it — while the console displayed
+  the prefix list as the deployment's posture. `SqlSourceScope` resolves each source back to the
+  topic it would register and refuses before the read: a reference that matches no topic, a
+  `CREATE TABLE` naming a topic, a `DESCRIBE`, and (while the scope is restricted) a statement
+  whose sources cannot be parsed. `kex_list_tables` filters by the same rule and counts what it
+  withheld. Nothing of it runs on the default `"*"`.
+- **The DLP scrub reached that tool's warnings and not its rows**, so `dlp.mode` held on the
+  readers that return a handful of records and lapsed on the one that can return a whole topic.
+  Every string cell is redacted now, and `block` refuses with `-32045` rather than masking.
+- **`mcp-probe.sh` required a credential its own test suite never passed**, failing all ten cases;
+  and it answered a 404 with "is EXPLORER_MCP_AUTH_TOKEN correct?", so an endpoint that was not
+  bound read as a credential problem. The harness passes a token, the missing-token refusal has a
+  case of its own, and the probe reads the status to name the cause.
+- **`McpRateLimiterBoundTest` asserted a bound Caffeine does not promise synchronously.** The
+  limiter was never wrong; `identityCount()` drains the cache before estimating.
+
+- **Quarantine, the rate limit and the audit trail were keyed on the MCP session id**, which a
+  reconnect changes: a quarantined agent came back under a new one, a caller reset its token bucket
+  by reconnecting, and the trail could not answer what a credential did last Tuesday. Only
+  `McpTraceStore` read the authenticated fingerprint, so the module carried two identities with the
+  guards on the weaker. The interceptor reads the authenticated one now, and falls back to the
+  session id only for transports that present no credential. The transport test asserts the
+  recorded identity over the wire, which is also what proves the filter and the interceptor see the
+  same thread.
+- **`explorer_mcp_audit_write_errors_total` counted only what `append` threw**, so it read zero
+  through the failure that actually makes holes in the trail: a Kafka producer reports the broker
+  refusing a record on its own callback thread, long after `append` returned. The sink counts that
+  half and the gauge reads both. The producer is no longer dropped from that callback either —
+  `close()` cannot join itself from the I/O thread, and a client that reconnects on its own was
+  being rebuilt on every transient timeout.
+- **The console can hold the MCP token, so its own switches work again.** The bearer boundary
+  covers everything that is not a read, and a browser holds nothing — so the toggles, quarantine,
+  the approval mint and the replay answered 401 from the page that carries them, which is the kill
+  switch being unusable exactly where an operator reaches for it. A card on the Supervision tab
+  takes the token the operator already has and sends it on those calls and no others; it lives in
+  the tab's `sessionStorage`, is never re-displayed beyond its last four characters, and *Forget*
+  takes it back. A 401 now reads differently depending on whether a token is held, because pasting
+  one and pasting a different one are different gestures.
+- **The console shows an identity that can be read.** A fingerprint is 64 hexadecimal characters;
+  the rows carry the first twelve with the whole value in the title, and quarantine still sends the
+  whole value, which is what the server compares.
+
+`MCP-AUDIT.md` is the report these came out of, and it carries what is still open — chiefly an
+approval token bound to a tool but not to a caller, and a gauge whose name ends in `_total`, which
+is left alone because renaming a published metric breaks the dashboards reading it.
 
 ## [2.0.0] — 2026-09-09
 

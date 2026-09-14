@@ -39,9 +39,24 @@ interface OperatorConsole {
         private final HttpClient http;
         private final URI base;
 
+        /**
+         * The same bearer credential the MCP endpoint takes.
+         *
+         * <p>The console's <em>reads</em> need none — they are the application's own screen — but a
+         * switch is a privileged gesture and the boundary covers every non-GET under
+         * {@code /api/mcp/**}. A harness with no token would fail its mid-session gesture with a 401
+         * and report it as the deployment refusing the switch.
+         */
+        private final String bearerToken;
+
         Http(URI base, Duration timeout) {
+            this(base, timeout, null);
+        }
+
+        Http(URI base, Duration timeout, String bearerToken) {
             this.base = base;
             this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
+            this.bearerToken = bearerToken == null || bearerToken.isBlank() ? null : bearerToken.trim();
         }
 
         @Override
@@ -56,11 +71,14 @@ interface OperatorConsole {
         }
 
         private void post(String tool, String body) {
-            HttpRequest request = HttpRequest.newBuilder(
+            HttpRequest.Builder builder = HttpRequest.newBuilder(
                             base.resolve("/api/mcp/toggle/tool/" + tool))
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build();
+                    .POST(HttpRequest.BodyPublishers.ofString(body));
+            if (bearerToken != null) {
+                builder.header("Authorization", "Bearer " + bearerToken);
+            }
+            HttpRequest request = builder.build();
             try {
                 HttpResponse<String> response =
                         http.send(request, HttpResponse.BodyHandlers.ofString());

@@ -8,7 +8,8 @@ import type {
 import {
   DEFAULT_WINDOW, callsToCsv, coverageLabel, deniedShare, filtersFromParams, filtersToParams,
   formatBytes, formatMeasured, historyNotice, isWindow, outcomeLabel, overrideAge,
-  explainDenial, filterTools, firstSentence, hasMoreThanFirstSentence, overrideBanner,
+  explainDenial, explainHttpRefusal, filterTools, firstSentence, hasMoreThanFirstSentence,
+  identityLabel, overrideBanner,
   replaySummary, sortTools, windowCaveat,
 } from './mcpConsoleLogic';
 
@@ -301,5 +302,42 @@ describe('filterTools / firstSentence', () => {
   it('ne propose de déplier que lorsqu’il y a réellement plus à lire', () => {
     expect(hasMoreThanFirstSentence('Une seule phrase.')).toBe(false);
     expect(hasMoreThanFirstSentence('Une phrase. Et une autre.')).toBe(true);
+  });
+});
+
+describe('explainHttpRefusal', () => {
+  it('dit que le geste demande un jeton que le navigateur ne détient pas', () => {
+    // Les leviers passent derrière le jeton MCP depuis que la frontière existe ; « status code
+    // 401 » est exact et n'apprend rien à qui doit agir pendant l'incident.
+    expect(explainHttpRefusal(401)).toContain('explorer.mcp.auth-token');
+    expect(explainHttpRefusal(403)).toContain('explorer.mcp.auth-token');
+  });
+
+  it('nomme le réglage de transport et celui du jeton serveur', () => {
+    expect(explainHttpRefusal(426)).toContain('explorer.mcp.require-tls');
+    expect(explainHttpRefusal(503)).toContain('EXPLORER_MCP_AUTH_TOKEN');
+  });
+
+  it('rend null sur un statut qu’il ne sait pas interpréter, comme explainDenial', () => {
+    // Le message d'origine décrit encore mieux ce qui s'est passé qu'une phrase inventée.
+    expect(explainHttpRefusal(500)).toBeNull();
+    expect(explainHttpRefusal(undefined)).toBeNull();
+  });
+});
+
+describe('identityLabel', () => {
+  it('abrège une empreinte, qui est illisible entière dans une cellule', () => {
+    const fingerprint = `bearer:${'a1b2c3d4e5f6'.repeat(5).slice(0, 64)}`;
+    expect(identityLabel(fingerprint)).toBe('bearer:a1b2c3d4e5f6…');
+  });
+
+  it('laisse intacte une identité déjà lisible', () => {
+    // Raccourcir `local (stdio)` dirait qu'il manque quelque chose.
+    expect(identityLabel('local (stdio)')).toBe('local (stdio)');
+    expect(identityLabel('session:abc')).toBe('session:abc');
+  });
+
+  it('rend un tiret plutôt que rien quand l’appel n’en portait pas', () => {
+    expect(identityLabel(null)).toBe('—');
   });
 });

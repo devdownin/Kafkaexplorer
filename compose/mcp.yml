@@ -4,8 +4,10 @@
 #   ./setup-demo.sh localhost:9092            # if the seeder has not finished yet
 #   docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe
 #
-# The endpoint is `http://localhost:${EXPLORER_PORT:-8080}/mcp` for local development. Production
-# MCP requires TLS; the local overlay below explicitly opts out because it is a development stack.
+# The endpoint is `http://localhost:${EXPLORER_PORT:-8080}/mcp` for local development, and it wants
+# `Authorization: Bearer $EXPLORER_MCP_AUTH_TOKEN` on every call. The default below is a published
+# development value: export your own before anyone else can reach the stack. Production MCP also
+# requires TLS; the local overlay opts out flat because it is a cleartext loopback stack.
 services:
   explorer:
     environment:

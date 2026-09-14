@@ -41,5 +41,14 @@ public class McpRateLimiter {
         }
     }
     public void reset(String identity) { buckets.invalidate(identity); }
-    int identityCount() { return (int) buckets.estimatedSize(); }
+    /**
+     * How many identities are held.
+     *
+     * <p>{@code cleanUp()} first, and it is the assertion that needs it rather than the limiter:
+     * Caffeine evicts on later reads and writes, so {@code estimatedSize()} straight after a burst
+     * of insertions legitimately reads above {@code maximumSize} — which failed
+     * {@code McpRateLimiterBoundTest} on every build. Draining first makes the bound the test reads
+     * the bound the cache actually keeps.
+     */
+    int identityCount() { buckets.cleanUp(); return (int) buckets.estimatedSize(); }
 }

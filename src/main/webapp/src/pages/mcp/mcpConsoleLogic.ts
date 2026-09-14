@@ -357,3 +357,58 @@ export function firstSentence(description: string): string {
 export function hasMoreThanFirstSentence(description: string): boolean {
   return firstSentence(description).length < description.replace(/\s+/g, ' ').trim().length;
 }
+
+/**
+ * Ce qu'un refus HTTP de `/api/mcp/**` veut dire, et ce que l'opérateur peut y faire.
+ *
+ * Les gestes qui changent l'état — verrouiller, éteindre un outil, mettre en quarantaine, frapper
+ * une approbation, rejouer le trail — passent derrière le jeton bearer du serveur MCP. L'onglet
+ * peut en retenir un (`mcpCredential`), et les deux situations ne demandent pas le même geste :
+ * aucun jeton se règle en le collant, un jeton refusé en collant l'autre. « Request failed with
+ * status code 401 » est exact et n'apprend ni l'un ni l'autre.
+ *
+ * `null` sur tout le reste, pour la raison qui vaut déjà pour `explainDenial` : un statut que cet
+ * écran ne sait pas interpréter est mieux servi par le message d'origine que par une phrase
+ * inventée.
+ */
+export function explainHttpRefusal(status: number | undefined, held = false): string | null {
+  switch (status) {
+    case 401:
+    case 403:
+      // Deux phrases, parce que ce sont deux gestes : coller un jeton, ou en coller un autre. Une
+      // seule formulation enverrait la moitié des lecteurs vérifier ce qui est déjà fait.
+      return held
+        ? "le jeton retenu par cet onglet a été refusé : ce n'est pas celui que le serveur attend "
+          + '(explorer.mcp.auth-token). Oubliez-le et collez le bon.'
+        : 'ce geste demande le jeton MCP (explorer.mcp.auth-token), et cet onglet n’en retient '
+          + 'aucun. Collez-le dans la carte « Jeton MCP » de l’onglet Supervision.';
+    case 426:
+      return "le serveur exige TLS sur cette adresse (explorer.mcp.require-tls). Passez par "
+        + "l'adresse HTTPS, ou mettez le réglage à false pour une pile de développement locale.";
+    case 503:
+      return "le serveur MCP n'a pas de jeton configuré (EXPLORER_MCP_AUTH_TOKEN), donc il refuse "
+        + "de servir plutôt que de s'ouvrir.";
+    default:
+      return null;
+  }
+}
+
+/**
+ * L'identité telle qu'elle se lit dans une cellule.
+ *
+ * Depuis que les gardes s'indexent sur le porteur plutôt que sur la connexion, une identité est
+ * `bearer:` suivi de 64 caractères hexadécimaux — une empreinte, qui nomme un appelant sans rien
+ * dire de son jeton, et qui est illisible dans une ligne de tableau. Les douze premiers suffisent à
+ * distinguer deux agents sur un écran.
+ *
+ * Ce n'est qu'un libellé : ce qui part en quarantaine reste la valeur entière, puisque c'est elle
+ * que le serveur compare. Tout ce qui n'est pas une empreinte — `local (stdio)`, `session:…` — est
+ * rendu tel quel : c'est déjà lisible, et raccourcir dirait qu'il manque quelque chose.
+ */
+export function identityLabel(identity: string | null): string {
+  if (!identity) {
+    return '—';
+  }
+  const fingerprint = /^bearer:([0-9a-f]{16,})$/.exec(identity);
+  return fingerprint ? `bearer:${fingerprint[1].slice(0, 12)}…` : identity;
+}

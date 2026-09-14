@@ -16,6 +16,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The call trail, appended to {@code explorer.mcp.audit-topic}.
@@ -52,6 +53,16 @@ public class KafkaMcpAuditSink implements McpAuditSink {
 
     private volatile KafkaProducer<String, String> producer;
 
+    /**
+     * Appends the broker did not take, counted where they actually happen.
+     *
+     * <p>The recorder counts what {@code append} throws; this is the other half, and it is the
+     * commoner one — a broker that is away, a topic that does not exist, retries spent. It was
+     * logged and counted nowhere, so the gauge that says the trail has holes read zero through the
+     * outage that makes them.
+     */
+    private final AtomicLong asyncWriteErrors = new AtomicLong();
+
     public KafkaMcpAuditSink(KafkaConfig kafkaConfig, McpProperties properties) {
         this.kafkaConfig = kafkaConfig;
         this.properties = properties;
@@ -71,17 +82,29 @@ public class KafkaMcpAuditSink implements McpAuditSink {
             producer().send(new ProducerRecord<>(properties.getAuditTopic(), call.identity(), value),
                     (metadata, failure) -> {
                         if (failure != null) {
-                            // Asynchronous, so it cannot be counted by the recorder's own catch;
-                            // logged and the producer dropped so the next call reconnects.
+                            // Asynchronous, so the recorder's own catch cannot see it: counted here
+                            // instead, and read back through asyncWriteErrors().
+                            //
+                            // The producer is NOT dropped here. It was, on the reasoning that the
+                            // next call would reconnect — but this runs on the producer's own I/O
+                            // thread, where close() cannot join itself, and a client that already
+                            // reconnects and retries on its own was being rebuilt on every
+                            // transient timeout, at the cost of its buffer and a metadata fetch, on
+                            // the thread serving tool calls.
+                            asyncWriteErrors.incrementAndGet();
                             log.warn("MCP audit append failed for {}: {}", call.correlationId(),
                                     failure.getMessage());
-                            closeProducer();
                         }
                     });
         } catch (Exception e) {
             closeProducer();
             throw new IllegalStateException("MCP audit append failed: " + e.getMessage(), e);
         }
+    }
+
+    @Override
+    public long asyncWriteErrors() {
+        return asyncWriteErrors.get();
     }
 
     private KafkaProducer<String, String> producer() {

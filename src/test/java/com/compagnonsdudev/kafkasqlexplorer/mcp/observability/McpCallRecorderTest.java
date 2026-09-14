@@ -20,6 +20,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 
 @ExtendWith(MockitoExtension.class)
@@ -110,6 +111,31 @@ class McpCallRecorderTest {
         assertThat(noSink.recent(McpCallFilter.all(), 10)).hasSize(1);
         assertThat(noSink.auditPersisted()).isFalse();
         assertThat(noSink.auditWriteErrors()).isZero();
+    }
+
+    @Test
+    void an_append_the_sink_lost_after_accepting_it_is_counted_too() {
+        // The hole the counter is watched for. A Kafka producer takes the record, returns, and
+        // reports the broker's refusal on its own callback thread — so `append` throws nothing and
+        // the recorder's catch sees nothing. Counted at the sink and read back here, the gauge
+        // moves through the outage instead of reading zero across it.
+        given(auditSink.asyncWriteErrors()).willReturn(4L);
+
+        recorder.record(ok("kex_list_topics"));
+
+        assertThat(recorder.auditWriteErrors()).isEqualTo(4);
+        assertThat(meters.get("explorer_mcp_audit_write_errors_total").gauge().value()).isEqualTo(4.0);
+    }
+
+    @Test
+    void the_two_halves_of_a_broken_trail_are_one_number() {
+        // An operator asking "does the trail have holes?" is not asking which thread noticed.
+        willThrow(new RuntimeException("topic unavailable")).given(auditSink).append(any());
+        given(auditSink.asyncWriteErrors()).willReturn(2L);
+
+        recorder.record(ok("kex_list_topics"));
+
+        assertThat(recorder.auditWriteErrors()).isEqualTo(3);
     }
 
     @Test

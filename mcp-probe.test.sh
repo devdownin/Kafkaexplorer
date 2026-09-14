@@ -27,6 +27,10 @@ PROBE="${PROBE:-$HERE/mcp-probe.sh}"
 PORT="${MCP_PROBE_TEST_PORT:-8137}"
 WORK=$(mktemp -d)
 STUB_PID=""
+# The probe requires a credential since /mcp grew one, and the stub does not check it: what is
+# under test here is the probe's *decisions*, and a harness with no token tests only its refusal to
+# start. That refusal has a case of its own below.
+STUB_TOKEN="probe-test-token"
 trap 'if [ -n "$STUB_PID" ]; then kill "$STUB_PID" 2>/dev/null || true; fi; rm -rf "$WORK"' EXIT INT TERM
 
 FAILURES=0
@@ -126,6 +130,7 @@ expect() {
     start_stub "$_mode"
     set +e
     MCP_BASE_URL="http://127.0.0.1:$PORT" MCP_PROBE_WAIT_SECONDS=10 \
+        MCP_AUTH_TOKEN="$STUB_TOKEN" \
         sh "$PROBE" >"$WORK/out.txt" 2>&1
     _got=$?
     set -e
@@ -167,6 +172,7 @@ expect "an answer with no coverage fails"         no-coverage 1 "no coverage env
 # Nothing listening at all: the wait is bounded and says what it waited for.
 set +e
 MCP_BASE_URL="http://127.0.0.1:$((PORT + 1))" MCP_PROBE_WAIT_SECONDS=2 \
+    MCP_AUTH_TOKEN="$STUB_TOKEN" \
     sh "$PROBE" >"$WORK/out.txt" 2>&1
 _got=$?
 set -e
@@ -174,6 +180,22 @@ if [ "$_got" -eq 1 ] && grep -qF "did not answer within" "$WORK/out.txt"; then
     echo "ok    an unreachable application is a bounded wait"
 else
     echo "FAIL  an unreachable application is a bounded wait: exit $_got"
+    sed 's/^/      /' "$WORK/out.txt"
+    FAILURES=$((FAILURES + 1))
+fi
+
+# No credential at all: refused before anything is contacted, and the message names the variable.
+# The endpoint requires a bearer token, so a probe that started without one would spend its whole
+# wait discovering a 401 and report it as a server that is not bound.
+set +e
+MCP_BASE_URL="http://127.0.0.1:$PORT" MCP_PROBE_WAIT_SECONDS=2 MCP_AUTH_TOKEN="" \
+    sh "$PROBE" >"$WORK/out.txt" 2>&1
+_got=$?
+set -e
+if [ "$_got" -eq 1 ] && grep -qF "MCP_AUTH_TOKEN" "$WORK/out.txt"; then
+    echo "ok    a missing credential is named, not waited out"
+else
+    echo "FAIL  a missing credential is named, not waited out: exit $_got"
     sed 's/^/      /' "$WORK/out.txt"
     FAILURES=$((FAILURES + 1))
 fi

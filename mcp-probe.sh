@@ -41,9 +41,27 @@ call() {
         -H 'Accept: application/json, text/event-stream' \
         -H "MCP-Protocol-Version: $PROTOCOL_VERSION" \
         -H "Authorization: Bearer $AUTH_TOKEN" \
+        -w '%{http_code}' \
         -D "$_headers" -o "$_out" --data-binary "$_body"
     [ -n "${SESSION:-}" ] && set -- "$@" -H "Mcp-Session-Id: $SESSION"
-    curl "$@"
+    # The body went to -o, so stdout carries the status alone. It is kept because every way this
+    # endpoint can refuse has a different remedy, and one message naming all of them sends an
+    # operator to check three settings when the server already said which.
+    curl "$@" > "$WORK/status" || true
+}
+
+# Why the endpoint refused, in the operator's terms rather than the protocol's.
+refusal_hint() {
+    case "$(cat "$WORK/status" 2>/dev/null)" in
+        401|403) echo "the credential was refused: check EXPLORER_MCP_AUTH_TOKEN on both sides." ;;
+        426)     echo "the endpoint requires TLS: terminate TLS in front of it, or set" \
+                      "EXPLORER_MCP_REQUIRE_TLS=false for a loopback development stack." ;;
+        503)     echo "the application has no MCP token configured: set EXPLORER_MCP_AUTH_TOKEN." ;;
+        404|405) echo "nothing is bound at $ENDPOINT: is EXPLORER_MCP_ENABLED=true and the" \
+                      "compose/mcp.yml overlay layered?" ;;
+        *)       echo "is EXPLORER_MCP_ENABLED=true, the compose/mcp.yml overlay layered, and" \
+                      "EXPLORER_MCP_AUTH_TOKEN correct?" ;;
+    esac
 }
 
 # A streamable-HTTP answer may arrive as an SSE frame. Unwrap it to the JSON payload; a plain
@@ -66,7 +84,7 @@ call '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 
 grep -q '"result"' "$WORK/init.json" || {
     echo "   response: $(payload "$WORK/init.json")" >&2
-    fail "initialize was refused. Is EXPLORER_MCP_AUTH_TOKEN correct and is the MCP overlay layered?"
+    fail "initialize was refused (HTTP $(cat "$WORK/status" 2>/dev/null)). $(refusal_hint)"
 }
 
 SESSION=$(tr -d '\r' < "$WORK/init.headers" | sed -n 's/^[Mm][Cc][Pp]-[Ss]ession-[Ii][Dd]: *//p' | tail -1)

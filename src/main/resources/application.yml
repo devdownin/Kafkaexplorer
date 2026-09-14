@@ -271,6 +271,29 @@ explorer:
     # name whatever a prompt says. Setting this false is what registers them.
     readonly: true
 
+    # The bearer credential /mcp requires, and the two settings that decide whether the endpoint
+    # answers at all. They were enforced by McpHttpAuthFilter and documented nowhere in this file,
+    # which is how a deployment that turned MCP on the documented way met a 503 and then a 426 with
+    # no setting to look up.
+    #
+    #   auth-token   — empty here on purpose: a value committed to this file is a shared secret with
+    #                  a published value. Set EXPLORER_MCP_AUTH_TOKEN (e.g. `openssl rand -hex 32`).
+    #                  While it is empty the endpoint answers 503 rather than opening: an MCP server
+    #                  that authenticates nobody is not the thing this setting was added for.
+    #   require-tls  — the credential is a bearer token, so cleartext hands it to anyone on the path.
+    #                  A non-TLS request is refused with 426. Set it false only for a loopback
+    #                  development stack, as compose/mcp.yml does; behind an ingress that terminates
+    #                  TLS, leave it true and make sure the proxy forwards the request as secure
+    #                  (X-Forwarded-Proto with server.forward-headers-strategy), or every call is
+    #                  refused for a transport that is in fact encrypted.
+    #
+    # The console's own reads (/api/mcp/status, /catalog, /calls, /stats, /clients, /overrides) are
+    # NOT behind this token — they are this application's screen, and a browser has none to send.
+    # Everything that changes state is: try-it, the toggles, quarantine, approval minting, and the
+    # audit replay.
+    auth-token: ${EXPLORER_MCP_AUTH_TOKEN:}
+    require-tls: true
+
     tools:
       # Enforced by absence, not by refusal: a tool these lists keep out is not in tools/list at
       # all, so it is never described to the model, chosen by it, and refused after a round trip.

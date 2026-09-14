@@ -7,8 +7,8 @@ import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { copyText } from '../clipboard';
 import {
-  Badge, Button, Card, EmptyState, ErrorPanel, Field, Input, MeasuredValue, PageHeader, Select,
-  Stat, Textarea, Tooltip,
+  Badge, Button, Card, EmptyState, ErrorPanel, Field, Input, MeasuredValue, PageHeader,
+  PasswordInput, Select, Stat, Textarea, Tooltip,
 } from '../components/ui';
 import type {
   McpApprovalResult, McpCallView, McpCatalogView, McpClientConfig, McpClientRow, McpOverrideView,
@@ -17,10 +17,26 @@ import type {
 import {
   DEFAULT_WINDOW, EMPTY_FILTERS, WINDOWS, callsToCsv, coverageLabel, deniedShare, filtersFromParams,
   filtersToParams, formatBytes, formatDuration, formatNumber, historyNotice, isWindow,
-  explainDenial, filterTools, firstSentence, hasMoreThanFirstSentence, outcomeLabel,
+  explainDenial, explainHttpRefusal, filterTools, firstSentence, hasMoreThanFirstSentence,
+  identityLabel, outcomeLabel,
   overrideBanner, replaySummary, sortTools, windowCaveat,
 } from './mcp/mcpConsoleLogic';
 import type { FeedFilters, McpWindow } from './mcp/mcpConsoleLogic';
+import {
+  authHeaders, credentialHint, forgetCredential, readCredential, writeCredential,
+} from './mcp/mcpCredential';
+
+/**
+ * Le message d'un refus HTTP, ou celui de l'erreur elle-même.
+ *
+ * Les statuts que le garde MCP produit ont chacun un geste derrière eux ; tout le reste garde son
+ * message d'origine, qui est encore la meilleure description de ce qui s'est passé.
+ */
+const refusalMessage = (e: unknown, fallback: string): string => {
+  const status = axios.isAxiosError(e) ? e.response?.status : undefined;
+  return explainHttpRefusal(status, readCredential() !== null)
+    ?? (e instanceof Error ? e.message : fallback);
+};
 
 /**
  * L'écran MCP : ce que ce serveur offre à un agent, et ce que les agents en ont fait.
@@ -329,14 +345,15 @@ const OverrideSwitch: FC<{
 
   const send = async (enable: boolean, actor: string, reason: string) => {
     try {
-      const res = await axios.post<McpSwitchResult>(endpoint, { enable, actor, reason });
+      const res = await axios.post<McpSwitchResult>(endpoint, { enable, actor, reason },
+        authHeaders(readCredential()));
       // `applied: false` n'est pas une erreur : verrouiller une surface que la configuration tient
       // déjà en lecture seule ne change rien, et le message dit lequel des deux s'est produit.
       setProblem(res.data.applied ? null : res.data.message);
       setOpen(false);
       onSwitched();
     } catch (e) {
-      setProblem(e instanceof Error ? e.message : 'le levier est injoignable');
+      setProblem(refusalMessage(e, 'le levier est injoignable'));
     }
   };
 
@@ -403,12 +420,12 @@ const ApprovalMint: FC<{ tool: string }> = ({ tool }) => {
     try {
       const res = await axios.post<McpApprovalResult>(`/api/mcp/approve/${tool}`, {
         enable: true, actor: '', reason: '',
-      }, { validateStatus: () => true });
+      }, { ...authHeaders(readCredential()), validateStatus: () => true });
       setResult(res.data);
     } catch (e) {
       setResult({
         token: null, tool: null, expiresInMinutes: 0,
-        message: e instanceof Error ? e.message : 'la frappe est injoignable',
+        message: refusalMessage(e, 'la frappe est injoignable'),
       });
     }
   };
@@ -728,9 +745,22 @@ const TryPanel: FC<{ tool: McpToolRow; onClose: () => void }> = ({ tool, onClose
     }
     setInvalid(null);
     const res = await axios.post<McpTryResult>(`/api/mcp/try/${tool.name}`, parsed, {
+      ...authHeaders(readCredential()),
       validateStatus: () => true,
     });
-    setResult(res.data);
+    // Un refus du garde HTTP n'a pas la forme d'un McpTryResult : l'afficher tel quel rendrait un
+    // panneau vide là où il y a une phrase à lire. Le 403 « try-it est désactivé », lui, en est un
+    // — c'est le contrôleur qui répond — et il reste affiché tel quel, sa phrase étant la bonne.
+    const answered = typeof (res.data as Partial<McpTryResult> | null)?.invoked === 'boolean';
+    setResult(answered ? res.data : {
+      tool: tool.name,
+      invoked: false,
+      isError: true,
+      jsonRpcErrorCode: null,
+      message: explainHttpRefusal(res.status, readCredential() !== null)
+        ?? `le serveur a répondu ${res.status}`,
+      structuredContent: null,
+    });
   };
 
   return (
@@ -794,10 +824,13 @@ const ReplayPanel: FC = () => {
       const to = new Date();
       const from = new Date(to.getTime() - Number(hours) * 3_600_000);
       const query = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
-      const res = await axios.get<McpReplay>(`/api/mcp/calls/replay?${query}`);
+      // Le replay est la seule lecture derrière le jeton : il rend l'historique des appels et des
+      // refus, là où le reste de l'écran ne montre que l'anneau vivant de ce processus.
+      const res = await axios.get<McpReplay>(`/api/mcp/calls/replay?${query}`,
+        authHeaders(readCredential()));
       setReplay(res.data);
     } catch (e) {
-      setProblem(e instanceof Error ? e.message : "le topic d'audit est injoignable");
+      setProblem(refusalMessage(e, "le topic d'audit est injoignable"));
     } finally {
       setBusy(false);
     }
@@ -914,6 +947,86 @@ interface SupervisionProps {
   onSwitched: () => void;
 }
 
+/**
+ * Le jeton que l'écran présente pour les gestes qui changent l'état.
+ *
+ * Sans lui, les leviers de cette page répondent 401 : la frontière bearer couvre tout ce qui n'est
+ * pas une lecture, et un navigateur ne détient rien. Le coller ici n'ouvre aucune porte — c'est le
+ * même secret que l'opérateur a déjà, présenté depuis l'écran plutôt que depuis un `curl`, ce qui
+ * est la différence entre un levier utilisable en incident et un levier théorique.
+ *
+ * Il ne part qu'avec les gestes privilégiés. Les lectures de l'écran ne sont pas authentifiées, par
+ * conception, et les accompagner d'un porteur l'exposerait à chaque rafraîchissement pour rien.
+ */
+const CredentialCard: FC = () => {
+  const [held, setHeld] = useState<string | null>(() => readCredential());
+  const [draft, setDraft] = useState('');
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const save = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (draft.trim() === '') return;
+    if (!writeCredential(draft)) {
+      // Le stockage a refusé — navigation privée, politique d'entreprise. Le dire, plutôt que
+      // d'afficher un jeton enregistré qui ne l'est pas.
+      setProblem('ce navigateur refuse de retenir le jeton (navigation privée ?) : les leviers '
+        + 'resteront refusés tant qu’il ne sera pas retenu.');
+      return;
+    }
+    setProblem(null);
+    setHeld(readCredential());
+    setDraft('');
+  };
+
+  const hint = credentialHint(held);
+
+  return (
+    <Card className="p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <h3 className="text-sm font-medium">Jeton MCP</h3>
+        <Badge tone={held === null ? 'warning' : 'success'}>
+          {held === null ? 'aucun jeton' : `retenu ${hint ?? ''}`}
+        </Badge>
+      </div>
+      <p className="mb-3 text-xs text-on-surface-variant">
+        Les gestes qui changent l’état — verrou lecture seule, extinction d’un outil, quarantaine,
+        frappe d’approbation, replay — demandent <span className="font-mono">
+        explorer.mcp.auth-token</span>. Les lectures de cet écran n’en ont pas besoin. Le jeton est
+        retenu le temps de cet onglet et part avec lui ; il n’est jamais réaffiché.
+      </p>
+      {held === null ? (
+        <form onSubmit={save} className="flex flex-wrap items-end gap-2">
+          <Field label="Jeton" className="w-72">
+            {(field) => (
+              <PasswordInput
+                {...field}
+                value={draft}
+                placeholder="le même que EXPLORER_MCP_AUTH_TOKEN"
+                onChange={(e) => setDraft(e.target.value)}
+              />
+            )}
+          </Field>
+          <Button size="sm" type="submit" disabled={draft.trim() === ''}>
+            Retenir
+          </Button>
+        </form>
+      ) : (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            forgetCredential();
+            setHeld(null);
+          }}
+        >
+          Oublier
+        </Button>
+      )}
+      {problem ? <p className="mt-2 text-xs text-error">{problem}</p> : null}
+    </Card>
+  );
+};
+
 const SupervisionTab: FC<SupervisionProps> = ({
   stats, calls, clients, filters, window: win, paused, onPause, onFilters, onWindow,
   overrides, onSwitched,
@@ -955,6 +1068,8 @@ const SupervisionTab: FC<SupervisionProps> = ({
           Exporter en CSV
         </Button>
       </div>
+
+      <CredentialCard />
 
       <ReplayPanel />
 
@@ -1123,7 +1238,9 @@ const SupervisionTab: FC<SupervisionProps> = ({
                         {new Date(call.startedAt).toLocaleTimeString('fr-FR')}
                       </td>
                       <td className="p-2">{call.origin.toLowerCase()}</td>
-                      <td className="p-2 font-mono">{call.identity ?? '—'}</td>
+                      <td className="p-2 font-mono" title={call.identity ?? undefined}>
+                        {identityLabel(call.identity)}
+                      </td>
                       <td className="p-2 font-mono">{call.tool}</td>
                       <td className="p-2">
                         <Badge tone={call.outcome === 'OK' ? 'success' : call.outcome === 'DENIED' ? 'warning' : 'error'}>
@@ -1162,7 +1279,9 @@ const SupervisionTab: FC<SupervisionProps> = ({
             {clients.map((client) => (
               <li key={client.identity} className="flex items-start justify-between gap-3">
                 <span>
-                  <span className="font-mono">{client.identity}</span>
+                  <span className="font-mono" title={client.identity}>
+                    {identityLabel(client.identity)}
+                  </span>
                   {client.clientInfo ? ` — ${client.clientInfo}` : ''} ·{' '}
                   {formatNumber(client.calls)} appels
                 </span>
@@ -1171,7 +1290,7 @@ const SupervisionTab: FC<SupervisionProps> = ({
                 <OverrideSwitch
                   endpoint={`/api/mcp/quarantine/${encodeURIComponent(client.identity)}`}
                   restricted={quarantined.has(client.identity)}
-                  formTitle={`Mettre ${client.identity} en quarantaine`}
+                  formTitle={`Mettre ${identityLabel(client.identity)} en quarantaine`}
                   restrictLabel="Quarantaine"
                   liftLabel="Relâcher"
                   onSwitched={onSwitched}

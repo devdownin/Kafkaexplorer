@@ -44,11 +44,24 @@ final class McpHttpClient implements AutoCloseable {
     private final AtomicInteger nextId = new AtomicInteger(1);
     private final List<ToolCall> calls = new ArrayList<>();
 
+    /**
+     * The bearer credential {@code /mcp} requires, or {@code null} to send none.
+     *
+     * <p>Null is kept usable on purpose: it is how a test asserts that the boundary refuses an
+     * anonymous client, which is a fact about the server and not a way of configuring this one.
+     */
+    private final String bearerToken;
+
     private String sessionId;
 
     McpHttpClient(URI endpoint, Duration timeout) {
+        this(endpoint, timeout, null);
+    }
+
+    McpHttpClient(URI endpoint, Duration timeout, String bearerToken) {
         this.endpoint = endpoint;
         this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
+        this.bearerToken = bearerToken == null || bearerToken.isBlank() ? null : bearerToken.trim();
     }
 
     /** One tool as {@code tools/list} describes it — the name, and the schema to hand the model. */
@@ -219,6 +232,9 @@ final class McpHttpClient implements AutoCloseable {
                 .POST(payload);
         if (sessionId != null) {
             builder.header("Mcp-Session-Id", sessionId);
+        }
+        if (bearerToken != null) {
+            builder.header("Authorization", "Bearer " + bearerToken);
         }
         try {
             return http.send(builder.build(), HttpResponse.BodyHandlers.ofString());

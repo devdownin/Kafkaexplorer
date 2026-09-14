@@ -282,20 +282,32 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   console's "Try it" — at exactly the value `application.yml` ships, so a scenario moves one of
   them from `.env` and the rest stay where the posture put them. `EXPLORER_MCP_ENABLED=true` is
   written flat, because a file named `mcp.yml` that could be layered with MCP off would be a name
-  that is a suggestion. What the overlay does *not* add is authentication: `SPEC-MCP.md` puts
-  OAuth 2.1 in front of `/mcp` and this application authenticates nothing, so the surface it opens
-  is protected by `BIND_ADDR` and by nothing else.
+  that is a suggestion.
+
+  **Two of its variables are a credential and a transport exception, and both deserve reading
+  before this stack leaves a laptop.** `/mcp` now requires a bearer token, so the overlay sets
+  `EXPLORER_MCP_AUTH_TOKEN` — with a **published default**, `dev-only-mcp-token`, which protects
+  nothing and exists so the compose-configuration check runs self-contained; any stack reachable by
+  more than its author must export its own (`openssl rand -hex 32`). And it sets
+  `EXPLORER_MCP_REQUIRE_TLS=false` flat, not as a variable: this is a loopback development stack
+  served over cleartext HTTP, and the application refuses to carry a bearer token over a non-secure
+  request otherwise. A deployment that keeps either of those defaults is protected by `BIND_ADDR`
+  and by nothing else — which is the same sentence this paragraph carried when there was no token
+  at all, and it is still the one that matters.
 
   **And it ships a probe, because a failed scenario has two causes with one symptom.** The
   `mcp-probe` one-shot (profile `probe`, so `up -d` never starts it) does the full JSON-RPC
   handshake, a `tools/list`, and one real `kex_list_topics` call, then asserts that the answer
   carries a `coverage` envelope. It reads the JSON with `grep` and that is deliberate: it asserts
   a field is *present*, never what it holds — what the values mean is the agent harness's question
-  (`SPECAGENT.md`), and a parser written in `sh` would be a second, worse one. The two failures it
-  names are the two that actually happen: the overlay was not layered, so `/mcp` is not bound at
-  all; and a deny-list emptied `tools/list`. It also unescapes once before reading, since a tool
+  (`SPECAGENT.md`), and a parser written in `sh` would be a second, worse one. **It names the cause
+  by the status it got**, because every way this endpoint refuses has a different remedy: 401 and
+  403 the credential, 426 the transport (`EXPLORER_MCP_REQUIRE_TLS`), 503 a server with no token
+  configured at all, 404 and 405 an overlay that was not layered, so `/mcp` is bound by nothing.
+  One message listing all of them would send an operator to check three settings when the server
+  has already said which. A deny-list that emptied `tools/list` is the other failure it names. It also unescapes once before reading, since a tool
   answer is a JSON document carried inside a JSON string. **Its failures are what is tested**, by
-  `mcp-probe.test.sh` (nine cases, the `mcp-probe-logic` job, python3 and curl and nothing else),
+  `mcp-probe.test.sh` (eleven cases, the `mcp-probe-logic` job, python3 and curl and nothing else),
   because a diagnostic that reports OK against a server which answered nothing useful is worse
   than none: it moves the blame for a failed scenario onto the model. Both shapes of a correct
   answer are covered rather than one — streamable HTTP may reply with an SSE frame or with plain

@@ -63,6 +63,28 @@ must be able to answer "why does my agent not see `kex_produce_message`?" with
 - **A clamp is not a rejection.** A budget above the ceiling is clamped and *said so* in the
   warnings, rather than refused. The caller asked for something reasonable in the wrong unit far
   more often than it attacked us, and a refusal there costs a round trip for nothing.
+- **A statement is scoped by resolving its sources, not by matching its text** — `SqlSourceScope`,
+  and `kex_sql_query` had no scope check of any kind until it existed, so a deployment restricted
+  to `demo.` refused `internal.mcp.audit` through `kex_preview_messages` and served it through one
+  SELECT. A prefix is written in topic terms and a statement names Flink tables, where
+  `DdlGeneratorService.toTableName` has already replaced the dots: `internal.mcp.audit` and
+  `internal_mcp_audit` are one identifier there, so each reference is matched back to the topic it
+  would register and the *topic* is what `checkTopicScope` sees. Three rules hold it up, and each
+  is a way the check could be walked around: a reference that resolves to no topic is **refused**
+  (a hand-written table carries its own `'topic'` option, which is the way out that resolution
+  leaves); a `CREATE TABLE` is checked on the topic literal it names, before anything is listed;
+  and a `DESCRIBE` is scoped like the read it is, since registering the table samples the records.
+  A CTE body is parsed too — `withoutLeadingCte` hides it from the parser, and refusing every CTE
+  is how a guard teaches operators to widen their prefixes. The exempt shapes are **named**
+  (`SHOW`, `EXPLAIN`, `CREATE`, `USE`, `SET`) rather than the checked ones: written as "only a
+  statement starting with `SELECT`", a parenthesised set operation walked past unlooked-at, and the
+  Flink catalogue is shared with the UI, which registers a table for any topic it is pointed at.
+  Nothing of it runs on the default `"*"`.
+- **The DLP scrub follows the payload, and the payload of `kex_sql_query` is its rows.** It reached
+  that tool's warnings and stopped there, so `dlp.mode` held on the readers that return a handful
+  of records and lapsed on the one that can return a whole topic. String cells only, as
+  `scrubParams` already does for arguments: a thousand rows of numbers are three regexes each for
+  nothing.
 
 ## One layer makes three claims true
 
@@ -180,8 +202,9 @@ Three smaller decisions worth knowing:
   would leave the screen unable to tell "the server is off" from "this build is too old"; the empty
   state that explains itself is the reason the screen exists at all.
 - **"Try it" is off by default, because it is an authentication bypass waiting to happen.** The
-  endpoint executes the real tool over an application URL, and this application authenticates
-  nothing while `SPEC-MCP.md` puts OAuth 2.1 in front of `/mcp`. Leaving it on would mean that
+  endpoint executes the real tool over an application URL; it requires the MCP bearer token since
+  the boundary below landed, but this application still authenticates nobody of its own while
+  `SPEC-MCP.md` puts OAuth 2.1 in front of `/mcp`. Leaving it on would mean that
   wiring up that OAuth — the phase 5 work — buys nothing, since the same tools stay reachable one
   path over with no token, mutating ones included once `readonly` is cleared. The console does not
   need it: everything else on both tabs is a read.
@@ -505,6 +528,81 @@ N'EXISTE", with the tooltip saying the setting is the posture for when the first
 flip on their own the day it does, because both ask the catalogue rather than a constant — and the
 "hidden by read-only" row stops being a branch only a test can reach.
 
+## The bearer boundary, and the four places it met code that assumed there was none
+
+`/mcp` is behind a bearer token (`explorer.mcp.auth-token`, refused in cleartext unless
+`explorer.mcp.require-tls=false`) — `McpHttpAuthFilter`, with
+`docs/notes/mcp-security-p0.md` / `-p1.md` as its own record. It is **not** OAuth 2.1: a static
+credential an operator distributes, fail-closed (no token configured is a 503, not an open
+endpoint), hashed into an identity so the credential itself never reaches the audit trail. Phase 5b
+below stands.
+
+The boundary was correct in isolation and wrong in every place it had to meet code written when
+there was none. `MCP-AUDIT.md` is the finding list; what the fixes settled is here, because each one
+is a rule the next change has to keep:
+
+- **Under `/api/mcp/**`, privilege is decided by exclusion.** Any non-GET is covered, plus
+  `/calls/replay` — the one read that answers "what happened" out of the audit topic rather than
+  showing the live ring. Everything else the screen reads is *not* covered, and that asymmetry is
+  the point: the console is this application's own page, served to a browser that holds no token,
+  and protecting it here only makes the MCP screen answer 401 to itself. It shipped the other way
+  round — the four state-changing endpoints open, every console read refused — with the module's
+  own test asserting the opposite and failing on every build. Deciding by exclusion rather than by
+  a list of paths is what stops the next endpoint being open by omission.
+- **The console's write gestures need the token, so the console can hold one.** The toggles,
+  quarantine, the approval mint and the replay answered 401 from the page that carries them — the
+  kill switch unusable exactly where an operator reaches for it. A card on the Supervision tab takes
+  the token the operator already has and sends it on those calls, and only those: the reads are
+  unauthenticated by design, and attaching a bearer credential to a feed that polls every five
+  seconds would expose it for nothing. Four rules shape it, each one a way a secret in a browser
+  goes wrong:
+  - **`sessionStorage`, never `localStorage`.** In memory alone it is retyped on every refresh —
+    during the incident, which is the only time it is used; in `localStorage` it outlives the tab
+    and sits on a shared machine until somebody thinks of it. The tab's lifetime is the gesture's.
+  - **Never re-displayed.** The card shows `…4 last characters` and offers *Forget*. A screen that
+    can render a secret legibly is a screen you steal it from by opening.
+  - **Never in a URL**, where a proxy log keeps it, and never on a read.
+  - **A storage that refuses is said so, not swallowed** — private browsing and enterprise policy
+    both make the accessor itself throw, and a card claiming to hold a token it does not is the
+    failure this module spends its time removing.
+  A 401 then has two readings and they need different gestures, so `explainHttpRefusal` takes
+  whether a token is held: paste one, or paste a different one.
+- **A harness that talks to the endpoint carries the credential.** `McpTransportContractTest` — the
+  only test that crosses a socket — met `426` then `503` and failed at the handshake, so the
+  wire-level `Measured` / `Coverage` serialisation it exists to check went unverified while the
+  suite looked busy. It configures the token now and asserts the refusal of an anonymous client as
+  a fact of its own. Same for `mcp-probe.sh` (`MCP_AUTH_TOKEN`) and the agent harness.
+- **A refusal names its own remedy.** The probe reads the status: 401 and 403 are the credential,
+  426 the transport, 503 a server with no token configured, 404 and 405 an endpoint that is not
+  bound at all. One message listing every possibility sends an operator to check three settings
+  when the server already said which.
+
+**One identity, and the session id only where there is no credential.** `McpToolInterceptor` named
+the caller by MCP session id, so quarantine, the rate limit and the audit topic's key were bound to
+a *connection*: a quarantined agent reconnected under a new id and was no longer quarantined, a
+caller reset its token bucket by reconnecting, and "what did this credential do last Tuesday?" could
+not be answered by the key the trail is written under. Meanwhile `McpTraceStore` read the
+authenticated fingerprint, which left the module with two identities and the guards on the weaker
+one. `McpCallerContext.authenticated()` is what the interceptor asks now; `session:…` and
+`local (stdio)` remain for the transports that present nothing, named as the placeholders they are.
+
+**And the thread that carries it is asserted, not assumed.** The identity is installed by a servlet
+filter and read by the interceptor; whether Spring AI dispatches the tool on that same thread is a
+fact about the transport that no unit test can reach, and the wrong answer degrades silently —
+every guard back on the session id, every paused trace owned by `local`, which is the resume-token
+isolation quietly becoming none. `McpTransportContractTest` calls a tool over the wire and reads the
+recorded identity back: it starts with `bearer:`.
+
+**A failed append is counted wherever it fails.** The recorder counts what `append` throws; a Kafka
+producer reports the ordinary failure — the broker not taking the record — on its own callback
+thread, long after `append` returned. That half was logged and counted nowhere, so
+`explorer_mcp_audit_write_errors_total` read zero through exactly the outage it is watched for. The
+sink counts it and `McpAuditSink.asyncWriteErrors()` publishes it; the gauge reads the sum through
+`McpCallRecorder.auditWriteErrors()`. Read rather than pushed, because a sink calling back into the
+recorder is a cycle between two beans, one of which is constructed with the other. The producer is
+no longer dropped from that callback either: `close()` cannot join itself from the I/O thread, and a
+client that reconnects on its own was being rebuilt on every transient timeout.
+
 ### What phase 5 deliberately leaves
 
 **The taint guard is deferred, and its reason is the mirror of every other deferral here.** It
@@ -528,7 +626,8 @@ guard-pipeline change.
 | 3b — `kex_analyze_dead_letters` | blocked: the pairing rule lives only in `deadLetterSupervision.ts`; it needs a Java service first | not started |
 | 4 — Modélisation | `kex_deduce_data_model`, `kex_build_join`, `kex_run_audit`/`kex_get_audit`, `kex_suggest_kpis` | **done** |
 | 5 — Entreprise | per-tool allow/deny enforced by absence, kill switch (read-only lock, per-tool off, quarantine), approval token, rate limit, audit topic + replay | **done** |
-| 5b — OAuth 2.1 | separate: it changes the deployment contract and contradicts `SECURITY.md`'s "no authentication" | not started |
+| 5a — Bearer boundary | `McpHttpAuthFilter`: a static token on `/mcp` and on every state-changing `/api/mcp/**` call, TLS required by default, the credential hashed into an identity | **done** |
+| 5b — OAuth 2.1 | separate: it changes the deployment contract and contradicts `SECURITY.md`'s "no authentication". The static token above is the interim, not this | not started |
 | 5c — Taint guard | blocked: nothing to guard until a mutating tool exists | not started |
 
 Phase 2 before phase 3 is the spec's ordering and it is kept: instrumentation added after the

@@ -95,6 +95,8 @@ Transports :
 - **stdio** — `--mcp.stdio` sur le JAR, pour Claude Desktop / Claude Code / Cursor en local.
 - **HTTP streamable** — endpoint `/mcp` du serveur Spring Boot existant, sans état, OAuth 2.1 (audience + issuer validés), TLS obligatoire. Aucune session serveur : scalable horizontalement derrière un LB.
 
+> **État livré (2026-09).** OAuth 2.1 n'est pas implémenté — c'est la phase 5b, et elle change le contrat de déploiement. Ce qui est livré à sa place est un **jeton bearer statique** (`explorer.mcp.auth-token`), fail-closed — sans jeton configuré, `/mcp` répond 503 plutôt que de s'ouvrir — sur TLS exigé par défaut (`explorer.mcp.require-tls`, 426 en clair). Le jeton n'est jamais retenu tel quel : son empreinte SHA-256 est l'identité que porte le trail et sur laquelle mordent la quarantaine et la limite de débit. C'est un intérim, pas la cible : il ne valide ni issuer ni audience et ne se révoque que par redéploiement. `docs/notes/mcp-server.md` est le registre d'implémentation.
+
 > Conséquence sur la supervision : en HTTP stateless, une « session » est une abstraction de l'écran, reconstruite depuis les appels partageant la même identité et le même `client_info` de l'`initialize`. L'écran le dit (§6.4) plutôt que de laisser croire à un suivi de session serveur.
 
 ### 5.3 Contrats communs

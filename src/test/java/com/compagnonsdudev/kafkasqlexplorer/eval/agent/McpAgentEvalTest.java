@@ -105,7 +105,8 @@ class McpAgentEvalTest {
         AgentModel agent = unconfigured.isEmpty() ? models.agent() : null;
         VerdictJudge judge = unconfigured.isEmpty() ? new VerdictJudge(models.judge()) : null;
         // The console lives at the application's root, which the MCP endpoint hangs off.
-        OperatorConsole operator = new OperatorConsole.Http(endpoint, Duration.ofSeconds(20));
+        OperatorConsole operator =
+                new OperatorConsole.Http(endpoint, Duration.ofSeconds(20), authToken());
 
         Stream<DynamicTest> cases = scenarios.stream().map(scenario ->
                 DynamicTest.dynamicTest(scenario.id(), () -> {
@@ -149,7 +150,8 @@ class McpAgentEvalTest {
 
         List<ScenarioReport.Attempt> attempts = new ArrayList<>();
         for (int attempt = 1; attempt <= repeats; attempt++) {
-            try (McpHttpClient mcp = new McpHttpClient(endpoint, Duration.ofSeconds(20))) {
+            try (McpHttpClient mcp =
+                         new McpHttpClient(endpoint, Duration.ofSeconds(20), authToken())) {
                 mcp.initialize();
                 AgentRunner.Session session =
                         new AgentRunner(agent, mcp, operator).run(scenario);
@@ -184,6 +186,18 @@ class McpAgentEvalTest {
     private static boolean selected(AgentScenario scenario) {
         String only = System.getProperty("agent.eval.scenario");
         return only == null || only.isBlank() || only.equals(scenario.id());
+    }
+
+    /**
+     * {@code MCP_AUTH_TOKEN}: the credential the endpoint requires since the bearer boundary landed.
+     *
+     * <p>The same variable name {@code mcp-probe.sh} reads, so one export configures both, and the
+     * one the bundled overlay sets from {@code EXPLORER_MCP_AUTH_TOKEN}. Absent, the run is refused
+     * at the handshake and reported as SKIPPED with the endpoint's own reason — which is the right
+     * answer: a scenario that never reached the server says nothing about the agent.
+     */
+    private static String authToken() {
+        return System.getenv("MCP_AUTH_TOKEN");
     }
 
     private static String endpointUrl() {

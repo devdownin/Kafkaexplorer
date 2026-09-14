@@ -28,7 +28,7 @@ one of these areas without reading its note is how a correction gets un-correcte
 The audit reports themselves are at the root: `AUDIT-FEATURE-REVIEW.md`, `DOCKER-AUDIT.md`,
 `FLINK-JOBS-AUDIT.md`, `INSERT-SCOPE.md`, `METRICS-TWO-QUERY-AUDIT.md`,
 `MOBILE-LAYOUT-SCOPE.md`, `PROCESS-MINING-LLM-SCOPE.md`, `PROCESS-MINING-LLM-CALLS-AUDIT.md`,
-`SQL-EDITOR-AUDIT.md`, `CODE-SIMPLIFICATION-AUDIT.md`.
+`SQL-EDITOR-AUDIT.md`, `CODE-SIMPLIFICATION-AUDIT.md`, `MCP-AUDIT.md`.
 
 ## Commands
 
@@ -296,8 +296,25 @@ MCP on flat, publishes every guard as a variable (`.env.example`), and ships an 
 one-shot (`--profile probe run --rm mcp-probe`) that checks the surface answers — so a failed
 agent scenario is not blamed on a model when the server was never bound.
 
-Four rules bind before that note has been read:
+The rules below bind before that note has been read:
 
+- **The bearer boundary covers `/mcp` and every state-changing `/api/mcp/**` call — decided by
+  exclusion.** `McpHttpAuthFilter` skips the console's reads (the page is served to a browser that
+  holds no token) and covers every non-GET plus `/calls/replay`; an endpoint added later is
+  therefore covered by default rather than left open by omission. `explorer.mcp.auth-token` empty
+  means **503**, not an open endpoint, and a cleartext request means **426** unless
+  `explorer.mcp.require-tls` is off. It is a static token an operator distributes, not OAuth —
+  phase 5b still stands.
+- **One identity, and it is the authenticated one.** `McpToolInterceptor` reads
+  `McpCallerContext.authenticated()` and falls back to the MCP session id only for transports that
+  present no credential. A session id changes on reconnect, so keying quarantine, the rate limit or
+  the audit trail on it makes the lever one reconnect from being lifted.
+- **A scope guard takes a statement, not just a topic name.** `kex_sql_query` resolves every source
+  back to the topic it would register (`SqlSourceScope`) and refuses before the read — a reference
+  that matches no topic included, since a hand-written table carries its own `'topic'`. The shapes
+  that read nothing are named (`SHOW`, `EXPLAIN`, `CREATE`, `USE`, `SET`, the non-table
+  `DESCRIBE`s) and everything else is checked. The DLP scrub follows the payload, which for that
+  tool is its rows.
 - **The read-only guard is at registration, not invocation, and the framework leaves no choice.**
   Spring AI scans `@McpTool` methods on *every* bean in the context, so a tool that exists as a
   bean is listed by `tools/list` whatever its body then refuses. Mutating toolsets are therefore
