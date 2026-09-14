@@ -18,7 +18,7 @@ the part worth saying first: the suite already knew.
 
 | Evidence | Before | After |
 |---|---|---|
-| `./verify-offline.sh "--include-classname=.*Mcp.*"` | 231 tests, **6 failed** | 247 tests, **0 failed** (1 aborted, the deliberate no-cluster `assumeTrue`) |
+| `./verify-offline.sh "--include-classname=.*Mcp.*"` | 231 tests, **6 failed** | 254 tests, **0 failed** (1 aborted, the deliberate no-cluster `assumeTrue`) |
 | CI run 945 on `main` (`4426490`), job `build` | **BUILD FAILURE** — the same 6 inside 1 563 tests | — |
 | `sh mcp-probe.test.sh` | **10 of 10 cases failed** | 11 cases, all pass |
 
@@ -149,7 +149,11 @@ written name against the prefix would let `internal_mcp_audit` through while ref
 - a `DESCRIBE` is scoped like the read it is — it registers the table, which samples the records;
 - a statement whose sources the parser cannot read is refused **while the scope is restricted**,
   since otherwise an unparseable statement is the way around the guard, and a broker that cannot be
-  listed fails the check closed rather than open.
+  listed fails the check closed rather than open;
+- the exempt shapes are **named** (`SHOW`, `EXPLAIN`, `CREATE`, `USE`, `SET`) and everything else is
+  checked. Written the other way round — "only a statement starting with `SELECT`" — a parenthesised
+  set operation walked past the guard unlooked-at, and the Flink catalogue is shared with the UI,
+  which registers a table for any topic it is pointed at.
 
 Nothing of this runs when the scope is `"*"`, the shipped default, so the common deployment pays
 neither the parse nor the topic listing. `kex_list_tables` filters its rows by the same rule and
@@ -170,7 +174,7 @@ regex passes otherwise, and a number carries neither a credential nor an address
 
 ## P1 — controls that do not bind what they claim
 
-### P1-5 · Two identity models, and the guards use the weaker one — **open**
+### P1-5 · Two identity models, and the guards used the weaker one — **fixed**
 
 `McpToolInterceptor.identityOf` (`:336-342`) names the caller `session:<exchange.sessionId()>`.
 `McpCallerContext` (`security/McpCallerContext.java`) holds `bearer:<sha256>` — the authenticated
@@ -185,17 +189,21 @@ So quarantine, the rate limit and the audit-trail key are all keyed on the MCP *
   answered by the key, and the compaction/ordering rationale in `KafkaMcpAuditSink` (one record per
   caller, a caller's calls in order) does not hold.
 
-Fix: `identityOf` reads `McpCallerContext.identity()` first and falls back to the session id only
-when it is `local` (stdio, console "Try it"). That also makes the console's quarantine row act on
-something stable enough to be worth typing.
+**Fixed**: `identityOf` reads `McpCallerContext.authenticated()` first and falls back to the
+session id only for the transports that carry no credential — stdio, and the console's "Try it".
+One identity now: the quarantine an operator throws survives the reconnect it used to be defeated
+by, the token bucket belongs to the caller rather than to the connection, and the audit topic is
+keyed by the credential the review will ask about.
 
-Related, and worth one test rather than a paragraph: `McpCallerContext` is a `ThreadLocal` set by
-the servlet filter, and nothing asserts that Spring AI dispatches the tool call on that same
-thread. If it ever does not, every paused trace is owned by `local` and the P0 resume-token
-isolation silently becomes no isolation. The only test that could see it is
-`McpTransportContractTest`, which does not currently connect (P0-2).
+**And the thread question is answered rather than assumed.** `McpCallerContext` is a `ThreadLocal`
+set by a servlet filter and read by the interceptor, and nothing asserted that Spring AI dispatches
+the tool on that same thread — with the wrong answer the guards fall back silently and every paused
+trace is owned by `local`, which is the P0 resume-token isolation quietly becoming none.
+`McpTransportContractTest` now calls a tool over the wire and reads the recorded identity back out
+of the recorder: it starts with `bearer:`. That assertion only became possible because the same
+test can connect again (P0-2).
 
-### P1-6 · `explorer_mcp_audit_write_errors_total` misses the ordinary hole — **open**
+### P1-6 · `explorer_mcp_audit_write_errors_total` missed the ordinary hole — **fixed**
 
 `McpCallRecorder:96-99` increments the counter when `auditSink.append` **throws** — a
 serialisation failure, or `send()` refusing synchronously. The ordinary failure — the broker
@@ -203,15 +211,23 @@ rejecting or timing out the append — arrives in the producer callback
 (`KafkaMcpAuditSink:71-78`), which logs and closes the producer and increments nothing. Its own
 comment says so: *"Asynchronous, so it cannot be counted by the recorder's own catch"*.
 
-The gauge is documented in three places as *the* signal that the trail has holes. It is silent in
-the case that actually makes holes. Fix: pass a failure sink (a `LongAdder`, or the recorder's
-own `auditWriteErrors`) into `KafkaMcpAuditSink` and increment it from the callback.
+The gauge is documented in three places as *the* signal that the trail has holes. It was silent in
+the case that actually makes holes.
 
-Two smaller things in the same file: the metric is registered as a `Gauge` whose name ends in
-`_total`, which no Prometheus `rate()` rule will treat as expected — a `Counter` is what the name
-promises; and `closeProducer()` runs from the producer's own callback thread on every failure, so a
-broker outage rebuilds a `KafkaProducer` per call (threads, metadata fetch, 500 ms `MAX_BLOCK_MS`)
-on the thread serving tool calls.
+**Fixed**: the sink counts what it later fails to deliver and publishes it as
+`McpAuditSink.asyncWriteErrors()`; `McpCallRecorder.auditWriteErrors()` — and the gauge, which now
+reads through that method rather than off its own counter — returns both halves as one number. Read
+rather than pushed, because a sink calling back into the recorder is a cycle between two beans, one
+of which is constructed with the other.
+
+**The producer is no longer dropped from the callback.** It ran `closeProducer()` on the producer's
+own I/O thread, where `close()` cannot join itself, and it rebuilt a `KafkaProducer` — threads, a
+metadata fetch, 500 ms of `MAX_BLOCK_MS` — on every transient timeout, on the thread serving tool
+calls, for a client that reconnects and retries by itself.
+
+**One thing deliberately left**: the metric is a `Gauge` whose name ends in `_total`, which no
+Prometheus `rate()` rule treats as expected. Renaming a published metric breaks the dashboards that
+read it, which is worse than the convention it violates; it belongs in a release that says so.
 
 ### P1-7 · The probe's own test suite passed no token, so all 10 cases failed — **fixed**
 

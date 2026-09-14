@@ -12,6 +12,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpApprovalStore;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRateLimiter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRuntimeSwitches;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.security.McpCallerContext;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
@@ -26,6 +27,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.BiFunction;
 
@@ -327,13 +329,26 @@ public class McpToolInterceptor {
     }
 
     /**
-     * Who is calling.
+     * Who is calling: the credential that authenticated, or the session that did not.
      *
-     * <p>The session id until OAuth lands in phase 5, and named as the placeholder it is rather
-     * than dressed up as a subject: the console must not show a transport identifier in a column
-     * headed "identity" as though it had been authenticated.
+     * <p><b>The authenticated identity first, and that ordering is the whole fix.</b> This read the
+     * MCP session id alone, so quarantine, the rate limit and the audit topic's key were all bound
+     * to a <em>connection</em>: an agent that was quarantined reconnected under a new session id
+     * and was no longer quarantined, a caller reset its token bucket by reconnecting, and "what did
+     * this credential do last Tuesday?" could not be answered by the key the trail is written under.
+     * The fingerprint {@code McpHttpAuthFilter} installs is stable across reconnects and is the
+     * thing an operator actually means when they stop an agent. {@code McpTraceStore} was already
+     * reading it, which left the module with two identities and the guards on the weaker one.
+     *
+     * <p>The session id remains the fallback, for the transports that carry no credential — a stdio
+     * client, the console's "Try it" — and it is still named as the placeholder it is rather than
+     * dressed up as a subject.
      */
     private static String identityOf(McpSyncServerExchange exchange) {
+        Optional<String> authenticated = McpCallerContext.authenticated();
+        if (authenticated.isPresent()) {
+            return authenticated.get();
+        }
         if (exchange == null) {
             return LOCAL_IDENTITY;
         }

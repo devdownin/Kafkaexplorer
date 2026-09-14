@@ -60,6 +60,16 @@ class SqlSourceScope {
     private static final Pattern CTE_BINDING = Pattern.compile(
             "(?i)(?:\\bWITH\\b|,)\\s*([\\w$]+)\\s*(?:\\([^)]*\\))?\\s*AS\\s*\\(");
 
+    /**
+     * The statement kinds that reach no record, so nothing of theirs needs resolving.
+     *
+     * <p>{@code DESC} is here only for the forms {@link #DESCRIBE_TARGET} deliberately excludes —
+     * {@code DESCRIBE CATALOG}, {@code DESCRIBE JOB} and the rest, which name no table.
+     * {@code DESCRIBE <table>} is resolved before this list is consulted.
+     */
+    private static final List<String> READS_NOTHING =
+            List.of("SHOW", "EXPLAIN", "CREATE", "USE", "SET", "DESC");
+
     /** The object a {@code DESCRIBE} names — the one non-SELECT shape that registers a topic. */
     private static final Pattern DESCRIBE_TARGET = Pattern.compile(
             "(?i)^DESC(?:RIBE)?\\s+(?!CATALOG\\b|JOB\\b|FUNCTION\\b|MODEL\\b|SYSTEM\\b)"
@@ -136,9 +146,17 @@ class SqlSourceScope {
         if (described != null) {
             return List.of(described);
         }
+        // The exemptions are named, and everything else is checked. Written the other way round —
+        // "only a statement starting with SELECT" — a parenthesised set operation
+        // (`(SELECT …) UNION (SELECT …)`) passed the guard without being looked at, and the
+        // catalogue is shared with the UI, which registers a table for any topic it is pointed at.
+        // These five read no records: SHOW and DESCRIBE list, EXPLAIN plans without scanning, and
+        // a CREATE TABLE is already checked on the topic it names.
         String body = SqlStatements.classifiableBody(sql);
-        if (!body.startsWith("SELECT")) {
-            return List.of();
+        for (String exempt : READS_NOTHING) {
+            if (body.startsWith(exempt)) {
+                return List.of();
+            }
         }
         Optional<SqlAst.Read> ast = SqlAst.read(SqlStatements.withoutLeadingCte(sql));
         List<String> names = new ArrayList<>(ast.map(SqlAst::tableNames).orElse(List.of()));

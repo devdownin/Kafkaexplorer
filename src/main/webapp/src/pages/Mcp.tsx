@@ -18,7 +18,7 @@ import {
   DEFAULT_WINDOW, EMPTY_FILTERS, WINDOWS, callsToCsv, coverageLabel, deniedShare, filtersFromParams,
   filtersToParams, formatBytes, formatDuration, formatNumber, historyNotice, isWindow,
   explainDenial, explainHttpRefusal, filterTools, firstSentence, hasMoreThanFirstSentence,
-  outcomeLabel,
+  identityLabel, outcomeLabel,
   overrideBanner, replaySummary, sortTools, windowCaveat,
 } from './mcp/mcpConsoleLogic';
 import type { FeedFilters, McpWindow } from './mcp/mcpConsoleLogic';
@@ -1146,7 +1146,9 @@ const SupervisionTab: FC<SupervisionProps> = ({
                         {new Date(call.startedAt).toLocaleTimeString('fr-FR')}
                       </td>
                       <td className="p-2">{call.origin.toLowerCase()}</td>
-                      <td className="p-2 font-mono">{call.identity ?? '—'}</td>
+                      <td className="p-2 font-mono" title={call.identity ?? undefined}>
+                        {identityLabel(call.identity)}
+                      </td>
                       <td className="p-2 font-mono">{call.tool}</td>
                       <td className="p-2">
                         <Badge tone={call.outcome === 'OK' ? 'success' : call.outcome === 'DENIED' ? 'warning' : 'error'}>
@@ -1185,7 +1187,9 @@ const SupervisionTab: FC<SupervisionProps> = ({
             {clients.map((client) => (
               <li key={client.identity} className="flex items-start justify-between gap-3">
                 <span>
-                  <span className="font-mono">{client.identity}</span>
+                  <span className="font-mono" title={client.identity}>
+                    {identityLabel(client.identity)}
+                  </span>
                   {client.clientInfo ? ` — ${client.clientInfo}` : ''} ·{' '}
                   {formatNumber(client.calls)} appels
                 </span>
@@ -1194,7 +1198,7 @@ const SupervisionTab: FC<SupervisionProps> = ({
                 <OverrideSwitch
                   endpoint={`/api/mcp/quarantine/${encodeURIComponent(client.identity)}`}
                   restricted={quarantined.has(client.identity)}
-                  formTitle={`Mettre ${client.identity} en quarantaine`}
+                  formTitle={`Mettre ${identityLabel(client.identity)} en quarantaine`}
                   restrictLabel="Quarantaine"
                   liftLabel="Relâcher"
                   onSwitched={onSwitched}

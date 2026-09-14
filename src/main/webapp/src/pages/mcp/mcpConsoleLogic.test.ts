@@ -9,7 +9,7 @@ import {
   DEFAULT_WINDOW, callsToCsv, coverageLabel, deniedShare, filtersFromParams, filtersToParams,
   formatBytes, formatMeasured, historyNotice, isWindow, outcomeLabel, overrideAge,
   explainDenial, explainHttpRefusal, filterTools, firstSentence, hasMoreThanFirstSentence,
-  overrideBanner,
+  identityLabel, overrideBanner,
   replaySummary, sortTools, windowCaveat,
 } from './mcpConsoleLogic';
 
@@ -322,5 +322,22 @@ describe('explainHttpRefusal', () => {
     // Le message d'origine décrit encore mieux ce qui s'est passé qu'une phrase inventée.
     expect(explainHttpRefusal(500)).toBeNull();
     expect(explainHttpRefusal(undefined)).toBeNull();
+  });
+});
+
+describe('identityLabel', () => {
+  it('abrège une empreinte, qui est illisible entière dans une cellule', () => {
+    const fingerprint = `bearer:${'a1b2c3d4e5f6'.repeat(5).slice(0, 64)}`;
+    expect(identityLabel(fingerprint)).toBe('bearer:a1b2c3d4e5f6…');
+  });
+
+  it('laisse intacte une identité déjà lisible', () => {
+    // Raccourcir `local (stdio)` dirait qu'il manque quelque chose.
+    expect(identityLabel('local (stdio)')).toBe('local (stdio)');
+    expect(identityLabel('session:abc')).toBe('session:abc');
+  });
+
+  it('rend un tiret plutôt que rien quand l’appel n’en portait pas', () => {
+    expect(identityLabel(null)).toBe('—');
   });
 });

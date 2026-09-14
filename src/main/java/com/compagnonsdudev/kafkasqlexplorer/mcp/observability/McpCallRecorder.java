@@ -53,7 +53,12 @@ public class McpCallRecorder {
         this.capacity = Math.max(1, properties.getConsole().getRingBufferSize());
         this.auditSink = auditSink;
         this.meters = meters;
-        Gauge.builder("explorer_mcp_audit_write_errors_total", auditWriteErrors, AtomicLong::get)
+        // Read through auditWriteErrors() rather than off the counter, so the gauge carries the
+        // sink's asynchronous failures too. Registered against the counter alone, it reported zero
+        // through the outage it exists to signal: a broker that will not take the record answers on
+        // the producer's callback thread, long after append() returned without throwing.
+        Gauge.builder("explorer_mcp_audit_write_errors_total", this,
+                        recorder -> (double) recorder.auditWriteErrors())
                 .description("MCP calls whose audit append failed; the call itself still succeeded")
                 .register(meters);
     }
@@ -128,8 +133,13 @@ public class McpCallRecorder {
                 .toList();
     }
 
+    /**
+     * Appends that did not land, from both halves: what {@code append} threw, and what the sink
+     * later failed to deliver. One number, because an operator asking "does the trail have holes?"
+     * is not asking which thread noticed.
+     */
     public long auditWriteErrors() {
-        return auditWriteErrors.get();
+        return auditWriteErrors.get() + (auditSink == null ? 0L : auditSink.asyncWriteErrors());
     }
 
     /**

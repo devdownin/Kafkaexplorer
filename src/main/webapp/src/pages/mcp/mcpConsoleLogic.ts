@@ -387,3 +387,23 @@ export function explainHttpRefusal(status: number | undefined): string | null {
       return null;
   }
 }
+
+/**
+ * L'identité telle qu'elle se lit dans une cellule.
+ *
+ * Depuis que les gardes s'indexent sur le porteur plutôt que sur la connexion, une identité est
+ * `bearer:` suivi de 64 caractères hexadécimaux — une empreinte, qui nomme un appelant sans rien
+ * dire de son jeton, et qui est illisible dans une ligne de tableau. Les douze premiers suffisent à
+ * distinguer deux agents sur un écran.
+ *
+ * Ce n'est qu'un libellé : ce qui part en quarantaine reste la valeur entière, puisque c'est elle
+ * que le serveur compare. Tout ce qui n'est pas une empreinte — `local (stdio)`, `session:…` — est
+ * rendu tel quel : c'est déjà lisible, et raccourcir dirait qu'il manque quelque chose.
+ */
+export function identityLabel(identity: string | null): string {
+  if (!identity) {
+    return '—';
+  }
+  const fingerprint = /^bearer:([0-9a-f]{16,})$/.exec(identity);
+  return fingerprint ? `bearer:${fingerprint[1].slice(0, 12)}…` : identity;
+}

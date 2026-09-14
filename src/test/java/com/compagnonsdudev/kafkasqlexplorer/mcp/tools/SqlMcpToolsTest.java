@@ -243,6 +243,45 @@ class SqlMcpToolsTest {
     }
 
     @Test
+    void a_set_operation_is_checked_rather_than_skipped_for_not_starting_with_select() throws Exception {
+        // The catalogue is shared with the UI, which registers a table for any topic it is pointed
+        // at — so a shape this guard does not look at reads whatever the UI has already registered.
+        restrictTo("demo.");
+
+        assertThatThrownBy(() -> tools().sqlQuery(
+                "(SELECT id FROM demo.orders) UNION (SELECT id FROM internal.mcp.audit)",
+                null, null, null))
+                .isInstanceOf(McpToolException.class)
+                .satisfies(e -> assertThat(((McpToolException) e).jsonRpcCode()).isEqualTo(-32041));
+    }
+
+    @Test
+    void a_show_reads_no_record_so_it_is_not_resolved() throws Exception {
+        properties.setAllowedTopicPrefixes(List.of("demo."));
+        given(flink.executeSync(any())).willReturn(new QueryResult(
+                List.of("table name"), List.of(Map.of("table name", "demo_orders")), 1L, null, true, "FLINK"));
+
+        var result = tools().sqlQuery("SHOW TABLES", null, null, null);
+
+        assertThat(result.data().rows()).hasSize(1);
+        verify(kafka, org.mockito.Mockito.never()).listTopics();
+    }
+
+    @Test
+    void describe_catalog_names_no_table_so_it_is_left_alone() throws Exception {
+        // DESCRIBE <table> is a read and is scoped above; DESCRIBE CATALOG names nothing that
+        // resolves to a topic, and refusing it would be the guard answering a question nobody asked.
+        properties.setAllowedTopicPrefixes(List.of("demo."));
+        given(flink.executeSync(any())).willReturn(new QueryResult(
+                List.of("info"), List.of(Map.of("info", "default_catalog")), 1L, null, true, "FLINK"));
+
+        var result = tools().sqlQuery("DESCRIBE CATALOG default_catalog", null, null, null);
+
+        assertThat(result.data().rows()).hasSize(1);
+        verify(kafka, org.mockito.Mockito.never()).listTopics();
+    }
+
+    @Test
     void a_source_inside_the_scope_runs_untouched() throws Exception {
         restrictTo("demo.");
         given(flink.executeSync(any())).willReturn(new QueryResult(

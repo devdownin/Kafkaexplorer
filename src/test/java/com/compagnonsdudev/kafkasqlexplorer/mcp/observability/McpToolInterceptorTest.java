@@ -14,6 +14,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpGuard;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpScopeViolationException;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolException;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.security.McpCallerContext;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
@@ -224,6 +225,48 @@ class McpToolInterceptorTest {
                 .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().code()).isEqualTo(-32047));
 
         assertThat(ran[0]).isFalse();
+    }
+
+    @Test
+    void the_authenticated_caller_is_the_identity_the_guards_and_the_trail_use() {
+        // It was the MCP session id, which a reconnect changes: an agent quarantined by identity
+        // came back under a new one, a token bucket reset itself on reconnect, and the audit topic
+        // was keyed by connection rather than by credential.
+        try {
+            McpCallerContext.set("bearer:cafebabe");
+
+            invoke((exchange, request) -> structured(1L, StopReason.EXHAUSTED, false), Map.of());
+
+            assertThat(recorder.recent(McpCallFilter.all(), 10)).singleElement()
+                    .satisfies(call -> assertThat(call.identity()).isEqualTo("bearer:cafebabe"));
+        } finally {
+            McpCallerContext.clear();
+        }
+    }
+
+    @Test
+    void a_quarantine_on_the_credential_survives_the_reconnect_it_used_to_be_defeated_by() {
+        switches.quarantine("bearer:cafebabe", "alice", "a runaway loop");
+        try {
+            McpCallerContext.set("bearer:cafebabe");
+
+            assertThatThrownBy(() -> invoke(
+                    (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false), Map.of()))
+                    .isInstanceOf(McpError.class)
+                    .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().code()).isEqualTo(-32047));
+        } finally {
+            McpCallerContext.clear();
+        }
+    }
+
+    @Test
+    void a_caller_with_no_credential_is_still_named_as_the_placeholder_it_is() {
+        // stdio and the console's "Try it" present nothing; naming them `bearer:` anything would be
+        // the console showing an authentication that did not happen.
+        invoke((exchange, request) -> structured(1L, StopReason.EXHAUSTED, false), Map.of());
+
+        assertThat(recorder.recent(McpCallFilter.all(), 10)).singleElement().satisfies(call ->
+                assertThat(call.identity()).isEqualTo(McpToolInterceptor.LOCAL_IDENTITY));
     }
 
     private ToolGuard quarantineEverything() {

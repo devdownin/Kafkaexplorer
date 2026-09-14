@@ -75,8 +75,11 @@ must be able to answer "why does my agent not see `kex_produce_message`?" with
   leaves); a `CREATE TABLE` is checked on the topic literal it names, before anything is listed;
   and a `DESCRIBE` is scoped like the read it is, since registering the table samples the records.
   A CTE body is parsed too — `withoutLeadingCte` hides it from the parser, and refusing every CTE
-  is how a guard teaches operators to widen their prefixes. Nothing of it runs on the default
-  `"*"`.
+  is how a guard teaches operators to widen their prefixes. The exempt shapes are **named**
+  (`SHOW`, `EXPLAIN`, `CREATE`, `USE`, `SET`) rather than the checked ones: written as "only a
+  statement starting with `SELECT`", a parenthesised set operation walked past unlooked-at, and the
+  Flink catalogue is shared with the UI, which registers a table for any topic it is pointed at.
+  Nothing of it runs on the default `"*"`.
 - **The DLP scrub follows the payload, and the payload of `kex_sql_query` is its rows.** It reached
   that tool's warnings and stopped there, so `dlp.mode` held on the readers that return a handful
   of records and lapsed on the one that can return a whole topic. String cells only, as
@@ -561,10 +564,31 @@ is a rule the next change has to keep:
   bound at all. One message listing every possibility sends an operator to check three settings
   when the server already said which.
 
-**Two identities still coexist, and the audit says so.** `McpCallerContext` holds the authenticated
-fingerprint and `McpToolInterceptor` still names the caller by MCP session id, which a reconnect
-changes — so quarantine and the rate limit bound a session rather than a credential. Only
-`McpTraceStore` reads the fingerprint. That is P1-5 in `MCP-AUDIT.md`, not a decision.
+**One identity, and the session id only where there is no credential.** `McpToolInterceptor` named
+the caller by MCP session id, so quarantine, the rate limit and the audit topic's key were bound to
+a *connection*: a quarantined agent reconnected under a new id and was no longer quarantined, a
+caller reset its token bucket by reconnecting, and "what did this credential do last Tuesday?" could
+not be answered by the key the trail is written under. Meanwhile `McpTraceStore` read the
+authenticated fingerprint, which left the module with two identities and the guards on the weaker
+one. `McpCallerContext.authenticated()` is what the interceptor asks now; `session:…` and
+`local (stdio)` remain for the transports that present nothing, named as the placeholders they are.
+
+**And the thread that carries it is asserted, not assumed.** The identity is installed by a servlet
+filter and read by the interceptor; whether Spring AI dispatches the tool on that same thread is a
+fact about the transport that no unit test can reach, and the wrong answer degrades silently —
+every guard back on the session id, every paused trace owned by `local`, which is the resume-token
+isolation quietly becoming none. `McpTransportContractTest` calls a tool over the wire and reads the
+recorded identity back: it starts with `bearer:`.
+
+**A failed append is counted wherever it fails.** The recorder counts what `append` throws; a Kafka
+producer reports the ordinary failure — the broker not taking the record — on its own callback
+thread, long after `append` returned. That half was logged and counted nowhere, so
+`explorer_mcp_audit_write_errors_total` read zero through exactly the outage it is watched for. The
+sink counts it and `McpAuditSink.asyncWriteErrors()` publishes it; the gauge reads the sum through
+`McpCallRecorder.auditWriteErrors()`. Read rather than pushed, because a sink calling back into the
+recorder is a cycle between two beans, one of which is constructed with the other. The producer is
+no longer dropped from that callback either: `close()` cannot join itself from the I/O thread, and a
+client that reconnects on its own was being rebuilt on every transient timeout.
 
 ### What phase 5 deliberately leaves
 

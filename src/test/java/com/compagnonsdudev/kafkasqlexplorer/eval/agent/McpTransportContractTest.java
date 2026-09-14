@@ -188,6 +188,27 @@ class McpTransportContractTest {
     }
 
     @Test
+    @DisplayName("the call is recorded against the credential, not against the connection")
+    void theRecordedIdentityIsTheAuthenticatedOne() {
+        // The one place this can be asserted. The identity is installed by a servlet filter and
+        // read by the interceptor, and whether the two see the same thread is a fact about the
+        // transport that no unit test can reach: with the wrong answer the guards fall back to the
+        // MCP session id, which a reconnect changes, and the audit topic is keyed by connection.
+        client().callTool("kex_list_topics", Map.of("prefix", "demo."));
+
+        var recorder = context.getBean(
+                com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCallRecorder.class);
+        assertThat(recorder.snapshot())
+                .withFailMessage("the call crossed the wire but was not recorded at all")
+                .isNotEmpty();
+        assertThat(recorder.snapshot().getLast().identity())
+                .withFailMessage("the call was recorded against the connection rather than the "
+                        + "credential, so quarantine and the rate limit are one reconnect from "
+                        + "being reset")
+                .startsWith("bearer:");
+    }
+
+    @Test
     @DisplayName("Measured survives the transport's Jackson 3 with all three of its components")
     void measuredKeepsItsShapeOnTheWire() throws IOException {
         // The pitfall CLAUDE.md names: a serializer registered against Jackson 2 is absent from

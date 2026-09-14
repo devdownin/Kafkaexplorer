@@ -55,9 +55,27 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`McpRateLimiterBoundTest` asserted a bound Caffeine does not promise synchronously.** The
   limiter was never wrong; `identityCount()` drains the cache before estimating.
 
-`MCP-AUDIT.md` is the report these came out of, and it carries what is still open — chiefly that
-quarantine and the rate limit are keyed on the MCP session id, which a reconnect changes, while
-only the trace store reads the authenticated identity.
+- **Quarantine, the rate limit and the audit trail were keyed on the MCP session id**, which a
+  reconnect changes: a quarantined agent came back under a new one, a caller reset its token bucket
+  by reconnecting, and the trail could not answer what a credential did last Tuesday. Only
+  `McpTraceStore` read the authenticated fingerprint, so the module carried two identities with the
+  guards on the weaker. The interceptor reads the authenticated one now, and falls back to the
+  session id only for transports that present no credential. The transport test asserts the
+  recorded identity over the wire, which is also what proves the filter and the interceptor see the
+  same thread.
+- **`explorer_mcp_audit_write_errors_total` counted only what `append` threw**, so it read zero
+  through the failure that actually makes holes in the trail: a Kafka producer reports the broker
+  refusing a record on its own callback thread, long after `append` returned. The sink counts that
+  half and the gauge reads both. The producer is no longer dropped from that callback either —
+  `close()` cannot join itself from the I/O thread, and a client that reconnects on its own was
+  being rebuilt on every transient timeout.
+- **The console shows an identity that can be read.** A fingerprint is 64 hexadecimal characters;
+  the rows carry the first twelve with the whole value in the title, and quarantine still sends the
+  whole value, which is what the server compares.
+
+`MCP-AUDIT.md` is the report these came out of, and it carries what is still open — chiefly an
+approval token bound to a tool but not to a caller, and a gauge whose name ends in `_total`, which
+is left alone because renaming a published metric breaks the dashboards reading it.
 
 ## [2.0.0] — 2026-09-09
 
