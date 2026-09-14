@@ -277,6 +277,24 @@
                     </div>
                 </div>
 
+                <!-- MCP server -->
+                <div class="md:col-span-3 glass-effect rounded-2xl p-8 flex flex-col md:flex-row gap-8 items-center hover:border-primary/50 transition-colors group">
+                    <div class="flex-1">
+                        <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">smart_toy</span>
+                        <h4 class="text-2xl font-bold text-white mb-2">An MCP Server for Your Agent</h4>
+                        <p class="text-slate-400">The same analysis layer over the Model Context Protocol — SQL over vanilla Kafka, schema inference, key tracing, graded consumer lag. Every answer carries a <span class="font-mono text-primary">coverage</span> envelope naming what it did <strong class="text-white">not</strong> read, because an empty list is the one shape a model reads as "it does not exist". Off by default, read-only by registration, behind a bearer token over TLS.</p>
+                        <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/SPEC-MCP.md" class="inline-block mt-4 text-primary text-sm font-bold hover:underline">Read the specification →</a>
+                    </div>
+                    <div class="min-w-[260px] bg-black/40 rounded-2xl border border-border p-5 font-mono text-[11px] leading-relaxed">
+                        <div class="text-slate-500 mb-2">kex_trace_key → ORD-1042</div>
+                        <p><span class="text-primary">hops:</span> 7 topics</p>
+                        <p><span class="text-primary">stopReason:</span> TIME_BUDGET</p>
+                        <p class="text-yellow-500">topicsNotReached: 3 (named)</p>
+                        <p class="text-slate-400">lagMs: { measured: false,</p>
+                        <p class="text-slate-400 pl-4">reason: "retention" }</p>
+                    </div>
+                </div>
+
                 <!-- Functional Audit -->
                 <div class="md:col-span-3 glass-effect rounded-2xl p-8 flex flex-col md:flex-row gap-8 items-center hover:border-primary/50 transition-colors group">
                     <div class="flex-1">

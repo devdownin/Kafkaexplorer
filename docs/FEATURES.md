@@ -230,6 +230,15 @@ Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, 
   too, so there is exactly one switch and no endpoint bound by a default nobody set. **Read-only
   when on**: `explorer.mcp.readonly` ships `true`, and it is enforced at *registration* — a
   mutating tool is not a bean, so it is neither listed nor invocable, whatever a prompt argues.
+- **And turning it on is not enough to open it.** `/mcp` wants a bearer token
+  (`EXPLORER_MCP_AUTH_TOKEN`) over TLS (`explorer.mcp.require-tls`, on by default): with no token
+  configured the endpoint answers **503** rather than serving, and a cleartext request is refused
+  with **426** — a bearer token over plain HTTP is a bearer token given away. The token is never
+  kept as such: its SHA-256 fingerprint is the identity the call trail carries and the one
+  quarantine and the rate limit bite on, so an agent cannot shake either by reconnecting. It is a
+  static credential an operator distributes, not OAuth 2.1 — that is what `SPEC-MCP.md` specifies
+  and it is not built. The same token covers every state-changing `/api/mcp/**` call; the console's
+  own reads stay open, like the rest of this application, which authenticates nobody.
 - **Every answer says what it did not read.** A `coverage` envelope travels with each response:
   topics scanned, topics **named** that were not, records read, why the pass stopped, and a resume
   token. This is the point of the whole module. An empty array is the one shape a language model
@@ -292,7 +301,12 @@ Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, 
 - **The guard is KIP-1318's, in KIP-1318's order.** Resource scope is checked **before** any Kafka
   call — a scope check that runs after the read has already disclosed what it was refusing — and
   the error codes (`-32041` out of scope, `-32046` validation, `-32047` quarantine…) are adopted
-  unchanged so an agent trained on that surface can read our refusals.
+  unchanged so an agent trained on that surface can read our refusals. **Scope covers the SQL too**,
+  which is not free: a prefix is written in topic terms and a statement names Flink tables, where
+  the dots have become underscores, so every source in the query is resolved back to the topic it
+  would read and a name that resolves to nothing is refused rather than served. Restricting to
+  `demo.` and having one `SELECT` read everything else would be a setting that only looks like a
+  boundary.
 - **A ceiling clamps and says so.** Ask for a hundred thousand rows and you get the configured
   maximum plus a warning naming the real ceiling — not a refusal, which costs a round trip and
   teaches nothing, and not a silent cut, which hands a model a truncated answer wearing a complete
@@ -304,4 +318,6 @@ Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, 
   `_call_duration`, `_records_scanned_total`, `_output_truncated_total` and
   `_audit_write_errors_total` are on `/actuator/prometheus` alongside the existing series. The
   operator console that reads them — the catalogue of what is exposed *and what is withheld, with
-  the reason*, and the live call feed with its refusals — is phase 2.
+  the reason*, and the live call feed with its refusals — is the **MCP** page of the application
+  itself. Its switches need the same token the agents use, since they change what the server does;
+  the page takes it from you and keeps it for the tab, never beyond.
