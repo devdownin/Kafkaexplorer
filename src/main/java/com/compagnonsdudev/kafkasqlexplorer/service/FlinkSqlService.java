@@ -1248,13 +1248,36 @@ public class FlinkSqlService {
                  * une lecture que ce lecteur sait honorer : sur un JOIN ou une sous-requête il
                  * lirait une seule table et ignorerait le reste, donc là c'est le planner qui
                  * répond et l'avertissement dit que le mode n'a pas pu l'être.
+                 *
+                 * <p><b>Et cet aiguillage-ci ne porte aucun avertissement</b>, là où il en portait
+                 * un ouvert par {@link #DIRECT_READER_CAVEAT} — « This query fell back to the
+                 * direct Kafka reader, which supports neither JOIN nor subqueries. » Trois fois
+                 * faux, et le résultat était un bandeau jaune « Engine caveat » sur <em>chaque</em>
+                 * requête tant que le sélecteur « Offset » de l'éditeur restait sur « Latest »,
+                 * c'est-à-dire sur le geste d'exploration ordinaire.
+                 *
+                 * <p>Rien n'est tombé : ce lecteur est choisi <em>nommément</em>, parce qu'il est
+                 * le seul à savoir poser la question — exactement la règle que le javadoc de
+                 * {@link #WINDOWED_READ_NOTE} énonce déjà pour la fenêtre, et qui n'avait pas été
+                 * appliquée ici. La réserve elle-même ne porte sur rien : la branche est gardée
+                 * par {@code isSingleTableRead}, donc l'instruction ne contient par construction
+                 * ni JOIN ni sous-requête, et la phrase avertit d'une limite qu'aucune requête
+                 * arrivant ici ne peut rencontrer. Et le coût réel est le troisième :
+                 * {@code aQueryThePlannerAnswersCarriesNoFallbackWarning} pose qu'un
+                 * avertissement de repli qui apparaît toujours cesse d'être lu — ce qui détruit
+                 * le signal pour le repli qui, lui, est une vraie panne, puisque les deux se
+                 * ressemblent mot pour mot.
+                 *
+                 * <p>Le fait ne se perd pas pour autant : {@code engine} rend {@code KAFKA_DIRECT},
+                 * qui est la forme lisible par une machine, la pastille de l'éditeur le nomme et
+                 * son infobulle dit ce que ce lecteur sait faire — et, quand c'est le mode de
+                 * lecture qui l'a choisi, pourquoi. Les réserves que cette lecture-ci peut
+                 * vraiment mériter — un prédicat non appliqué, un plafond de scan atteint — sont
+                 * ajoutées par {@code kafkaDirectSelect}, sur les seules requêtes concernées.
                  */
                 if (namesARecentReadMode(readMode) && extractPrimaryTable(sqlToExecute) != null) {
                     if (MetricService.isSingleTableRead(sqlToExecute)) {
                         QueryResult direct = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
-                        direct = withExtraWarning(direct, DIRECT_READER_CAVEAT
-                            + " It answered because \"" + readMode + "\" asks for the most recent "
-                            + "records, which the Flink planner has no way to express.");
                         return autoReg.registered() ? withRegisteredFlag(direct) : direct;
                     }
                     unhonouredReadMode = readMode;

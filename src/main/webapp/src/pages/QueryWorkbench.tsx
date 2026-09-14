@@ -546,6 +546,14 @@ const QueryWorkbench: React.FC = () => {
   /** SQL de la requête qui a produit `results` — sert à marquer l'affichage périmé. */
   const [ranSql, setRanSql] = useState<string | null>(null);
   /**
+   * Le mode d'offset réellement envoyé avec `results`, et non celui que le sélecteur affiche à
+   * l'instant : c'est lui qui dit pourquoi le lecteur direct a répondu, et le sélecteur peut avoir
+   * bougé depuis. Le backend ne le dit plus dans `warnings` — un aiguillage voulu n'est pas un
+   * repli, et une réserve présente à chaque requête cesse d'être lue —, donc la pastille du moteur
+   * porte la raison.
+   */
+  const [ranOffsetMode, setRanOffsetMode] = useState<'EARLIEST' | 'LATEST' | null>(null);
+  /**
    * Le lot en cours ou terminé, une entrée par instruction, ou `null` quand la dernière exécution
    * n'en portait qu'une. C'est lui qui garde ce que chaque instruction a donné — voir `runBatch`.
    */
@@ -1148,6 +1156,7 @@ const QueryWorkbench: React.FC = () => {
     // Ce qui a réellement été exécuté — c'est lui, et non le contenu courant de l'onglet, qui dit
     // si les lignes affichées répondent encore au texte sous les yeux.
     setRanSql(sqlToRun);
+    setRanOffsetMode(offsetMode);
     try {
       /*
        * Pré-vol : `/api/query/validate` refuse une faute de syntaxe avant que la requête n'ouvre
@@ -2042,6 +2051,9 @@ const QueryWorkbench: React.FC = () => {
                       ? 'Which engine answers is decided per query — the Flink planner when it can, the direct Kafka reader otherwise. The badge names it once the result is in.'
                       : results.engine === 'KAFKA_DIRECT'
                         ? 'Kafka Direct: a bounded scan over Kafka messages. It supports SELECT, WHERE, aggregates and TUMBLE windows — but no multi-topic JOIN, which is the limit worth knowing before reading these rows.'
+                          + (ranOffsetMode === 'LATEST'
+                            ? ' It answered this query because Offset is set to Latest: "the most recent records" is a question the Flink planner has no way to express. Switch to Earliest to get the planner back.'
+                            : '')
                         : 'Flink: executed by the embedded Flink SQL engine (EXPLAIN / DDL).'
                   }>
                   <span tabIndex={0} className="rounded">

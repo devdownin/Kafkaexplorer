@@ -801,8 +801,32 @@ class FlinkSqlServiceTest {
         assertNoError(latest);
         assertEquals("KAFKA_DIRECT", latest.engine(),
             "the planner cannot express \"the most recent N records\", so it must not answer it");
-        assertTrue(latest.warnings().stream().anyMatch(w -> w.contains("most recent")),
-            "and the reader change must say why, got: " + latest.warnings());
+    }
+
+    /**
+     * Et cet aiguillage n'est pas un repli, donc il n'en porte pas le vocabulaire.
+     *
+     * <p>Il en portait un — {@code DIRECT_READER_CAVEAT}, « fell back … supports neither JOIN nor
+     * subqueries » — sur une lecture où rien n'est tombé et où la limite citée est hors de portée
+     * par construction, la branche étant gardée par {@code isSingleTableRead}. Le sélecteur
+     * « Offset » de l'éditeur laissé sur « Latest », c'était le bandeau « Engine caveat » sur
+     * chaque requête ; et un avertissement de repli permanent est précisément ce que
+     * {@link #aQueryThePlannerAnswersCarriesNoFallbackWarning} interdit, puisqu'il rend
+     * indiscernable le repli qui est une vraie panne.
+     */
+    @Test
+    void aNamedRecentReadModeIsNotReportedAsAFallback() throws Exception {
+        stubRegisteredTopicWithRecords();
+
+        QueryResult latest = service.executeSql(QueryRequest.sql(
+            "SELECT event_id, payload FROM strict_mode_topic", 10, 5_000L, "latest-offset"));
+
+        assertNoError(latest);
+        assertTrue(latest.warnings().stream().noneMatch(w -> w.contains("direct Kafka reader")),
+            "nothing fell back — the reader was chosen by name, got: " + latest.warnings());
+        assertTrue(latest.warnings().stream().noneMatch(w -> w.contains("JOIN")),
+            "isSingleTableRead guards this branch, so no JOIN caveat can apply, got: "
+                + latest.warnings());
     }
 
     /**
