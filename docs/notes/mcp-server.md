@@ -549,11 +549,24 @@ is a rule the next change has to keep:
   round — the four state-changing endpoints open, every console read refused — with the module's
   own test asserting the opposite and failing on every build. Deciding by exclusion rather than by
   a list of paths is what stops the next endpoint being open by omission.
-- **The console's write gestures now need the token, and the browser has none.** The toggles,
-  quarantine and the approval mint answer 401 from the page. That is the posture the boundary was
-  added for, and it is why "Try it" stays off by default; a console that can throw the kill switch
-  from a browser is an application-level decision (`SECURITY.md`'s "no authentication out of the
-  box"), not an MCP one.
+- **The console's write gestures need the token, so the console can hold one.** The toggles,
+  quarantine, the approval mint and the replay answered 401 from the page that carries them — the
+  kill switch unusable exactly where an operator reaches for it. A card on the Supervision tab takes
+  the token the operator already has and sends it on those calls, and only those: the reads are
+  unauthenticated by design, and attaching a bearer credential to a feed that polls every five
+  seconds would expose it for nothing. Four rules shape it, each one a way a secret in a browser
+  goes wrong:
+  - **`sessionStorage`, never `localStorage`.** In memory alone it is retyped on every refresh —
+    during the incident, which is the only time it is used; in `localStorage` it outlives the tab
+    and sits on a shared machine until somebody thinks of it. The tab's lifetime is the gesture's.
+  - **Never re-displayed.** The card shows `…4 last characters` and offers *Forget*. A screen that
+    can render a secret legibly is a screen you steal it from by opening.
+  - **Never in a URL**, where a proxy log keeps it, and never on a read.
+  - **A storage that refuses is said so, not swallowed** — private browsing and enterprise policy
+    both make the accessor itself throw, and a card claiming to hold a token it does not is the
+    failure this module spends its time removing.
+  A 401 then has two readings and they need different gestures, so `explainHttpRefusal` takes
+  whether a token is held: paste one, or paste a different one.
 - **A harness that talks to the endpoint carries the credential.** `McpTransportContractTest` — the
   only test that crosses a socket — met `426` then `503` and failed at the handshake, so the
   wire-level `Measured` / `Coverage` serialisation it exists to check went unverified while the

@@ -65,12 +65,16 @@ reads are not. By exclusion rather than by a list of paths, so the endpoint adde
 by default instead of open by omission; `McpHttpAuthFilterTest` asserts both directions and an
 unknown future `POST`.
 
-**One consequence, deliberate and worth stating.** The console's own write gestures — the toggles,
-quarantine, the approval mint, the replay — now answer 401 in a browser, which holds no token. That
-is the posture `docs/notes/mcp-security-p0.md` asks for, and the page says so instead of rendering
-axios's "Request failed with status code 401": `explainHttpRefusal` names the setting and what to
-do. Giving the console a way to hold a credential is a feature, not an audit fix, and it is the
-obvious follow-up.
+**One consequence, deliberate — and since built out.** The console's own write gestures — the
+toggles, quarantine, the approval mint, the replay — answer 401 in a browser, which holds no token.
+That is the posture `docs/notes/mcp-security-p0.md` asks for, and it left the kill switch unusable
+exactly where an operator reaches for it. The Supervision tab now has a **Jeton MCP** card: the
+operator pastes the token they already hold, it rides the privileged calls and only those, it lives
+in `sessionStorage` (never `localStorage`, never a URL, never a read), it is never re-displayed —
+`…` and the last four characters — and *Forget* takes it back. A storage that refuses to keep it
+says so rather than showing a card that claims to hold what it does not. `explainHttpRefusal` now
+takes whether a token is held, because "paste one" and "paste a different one" are different
+gestures behind the same 401.
 
 ### P0-2 · `/mcp` answered nothing in a deployment configured the documented way — **fixed**
 

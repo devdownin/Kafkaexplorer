@@ -111,7 +111,10 @@ plainly because it decides how the app must be deployed:
   (`explorer.mcp.require-tls`, true by default). With no token configured the endpoint answers 503
   rather than opening. That token authenticates an *agent*, not a person: the console's own reads
   are unauthenticated like the rest of this application, and the paragraph above still decides how
-  the whole thing must be deployed.
+  the whole thing must be deployed. The MCP console can hold that token to use its own switches; it
+  keeps it in the tab's `sessionStorage`, never in `localStorage` and never in a URL, and never
+  displays it again — but a bearer credential in a browser is a bearer credential in a browser, so
+  it belongs on an operator's machine rather than on a shared one.
 - Every bundled compose stack therefore publishes its ports on `${BIND_ADDR:-127.0.0.1}`,
   the loopback interface, rather than Docker's usual `0.0.0.0`.
 

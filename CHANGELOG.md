@@ -69,6 +69,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   half and the gauge reads both. The producer is no longer dropped from that callback either —
   `close()` cannot join itself from the I/O thread, and a client that reconnects on its own was
   being rebuilt on every transient timeout.
+- **The console can hold the MCP token, so its own switches work again.** The bearer boundary
+  covers everything that is not a read, and a browser holds nothing — so the toggles, quarantine,
+  the approval mint and the replay answered 401 from the page that carries them, which is the kill
+  switch being unusable exactly where an operator reaches for it. A card on the Supervision tab
+  takes the token the operator already has and sends it on those calls and no others; it lives in
+  the tab's `sessionStorage`, is never re-displayed beyond its last four characters, and *Forget*
+  takes it back. A 401 now reads differently depending on whether a token is held, because pasting
+  one and pasting a different one are different gestures.
 - **The console shows an identity that can be read.** A fingerprint is 64 hexadecimal characters;
   the rows carry the first twelve with the whole value in the title, and quarantine still sends the
   whole value, which is what the server compares.

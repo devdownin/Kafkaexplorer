@@ -139,6 +139,9 @@ function renderAt(path = '/mcp') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Le jeton vit dans sessionStorage, que jsdom partage d'un cas à l'autre : sans cela, le
+  // deuxième test trouve la carte déjà en « retenu » et cherche un champ qui n'est plus là.
+  window.sessionStorage.clear();
   mockApi();
 });
 
@@ -324,6 +327,9 @@ describe('les leviers du commutateur', () => {
     expect(mockedAxios.post).toHaveBeenCalledWith(
       '/api/mcp/toggle/tool/kex_list_topics',
       { enable: true, actor: 'alice', reason: 'boucle folle' },
+      // Sans jeton retenu, aucun en-tête : « Bearer  » est une authentification ratée là où
+      // l'absence est une requête anonyme, et le serveur ne répond pas la même chose aux deux.
+      {},
     );
   });
 
@@ -335,6 +341,44 @@ describe('les leviers du commutateur', () => {
     // L'identité apparaît aussi dans le flux d'appels ; c'est le levier qui est nouveau.
     expect(await screen.findByRole('button', { name: 'Quarantaine' })).toBeInTheDocument();
     expect(screen.getAllByText('svc-sre@corp').length).toBeGreaterThan(0);
+  });
+
+  it('porte le jeton retenu sur un geste qui change l’état', async () => {
+    // Le levier le plus utile en incident répondait 401 depuis la page qui le porte : la frontière
+    // bearer couvre tout ce qui n'est pas une lecture, et un navigateur ne détient rien.
+    const user = userEvent.setup();
+    mockedAxios.post.mockResolvedValue({ data: { applied: true, message: 'ok', override: null } });
+    renderAt('/mcp?tab=supervision');
+
+    await user.type(await screen.findByLabelText('Jeton'), 'secret-token');
+    await user.click(screen.getByRole('button', { name: 'Retenir' }));
+
+    await user.click(screen.getByRole('button', { name: 'Verrouiller' }));
+    await user.type(screen.getByLabelText('Pourquoi ?'), 'incident');
+    // Le formulaire remplace le déclencheur — OverrideSwitch rend l'un ou l'autre — donc le même
+    // libellé désigne le bouton de soumission une fois ouvert.
+    await user.click(screen.getByRole('button', { name: 'Verrouiller' }));
+
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      '/api/mcp/toggle/readonly',
+      expect.anything(),
+      { headers: { Authorization: 'Bearer secret-token' } },
+    );
+  });
+
+  it('ne réaffiche jamais le jeton, et l’oublie sur demande', async () => {
+    // Un écran capable de rendre un secret lisible est un écran qu'il suffit d'ouvrir pour le voler.
+    const user = userEvent.setup();
+    renderAt('/mcp?tab=supervision');
+
+    await user.type(await screen.findByLabelText('Jeton'), 'secret-token');
+    await user.click(screen.getByRole('button', { name: 'Retenir' }));
+
+    expect(screen.getByText(/retenu …oken/)).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('secret-token')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Oublier' }));
+    expect(screen.getByText('aucun jeton')).toBeInTheDocument();
   });
 
   it('propose de relâcher une identité déjà en quarantaine plutôt que de la remettre', async () => {

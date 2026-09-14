@@ -362,21 +362,26 @@ export function hasMoreThanFirstSentence(description: string): boolean {
  * Ce qu'un refus HTTP de `/api/mcp/**` veut dire, et ce que l'opérateur peut y faire.
  *
  * Les gestes qui changent l'état — verrouiller, éteindre un outil, mettre en quarantaine, frapper
- * une approbation, rejouer le trail — passent derrière le jeton bearer du serveur MCP, et cette
- * page n'en détient aucun : un navigateur n'a rien à présenter. « Request failed with status code
- * 401 » est exact et n'apprend rien à qui doit décider quoi faire dans l'incident en cours.
+ * une approbation, rejouer le trail — passent derrière le jeton bearer du serveur MCP. L'onglet
+ * peut en retenir un (`mcpCredential`), et les deux situations ne demandent pas le même geste :
+ * aucun jeton se règle en le collant, un jeton refusé en collant l'autre. « Request failed with
+ * status code 401 » est exact et n'apprend ni l'un ni l'autre.
  *
  * `null` sur tout le reste, pour la raison qui vaut déjà pour `explainDenial` : un statut que cet
  * écran ne sait pas interpréter est mieux servi par le message d'origine que par une phrase
  * inventée.
  */
-export function explainHttpRefusal(status: number | undefined): string | null {
+export function explainHttpRefusal(status: number | undefined, held = false): string | null {
   switch (status) {
     case 401:
     case 403:
-      return "ce geste demande le jeton MCP (explorer.mcp.auth-token) et cette page n'en envoie "
-        + "aucun : un navigateur n'en détient pas. Lancez-le depuis un client authentifié, ou "
-        + "depuis la machine qui garde le jeton.";
+      // Deux phrases, parce que ce sont deux gestes : coller un jeton, ou en coller un autre. Une
+      // seule formulation enverrait la moitié des lecteurs vérifier ce qui est déjà fait.
+      return held
+        ? "le jeton retenu par cet onglet a été refusé : ce n'est pas celui que le serveur attend "
+          + '(explorer.mcp.auth-token). Oubliez-le et collez le bon.'
+        : 'ce geste demande le jeton MCP (explorer.mcp.auth-token), et cet onglet n’en retient '
+          + 'aucun. Collez-le dans la carte « Jeton MCP » de l’onglet Supervision.';
     case 426:
       return "le serveur exige TLS sur cette adresse (explorer.mcp.require-tls). Passez par "
         + "l'adresse HTTPS, ou mettez le réglage à false pour une pile de développement locale.";
