@@ -56,8 +56,9 @@ format every time on the model under test answers the suspicion without one. Onl
 failures justifies building it, and it would then be justified by a number.
 
 **The MCP agent harness is a third kind of test, and it is being built in layers** (`eval/agent/`,
-`SPECAGENT.md`). The MCP server carries 1 442 unit tests and `McpServerBootTest` proves Spring AI
-registers the fifteen tools — and none of that reaches what the module exists for. Its value
+`SPECAGENT.md`). The MCP module carries some 270 unit tests, `McpServerBootTest` proves Spring AI
+registers the fifteen tools and `McpTransportContractTest` proves a third-party client can reach
+them over a bound port — and none of that reaches what the module exists for. Its value
 proposition is a claim about what a *model concludes*: that an empty result carrying
 `stopReason != EXHAUSTED` is not read as "it does not exist". A unit test can assert the field; only
 a model can falsify the conclusion. So a scenario renders **two independent verdicts**, and the
