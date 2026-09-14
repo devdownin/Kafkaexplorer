@@ -986,3 +986,48 @@ describe('QueryWorkbench — saved queries', () => {
     await waitFor(() => expect(editor().value).toBe('SELECT COUNT(*) AS metric_value FROM t'));
   });
 });
+
+/*
+ * Le lecteur direct choisi par le mode de lecture n'est pas un repli, et le backend a cessé de le
+ * dire dans `warnings` : la phrase y était ouverte par « This query fell back… », donc le bandeau
+ * jaune « Engine caveat » s'affichait sur *chaque* requête tant que « Offset » restait sur
+ * « Latest ». La raison se lit maintenant sur la pastille du moteur, qui n'a pas le ton d'une
+ * alerte et ne prétend pas qu'une panne a eu lieu.
+ */
+describe('QueryWorkbench — the engine badge says why the direct reader answered', () => {
+  const directResult = () => post.mockImplementation((url: string) => (url === '/api/query/validate'
+    ? Promise.resolve({ data: { valid: true } })
+    : Promise.resolve({
+      data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT', warnings: [] },
+    })));
+
+  const run = async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT id FROM t');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    return screen.findByText('KAFKA_DIRECT');
+  };
+
+  it('names the read mode when Latest is what routed the query', async () => {
+    directResult();
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.click(screen.getByRole('button', { name: 'Latest' }));
+    await userEvent.type(editor(), 'SELECT id FROM t');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await screen.findByText('KAFKA_DIRECT');
+
+    expect(screen.getByText(/Offset is set to Latest/)).toBeInTheDocument();
+    // Et surtout : aucun bandeau d'avertissement sur une requête où rien n'a échoué.
+    expect(screen.queryByText(/Engine caveat/)).not.toBeInTheDocument();
+  });
+
+  it('stays silent about it on an Earliest run the reader answered anyway', async () => {
+    directResult();
+    await run();
+
+    expect(screen.queryByText(/Offset is set to Latest/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Engine caveat/)).not.toBeInTheDocument();
+  });
+});
