@@ -131,8 +131,9 @@ public class McpServerConfiguration {
      * builds no producer, and so the sink is absent — not a no-op — when there is nothing to record.
      */
     @Bean
-    McpAuditSink mcpAuditSink(KafkaConfig kafkaConfig, McpProperties properties) {
-        return new KafkaMcpAuditSink(kafkaConfig, properties);
+    McpAuditSink mcpAuditSink(KafkaConfig kafkaConfig, McpProperties properties,
+                              MeterRegistry meters) {
+        return new KafkaMcpAuditSink(kafkaConfig, properties, meters);
     }
 
     @Bean

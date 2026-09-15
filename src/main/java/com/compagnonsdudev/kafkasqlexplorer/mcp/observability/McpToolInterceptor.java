@@ -134,7 +134,7 @@ public class McpToolInterceptor {
             // second ago.
             checkNotQuarantined(identity);
             checkNotDisabled(tool);
-            approvals.spend(tool, approvalToken(arguments));
+            approvals.spend(tool, approvalToken(arguments), identity);
             rateLimiter.check(identity);
 
             CallToolResult result = delegate.apply(exchange, request);

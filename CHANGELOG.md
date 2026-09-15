@@ -20,7 +20,27 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **An approval token is bound to a caller, not only to a tool.** A token minted for a named agent
+  was spendable by whoever presented it first — on the deployment this control exists for, where
+  more people reach the application than may approve, the approval landed on whoever asked rather
+  than on whoever was approved. The console's mint names the caller now (defaulting to the single
+  known one where there is exactly one, so the wider token is never what you get without asking),
+  the store refuses a token offered by anyone else, and that refusal stays indistinguishable from
+  the other three — telling the holder of a stolen token which part of it to change is the one
+  thing it must not do. Minting for *any* caller stays possible, because an agent that has not
+  called yet has no identity to name, and the answer says which of the two it was.
+- **`explorer_mcp_audit_write_errors_total` is a counter, not a gauge wearing a counter's suffix.**
+  `rate()` and `increase()` — the two functions anyone alerting on a broken audit trail reaches for
+  — are not defined on a gauge. The type changed and the name did not, so every dashboard reading
+  the series keeps working; a test asserts a real Prometheus scrape, a name already ending in
+  `_total` being exactly where a registry can double the suffix.
+
+With these, every finding in `MCP-AUDIT.md` is closed. What that report still records, because the
+code does not say it, is what was deliberately *not* done: the taint guard waits for a mutating
+tool to guard, and OAuth 2.1 remains a phase of its own — the bearer token is the interim, and
+`SPEC-MCP.md` says so rather than implying the specified thing shipped.
 
 ## [2.0.2] — 2026-09-14
 

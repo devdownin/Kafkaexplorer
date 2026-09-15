@@ -199,6 +199,7 @@ const Mcp: FC = () => {
           endpoint={status?.endpoint ?? null}
           tryItEnabled={status?.tryItEnabled ?? false}
           overrides={overrides}
+          clients={clients}
           onSwitched={() => void load()}
         />
       ) : (
@@ -413,18 +414,21 @@ const ToolSwitch: FC<{ tool: string; off: boolean; onSwitched: () => void }> = (
  * capable de le redonner ferait d'une approbation à usage unique une permission permanente pour
  * quiconque atteint cette application.
  */
-const ApprovalMint: FC<{ tool: string }> = ({ tool }) => {
+const ApprovalMint: FC<{ tool: string; clients: McpClientRow[] }> = ({ tool, clients }) => {
   const [result, setResult] = useState<McpApprovalResult | null>(null);
+  /* Lié au seul appelant connu par défaut : sur un déploiement qui n'en a qu'un, c'est ce que
+     l'opérateur veut, et le choix large ne s'obtient alors pas sans l'avoir demandé. */
+  const [identity, setIdentity] = useState(clients.length === 1 ? clients[0].identity : '');
 
   const mint = async () => {
     try {
       const res = await axios.post<McpApprovalResult>(`/api/mcp/approve/${tool}`, {
-        enable: true, actor: '', reason: '',
+        actor: '', identity,
       }, { ...authHeaders(readCredential()), validateStatus: () => true });
       setResult(res.data);
     } catch (e) {
       setResult({
-        token: null, tool: null, expiresInMinutes: 0,
+        token: null, tool: null, boundTo: null, expiresInMinutes: 0,
         message: refusalMessage(e, 'la frappe est injoignable'),
       });
     }
@@ -435,6 +439,14 @@ const ApprovalMint: FC<{ tool: string }> = ({ tool }) => {
       <div className="max-w-xs space-y-1 text-right">
         <p className="text-[11px] text-on-surface-variant">
           Un appel, {result.expiresInMinutes} min. Montré une seule fois.
+        </p>
+        {/* Ce qui a été frappé, pas ce qui a été demandé : un jeton que n'importe quel porteur
+            dépense est un choix réel — un client qui n'a pas encore appelé n'a pas d'identité à
+            nommer — et c'est le plus large des deux, donc il se lit. */}
+        <p className="text-[11px] text-on-surface-variant">
+          {result.boundTo === null
+            ? "Pour n'importe quel appelant."
+            : `Pour ${identityLabel(result.boundTo)} seulement.`}
         </p>
         <code className="block break-all rounded bg-surface-container-high p-1 text-[10px]">
           {result.token}
@@ -447,12 +459,32 @@ const ApprovalMint: FC<{ tool: string }> = ({ tool }) => {
   }
 
   return (
-    <div className="text-right">
-      <Button size="sm" variant="outline" onClick={() => void mint()}>
-        Approuver
-      </Button>
+    <div className="max-w-xs space-y-1 text-right">
+      <div className="flex items-end justify-end gap-2">
+        {clients.length > 0 ? (
+          <Field label="Pour" className="w-44">
+            {(field) => (
+              <Select
+                {...field}
+                value={identity}
+                onChange={(e) => setIdentity(e.target.value)}
+              >
+                {clients.map((client) => (
+                  <option key={client.identity} value={client.identity}>
+                    {identityLabel(client.identity)}
+                  </option>
+                ))}
+                <option value="">n'importe quel appelant</option>
+              </Select>
+            )}
+          </Field>
+        ) : null}
+        <Button size="sm" variant="outline" onClick={() => void mint()}>
+          Approuver
+        </Button>
+      </div>
       {result?.message ? (
-        <p className="mt-1 max-w-xs text-xs text-error">{result.message}</p>
+        <p className="mt-1 text-xs text-error">{result.message}</p>
       ) : null}
     </div>
   );
@@ -537,8 +569,10 @@ const CatalogTab: FC<{
   endpoint: string | null;
   tryItEnabled: boolean;
   overrides: McpOverrideView[];
+  /* Pour l'approbation : lier un jeton à un appelant demande de savoir lesquels existent. */
+  clients: McpClientRow[];
   onSwitched: () => void;
-}> = ({ catalog, endpoint, tryItEnabled, overrides, onSwitched }) => {
+}> = ({ catalog, endpoint, tryItEnabled, overrides, clients, onSwitched }) => {
   const [config, setConfig] = useState<McpClientConfig | null>(null);
   const [client, setClient] = useState('claude-code');
   /* Les outils coupés à chaud, tirés du bandeau plutôt que d'un second appel : la même vérité,
@@ -646,7 +680,7 @@ const CatalogTab: FC<{
                       </Button>
                     ) : null}
                     {tool.visibility.state === 'EXPOSED_WITH_APPROVAL' ? (
-                      <ApprovalMint tool={tool.name} />
+                      <ApprovalMint tool={tool.name} clients={clients} />
                     ) : null}
                     {tool.visibility.state !== 'HIDDEN' ? (
                       <ToolSwitch

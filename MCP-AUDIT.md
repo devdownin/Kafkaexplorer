@@ -230,9 +230,13 @@ own I/O thread, where `close()` cannot join itself, and it rebuilt a `KafkaProdu
 metadata fetch, 500 ms of `MAX_BLOCK_MS` — on every transient timeout, on the thread serving tool
 calls, for a client that reconnects and retries by itself.
 
-**One thing deliberately left**: the metric is a `Gauge` whose name ends in `_total`, which no
-Prometheus `rate()` rule treats as expected. Renaming a published metric breaks the dashboards that
-read it, which is worse than the convention it violates; it belongs in a release that says so.
+**And the type is fixed without touching the name — fixed.** The metric was a `Gauge` whose
+name ends in `_total`, so `rate()` and `increase()`, the two functions anyone alerting on a broken
+audit trail reaches for, were not defined on it. Renaming the series would have broken every
+dashboard already reading it for a convention the *type* can satisfy on its own, so it is a
+`Counter` under the same name, incremented at both sites that notice a failure rather than derived
+from a sum. The one risk in that — a registry appending `_total` to a name that already ends in it
+— is asserted against a real Prometheus scrape rather than against the convention's documentation.
 
 ### P1-7 · The probe's own test suite passed no token, so all 10 cases failed — **fixed**
 
@@ -273,12 +277,20 @@ fixed.** `identityCardinalityIsBoundedAgainstMemoryExhaustion` inserts 10 500 id
 timing-dependent and failed here and in CI. The limiter was never wrong; `identityCount()` drains
 the cache before estimating, which makes the bound the test reads the bound the cache keeps.
 
-**P3-10 · An approval token is bound to a tool, never to a caller.** `McpApprovalStore.spend`
-checks `tool` and TTL. Any caller may spend a token minted for any other, which matters on the
-deployment the store exists for — one where more people reach the application than may approve.
-Binding the mint to the identity that will spend it is a two-field change; leaving it as is would
-at least deserve a sentence in the class doc, which currently enumerates four properties as if they
-were exhaustive.
+**P3-10 · An approval token was bound to a tool, never to a caller — fixed.**
+`McpApprovalStore.spend` checked `tool` and the TTL, so any caller could spend a token minted for
+any other: on the deployment this store exists for — one where more people reach the application
+than may approve — the approval an operator granted to a named agent went to whoever asked first.
+`mint` takes the identity it is for and `spend` takes the caller's, which the interception layer
+already knows because it is the same identity quarantine and the rate limit now use.
+
+Two decisions inside it. The binding is **optional**, because an operator may legitimately be
+approving for a client that has not called yet and has no identity to name — and the answer says
+which of the two was minted, with the console defaulting to the single known caller where there is
+exactly one, so the wider token is never what you get without asking. And the refusal stays
+**undistinguishable from the other three**: a wrong caller reads exactly like an invented token,
+because telling a holder of a stolen token which part of it to change is the one thing this
+refusal must not do.
 
 **P3-11 · `docs/notes/mcp-server.md` predates the security work.** It has no mention of the bearer
 filter, of `require-tls`, or of `McpCallerContext`, and its phase table still reads *5b — OAuth 2.1
@@ -321,14 +333,21 @@ contracts were written assuming there was none: the boundary is correct in isola
 place it had to meet something that already existed — the console's unauthenticated reads, the
 interceptor's session identity, the transport test's plain HTTP client, the probe harness.
 
-## Suggested order
+## What is left
 
-1. P0-1 — swap the two `shouldNotFilter` branches. Smallest diff, largest exposure closed, and it
-   turns four CI failures into one.
-2. P0-2 — configure the transport contract test with a token, and document both properties in
-   `application.yml`. The wire-level contract is unverified until this lands.
-3. P0-3 / P0-4 — scope and DLP in `SqlMcpTools`, with the cases
-   `SqlMcpToolsTest` does not yet have: an out-of-scope `FROM`, an out-of-scope `JOIN`, a
-   restricted scope with an unresolvable source, and a row carrying a credential.
-4. P1-5 — one identity, read from `McpCallerContext`.
-5. P1-6, P1-7, P1-8, P2-9 — each independent, each small.
+Every finding above is closed. Two things are deliberately *not* done, and they are decisions
+rather than omissions — both were already in `docs/notes/mcp-server.md` before this audit and both
+survive it:
+
+- **The taint guard.** It exists to stop a value read from the cluster being used as a mutating
+  argument, and there is no mutating tool in this tree: under the shipped `readonly=true` it could
+  never fire. A guard nobody has seen work is not a control. It lands with the write surface it
+  protects.
+- **OAuth 2.1.** The bearer token is an interim — a static credential an operator distributes, with
+  no issuer, no audience, and revocation by redeployment — and `SPEC-MCP.md` now records that
+  distinction rather than implying the specified thing shipped. Real OAuth changes the deployment
+  contract and deserves its own review.
+
+The one habit worth carrying forward from this audit: three of the four P0s were already failing in
+CI when it started. The suite knew, and the build had been red long enough for that to stop being
+information. A finding list is cheaper than the next red build nobody reads.

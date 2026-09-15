@@ -289,7 +289,8 @@ Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, 
   configuration nobody remembers choosing; the console's banner names each live one with its age and
   cannot be dismissed.
 - **Approval tokens and a rate limit.** A tool named in `explorer.mcp.approval-required-tools` needs
-  a token a human mints from the console — single use, bound to that one tool, fifteen minutes. And
+  a token a human mints from the console — single use, fifteen minutes, bound to that one tool and
+  to the caller the operator names, so an approval granted to one agent is not spent by another. And
   a token bucket per identity bounds the *sequence* where the ceilings bound one call: an operator
   clicks, a model loops, and a tool that answers "not found in what was scanned" invites another
   pass.
