@@ -405,17 +405,25 @@ client caches the tool list from its `initialize`, so a tool that vanishes mid-s
 model keeps calling and cannot be told about. The refusal is `-32044` naming the operator and the
 reason — the only form this can take that the caller can actually read.
 
-**Approval tokens make `approval-required-tools` mean something.** Single use, bound to one tool,
-fifteen minutes, unguessable, compared in constant time; each of those is the answer to a way an
-approval can be defeated, and the reasons are written out in `McpApprovalStore`. Two decisions worth
-knowing: it applies to **any** tool an operator lists rather than only the mutating ones, because a
+**Approval tokens make `approval-required-tools` mean something.** Single use, bound to one tool
+**and, when the operator names one, to one caller** — an approval granted to a named agent was
+spendable by whoever asked first, which on the deployment this control exists for (more people
+reach the application than may approve) is the control approving the wrong party. The binding is
+optional rather than required, because an operator may legitimately be approving for a client that
+has not called yet and has no identity to name; the answer says which of the two was minted, and
+the console defaults to the single known caller where there is exactly one, so the wider token is
+never what you get without asking for it.
+
+Single use, fifteen minutes, unguessable, compared in constant time; each of those is the answer to
+a way an approval can be defeated, and the reasons are written out in `McpApprovalStore`. Two
+decisions worth knowing: it applies to **any** tool an operator lists rather than only the mutating ones, because a
 read is the sensitive gesture on a cluster whose payloads are regulated and hard-coding the list to
 the write surface would deny that operator the control; and the refusal never says which of the
-three ways it failed — unknown, expired, or minted for another tool — because distinguishing them
-tells a caller holding a stolen token which part of it to change, while a caller holding a
-legitimate one has the same thing to do in all three cases. The token travels as `_approvalToken`
-and is **removed, not masked,** before the call is recorded: a bearer credential in a durable log
-outlives the fifteen minutes it was minted for.
+four ways it failed — unknown, expired, minted for another tool, or minted for another caller —
+because distinguishing them tells a caller holding a stolen token which part of it to change, while
+a caller holding a legitimate one has the same thing to do in every one of them. The token travels
+as `_approvalToken` and is **removed, not masked,** before the call is recorded: a bearer credential
+in a durable log outlives the fifteen minutes it was minted for.
 
 **Rate limiting (`-32029`) is a token bucket per identity, refilled continuously.** A fixed window
 lets a caller spend the whole allowance in the last second of one minute and the whole allowance
@@ -592,6 +600,15 @@ fact about the transport that no unit test can reach, and the wrong answer degra
 every guard back on the session id, every paused trace owned by `local`, which is the resume-token
 isolation quietly becoming none. `McpTransportContractTest` calls a tool over the wire and reads the
 recorded identity back: it starts with `bearer:`.
+
+**And the series it moves is a counter, under the name it has always had.** `_total` is
+Prometheus's suffix for a monotonic counter, and this one wore it as a *gauge*, so `rate()` and
+`increase()` — the two functions anyone alerting on "the trail has holes" reaches for — were not
+defined on it. Changing the type rather than the name keeps every dashboard already reading the
+series; the one thing that could go wrong with that is Micrometer appending `_total` a second time,
+and `McpCallRecorderTest` asserts a real Prometheus scrape rather than the convention's
+documentation. The two `AtomicLong`s stay for the console, which asks "how many holes" and gets one
+number; a counter's value is the registry's business.
 
 **A failed append is counted wherever it fails.** The recorder counts what `append` throws; a Kafka
 producer reports the ordinary failure — the broker not taking the record — on its own callback

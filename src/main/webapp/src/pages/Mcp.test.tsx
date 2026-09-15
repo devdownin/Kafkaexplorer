@@ -426,7 +426,10 @@ describe('les leviers du commutateur', () => {
       },
     });
     mockedAxios.post.mockResolvedValue({
-      data: { token: 'tok-abc', tool: 'kex_list_topics', expiresInMinutes: 15, message: null },
+      data: {
+        token: 'tok-abc', tool: 'kex_list_topics', boundTo: null, expiresInMinutes: 15,
+        message: null,
+      },
     });
     renderAt();
     await screen.findByText('kex_list_topics');
@@ -435,6 +438,42 @@ describe('les leviers du commutateur', () => {
 
     expect(await screen.findByText('tok-abc')).toBeInTheDocument();
     expect(screen.getByText(/Montré une seule fois/)).toBeInTheDocument();
+  });
+
+  it('lie le jeton à l’appelant nommé, et dit lequel', async () => {
+    // Un jeton bon pour n'importe quel porteur est un jeton que le mauvais agent dépense : sur le
+    // déploiement où ce contrôle existe, plus de gens atteignent l'application qu'il n'y en a qui
+    // approuvent.
+    const user = userEvent.setup();
+    mockApi({
+      clients: [CLIENT],
+      catalog: {
+        ...CATALOG,
+        tools: [{
+          ...CATALOG.tools[0],
+          visibility: { state: 'EXPOSED_WITH_APPROVAL', reason: 'déclaré dans la liste' },
+        }],
+      },
+    });
+    mockedAxios.post.mockResolvedValue({
+      data: {
+        token: 'tok-abc', tool: 'kex_list_topics', boundTo: 'svc-sre@corp', expiresInMinutes: 15,
+        message: null,
+      },
+    });
+    renderAt();
+    await screen.findByText('kex_list_topics');
+
+    // Un seul client connu : c'est lui que le sélecteur porte déjà, donc le choix large ne
+    // s'obtient pas sans l'avoir demandé.
+    await user.click(screen.getByRole('button', { name: 'Approuver' }));
+
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      '/api/mcp/approve/kex_list_topics',
+      { actor: '', identity: 'svc-sre@corp' },
+      expect.anything(),
+    );
+    expect(await screen.findByText(/svc-sre@corp seulement/)).toBeInTheDocument();
   });
 });
 

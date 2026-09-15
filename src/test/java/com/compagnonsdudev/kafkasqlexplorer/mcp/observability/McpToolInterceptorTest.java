@@ -318,7 +318,7 @@ class McpToolInterceptorTest {
                 .isInstanceOf(McpError.class)
                 .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().code()).isEqualTo(-32042));
 
-        String token = approvals.mint("kex_list_topics", "alice");
+        String token = approvals.mint("kex_list_topics", "alice", null);
         CallToolResult result = invoke(
                 (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false),
                 Map.of(McpToolInterceptor.APPROVAL_ARGUMENT, token));
@@ -327,11 +327,42 @@ class McpToolInterceptorTest {
     }
 
     @Test
+    void an_approval_minted_for_one_caller_is_refused_to_another_at_this_layer() {
+        // The identity is only knowable here — a tool cannot see who invoked it — so this is where
+        // the binding has to be checked, on the same identity quarantine and the rate limit use.
+        properties.setApprovalRequiredTools(java.util.Set.of("kex_list_topics"));
+        String token = approvals.mint("kex_list_topics", "alice", "bearer:someone-else");
+
+        assertThatThrownBy(() -> invoke(
+                (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false),
+                Map.of(McpToolInterceptor.APPROVAL_ARGUMENT, token)))
+                .isInstanceOf(McpError.class)
+                .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().code()).isEqualTo(-32042));
+    }
+
+    @Test
+    void an_approval_minted_for_this_caller_lets_the_call_through() {
+        properties.setApprovalRequiredTools(java.util.Set.of("kex_list_topics"));
+        try {
+            McpCallerContext.set("bearer:cafebabe");
+            String token = approvals.mint("kex_list_topics", "alice", "bearer:cafebabe");
+
+            CallToolResult result = invoke(
+                    (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false),
+                    Map.of(McpToolInterceptor.APPROVAL_ARGUMENT, token));
+
+            assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
+        } finally {
+            McpCallerContext.clear();
+        }
+    }
+
+    @Test
     void the_approval_token_is_removed_from_what_gets_recorded_rather_than_masked() {
         // A bearer credential in the ring buffer or on the audit topic outlives the fifteen minutes
         // it was minted for.
         properties.setApprovalRequiredTools(java.util.Set.of("kex_list_topics"));
-        String token = approvals.mint("kex_list_topics", "alice");
+        String token = approvals.mint("kex_list_topics", "alice", null);
 
         invoke((exchange, request) -> structured(1L, StopReason.EXHAUSTED, false),
                 Map.of(McpToolInterceptor.APPROVAL_ARGUMENT, token, "prefix", "demo."));
@@ -370,7 +401,7 @@ class McpToolInterceptorTest {
                 (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false), Map.of()))
                 .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().code()).isEqualTo(-32042));
 
-        String token = approvals.mint("kex_list_topics", "alice");
+        String token = approvals.mint("kex_list_topics", "alice", null);
         CallToolResult result = invoke(
                 (exchange, request) -> structured(1L, StopReason.EXHAUSTED, false),
                 Map.of(McpToolInterceptor.APPROVAL_ARGUMENT, token));

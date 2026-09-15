@@ -1365,6 +1365,8 @@ export interface McpSwitchResult {
 export interface McpApprovalResult {
   token: string | null;
   tool: string | null;
+  /** L'appelant auquel le jeton est lié, ou `null` quand n'importe lequel peut le dépenser. */
+  boundTo: string | null;
   expiresInMinutes: number;
   message: string | null;
 }

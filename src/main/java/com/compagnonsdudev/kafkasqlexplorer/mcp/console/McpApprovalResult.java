@@ -11,16 +11,18 @@ package com.compagnonsdudev.kafkasqlexplorer.mcp.console;
  *
  * @param token     the token to pass as {@code _approvalToken}, {@code null} when none was minted
  * @param tool      the tool it is good for — one call of that tool and no other
+ * @param boundTo   the caller it is good for, or {@code null} when any caller may spend it
  * @param expiresInMinutes how long it stays usable
  * @param message   why no token was minted, {@code null} when one was
  */
-public record McpApprovalResult(String token, String tool, long expiresInMinutes, String message) {
+public record McpApprovalResult(String token, String tool, String boundTo, long expiresInMinutes,
+                                String message) {
 
-    static McpApprovalResult minted(String token, String tool, long expiresInMinutes) {
-        return new McpApprovalResult(token, tool, expiresInMinutes, null);
+    static McpApprovalResult minted(String token, String tool, String boundTo, long expiresInMinutes) {
+        return new McpApprovalResult(token, tool, boundTo, expiresInMinutes, null);
     }
 
     static McpApprovalResult refused(String message) {
-        return new McpApprovalResult(null, null, 0L, message);
+        return new McpApprovalResult(null, null, null, 0L, message);
     }
 }

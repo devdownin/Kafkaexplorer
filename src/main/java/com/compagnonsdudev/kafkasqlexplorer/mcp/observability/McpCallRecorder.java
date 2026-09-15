@@ -3,7 +3,7 @@
 package com.compagnonsdudev.kafkasqlexplorer.mcp.observability;
 
 import com.compagnonsdudev.kafkasqlexplorer.mcp.McpProperties;
-import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,17 +48,31 @@ public class McpCallRecorder {
     private final AtomicLong auditWriteErrors = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
 
+    /** The Prometheus series. Incremented where a failure is noticed, never derived from a sum. */
+    private final Counter auditWriteErrorCounter;
+
     public McpCallRecorder(McpProperties properties, McpAuditSink auditSink, MeterRegistry meters) {
         // auditSink may be null: no sink configured is a state the console reports, not a failure.
         this.capacity = Math.max(1, properties.getConsole().getRingBufferSize());
         this.auditSink = auditSink;
         this.meters = meters;
-        // Read through auditWriteErrors() rather than off the counter, so the gauge carries the
-        // sink's asynchronous failures too. Registered against the counter alone, it reported zero
-        // through the outage it exists to signal: a broker that will not take the record answers on
-        // the producer's callback thread, long after append() returned without throwing.
-        Gauge.builder("explorer_mcp_audit_write_errors_total", this,
-                        recorder -> (double) recorder.auditWriteErrors())
+        // A Counter, not a Gauge, under the same name it has always had.
+        //
+        // `_total` is Prometheus's suffix for a monotonic counter, and a gauge wearing it is read
+        // by `rate()` and `increase()` as something they may not touch — the two functions anyone
+        // alerting on "the trail has holes" would reach for. Renaming the series instead would
+        // break every dashboard already reading it for a convention the type can satisfy on its
+        // own; Micrometer does not double the suffix on a name that already carries it, and
+        // McpCallRecorderTest asserts that against a real Prometheus scrape rather than trusting
+        // the convention.
+        //
+        // The two AtomicLongs stay: the console asks "how many holes" and gets one number from
+        // auditWriteErrors(), where a counter's value is the registry's business. The asynchronous
+        // half is incremented by the sink, which is where it is noticed — a broker that will not
+        // take the record answers on the producer's callback thread, long after append() returned
+        // without throwing, and registering a gauge over the recorder's counter alone reported
+        // zero through exactly that outage.
+        this.auditWriteErrorCounter = Counter.builder("explorer_mcp_audit_write_errors_total")
                 .description("MCP calls whose audit append failed; the call itself still succeeded")
                 .register(meters);
     }
@@ -102,6 +116,7 @@ public class McpCallRecorder {
             auditSink.append(call);
         } catch (RuntimeException e) {
             auditWriteErrors.incrementAndGet();
+            auditWriteErrorCounter.increment();
             log.warn("MCP audit append failed for correlationId={}", call.correlationId(), e);
         }
     }

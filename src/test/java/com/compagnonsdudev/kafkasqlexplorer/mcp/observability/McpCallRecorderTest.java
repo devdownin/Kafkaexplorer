@@ -17,6 +17,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.Instant;
 import java.util.Map;
 
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.mockito.ArgumentMatchers.any;
@@ -117,14 +120,45 @@ class McpCallRecorderTest {
     void an_append_the_sink_lost_after_accepting_it_is_counted_too() {
         // The hole the counter is watched for. A Kafka producer takes the record, returns, and
         // reports the broker's refusal on its own callback thread — so `append` throws nothing and
-        // the recorder's catch sees nothing. Counted at the sink and read back here, the gauge
-        // moves through the outage instead of reading zero across it.
+        // the recorder's catch sees nothing. The sink counts it and the console reads both halves
+        // as one number, instead of a console reading zero through the outage.
         given(auditSink.asyncWriteErrors()).willReturn(4L);
 
         recorder.record(ok("kex_list_topics"));
 
         assertThat(recorder.auditWriteErrors()).isEqualTo(4);
-        assertThat(meters.get("explorer_mcp_audit_write_errors_total").gauge().value()).isEqualTo(4.0);
+    }
+
+    @Test
+    void a_failed_append_moves_the_prometheus_series_as_a_counter() {
+        willThrow(new RuntimeException("topic unavailable")).given(auditSink).append(any());
+
+        recorder.record(ok("kex_list_topics"));
+
+        assertThat(meters.get("explorer_mcp_audit_write_errors_total").counter().count())
+                .isEqualTo(1.0);
+    }
+
+    @Test
+    void the_series_is_scraped_under_the_name_it_has_always_had_and_typed_as_a_counter() {
+        // `_total` is Prometheus's suffix for a monotonic counter, and this series wore it as a
+        // *gauge*: `rate()` and `increase()` — the two functions anyone alerting on "the trail has
+        // holes" reaches for — are not defined on a gauge. Changing the type rather than the name
+        // keeps every dashboard already reading it. What has to be checked is the one thing that
+        // could go wrong with that: Micrometer appends `_total` to counters, so a name that already
+        // ends in it could scrape as `..._total_total`. Asserted against a real scrape rather than
+        // against the convention's documentation.
+        PrometheusMeterRegistry prometheus =
+                new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        McpCallRecorder scraped = new McpCallRecorder(new McpProperties(), auditSink, prometheus);
+        willThrow(new RuntimeException("topic unavailable")).given(auditSink).append(any());
+
+        scraped.record(ok("kex_list_topics"));
+        String exposition = prometheus.scrape();
+
+        assertThat(exposition).contains("explorer_mcp_audit_write_errors_total");
+        assertThat(exposition).doesNotContain("explorer_mcp_audit_write_errors_total_total");
+        assertThat(exposition).contains("# TYPE explorer_mcp_audit_write_errors_total counter");
     }
 
     @Test

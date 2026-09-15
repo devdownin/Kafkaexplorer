@@ -6,6 +6,8 @@ import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.McpProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -51,6 +53,17 @@ public class KafkaMcpAuditSink implements McpAuditSink {
     private final McpProperties properties;
     private final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
+    /**
+     * The same series {@link McpCallRecorder} increments, by name.
+     *
+     * <p>Micrometer returns one meter per id, so the two registrations are one counter: the
+     * recorder counts what {@code append} threw, this counts what the broker then refused, and
+     * `explorer_mcp_audit_write_errors_total` is the number of holes in the trail either way. The
+     * alternative — the sink calling back into the recorder — is a cycle between two beans, one of
+     * which is constructed with the other.
+     */
+    private final Counter writeErrors;
+
     private volatile KafkaProducer<String, String> producer;
 
     /**
@@ -63,9 +76,12 @@ public class KafkaMcpAuditSink implements McpAuditSink {
      */
     private final AtomicLong asyncWriteErrors = new AtomicLong();
 
-    public KafkaMcpAuditSink(KafkaConfig kafkaConfig, McpProperties properties) {
+    public KafkaMcpAuditSink(KafkaConfig kafkaConfig, McpProperties properties, MeterRegistry meters) {
         this.kafkaConfig = kafkaConfig;
         this.properties = properties;
+        this.writeErrors = Counter.builder("explorer_mcp_audit_write_errors_total")
+                .description("MCP calls whose audit append failed; the call itself still succeeded")
+                .register(meters);
     }
 
     @Override
@@ -92,6 +108,7 @@ public class KafkaMcpAuditSink implements McpAuditSink {
                             // transient timeout, at the cost of its buffer and a metadata fetch, on
                             // the thread serving tool calls.
                             asyncWriteErrors.incrementAndGet();
+                            writeErrors.increment();
                             log.warn("MCP audit append failed for {}: {}", call.correlationId(),
                                     failure.getMessage());
                         }

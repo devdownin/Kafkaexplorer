@@ -265,10 +265,15 @@ public class McpConsoleController {
      * <p>Behind {@code allow-runtime-toggle} like the switches, and for the same reason: on a
      * deployment where this application is reachable by more people than may approve, an open
      * minting endpoint is the approval control defeating itself.
+     *
+     * <p>{@code identity} binds the token to one caller — the same string the console's client
+     * rows carry. It is optional because an operator may be approving for an agent that has not
+     * called yet, and the answer says which of the two was minted rather than letting the wider
+     * one pass for the narrower.
      */
     @PostMapping("/approve/{tool}")
     public ResponseEntity<McpApprovalResult> approve(@PathVariable("tool") String tool,
-                                                     @RequestBody McpSwitchRequest request) {
+                                                     @RequestBody McpApprovalRequest request) {
         McpApprovalStore store = approvals.getIfAvailable();
         McpRuntimeSwitches runtime = switches.getIfAvailable();
         if (store == null || runtime == null) {
@@ -285,8 +290,13 @@ public class McpConsoleController {
                     + "it is not named in explorer.mcp.approval-required-tools, so a token would "
                     + "grant nothing that is not already allowed"));
         }
+        // The identity travels back with the token so the panel can say which of the two was
+        // minted. A token good for any bearer is a real choice an operator may need — a client
+        // that has not called yet has no identity to name — and it is the weaker one, so it must
+        // not be the one you get without noticing.
+        String boundTo = request.boundIdentity();
         return ResponseEntity.ok(McpApprovalResult.minted(
-                store.mint(tool, request.actorOrAnonymous()), tool,
+                store.mint(tool, request.actorOrAnonymous(), boundTo), tool, boundTo,
                 McpApprovalStore.TTL.toMinutes()));
     }
 
