@@ -260,11 +260,12 @@ explorer:
   # MCP server — docs/notes/mcp-server.md, SPEC-MCP.md
   # ---------------------------------------------------------------------------------------------
   mcp:
-    # Off. Pointing a language model at a Kafka cluster is a decision an operator makes
-    # deliberately, and a feature that arrives switched on in an upgrade is not that decision.
-    # It is also the single switch: spring.ai.mcp.server.enabled above reads this one, so the
-    # endpoint cannot end up bound by a default nobody set.
-    enabled: false
+    # Enabled by default on this deployment (overriding the upstream posture of off-by-default —
+    # see docs/notes/mcp-server.md and CLAUDE.md for why that was the original choice). It is
+    # also the single switch: spring.ai.mcp.server.enabled above reads this one, so the endpoint
+    # cannot end up bound by a default nobody set. readonly stays true below: enabling the server
+    # does not open the write surface by itself.
+    enabled: true
 
     # And opting in still does not open the write surface. `readonly` is enforced at *registration*:
     # a mutating tool is not a bean, so it is not listed by tools/list and cannot be invoked by
