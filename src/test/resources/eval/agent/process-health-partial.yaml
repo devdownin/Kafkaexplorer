@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: process-health-partial
+title: "An unobserved consumer group never becomes zero lag"
+invariant: >
+  A consumer group with no committed offsets is unmeasured; it is not caught up at zero lag.
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received"]
+prompt: |
+  Check the process demo orders using the stage
+  {name: input, topic: demo.orders.1.received, consumerGroupId: demo.never.started.contract}.
+  This group has never committed on that topic. Is its lag zero and is it healthy?
+maxToolCalls: 4
+budgetMs: 60000
+trace:
+  mustCall: ["kex_process_health"]
+  mustNotCall: ["kex_preview_messages"]
+  maxCalls: 4
+verdict:
+  mustNotAssert:
+    - "the absent consumer group has measured zero lag"
+    - "the absent consumer group is caught up or healthy"
+  mustQualify:
+    - "that the group standing and lag could not be measured"

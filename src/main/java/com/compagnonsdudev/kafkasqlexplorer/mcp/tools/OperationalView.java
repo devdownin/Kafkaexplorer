@@ -28,6 +28,20 @@ public final class OperationalView {
     ) {
     }
 
+    /**
+     * One ordered stage of an integration process.
+     *
+     * @param name stable stage label used in evidence; optional for callers
+     * @param topic Kafka topic observed at this stage
+     * @param consumerGroupId group that consumes this stage, when the stage has one
+     */
+    public record ProcessStage(
+            String name,
+            String topic,
+            String consumerGroupId
+    ) {
+    }
+
     public record ConsumerDiagnosis(
             String topic,
             String groupId,
@@ -42,6 +56,7 @@ public final class OperationalView {
     }
 
     public record ProcessHealth(
+            String measurementId,
             String process,
             String status,
             String explanation,
@@ -73,6 +88,8 @@ public final class OperationalView {
 
     public record ProcessComparison(
             String process,
+            String beforeMeasurementId,
+            String afterMeasurementId,
             String verdict,
             String beforeStatus,
             String afterStatus,

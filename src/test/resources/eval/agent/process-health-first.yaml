@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: process-health-first
+title: "Use process health instead of reconstructing a process from low-level reads"
+invariant: >
+  A named process with explicit Kafka stages is observed using kex_process_health;
+  the agent must preserve the tool's coverage rather than invent unmeasured health.
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.orders.6.delivered"]
+prompt: |
+  Check the health of my demo orders process. Its ordered stages are
+  {name: input, topic: demo.orders.1.received} and
+  {name: output, topic: demo.orders.6.delivered}.
+  No consumer group is declared. Tell me only what the available measurements show.
+maxToolCalls: 4
+budgetMs: 60000
+trace:
+  mustCall: ["kex_process_health"]
+  mustNotCall: ["kex_preview_messages", "kex_consumer_lag"]
+  maxCalls: 4
+verdict:
+  mustCite:
+    - "the process status and evidence returned by kex_process_health"
+  mustNotAssert:
+    - "a consumer group is healthy or unhealthy when no group was supplied"

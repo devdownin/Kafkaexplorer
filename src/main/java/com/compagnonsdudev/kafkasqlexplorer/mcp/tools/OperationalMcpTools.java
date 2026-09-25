@@ -18,9 +18,12 @@ import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Operational views composed from Kafka Explorer's existing measurements.
@@ -35,10 +38,17 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
     private static final long DEFAULT_WINDOW_MS = 15 * 60_000L;
     private static final int DEFAULT_BUCKETS = 12;
     private static final int ACTIVITY_MAX_LOOKUPS = 20_000;
+    private static final long SNAPSHOT_TTL_MS = 60 * 60_000L;
+    private static final int MAX_SNAPSHOTS = 512;
 
     private final KafkaAdminService kafka;
     private final ConsumerLagMcpTools consumerLag;
     private final ToolGuard guard;
+    private final Map<String, Snapshot> snapshots = new LinkedHashMap<>();
+
+    private record Snapshot(OperationalView.ProcessHealth health, Coverage coverage,
+                            List<OperationalView.ProcessStage> stages, List<String> groups,
+                            long windowMs, long measuredAt) { }
 
     public OperationalMcpTools(KafkaAdminService kafka, ConsumerLagMcpTools consumerLag, ToolGuard guard) {
         this.kafka = kafka;
@@ -142,7 +152,7 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
         }
 
         ToolResult<LagView.TopicLag> lag = consumerLag.consumerLag(
-                topic, groupId, includeTimeLag == null || includeTimeLag, false, 1);
+                topic, groupId, includeTimeLag == null || includeTimeLag, false, Integer.MAX_VALUE);
         LagView.GroupLag group = lag.data().groups().stream().findFirst().orElse(null);
         if (group == null) {
             OperationalView.ConsumerDiagnosis missing = new OperationalView.ConsumerDiagnosis(
@@ -175,45 +185,69 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
             names the evidence used, and coverage still states what was not read.""")
     public ToolResult<OperationalView.ProcessHealth> processHealth(
             @McpToolParam(description = "Process name used in the returned evidence") String process,
-            @McpToolParam(description = "Ordered topics that form the process") List<String> topics,
-            @McpToolParam(required = false, description = "Consumer groups to check on each topic")
+            @McpToolParam(required = false, description = "Preferred typed stages in process order; each stage binds its topic and optional consumerGroupId")
+            List<OperationalView.ProcessStage> stages,
+            @McpToolParam(required = false, description = "Legacy ordered topics; omit when stages is supplied") List<String> topics,
+            @McpToolParam(required = false, description = "Legacy consumer groups discovered across topics; omit when stages is supplied")
             List<String> groupIds,
             @McpToolParam(required = false, description = "Activity window in milliseconds; default 15 minutes")
             Long windowMs,
             @McpToolParam(required = false, description = "Activity buckets; default 12")
             Integer buckets) {
 
-        List<String> selected = topics(topics);
+        List<OperationalView.ProcessStage> typedStages = stages(stages);
+        boolean typed = !typedStages.isEmpty();
+        if (typed && ((topics != null && !topics.isEmpty()) || (groupIds != null && !groupIds.isEmpty()))) {
+            throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
+                    "supply either typed stages or legacy topics/groupIds, not both");
+        }
+
+        List<String> selected = typed
+                ? topics(typedStages.stream().map(OperationalView.ProcessStage::topic).toList())
+                : topics(topics);
         ToolResult<List<OperationalView.TopicActivity>> activity = topicActivity(selected, windowMs, buckets);
         List<OperationalView.ConsumerDiagnosis> consumers = new ArrayList<>();
         List<Warning> warnings = new ArrayList<>(activity.warnings());
-        List<String> groups = groups(groupIds);
+        List<String> groups = typed
+                ? typedStages.stream().map(OperationalView.ProcessStage::consumerGroupId)
+                        .filter(Objects::nonNull).filter(group -> !group.isBlank()).distinct().toList()
+                : groups(groupIds);
         boolean truncated = activity.truncated();
 
-        // A group is normally attached to one stage, not every topic in the process. Probe the
-        // ordered stages until its committed offsets are found; reporting "UNKNOWN" once per topic
-        // would turn a valid one-group process into an unknown process merely because that group
-        // does not consume the upstream topics.
-        for (String group : groups) {
-            OperationalView.ConsumerDiagnosis missing = null;
-            boolean found = false;
-            for (String topic : selected) {
+        if (typed) {
+            for (OperationalView.ProcessStage stage : typedStages) {
+                if (stage.consumerGroupId() == null || stage.consumerGroupId().isBlank()) continue;
                 ToolResult<OperationalView.ConsumerDiagnosis> diagnosis =
-                        diagnoseConsumer(topic, group, true);
+                        diagnoseConsumer(stage.topic(), stage.consumerGroupId(), true);
                 warnings.addAll(diagnosis.warnings());
                 truncated |= diagnosis.truncated();
-                if (!"UNKNOWN".equals(diagnosis.data().verdict())
-                        || !diagnosis.data().diagnosis().contains("not found")) {
-                    consumers.add(diagnosis.data());
-                    found = true;
-                    break;
-                }
-                missing = diagnosis.data();
+                consumers.add(diagnosis.data());
             }
-            if (!found && missing != null) consumers.add(missing);
+        } else {
+            // Legacy contract: a group is not assumed to consume every topic. Probe the ordered
+            // stages until its committed offsets are found.
+            for (String group : groups) {
+                OperationalView.ConsumerDiagnosis missing = null;
+                boolean found = false;
+                for (String topic : selected) {
+                    ToolResult<OperationalView.ConsumerDiagnosis> diagnosis =
+                            diagnoseConsumer(topic, group, true);
+                    warnings.addAll(diagnosis.warnings());
+                    truncated |= diagnosis.truncated();
+                    if (!"UNKNOWN".equals(diagnosis.data().verdict())
+                            || !diagnosis.data().diagnosis().contains("not found")) {
+                        consumers.add(diagnosis.data());
+                        found = true;
+                        break;
+                    }
+                    missing = diagnosis.data();
+                }
+                if (!found && missing != null) consumers.add(missing);
+            }
         }
 
         String status = healthStatus(activity.data(), consumers);
+        if (truncated || !activity.coverage().complete()) status = "UNKNOWN";
         String explanation = healthExplanation(status, activity.data(), consumers);
         Long last = activity.data().stream()
                 .map(OperationalView.TopicActivity::lastMessageAt)
@@ -230,15 +264,32 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
                 .orElse(null);
 
         OperationalView.ProcessHealth data = new OperationalView.ProcessHealth(
+                UUID.randomUUID().toString(),
                 process == null || process.isBlank() ? String.join(" -> ", selected) : process,
                 status, explanation, selected, activity.data(), consumers,
                 Measured.ofNullable(last, "no topic returned a last-message timestamp"),
-                Measured.of(total),
+                activity.truncated() ? Measured.unmeasured("topic activity was incomplete") : Measured.of(total),
                 Measured.ofNullable(worstLag, groups.isEmpty()
                         ? "no consumer groups were requested"
                         : "no consumer lag could be measured"));
 
+        synchronized (snapshots) {
+            long now = System.currentTimeMillis();
+            snapshots.entrySet().removeIf(entry -> now - entry.getValue().measuredAt() > SNAPSHOT_TTL_MS);
+            while (snapshots.size() >= MAX_SNAPSHOTS) {
+                snapshots.remove(snapshots.keySet().iterator().next());
+            }
+            snapshots.put(data.measurementId(), new Snapshot(data, activity.coverage(),
+                    typed ? typedStages : List.of(), typed ? List.of() : groups,
+                    windowMs == null ? DEFAULT_WINDOW_MS : windowMs, now));
+        }
         return new ToolResult<>(data, activity.coverage(), warnings, truncated);
+    }
+
+    /** Java compatibility for callers compiled against the pre-stage contract. */
+    public ToolResult<OperationalView.ProcessHealth> processHealth(
+            String process, List<String> topics, List<String> groupIds, Long windowMs, Integer buckets) {
+        return processHealth(process, null, topics, groupIds, windowMs, buckets);
     }
 
     @McpTool(name = "kex_flow_health", annotations = @McpTool.McpAnnotations(
@@ -300,32 +351,73 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
     @McpTool(name = "kex_compare_process_state", annotations = @McpTool.McpAnnotations(
             readOnlyHint = true, destructiveHint = false, openWorldHint = true),
             description = """
-            Verify a process after an action by comparing a caller-supplied baseline with a fresh
-            Kafka measurement.
+            Verify a process after an action by comparing a stored measurementId with a fresh
+            Kafka measurement, or by using the legacy caller-supplied baseline.
 
             The baseline is explicit because Kafka Explorer does not invent historical state.
             verdict is RESOLVED, IMPROVED, UNCHANGED, DEGRADED or UNKNOWN. UNKNOWN wins whenever
             the fresh process state is not fully measurable.""")
     public ToolResult<OperationalView.ProcessComparison> compareProcessState(
             @McpToolParam(description = "Process name") String process,
-            @McpToolParam(description = "Ordered topics that form the process") List<String> topics,
-            @McpToolParam(required = false, description = "Consumer groups to check") List<String> groupIds,
-            @McpToolParam(description = "Baseline status: OK | WARNING | ERROR | UNKNOWN") String beforeStatus,
+            @McpToolParam(required = false, description = "Preferred typed stages; omit legacy topics/groupIds when supplied")
+            List<OperationalView.ProcessStage> stages,
+            @McpToolParam(required = false, description = "Legacy ordered topics") List<String> topics,
+            @McpToolParam(required = false, description = "Legacy consumer groups") List<String> groupIds,
+            @McpToolParam(required = false, description = "Legacy baseline status: OK | WARNING | ERROR | UNKNOWN; omit when beforeMeasurementId is supplied") String beforeStatus,
             @McpToolParam(required = false, description = "Worst baseline record lag, if measured")
             Long beforeRecordLag,
             @McpToolParam(required = false, description = "Baseline offsets produced in an equivalent window")
             Long beforeOffsetsProduced,
             @McpToolParam(required = false, description = "Activity window in milliseconds; default 15 minutes")
-            Long windowMs) {
+            Long windowMs,
+            @McpToolParam(required = false, description = "Preferred baseline measurementId returned by kex_process_health or kex_incident_evidence; do not also supply baseline values")
+            String beforeMeasurementId) {
+
+        Snapshot baseline = null;
+        if (beforeMeasurementId != null && !beforeMeasurementId.isBlank()) {
+            if (beforeStatus != null || beforeRecordLag != null || beforeOffsetsProduced != null) {
+                throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
+                        "supply either beforeMeasurementId or legacy baseline values, not both");
+            }
+            synchronized (snapshots) {
+                baseline = snapshots.get(beforeMeasurementId);
+            }
+            if (baseline == null || System.currentTimeMillis() - baseline.measuredAt() > SNAPSHOT_TTL_MS) {
+                throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
+                        "baseline measurementId is unknown or expired on this server instance");
+            }
+            // Validate scope again: a snapshot identifier is not permission to inspect its topics.
+            List<OperationalView.ProcessStage> requestedStages = stages(stages);
+            List<String> requestedTopics = requestedStages.isEmpty() ? topics(topics)
+                    : topics(requestedStages.stream().map(OperationalView.ProcessStage::topic).toList());
+            List<String> requestedGroups = requestedStages.isEmpty() ? groups(groupIds) : List.of();
+            if (!baseline.health().process().equals(process) || !baseline.health().topics().equals(requestedTopics)
+                    || !baseline.stages().equals(requestedStages) || !baseline.groups().equals(requestedGroups)
+                    || baseline.windowMs() != (windowMs == null ? DEFAULT_WINDOW_MS : windowMs)) {
+                throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
+                        "baseline measurementId belongs to a different process, stage mapping or window");
+            }
+            beforeStatus = baseline.health().status();
+            beforeRecordLag = baseline.health().worstRecordLag().measured()
+                    ? baseline.health().worstRecordLag().value() : null;
+            beforeOffsetsProduced = baseline.health().offsetsProduced().measured()
+                    ? baseline.health().offsetsProduced().value() : null;
+        }
 
         ToolResult<OperationalView.ProcessHealth> current =
-                processHealth(process, topics, groupIds, windowMs, DEFAULT_BUCKETS);
+                processHealth(process, stages, topics, groupIds, windowMs, DEFAULT_BUCKETS);
         OperationalView.ProcessHealth after = current.data();
         Long afterLag = after.worstRecordLag().measured() ? after.worstRecordLag().value() : null;
         Long afterProduced = after.offsetsProduced().measured() ? after.offsetsProduced().value() : null;
 
         String verdict = compare(beforeStatus, after.status(), beforeRecordLag, afterLag,
                 beforeOffsetsProduced, afterProduced);
+        if (baseline != null && (!baseline.coverage().complete() || current.truncated()
+                || !current.coverage().complete() || "UNKNOWN".equals(baseline.health().status())
+                || current.coverage().windowEnd() == null || baseline.coverage().windowEnd() == null
+                || !current.coverage().windowEnd().isAfter(baseline.coverage().windowEnd()))) {
+            verdict = "UNKNOWN";
+        }
         String explanation = switch (verdict) {
             case "RESOLVED" -> "the process is now OK after a non-OK baseline";
             case "IMPROVED" -> "the fresh state is better by status, lag, or observed activity";
@@ -335,13 +427,31 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
         };
 
         OperationalView.ProcessComparison data = new OperationalView.ProcessComparison(
-                after.process(), verdict, normalizeStatus(beforeStatus), after.status(),
+                after.process(), baseline == null ? null : baseline.health().measurementId(),
+                after.measurementId(), verdict, normalizeStatus(beforeStatus), after.status(),
                 Measured.ofNullable(beforeRecordLag, "baseline lag was not supplied"),
                 after.worstRecordLag(),
                 Measured.ofNullable(beforeOffsetsProduced, "baseline activity was not supplied"),
                 after.offsetsProduced(),
                 explanation);
         return new ToolResult<>(data, current.coverage(), current.warnings(), current.truncated());
+    }
+
+    /** Java compatibility for callers compiled against the pre-snapshot contract. */
+    public ToolResult<OperationalView.ProcessComparison> compareProcessState(
+            String process, List<OperationalView.ProcessStage> stages, List<String> topics,
+            List<String> groupIds, String beforeStatus, Long beforeRecordLag,
+            Long beforeOffsetsProduced, Long windowMs) {
+        return compareProcessState(process, stages, topics, groupIds, beforeStatus,
+                beforeRecordLag, beforeOffsetsProduced, windowMs, null);
+    }
+
+    /** Java compatibility for callers compiled against the pre-stage contract. */
+    public ToolResult<OperationalView.ProcessComparison> compareProcessState(
+            String process, List<String> topics, List<String> groupIds, String beforeStatus,
+            Long beforeRecordLag, Long beforeOffsetsProduced, Long windowMs) {
+        return compareProcessState(process, null, topics, groupIds, beforeStatus,
+                beforeRecordLag, beforeOffsetsProduced, windowMs);
     }
 
     @McpTool(name = "kex_incident_evidence", annotations = @McpTool.McpAnnotations(
@@ -355,13 +465,15 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
             its own reasoning.""")
     public ToolResult<OperationalView.IncidentEvidence> incidentEvidence(
             @McpToolParam(description = "Process name") String process,
-            @McpToolParam(description = "Ordered topics that form the process") List<String> topics,
-            @McpToolParam(required = false, description = "Consumer groups to diagnose") List<String> groupIds,
+            @McpToolParam(required = false, description = "Preferred typed stages; omit legacy topics/groupIds when supplied")
+            List<OperationalView.ProcessStage> stages,
+            @McpToolParam(required = false, description = "Legacy ordered topics") List<String> topics,
+            @McpToolParam(required = false, description = "Legacy consumer groups") List<String> groupIds,
             @McpToolParam(required = false, description = "Activity window in milliseconds; default 15 minutes")
             Long windowMs) {
 
         ToolResult<OperationalView.ProcessHealth> health =
-                processHealth(process, topics, groupIds, windowMs, DEFAULT_BUCKETS);
+                processHealth(process, stages, topics, groupIds, windowMs, DEFAULT_BUCKETS);
         List<String> facts = new ArrayList<>();
         for (OperationalView.TopicActivity item : health.data().activity()) {
             facts.add("%s produced %d offset(s) in the measured window"
@@ -384,6 +496,37 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
                 health.data().process(), System.currentTimeMillis(), health.data(),
                 health.data().activity(), health.data().consumers(), facts);
         return new ToolResult<>(data, health.coverage(), health.warnings(), health.truncated());
+    }
+
+    /** Java compatibility for callers compiled against the pre-stage contract. */
+    public ToolResult<OperationalView.IncidentEvidence> incidentEvidence(
+            String process, List<String> topics, List<String> groupIds, Long windowMs) {
+        return incidentEvidence(process, null, topics, groupIds, windowMs);
+    }
+
+    private List<OperationalView.ProcessStage> stages(List<OperationalView.ProcessStage> stages) {
+        if (stages == null) return List.of();
+        List<OperationalView.ProcessStage> selected = stages.stream()
+                .filter(Objects::nonNull)
+                .map(stage -> new OperationalView.ProcessStage(
+                        stage.name() == null ? null : stage.name().trim(),
+                        stage.topic() == null ? null : stage.topic().trim(),
+                        stage.consumerGroupId() == null ? null : stage.consumerGroupId().trim()))
+                .toList();
+        if (selected.stream().anyMatch(stage -> stage.topic() == null || stage.topic().isBlank())) {
+            throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
+                    "every typed process stage requires a non-blank topic");
+        }
+        List<String> stageTopics = selected.stream().map(OperationalView.ProcessStage::topic).toList();
+        if (stageTopics.stream().distinct().count() != stageTopics.size()) {
+            throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
+                    "typed process stages must bind distinct topics");
+        }
+        guard.checkTopicScope(stageTopics);
+        List<String> stageGroups = selected.stream().map(OperationalView.ProcessStage::consumerGroupId)
+                .filter(Objects::nonNull).filter(group -> !group.isBlank()).distinct().toList();
+        guard.checkGroupScope(stageGroups.isEmpty() ? null : stageGroups);
+        return selected;
     }
 
     private List<String> topics(List<String> topics) {
