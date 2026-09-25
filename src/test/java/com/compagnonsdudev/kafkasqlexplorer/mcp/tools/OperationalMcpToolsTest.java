@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.times;
 import static org.mockito.ArgumentMatchers.eq;
 
 @ExtendWith(MockitoExtension.class)
@@ -120,6 +121,54 @@ class OperationalMcpToolsTest {
     }
 
     @Test
+    void identified_baseline_compares_two_distinct_complete_windows() {
+        given(kafka.getTopicActivity(any(), anyLong(), anyInt(), anyInt())).willReturn(
+                response("orders", 0L, 120_000L, 0L),
+                response("orders", 120_001L, 240_001L, 8L));
+        given(kafka.getTopicsLastMessageTimestamps(any())).willReturn(Map.of());
+        var operational = tools("*");
+        var before = operational.processHealth("orders", List.of("orders"), List.of(), 120_000L, 4);
+        assertThat(before.data().measurementId()).isNotBlank();
+
+        var after = operational.compareProcessState("orders", null, List.of("orders"), List.of(),
+                null, null, null, 120_000L, before.data().measurementId());
+
+        assertThat(after.data().beforeMeasurementId()).isEqualTo(before.data().measurementId());
+        assertThat(after.data().afterMeasurementId()).isNotEqualTo(before.data().measurementId());
+        assertThat(after.data().verdict()).isEqualTo("RESOLVED");
+        verify(kafka, times(2)).getTopicActivity(any(), anyLong(), anyInt(), anyInt());
+    }
+
+    @Test
+    void snapshot_from_another_process_is_refused_without_a_new_measurement() {
+        given(kafka.getTopicActivity(any(), anyLong(), anyInt(), anyInt()))
+                .willReturn(response("orders", 0L, 120_000L, 2L));
+        given(kafka.getTopicsLastMessageTimestamps(any())).willReturn(Map.of());
+        var operational = tools("*");
+        String id = operational.processHealth("orders", List.of("orders"), List.of(), 120_000L, 4)
+                .data().measurementId();
+
+        assertThatThrownBy(() -> operational.compareProcessState("other", null,
+                List.of("orders"), List.of(), null, null, null, 120_000L, id))
+                .hasMessageContaining("different process");
+        verify(kafka).getTopicActivity(any(), anyLong(), anyInt(), anyInt());
+    }
+
+    @Test
+    void a_non_later_window_cannot_verify_an_action() {
+        given(kafka.getTopicActivity(any(), anyLong(), anyInt(), anyInt()))
+                .willReturn(response("orders", 0L, 120_000L, 2L));
+        given(kafka.getTopicsLastMessageTimestamps(any())).willReturn(Map.of());
+        var operational = tools("*");
+        String id = operational.processHealth("orders", List.of("orders"), List.of(), 120_000L, 4)
+                .data().measurementId();
+
+        var comparison = operational.compareProcessState("orders", null, List.of("orders"),
+                List.of(), null, null, null, 120_000L, id);
+        assertThat(comparison.data().verdict()).isEqualTo("UNKNOWN");
+    }
+
+    @Test
     void typed_process_stages_bind_each_consumer_to_its_topic() {
         given(kafka.getTopicActivity(any(), anyLong(), anyInt(), anyInt())).willReturn(
                 new TopicActivityResponse(
@@ -175,5 +224,11 @@ class OperationalMcpToolsTest {
         return new TopicActivity(topic, 0L, 120_000L, 30_000L,
                 List.of(total / 4, total / 4, total / 4, total - 3 * (total / 4)),
                 total, null, 1, 1, true, null);
+    }
+
+    private static TopicActivityResponse response(String topic, long start, long end, long count) {
+        return new TopicActivityResponse(Map.of(topic,
+                new TopicActivity(topic, start, end, 30_000L, List.of(count), count,
+                        null, 1, 1, true, null)), start, end, 30_000L, 4, true, List.of());
     }
 }

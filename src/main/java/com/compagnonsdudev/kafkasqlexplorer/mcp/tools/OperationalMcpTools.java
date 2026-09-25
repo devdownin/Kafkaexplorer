@@ -18,9 +18,12 @@ import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Operational views composed from Kafka Explorer's existing measurements.
@@ -35,10 +38,17 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
     private static final long DEFAULT_WINDOW_MS = 15 * 60_000L;
     private static final int DEFAULT_BUCKETS = 12;
     private static final int ACTIVITY_MAX_LOOKUPS = 20_000;
+    private static final long SNAPSHOT_TTL_MS = 60 * 60_000L;
+    private static final int MAX_SNAPSHOTS = 512;
 
     private final KafkaAdminService kafka;
     private final ConsumerLagMcpTools consumerLag;
     private final ToolGuard guard;
+    private final Map<String, Snapshot> snapshots = new LinkedHashMap<>();
+
+    private record Snapshot(OperationalView.ProcessHealth health, Coverage coverage,
+                            List<OperationalView.ProcessStage> stages, List<String> groups,
+                            long windowMs, long measuredAt) { }
 
     public OperationalMcpTools(KafkaAdminService kafka, ConsumerLagMcpTools consumerLag, ToolGuard guard) {
         this.kafka = kafka;
@@ -237,6 +247,7 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
         }
 
         String status = healthStatus(activity.data(), consumers);
+        if (truncated || !activity.coverage().complete()) status = "UNKNOWN";
         String explanation = healthExplanation(status, activity.data(), consumers);
         Long last = activity.data().stream()
                 .map(OperationalView.TopicActivity::lastMessageAt)
@@ -253,14 +264,25 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
                 .orElse(null);
 
         OperationalView.ProcessHealth data = new OperationalView.ProcessHealth(
+                UUID.randomUUID().toString(),
                 process == null || process.isBlank() ? String.join(" -> ", selected) : process,
                 status, explanation, selected, activity.data(), consumers,
                 Measured.ofNullable(last, "no topic returned a last-message timestamp"),
-                Measured.of(total),
+                activity.truncated() ? Measured.unmeasured("topic activity was incomplete") : Measured.of(total),
                 Measured.ofNullable(worstLag, groups.isEmpty()
                         ? "no consumer groups were requested"
                         : "no consumer lag could be measured"));
 
+        synchronized (snapshots) {
+            long now = System.currentTimeMillis();
+            snapshots.entrySet().removeIf(entry -> now - entry.getValue().measuredAt() > SNAPSHOT_TTL_MS);
+            while (snapshots.size() >= MAX_SNAPSHOTS) {
+                snapshots.remove(snapshots.keySet().iterator().next());
+            }
+            snapshots.put(data.measurementId(), new Snapshot(data, activity.coverage(),
+                    typed ? typedStages : List.of(), typed ? List.of() : groups,
+                    windowMs == null ? DEFAULT_WINDOW_MS : windowMs, now));
+        }
         return new ToolResult<>(data, activity.coverage(), warnings, truncated);
     }
 
@@ -329,8 +351,8 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
     @McpTool(name = "kex_compare_process_state", annotations = @McpTool.McpAnnotations(
             readOnlyHint = true, destructiveHint = false, openWorldHint = true),
             description = """
-            Verify a process after an action by comparing a caller-supplied baseline with a fresh
-            Kafka measurement.
+            Verify a process after an action by comparing a stored measurementId with a fresh
+            Kafka measurement, or by using the legacy caller-supplied baseline.
 
             The baseline is explicit because Kafka Explorer does not invent historical state.
             verdict is RESOLVED, IMPROVED, UNCHANGED, DEGRADED or UNKNOWN. UNKNOWN wins whenever
@@ -341,13 +363,46 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
             List<OperationalView.ProcessStage> stages,
             @McpToolParam(required = false, description = "Legacy ordered topics") List<String> topics,
             @McpToolParam(required = false, description = "Legacy consumer groups") List<String> groupIds,
-            @McpToolParam(description = "Baseline status: OK | WARNING | ERROR | UNKNOWN") String beforeStatus,
+            @McpToolParam(required = false, description = "Legacy baseline status: OK | WARNING | ERROR | UNKNOWN; omit when beforeMeasurementId is supplied") String beforeStatus,
             @McpToolParam(required = false, description = "Worst baseline record lag, if measured")
             Long beforeRecordLag,
             @McpToolParam(required = false, description = "Baseline offsets produced in an equivalent window")
             Long beforeOffsetsProduced,
             @McpToolParam(required = false, description = "Activity window in milliseconds; default 15 minutes")
-            Long windowMs) {
+            Long windowMs,
+            @McpToolParam(required = false, description = "Preferred baseline measurementId returned by kex_process_health or kex_incident_evidence; do not also supply baseline values")
+            String beforeMeasurementId) {
+
+        Snapshot baseline = null;
+        if (beforeMeasurementId != null && !beforeMeasurementId.isBlank()) {
+            if (beforeStatus != null || beforeRecordLag != null || beforeOffsetsProduced != null) {
+                throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
+                        "supply either beforeMeasurementId or legacy baseline values, not both");
+            }
+            synchronized (snapshots) {
+                baseline = snapshots.get(beforeMeasurementId);
+            }
+            if (baseline == null || System.currentTimeMillis() - baseline.measuredAt() > SNAPSHOT_TTL_MS) {
+                throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
+                        "baseline measurementId is unknown or expired on this server instance");
+            }
+            // Validate scope again: a snapshot identifier is not permission to inspect its topics.
+            List<OperationalView.ProcessStage> requestedStages = stages(stages);
+            List<String> requestedTopics = requestedStages.isEmpty() ? topics(topics)
+                    : topics(requestedStages.stream().map(OperationalView.ProcessStage::topic).toList());
+            List<String> requestedGroups = requestedStages.isEmpty() ? groups(groupIds) : List.of();
+            if (!baseline.health().process().equals(process) || !baseline.health().topics().equals(requestedTopics)
+                    || !baseline.stages().equals(requestedStages) || !baseline.groups().equals(requestedGroups)
+                    || baseline.windowMs() != (windowMs == null ? DEFAULT_WINDOW_MS : windowMs)) {
+                throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
+                        "baseline measurementId belongs to a different process, stage mapping or window");
+            }
+            beforeStatus = baseline.health().status();
+            beforeRecordLag = baseline.health().worstRecordLag().measured()
+                    ? baseline.health().worstRecordLag().value() : null;
+            beforeOffsetsProduced = baseline.health().offsetsProduced().measured()
+                    ? baseline.health().offsetsProduced().value() : null;
+        }
 
         ToolResult<OperationalView.ProcessHealth> current =
                 processHealth(process, stages, topics, groupIds, windowMs, DEFAULT_BUCKETS);
@@ -357,6 +412,12 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
 
         String verdict = compare(beforeStatus, after.status(), beforeRecordLag, afterLag,
                 beforeOffsetsProduced, afterProduced);
+        if (baseline != null && (!baseline.coverage().complete() || current.truncated()
+                || !current.coverage().complete() || "UNKNOWN".equals(baseline.health().status())
+                || current.coverage().windowEnd() == null || baseline.coverage().windowEnd() == null
+                || !current.coverage().windowEnd().isAfter(baseline.coverage().windowEnd()))) {
+            verdict = "UNKNOWN";
+        }
         String explanation = switch (verdict) {
             case "RESOLVED" -> "the process is now OK after a non-OK baseline";
             case "IMPROVED" -> "the fresh state is better by status, lag, or observed activity";
@@ -366,13 +427,23 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
         };
 
         OperationalView.ProcessComparison data = new OperationalView.ProcessComparison(
-                after.process(), verdict, normalizeStatus(beforeStatus), after.status(),
+                after.process(), baseline == null ? null : baseline.health().measurementId(),
+                after.measurementId(), verdict, normalizeStatus(beforeStatus), after.status(),
                 Measured.ofNullable(beforeRecordLag, "baseline lag was not supplied"),
                 after.worstRecordLag(),
                 Measured.ofNullable(beforeOffsetsProduced, "baseline activity was not supplied"),
                 after.offsetsProduced(),
                 explanation);
         return new ToolResult<>(data, current.coverage(), current.warnings(), current.truncated());
+    }
+
+    /** Java compatibility for callers compiled against the pre-snapshot contract. */
+    public ToolResult<OperationalView.ProcessComparison> compareProcessState(
+            String process, List<OperationalView.ProcessStage> stages, List<String> topics,
+            List<String> groupIds, String beforeStatus, Long beforeRecordLag,
+            Long beforeOffsetsProduced, Long windowMs) {
+        return compareProcessState(process, stages, topics, groupIds, beforeStatus,
+                beforeRecordLag, beforeOffsetsProduced, windowMs, null);
     }
 
     /** Java compatibility for callers compiled against the pre-stage contract. */

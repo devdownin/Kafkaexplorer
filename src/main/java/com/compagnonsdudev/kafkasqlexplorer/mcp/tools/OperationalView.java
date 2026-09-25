@@ -56,6 +56,7 @@ public final class OperationalView {
     }
 
     public record ProcessHealth(
+            String measurementId,
             String process,
             String status,
             String explanation,
@@ -87,6 +88,8 @@ public final class OperationalView {
 
     public record ProcessComparison(
             String process,
+            String beforeMeasurementId,
+            String afterMeasurementId,
             String verdict,
             String beforeStatus,
             String afterStatus,

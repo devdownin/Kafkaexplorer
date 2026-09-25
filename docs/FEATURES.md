@@ -266,8 +266,9 @@ Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, 
   `kex_process_health` summarizes an ordered process, `kex_topic_activity` returns aligned offset
   activity without consuming records, `kex_diagnose_consumer` turns one group standing into an
   actionable diagnosis, `kex_flow_health` finds the largest measured drop between adjacent stages,
-  `kex_compare_process_state` verifies a fresh measurement against an explicit caller-supplied
-  baseline, and `kex_incident_evidence` packages the measured facts for an incident workspace.
+  `kex_compare_process_state` verifies a fresh measurement against a previous `measurementId`
+  (or a legacy caller-supplied baseline), and `kex_incident_evidence` packages the measured facts
+  for an incident workspace.
   None of them calls a model, and a missing measurement remains UNKNOWN rather than becoming zero.
 - **The cluster as a model, and a join it refuses to fake.** `kex_deduce_data_model` reads several
   topics as tables and returns entities, columns, the deduced relations and a Mermaid `erDiagram` —

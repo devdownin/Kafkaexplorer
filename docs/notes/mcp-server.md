@@ -647,7 +647,21 @@ Le contrat processus préféré est désormais typé : chaque stage porte son to
 group optionnel. `kex_process_health`, `kex_compare_process_state` et
 `kex_incident_evidence` acceptent encore la forme historique `topics + groupIds` pour
 compatibilité, mais refusent le mélange des deux afin d'éviter deux descriptions contradictoires
-du même processus.| 3b — `kex_analyze_dead_letters` | blocked: the pairing rule lives only in `deadLetterSupervision.ts`; it needs a Java service first | not started |
+du même processus.
+
+`kex_process_health` et `kex_incident_evidence` retournent le même type de santé avec un
+`measurementId`. Pour vérifier une action, transmettre cet identifiant dans
+`beforeMeasurementId` à `kex_compare_process_state` avec le même processus, les mêmes stages et
+la même fenêtre, sans champs `beforeStatus`, `beforeRecordLag` ou `beforeOffsetsProduced`.
+La comparaison mesure une nouvelle fenêtre ; une fenêtre non postérieure, une couverture
+incomplète ou une ancienne mesure inconnue ne produit pas de verdict de résolution. Les mesures
+sont conservées une heure, au plus 512 par instance, en mémoire : utiliser la même instance
+pour le contrôle avant/après. Les identifiants expirent lors d'un redémarrage.
+
+Les scénarios d'évaluation `process-health-*` vérifient le choix de l'outil de santé et
+l'interprétation de `coverage` ; ils s'exécutent avec le profil optionnel `mcp-agent-eval`.
+
+| 3b — `kex_analyze_dead_letters` | blocked: the pairing rule lives only in `deadLetterSupervision.ts`; it needs a Java service first | not started |
 | 4 — Modélisation | `kex_deduce_data_model`, `kex_build_join`, `kex_run_audit`/`kex_get_audit`, `kex_suggest_kpis` | **done** |
 | 5 — Entreprise | per-tool allow/deny enforced by absence, kill switch (read-only lock, per-tool off, quarantine), approval token, rate limit, audit topic + replay | **done** |
 | 5a — Bearer boundary | `McpHttpAuthFilter`: a static token on `/mcp` and on every state-changing `/api/mcp/**` call, TLS required by default, the credential hashed into an identity | **done** |
