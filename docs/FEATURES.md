@@ -270,6 +270,10 @@ Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, 
   (or a legacy caller-supplied baseline), and `kex_incident_evidence` packages the measured facts
   for an incident workspace.
   None of them calls a model, and a missing measurement remains UNKNOWN rather than becoming zero.
+- **Dead-letter diagnosis.** `kex_dlq_diagnosis` measures arrivals and their recent trend, and
+  compares the DLQ with an explicitly supplied source topic over one aligned activity window.
+  Its error signatures, repeated keys and affected partitions describe only a bounded sample of
+  recent records. Missing or incomplete measurements never become zero failure rates.
 - **The cluster as a model, and a join it refuses to fake.** `kex_deduce_data_model` reads several
   topics as tables and returns entities, columns, the deduced relations and a Mermaid `erDiagram` —
   each relation with its confidence *and the sentence behind it*, because `MEDIUM` means the names

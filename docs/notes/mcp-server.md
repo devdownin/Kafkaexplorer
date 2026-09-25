@@ -661,7 +661,8 @@ pour le contrôle avant/après. Les identifiants expirent lors d'un redémarrage
 Les scénarios d'évaluation `process-health-*` vérifient le choix de l'outil de santé et
 l'interprétation de `coverage` ; ils s'exécutent avec le profil optionnel `mcp-agent-eval`.
 
-| 3b — `kex_analyze_dead_letters` | blocked: the pairing rule lives only in `deadLetterSupervision.ts`; it needs a Java service first | not started |
+| 3b — `kex_analyze_dead_letters` | blocked: automatic source pairing still lives only in `deadLetterSupervision.ts`; a Java service is needed before exposing that inference | not started |
+| 3d — DLQ diagnosis | `kex_dlq_diagnosis` measures an explicit source and inspects a bounded recent sample without replicating the UI pairing heuristics | **done** |
 | 4 — Modélisation | `kex_deduce_data_model`, `kex_build_join`, `kex_run_audit`/`kex_get_audit`, `kex_suggest_kpis` | **done** |
 | 5 — Entreprise | per-tool allow/deny enforced by absence, kill switch (read-only lock, per-tool off, quarantine), approval token, rate limit, audit topic + replay | **done** |
 | 5a — Bearer boundary | `McpHttpAuthFilter`: a static token on `/mcp` and on every state-changing `/api/mcp/**` call, TLS required by default, the credential hashed into an identity | **done** |
