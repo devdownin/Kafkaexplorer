@@ -640,6 +640,7 @@ guard-pipeline change.
 | 1 — Socle honnête | `Coverage`/`Measured`/`ToolResult`, `McpProperties`, `ToolGuard`, `McpCallRecorder` + metrics, `McpCatalogService`, `McpToolInterceptor`, tools `kex_list_topics` / `kex_describe_topic` / `kex_preview_messages` / `kex_infer_schema` / `kex_sql_query` / `kex_list_tables` | **done** |
 | 2 — Écran MCP | `/api/mcp/status`, `/catalog`, `/calls`, `/stats`, `/clients`, `/catalog/client-config`, `/try/{tool}`; the React page with its Catalogue and Supervision tabs | **done** |
 | 3 — Différenciation | `kex_trace_key`, `kex_resume_trace`, `kex_compare_traces`, `kex_consumer_lag` | **done** |
+| 3c — Diagnostic opérationnel | `kex_process_health`, `kex_topic_activity`, `kex_diagnose_consumer`, `kex_flow_health`, `kex_compare_process_state`, `kex_incident_evidence` | **done** |
 | 3b — `kex_analyze_dead_letters` | blocked: the pairing rule lives only in `deadLetterSupervision.ts`; it needs a Java service first | not started |
 | 4 — Modélisation | `kex_deduce_data_model`, `kex_build_join`, `kex_run_audit`/`kex_get_audit`, `kex_suggest_kpis` | **done** |
 | 5 — Entreprise | per-tool allow/deny enforced by absence, kill switch (read-only lock, per-tool off, quarantine), approval token, rate limit, audit topic + replay | **done** |

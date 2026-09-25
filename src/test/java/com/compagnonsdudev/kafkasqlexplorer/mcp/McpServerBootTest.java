@@ -59,6 +59,8 @@ class McpServerBootTest {
         "kex_sql_query", "kex_list_tables",
         "kex_trace_key", "kex_resume_trace", "kex_compare_traces",
         "kex_consumer_lag",
+        "kex_process_health", "kex_topic_activity", "kex_diagnose_consumer",
+        "kex_flow_health", "kex_compare_process_state", "kex_incident_evidence",
         "kex_deduce_data_model", "kex_build_join",
         "kex_run_audit", "kex_get_audit", "kex_suggest_kpis");
 
