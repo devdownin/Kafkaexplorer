@@ -274,6 +274,10 @@ Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, 
   compares the DLQ with an explicitly supplied source topic over one aligned activity window.
   Its error signatures, repeated keys and affected partitions describe only a bounded sample of
   recent records. Missing or incomplete measurements never become zero failure rates.
+- **Comparable time windows.** `kex_compare_windows` reads two equal, consecutive, completed
+  windows together and reports per-topic offset volumes, rates, quiet buckets, and candidate
+  drops between process stages. Its coverage names unread topics; historical lag, latency and
+  application errors remain unmeasured rather than being inferred from traffic.
 - **The cluster as a model, and a join it refuses to fake.** `kex_deduce_data_model` reads several
   topics as tables and returns entities, columns, the deduced relations and a Mermaid `erDiagram` —
   each relation with its confidence *and the sentence behind it*, because `MEDIUM` means the names

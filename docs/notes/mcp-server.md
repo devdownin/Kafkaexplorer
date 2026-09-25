@@ -641,6 +641,7 @@ guard-pipeline change.
 | 2 — Écran MCP | `/api/mcp/status`, `/catalog`, `/calls`, `/stats`, `/clients`, `/catalog/client-config`, `/try/{tool}`; the React page with its Catalogue and Supervision tabs | **done** |
 | 3 — Différenciation | `kex_trace_key`, `kex_resume_trace`, `kex_compare_traces`, `kex_consumer_lag` | **done** |
 | 3c — Diagnostic opérationnel | `kex_process_health`, `kex_topic_activity`, `kex_diagnose_consumer`, `kex_flow_health`, `kex_compare_process_state`, `kex_incident_evidence` | **done** |
+| 3e — Fenêtres comparables | `kex_compare_windows` : un seul relevé de 2 × durée et 2 × buckets, scindé en deux fenêtres consécutives et complètes | **done** |
 
 
 Le contrat processus préféré est désormais typé : chaque stage porte son topic et son consumer
