@@ -190,14 +190,27 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
         List<String> groups = groups(groupIds);
         boolean truncated = activity.truncated();
 
-        for (String topic : selected) {
-            for (String group : groups) {
+        // A group is normally attached to one stage, not every topic in the process. Probe the
+        // ordered stages until its committed offsets are found; reporting "UNKNOWN" once per topic
+        // would turn a valid one-group process into an unknown process merely because that group
+        // does not consume the upstream topics.
+        for (String group : groups) {
+            OperationalView.ConsumerDiagnosis missing = null;
+            boolean found = false;
+            for (String topic : selected) {
                 ToolResult<OperationalView.ConsumerDiagnosis> diagnosis =
                         diagnoseConsumer(topic, group, true);
-                consumers.add(diagnosis.data());
                 warnings.addAll(diagnosis.warnings());
                 truncated |= diagnosis.truncated();
+                if (!"UNKNOWN".equals(diagnosis.data().verdict())
+                        || !diagnosis.data().diagnosis().contains("not found")) {
+                    consumers.add(diagnosis.data());
+                    found = true;
+                    break;
+                }
+                missing = diagnosis.data();
             }
+            if (!found && missing != null) consumers.add(missing);
         }
 
         String status = healthStatus(activity.data(), consumers);
@@ -458,7 +471,7 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
                                   Long beforeLag, Long afterLag,
                                   Long beforeProduced, Long afterProduced) {
         String before = normalizeStatus(beforeStatus);
-        if ("UNKNOWN".equals(afterStatus)) return "UNKNOWN";
+        if ("UNKNOWN".equals(before) || "UNKNOWN".equals(afterStatus)) return "UNKNOWN";
         if (!"OK".equals(before) && "OK".equals(afterStatus)) return "RESOLVED";
 
         int beforeRank = rank(before);
