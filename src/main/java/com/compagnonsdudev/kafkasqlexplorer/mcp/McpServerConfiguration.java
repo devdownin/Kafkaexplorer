@@ -21,6 +21,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpToolSpecificati
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.AuditMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ConsumerLagMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.DataModelMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.DeadLetterMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.KpiMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.McpToolset;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.McpTraceStore;
@@ -270,6 +271,12 @@ public class McpServerConfiguration {
                                              ConsumerLagMcpTools consumerLag,
                                              ToolGuard guard) {
         return new OperationalMcpTools(kafka, consumerLag, guard);
+    }
+
+    @Bean
+    DeadLetterMcpTools deadLetterMcpTools(OperationalMcpTools operational,
+                                         TopicMcpTools topics, ToolGuard guard) {
+        return new DeadLetterMcpTools(operational, topics, guard);
     }
 
     /**

@@ -61,6 +61,7 @@ class McpServerBootTest {
         "kex_consumer_lag",
         "kex_process_health", "kex_topic_activity", "kex_diagnose_consumer",
         "kex_flow_health", "kex_compare_process_state", "kex_incident_evidence",
+        "kex_dlq_diagnosis",
         "kex_deduce_data_model", "kex_build_join",
         "kex_run_audit", "kex_get_audit", "kex_suggest_kpis");
 
