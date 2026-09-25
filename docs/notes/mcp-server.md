@@ -641,7 +641,13 @@ guard-pipeline change.
 | 2 — Écran MCP | `/api/mcp/status`, `/catalog`, `/calls`, `/stats`, `/clients`, `/catalog/client-config`, `/try/{tool}`; the React page with its Catalogue and Supervision tabs | **done** |
 | 3 — Différenciation | `kex_trace_key`, `kex_resume_trace`, `kex_compare_traces`, `kex_consumer_lag` | **done** |
 | 3c — Diagnostic opérationnel | `kex_process_health`, `kex_topic_activity`, `kex_diagnose_consumer`, `kex_flow_health`, `kex_compare_process_state`, `kex_incident_evidence` | **done** |
-| 3b — `kex_analyze_dead_letters` | blocked: the pairing rule lives only in `deadLetterSupervision.ts`; it needs a Java service first | not started |
+
+
+Le contrat processus préféré est désormais typé : chaque stage porte son topic et son consumer
+group optionnel. `kex_process_health`, `kex_compare_process_state` et
+`kex_incident_evidence` acceptent encore la forme historique `topics + groupIds` pour
+compatibilité, mais refusent le mélange des deux afin d'éviter deux descriptions contradictoires
+du même processus.| 3b — `kex_analyze_dead_letters` | blocked: the pairing rule lives only in `deadLetterSupervision.ts`; it needs a Java service first | not started |
 | 4 — Modélisation | `kex_deduce_data_model`, `kex_build_join`, `kex_run_audit`/`kex_get_audit`, `kex_suggest_kpis` | **done** |
 | 5 — Entreprise | per-tool allow/deny enforced by absence, kill switch (read-only lock, per-tool off, quarantine), approval token, rate limit, audit topic + replay | **done** |
 | 5a — Bearer boundary | `McpHttpAuthFilter`: a static token on `/mcp` and on every state-changing `/api/mcp/**` call, TLS required by default, the credential hashed into an identity | **done** |
