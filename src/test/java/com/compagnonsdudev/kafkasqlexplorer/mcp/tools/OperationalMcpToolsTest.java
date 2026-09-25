@@ -104,6 +104,81 @@ class OperationalMcpToolsTest {
     }
 
     @Test
+    void compare_windows_uses_one_aligned_read_for_both_periods_and_stage_drops() {
+        given(kafka.getTopicActivity(List.of("input", "output"), 120_000L, 4, 20_000))
+                .willReturn(new TopicActivityResponse(Map.of(
+                        "input", series("input", List.of(40L, 60L, 20L, 30L)),
+                        "output", series("output", List.of(30L, 50L, 10L, 10L))),
+                        0L, 120_000L, 30_000L, 4, true, List.of()));
+        given(kafka.getTopicsLastMessageTimestamps(any())).willReturn(Map.of());
+
+        var result = tools("*").compareWindows(List.of("input", "output"), 60_000L, 2);
+
+        assertThat(result.data().previousStartMs()).isZero();
+        assertThat(result.data().previousEndMs()).isEqualTo(60_000L);
+        assertThat(result.data().recentStartMs()).isEqualTo(60_000L);
+        assertThat(result.data().recentEndMs()).isEqualTo(120_000L);
+        assertThat(result.data().topics()).hasSize(2);
+        var input = result.data().topics().getFirst();
+        assertThat(input.previous().value().offsetsProduced()).isEqualTo(100L);
+        assertThat(input.recent().value().offsetsProduced()).isEqualTo(50L);
+        assertThat(input.previous().value().offsetsPerSecond()).isCloseTo(100.0 / 60,
+                org.assertj.core.data.Offset.offset(0.00001));
+        assertThat(input.activityChangePercent().value()).isEqualTo(-50.0);
+        assertThat(input.activityTrend()).isEqualTo("DECREASING");
+        assertThat(input.lagChange().measured()).isFalse();
+        assertThat(result.data().stages()).singleElement().satisfies(drop -> {
+            assertThat(drop.previousDropPercent().value()).isEqualTo(20.0);
+            assertThat(drop.recentDropPercent().value()).isEqualTo(60.0);
+            assertThat(drop.changePoints().value()).isEqualTo(40.0);
+        });
+        verify(kafka).getTopicActivity(List.of("input", "output"), 120_000L, 4, 20_000);
+    }
+
+    @Test
+    void compare_windows_keeps_zero_baseline_and_incomplete_topic_unmeasured() {
+        given(kafka.getTopicActivity(any(), anyLong(), anyInt(), anyInt())).willReturn(
+                new TopicActivityResponse(Map.of(
+                        "input", series("input", List.of(0L, 0L, 3L, 3L)),
+                        "output", new TopicActivity("output", 0L, 120_000L, 30_000L,
+                                List.of(0L, 0L, 0L, 0L), 0L, null, 0, 1, true, "partition unavailable")),
+                        0L, 120_000L, 30_000L, 4, true, List.of()));
+        given(kafka.getTopicsLastMessageTimestamps(any())).willReturn(Map.of());
+
+        var result = tools("*").compareWindows(List.of("input", "output"), 60_000L, 2);
+
+        assertThat(result.truncated()).isTrue();
+        assertThat(result.data().topics().getFirst().activityTrend()).isEqualTo("STARTED");
+        assertThat(result.data().topics().getFirst().activityChangePercent().measured()).isFalse();
+        assertThat(result.data().topics().get(1).previous().measured()).isFalse();
+        assertThat(result.data().stages().getFirst().changePoints().measured()).isFalse();
+    }
+
+    @Test
+    void compare_windows_rejects_out_of_scope_topics_before_kafka_io() {
+        assertThatThrownBy(() -> tools("demo.").compareWindows(
+                List.of("demo.input", "prod.output"), 60_000L, 2))
+                .isInstanceOf(McpScopeViolationException.class);
+        verifyNoInteractions(kafka, lag);
+    }
+
+    @Test
+    void compare_windows_names_unread_topic_without_reporting_zero() {
+        given(kafka.getTopicActivity(any(), anyLong(), anyInt(), anyInt())).willReturn(
+                new TopicActivityResponse(Map.of("input", series("input", List.of(1L, 1L, 1L, 1L))),
+                        0L, 120_000L, 30_000L, 4, true,
+                        List.of("output not reached within lookup budget")));
+        given(kafka.getTopicsLastMessageTimestamps(any())).willReturn(Map.of());
+
+        var result = tools("*").compareWindows(List.of("input", "output"), 60_000L, 2);
+
+        assertThat(result.coverage().topicsNotReached()).containsExactly("output");
+        assertThat(result.data().topics().get(1).previous().measured()).isFalse();
+        assertThat(result.data().topics().get(1).recent().measured()).isFalse();
+        assertThat(result.data().topics().get(1).activityTrend()).isEqualTo("UNKNOWN");
+    }
+
+    @Test
     void compare_process_state_never_calls_an_unknown_fresh_state_an_improvement() {
         given(kafka.getTopicActivity(any(), anyLong(), anyInt(), anyInt())).willReturn(
                 new TopicActivityResponse(
@@ -224,6 +299,11 @@ class OperationalMcpToolsTest {
         return new TopicActivity(topic, 0L, 120_000L, 30_000L,
                 List.of(total / 4, total / 4, total / 4, total - 3 * (total / 4)),
                 total, null, 1, 1, true, null);
+    }
+
+    private static TopicActivity series(String topic, List<Long> counts) {
+        return new TopicActivity(topic, 0L, 120_000L, 30_000L, counts,
+                counts.stream().mapToLong(Long::longValue).sum(), null, 1, 1, true, null);
     }
 
     private static TopicActivityResponse response(String topic, long start, long end, long count) {

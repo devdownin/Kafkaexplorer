@@ -28,6 +28,47 @@ public final class OperationalView {
     ) {
     }
 
+    /** One of two equal, contiguous, completed activity windows. */
+    public record ActivityWindow(
+            long startMs,
+            long endMs,
+            long offsetsProduced,
+            double offsetsPerSecond,
+            int silentBuckets
+    ) {
+    }
+
+    public record TopicWindowComparison(
+            String topic,
+            Measured<ActivityWindow> previous,
+            Measured<ActivityWindow> recent,
+            Measured<Double> activityChangePercent,
+            String activityTrend,
+            Measured<Long> lagChange
+    ) {
+    }
+
+    /** Drop is correlation between adjacent output counts, not proof of message loss. */
+    public record StageWindowComparison(
+            String upstream,
+            String downstream,
+            Measured<Double> previousDropPercent,
+            Measured<Double> recentDropPercent,
+            Measured<Double> changePoints
+    ) {
+    }
+
+    public record WindowsComparison(
+            long previousStartMs,
+            long previousEndMs,
+            long recentStartMs,
+            long recentEndMs,
+            List<TopicWindowComparison> topics,
+            List<StageWindowComparison> stages,
+            String explanation
+    ) {
+    }
+
     /**
      * One ordered stage of an integration process.
      *

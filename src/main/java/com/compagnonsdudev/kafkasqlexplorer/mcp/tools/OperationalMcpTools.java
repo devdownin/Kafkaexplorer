@@ -130,6 +130,110 @@ public class OperationalMcpTools implements ReadOnlyMcpTools {
         return new ToolResult<>(data, coverage, warnings, partial);
     }
 
+    @McpTool(name = "kex_compare_windows", annotations = @McpTool.McpAnnotations(
+            readOnlyHint = true, destructiveHint = false, openWorldHint = true),
+            description = """
+            Compare two consecutive, equal, completed Kafka activity windows in one offset read.
+            Returns per-topic produced offsets, rates, silent buckets and change, plus candidate
+            drop changes between adjacent topics in the supplied process order. A DLQ topic can
+            be included to compare its arrival volume. Lag, latency and application errors have
+            no historical series here and are explicitly unmeasured, not inferred from activity.
+            Incomplete partition or retention coverage makes that topic's comparison unmeasured.
+            A baseline of zero cannot support a percentage change.""")
+    public ToolResult<OperationalView.WindowsComparison> compareWindows(
+            @McpToolParam(description = "Ordered topics to compare") List<String> topics,
+            @McpToolParam(required = false, description = "Duration of EACH window in milliseconds; default 15 minutes")
+            Long windowMs,
+            @McpToolParam(required = false, description = "Buckets per window, 2 to 30; default 6")
+            Integer bucketsPerWindow) {
+
+        List<String> selected = topics(topics);
+        long each = windowMs == null ? DEFAULT_WINDOW_MS : windowMs;
+        int halfBuckets = bucketsPerWindow == null ? 6 : bucketsPerWindow;
+        if (each < KafkaAdminService.ACTIVITY_MIN_WINDOW_MS / 2
+                || each > KafkaAdminService.ACTIVITY_MAX_WINDOW_MS / 2
+                || halfBuckets < 2 || halfBuckets > KafkaAdminService.ACTIVITY_MAX_BUCKETS / 2) {
+            throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
+                    "each window must be 30 seconds to 15 days and have 2 to 30 buckets");
+        }
+
+        ToolResult<List<OperationalView.TopicActivity>> activity =
+                topicActivity(selected, 2 * each, 2 * halfBuckets);
+        java.time.Instant start = activity.coverage().windowStart();
+        java.time.Instant end = activity.coverage().windowEnd();
+        if (start == null || end == null || !end.isAfter(start)) {
+            throw new McpToolException(McpErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "aligned activity window boundaries were not returned");
+        }
+        long first = start.toEpochMilli();
+        long last = end.toEpochMilli();
+        long middle = first + (last - first) / 2;
+        java.util.Map<String, OperationalView.TopicActivity> measured = activity.data().stream()
+                .collect(java.util.stream.Collectors.toMap(OperationalView.TopicActivity::topic, item -> item));
+        List<OperationalView.TopicWindowComparison> rows = new ArrayList<>();
+        for (String topic : selected) {
+            OperationalView.TopicActivity item = measured.get(topic);
+            boolean complete = item != null && item.complete()
+                    && item.counts().size() == 2 * halfBuckets
+                    && item.windowStartMs() == first && item.windowEndMs() == last
+                    && item.bucketMs() * halfBuckets == middle - first;
+            if (!complete) {
+                String reason = item == null ? "topic was not reached in the activity read"
+                        : "topic activity is incomplete or not aligned with the requested buckets";
+                rows.add(new OperationalView.TopicWindowComparison(topic,
+                        Measured.unmeasured(reason), Measured.unmeasured(reason),
+                        Measured.unmeasured(reason), "UNKNOWN",
+                        Measured.unmeasured("historical consumer lag is not available")));
+                continue;
+            }
+            long previous = item.counts().subList(0, halfBuckets).stream().mapToLong(Long::longValue).sum();
+            long recent = item.counts().subList(halfBuckets, 2 * halfBuckets)
+                    .stream().mapToLong(Long::longValue).sum();
+            int previousSilent = (int) item.counts().subList(0, halfBuckets).stream()
+                    .filter(value -> value == 0L).count();
+            int recentSilent = (int) item.counts().subList(halfBuckets, 2 * halfBuckets).stream()
+                    .filter(value -> value == 0L).count();
+            double seconds = (middle - first) / 1000.0;
+            String trend = previous == recent ? "STABLE" : previous == 0 ? "STARTED"
+                    : recent == 0 ? "STOPPED" : recent > previous ? "INCREASING" : "DECREASING";
+            rows.add(new OperationalView.TopicWindowComparison(topic,
+                    Measured.of(new OperationalView.ActivityWindow(first, middle, previous,
+                            previous / seconds, previousSilent)),
+                    Measured.of(new OperationalView.ActivityWindow(middle, last, recent,
+                            recent / seconds, recentSilent)),
+                    previous == 0 ? Measured.unmeasured("baseline produced zero offsets")
+                            : Measured.of(100.0 * (recent - previous) / previous),
+                    trend, Measured.unmeasured("historical consumer lag is not available")));
+        }
+
+        List<OperationalView.StageWindowComparison> stages = new ArrayList<>();
+        for (int i = 1; i < rows.size(); i++) {
+            var upstream = rows.get(i - 1);
+            var downstream = rows.get(i);
+            Measured<Double> before = drop(upstream.previous(), downstream.previous());
+            Measured<Double> after = drop(upstream.recent(), downstream.recent());
+            stages.add(new OperationalView.StageWindowComparison(upstream.topic(), downstream.topic(),
+                    before, after, before.measured() && after.measured()
+                            ? Measured.of(after.value() - before.value())
+                            : Measured.unmeasured("one stage or upstream window was not measurable")));
+        }
+
+        return new ToolResult<>(new OperationalView.WindowsComparison(first, middle, middle, last,
+                rows, stages, "Produced offsets and adjacent-stage drops are correlated activity, "
+                + "not proof of records lost; lag, latency and application errors require other measurements."),
+                activity.coverage(), activity.warnings(), activity.truncated());
+    }
+
+    private static Measured<Double> drop(Measured<OperationalView.ActivityWindow> upstream,
+                                         Measured<OperationalView.ActivityWindow> downstream) {
+        if (!upstream.measured() || !downstream.measured()) {
+            return Measured.unmeasured("upstream or downstream activity is incomplete");
+        }
+        long produced = upstream.value().offsetsProduced();
+        if (produced == 0) return Measured.unmeasured("upstream produced zero offsets");
+        return Measured.of(100.0 * (produced - downstream.value().offsetsProduced()) / produced);
+    }
+
     @McpTool(name = "kex_diagnose_consumer", annotations = @McpTool.McpAnnotations(
             readOnlyHint = true, destructiveHint = false, openWorldHint = true),
             description = """
