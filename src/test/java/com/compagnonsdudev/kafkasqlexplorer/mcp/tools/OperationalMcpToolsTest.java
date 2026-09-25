@@ -27,7 +27,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.ArgumentMatchers.eq;
 
 @ExtendWith(MockitoExtension.class)
 class OperationalMcpToolsTest {
@@ -115,6 +117,50 @@ class OperationalMcpToolsTest {
 
         assertThat(result.data().afterStatus()).isEqualTo("UNKNOWN");
         assertThat(result.data().verdict()).isEqualTo("UNKNOWN");
+    }
+
+    @Test
+    void typed_process_stages_bind_each_consumer_to_its_topic() {
+        given(kafka.getTopicActivity(any(), anyLong(), anyInt(), anyInt())).willReturn(
+                new TopicActivityResponse(
+                        Map.of("orders.in", activity("orders.in", 10L),
+                               "orders.out", activity("orders.out", 10L)),
+                        0L, 120_000L, 30_000L, 4, true, List.of()));
+        given(kafka.getTopicsLastMessageTimestamps(any())).willReturn(Map.of());
+
+        LagView.GroupLag group = new LagView.GroupLag(
+                "orders-worker", "STABLE", "CLASSIC",
+                Measured.of(1), Measured.of(1), Measured.of(0L), Measured.of(0L),
+                0, "CAUGHT_UP", "caught up", null, List.of());
+        given(lag.consumerLag(eq("orders.out"), eq("orders-worker"), eq(true), eq(false), eq(Integer.MAX_VALUE)))
+                .willReturn(new ToolResult<>(
+                        new LagView.TopicLag("orders.out", List.of(group), 1, 1, 1, "CAUGHT_UP"),
+                        new Coverage(1, 1, List.of(), 0L, 1L, StopReason.EXHAUSTED, null, null, null),
+                        List.of(), false));
+
+        var result = tools("*").processHealth(
+                "orders",
+                List.of(
+                        new OperationalView.ProcessStage("input", "orders.in", null),
+                        new OperationalView.ProcessStage("output", "orders.out", "orders-worker")),
+                null, null, 120_000L, 4);
+
+        assertThat(result.data().consumers()).singleElement()
+                .satisfies(diagnosis -> {
+                    assertThat(diagnosis.topic()).isEqualTo("orders.out");
+                    assertThat(diagnosis.groupId()).isEqualTo("orders-worker");
+                });
+        verify(lag).consumerLag("orders.out", "orders-worker", true, false, Integer.MAX_VALUE);
+    }
+
+    @Test
+    void typed_and_legacy_process_contracts_cannot_be_mixed() {
+        assertThatThrownBy(() -> tools("*").processHealth(
+                "orders",
+                List.of(new OperationalView.ProcessStage("input", "orders.in", null)),
+                List.of("legacy-topic"), null, null, null))
+                .isInstanceOf(com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolException.class)
+                .hasMessageContaining("either typed stages or legacy");
     }
 
     @Test
