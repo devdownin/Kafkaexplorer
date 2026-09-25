@@ -330,3 +330,9 @@ Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, 
   the reason*, and the live call feed with its refusals — is the **MCP** page of the application
   itself. Its switches need the same token the agents use, since they change what the server does;
   the page takes it from you and keeps it for the tab, never beyond.
+
+
+Typed process stages are the preferred contract for process-level diagnostics: each ordered stage
+binds its Kafka topic and, when applicable, the consumer group that consumes that stage. This avoids
+guessing which group belongs to which topic. The legacy `topics + groupIds` form remains accepted
+for compatibility but cannot be mixed with typed stages in the same call.
