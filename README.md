@@ -138,6 +138,8 @@ A single Spring Boot 4.1 JAR embedding Apache Flink 2.3 as the SQL engine, with 
 
 An optional in-process MCP server (Spring AI 2.0) exposes the same services to an LLM agent — same caches, same budgets, no second Kafka client — behind a KIP-1318-shaped guard: resource scope applied to SQL as well as to topic names, per-tool allow/deny enforced by absence from `tools/list`, a rate limit, approval tokens, DLP on everything that leaves, and an append-only call trail. Off unless `explorer.mcp.enabled=true`, read-only when on, and behind a bearer token over TLS once it is. See **[SPEC-MCP.md](SPEC-MCP.md)**.
 
+Operational review tools add `kex_topic_configuration` (effective topic settings and replica/ISR counts), `kex_consumer_lag_trend` (two complete offset/commit snapshots, with producer and consumer rates), and `kex_dlq_review` (DLQ retention, replicas, groups and bounded header checks). The lag baseline is held in this server process for up to 30 minutes; a first call or a restart has no measured trend. Missing broker data is reported as unmeasured, and the DLQ review does not reprocess records.
+
 Architecture deep-dive: **[docs/architecture.md](docs/architecture.md)**
 
 ## 🏗️ Build and Development
