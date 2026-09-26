@@ -136,7 +136,7 @@ and the compose file explains each choice it makes.
 - 🤖 **AI process mining** — reconstruct business flows as flowcharts and hunt anomalies with OpenRouter (the default: one key, most hosted vendors), Claude, any local LLM (Ollama, vLLM, LM Studio…), or a fully private [SpectraLLM](https://github.com/devdownin/SpectraLLM). Point it at a local provider and nothing leaves your network; the default is hosted, and both pages that call a model say which of the two you are on — read off the address, not the provider's name.
 - 💰 **What the AI cost, and a cap if you want one** — every analysis shows the tokens and the **price the provider reported**, per call and per run, never an estimate; nothing is shown where a provider prices nothing, rather than a misleading zero. `CLAUDE_SESSION_COST_LIMIT_USD` stops a live session once it has spent that much, which is what bounds a tab left open overnight.
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, in the UI and on `/actuator/prometheus`.
-- 🔌 **An MCP server for your agent, off until you say so** — the same analysis layer over the Model Context Protocol: SQL over vanilla Kafka, schema inference, key tracing, graded consumer lag. Not a tenth translation of the `AdminClient`. Every answer carries a `coverage` envelope naming what it did **not** read, because an empty list is the one shape a model reads as "it does not exist". Read-only by registration, scoped by topic prefix — the SQL included — rate-limited, redacted, and behind a bearer token over TLS; the app's **MCP** page is the console for what it exposed, what it withheld and what every agent did with it.
+- 🔌 **An MCP server for your agent** — the same analysis layer over the Model Context Protocol: SQL over vanilla Kafka, schema inference, key tracing, graded consumer lag, environment-specific topic policy checks, and DLQ route reviews. Every answer carries a `coverage` envelope naming what it did **not** read. The image enables MCP by default but requires a configured bearer token to serve requests; tools are read-only by default, scoped by topic prefix — the SQL included — rate-limited and redacted. The app's **MCP** page shows what it exposed, what it withheld and what every agent did with it.
 
 Full feature tour: **[docs/FEATURES.md](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/FEATURES.md)**
 
@@ -334,6 +334,44 @@ allocates; a cluster audit over thousands of topics is the workload that wants m
 | `EXPLORER_SETTINGS_STORE_PATH` | `data/settings.json` | Where those settings are kept. A file rather than a Kafka topic, unlike the app's other stores: these settings *contain the bootstrap address*, so a topic could neither receive a save that repoints the cluster nor be found at boot. |
 | `EXPLORER_FLINK_TABLE_STORE_PATH` | `data/flink-tables.json` | Where hand-written `CREATE TABLE` statements are kept, to be replayed into Flink at startup. Tables auto-registered from a Kafka topic are not stored — they are re-derived on demand. |
 
+### Operational MCP reviews
+
+`kex_consumer_lag_trend` compares two **complete** readings of the same topic and group.
+By default its previous reading is kept in this process for 30 minutes. For scheduled
+checks or multiple replicas, mount the **same** writable directory on every Explorer
+instance and set `EXPLORER_MCP_LAG_HISTORY_DIRECTORY=/shared/lag`. The backing filesystem
+must support interprocess file locks. `EXPLORER_MCP_LAG_HISTORY_TTL_MS` defaults to
+`172800000` (48 hours); an expired or missing baseline yields an unmeasured trend.
+
+To configure the environment rules and declared DLQ links, add these properties to
+your deployment configuration (example values only):
+
+```yaml
+explorer:
+  mcp:
+    topic-policies:
+      - environment: prod
+        min-replicas: 3
+        min-in-sync-replicas: 2
+        min-retention-ms: 86400000
+        max-retention-ms: 604800000
+        cleanup-policy: delete
+    dlq-routes:
+      - queue-topic: orders.dlq
+        source-topic: orders
+        retry-topics: [orders.retry]
+        connector-name: orders-sink
+        monitoring-reference: dashboards/orders-dlq
+        replay-runbook: runbooks/orders-dlq.md
+```
+
+See [the application configuration](https://github.com/devdownin/Kafkaexplorer/blob/main/src/main/resources/application.yml)
+for the property names. `kex_topic_policy_review` needs an explicit `environment`;
+without a matching rule it reports `NOT_CONFIGURED`. `kex_dlq_review` checks Kafka
+metadata and a bounded header sample, but connector, monitoring and runbook references
+are declarations, not live health checks. It never replays records. Restrict the agent
+to the relevant topics and groups with the MCP scope settings above.
+
 ### Ports, volumes, probes
 
 | | |
@@ -525,4 +563,3 @@ study, share and improve.
   Size limits: 25 000 bytes for this file, 100 bytes for the `short-description` in the
   workflow (both are bytes, and the em dash is three of them).
 -->
-

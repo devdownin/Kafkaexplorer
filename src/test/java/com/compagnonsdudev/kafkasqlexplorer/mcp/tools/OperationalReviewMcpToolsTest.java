@@ -33,8 +33,13 @@ class OperationalReviewMcpToolsTest {
     private OperationalReviewMcpTools tools() {
         McpProperties properties = new McpProperties();
         properties.setAllowedTopicPrefixes(List.of("demo."));
+        return tools(properties);
+    }
+
+    private OperationalReviewMcpTools tools(McpProperties properties) {
         return new OperationalReviewMcpTools(kafka, lag,
-                new ToolGuard(properties, new DlpScrubber(properties)));
+                new ToolGuard(properties, new DlpScrubber(properties)),
+                LagSampleStore.inMemory(), false, properties);
     }
 
     @Test
@@ -101,8 +106,58 @@ class OperationalReviewMcpToolsTest {
         assertThat(result.sourceRetentionMs().value()).isEqualTo("86400000");
         assertThat(result.recordsSampled()).isEqualTo(1);
         assertThat(result.withOriginHeader()).isEqualTo(1);
+        assertThat(result.withMatchingSourceHeader()).isEqualTo(1);
         assertThat(result.withErrorHeader()).isEqualTo(1);
+        assertThat(result.retentionAtLeastSource().value()).isTrue();
         assertThat(result.consumerGroups().value()).isZero();
         assertThat(result.caveats()).anySatisfy(caveat -> assertThat(caveat).contains("does not mean no alerting"));
+    }
+
+    @Test
+    void policy_uses_explicit_environment_and_reports_failed_and_unread_rules() throws Exception {
+        McpProperties properties = new McpProperties();
+        var policy = new McpProperties.TopicPolicy();
+        policy.setEnvironment("prod");
+        policy.setMinReplicas(3);
+        policy.setMinRetentionMs(86_400_000L);
+        properties.setTopicPolicies(List.of(policy));
+        given(kafka.getTopicConfigs("demo.orders")).willReturn(Map.of());
+        given(kafka.getTopicReplication("demo.orders")).willReturn(Map.of(0,
+                new KafkaAdminService.PartitionReplication(1, 1)));
+
+        var review = tools(properties).topicPolicyReview("demo.orders", "prod").data();
+        assertThat(review.status()).isEqualTo("FAIL");
+        assertThat(review.findings()).filteredOn(finding -> finding.property().equals("retention.ms"))
+                .singleElement().satisfies(finding -> assertThat(finding.status()).isEqualTo("UNMEASURED"));
+        assertThat(review.findings()).filteredOn(finding -> finding.property().equals("partition[0].replicas"))
+                .singleElement().satisfies(finding -> assertThat(finding.status()).isEqualTo("FAIL"));
+        assertThat(tools(properties).topicPolicyReview("demo.orders", "staging").data().status())
+                .isEqualTo("NOT_CONFIGURED");
+    }
+
+    @Test
+    void declared_dlq_route_links_source_and_retry_but_does_not_claim_processor_health() throws Exception {
+        McpProperties properties = new McpProperties();
+        properties.setAllowedTopicPrefixes(List.of("demo."));
+        var route = new McpProperties.DlqRoute();
+        route.setQueueTopic("demo.orders.dlq");
+        route.setSourceTopic("demo.orders");
+        route.setRetryTopics(List.of("demo.orders.retry"));
+        route.setConnectorName("orders-sink");
+        route.setReplayRunbook("runbooks/orders-dlq.md");
+        properties.setDlqRoutes(List.of(route));
+        given(kafka.getTopicReplication("demo.orders.retry")).willReturn(Map.of(0,
+                new KafkaAdminService.PartitionReplication(3, 3)));
+        given(kafka.getRecentRecords("demo.orders.dlq", 20)).willReturn(List.of());
+        given(kafka.getTopicConsumers("demo.orders.retry", 50)).willReturn(new TopicConsumers(
+                "demo.orders.retry", List.of(), 0, 0, 0, false, true, List.of()));
+        given(kafka.getTopicRecordCounts(List.of("demo.orders.retry"))).willReturn(Map.of("demo.orders.retry", 5L));
+
+        var review = tools(properties).deadLetterReview("demo.orders.dlq", null).data();
+        assertThat(review.sourceTopic()).isEqualTo("demo.orders");
+        assertThat(review.retries()).containsExactly(new OperationalReviewMcpTools.RetryTopic(
+                "demo.orders.retry", "OBSERVED", Measured.of(0), Measured.of(5L)));
+        assertThat(review.connectorName()).isEqualTo("orders-sink");
+        assertThat(review.caveats()).anySatisfy(caveat -> assertThat(caveat).contains("not live checks"));
     }
 }

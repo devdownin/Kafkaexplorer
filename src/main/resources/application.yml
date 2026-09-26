@@ -346,6 +346,31 @@ explorer:
     # identity; internal.audit.history stays dedicated to the functional audit reports.
     audit-topic: internal.mcp.audit
 
+    # Optional: mount the same writable directory on all instances to retain lag baselines
+    # across restarts. The filesystem must support cross-process advisory file locks.
+    # lag-history-directory: /shared/kafkaexplorer/lag
+    # Shared baseline validity (default: 48 hours, suitable for daily scheduled checks).
+    # lag-history-ttl-ms: 172800000
+
+    # Define environment-specific expectations explicitly. Without a matching policy the
+    # kex_topic_policy_review tool reports NOT_CONFIGURED, not a guessed default.
+    # topic-policies:
+    #   - environment: prod
+    #     min-replicas: 3
+    #     min-in-sync-replicas: 2
+    #     min-retention-ms: 86400000
+    #     max-retention-ms: 604800000
+    #     cleanup-policy: delete
+
+    # Optional declared lineage. Connector, monitoring and runbook references are not live checks.
+    # dlq-routes:
+    #   - queue-topic: orders.dlq
+    #     source-topic: orders
+    #     retry-topics: [orders.retry]
+    #     connector-name: orders-sink
+    #     monitoring-reference: dashboards/orders-dlq
+    #     replay-runbook: runbooks/orders-dlq.md
+
     console:
       enabled: true
       # The live feed keeps this many calls in memory. It is not a history store — the audit topic
