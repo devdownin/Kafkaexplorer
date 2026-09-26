@@ -48,7 +48,8 @@ ROOT = Path(__file__).resolve().parent.parent
 # docs/notes/ is globbed rather than listed, and that is the point: those files hold the prose
 # CLAUDE.md used to carry, and a note added without being checked is exactly the hole this
 # check exists to close. The rest is enumerated — they are the five documents a human reads.
-DOCS = (['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md', 'docs/DOCKERHUB.md']
+DOCS = (['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md',
+         'docs/DOCKERHUB.md', 'docs/DOCKERHUB-OPERATIONS.md']
         + sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'docs/notes').glob('*.md')))
 
 # Where a path named in prose may be rooted. Ordered widest first for no reason but reading.
