@@ -71,7 +71,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # and drift exactly as quietly. A file with no configuration table simply contributes no
 # rows — the first cell of a row has to be a code span holding an ALL_CAPS name, which a
 # prose table never is.
-DOCS = ['docs/DOCKERHUB.md', 'README.md', 'README.fr.md']
+DOCS = ['docs/DOCKERHUB.md', 'docs/DOCKERHUB-OPERATIONS.md', 'README.md', 'README.fr.md']
 YAML = ROOT / 'src/main/resources/application.yml'
 CONFIG_DIR = ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/config'
 DOCKERFILES = [ROOT / 'Dockerfile', ROOT / 'Dockerfile.release']
@@ -85,7 +85,8 @@ POM = ROOT / 'pom.xml'
 # docs/notes/ is globbed for the reason check-doc-paths.py globs it: it holds the prose
 # CLAUDE.md used to carry, version claims included, and a note nothing reads drifts silently.
 VERSION_DOCS = (['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md',
-                 'docs/DOCKERHUB.md', 'docs/architecture.md', 'docs/index.html']
+                 'docs/DOCKERHUB.md', 'docs/DOCKERHUB-OPERATIONS.md',
+                 'docs/architecture.md', 'docs/index.html']
                 + sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'docs/notes').glob('*.md')))
 
 # How a documented version relates to the pom's.
