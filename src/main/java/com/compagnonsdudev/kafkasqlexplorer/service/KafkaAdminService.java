@@ -1208,6 +1208,20 @@ public class KafkaAdminService {
         }
     }
 
+    /** Partition replication and in-sync replicas, as measured by the broker at read time. */
+    public Map<Integer, PartitionReplication> getTopicReplication(String name)
+            throws ExecutionException, InterruptedException, TimeoutException {
+        TopicDescription topic = adminClient.describeTopics(List.of(name))
+                .allTopicNames().get(5, TimeUnit.SECONDS).get(name);
+        if (topic == null) throw new IllegalArgumentException("Unknown topic: " + name);
+        Map<Integer, PartitionReplication> result = new LinkedHashMap<>();
+        topic.partitions().forEach(partition -> result.put(partition.partition(),
+                new PartitionReplication(partition.replicas().size(), partition.isr().size())));
+        return result;
+    }
+
+    public record PartitionReplication(int replicas, int inSyncReplicas) { }
+
     /**
      * Sets the given entries on a topic, leaving every other entry alone.
      *
