@@ -37,7 +37,8 @@ HTML_SRC = re.compile(r'(?:src|href)="([^"]+)"')
 # shape as `…/img/…`, and that ellipsis was reported as a broken image.
 COMMENT = re.compile(r'<!--.*?-->', re.DOTALL)
 
-MARKDOWN = ['docs/DOCKERHUB.md', 'README.md', 'README.fr.md', 'docs/FEATURES.md',
+MARKDOWN = ['docs/DOCKERHUB.md', 'docs/DOCKERHUB-OPERATIONS.md',
+            'README.md', 'README.fr.md', 'docs/FEATURES.md',
             'docs/screenshots/README.md',
             # The community-health files. They are read by people who have not cloned the
             # repository — GitHub surfaces them from the issue composer, the "Contribute"
@@ -56,6 +57,12 @@ def is_local(target: str) -> bool:
 def check() -> list[str]:
     broken: list[str] = []
     checked = 0
+
+    # The Docker Hub repository API exposes only the first 25,000 bytes of the overview.
+    # Keep the visible page below the limit and put the detailed reference in a separate file.
+    hub = ROOT / 'docs/DOCKERHUB.md'
+    if hub.exists() and hub.stat().st_size > 25_000:
+        broken.append(f'docs/DOCKERHUB.md: {hub.stat().st_size} bytes exceeds the Docker Hub 25,000-byte limit')
 
     for name in MARKDOWN + HTML:
         path = ROOT / name
