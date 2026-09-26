@@ -272,16 +272,16 @@ explains the properties and limitations.
 
 ## ⚙️ Essential settings
 
-| Variable | Meaning |
-|---|---|
-| `KAFKA_BOOTSTRAP_SERVERS` | Broker address reachable **from inside** the container (not your host's localhost). |
-| `KAFKA_CONSUMER_GROUP_PROTOCOL` | `consumer` for Kafka 4.x; use `classic` on older brokers. |
-| `KAFKA_MODE` | `PLAIN`, `SSL` or `CONFLUENT_CLOUD`. |
-| `EXPLORER_MCP_AUTH_TOKEN` | Bearer required by `/mcp`; without it MCP returns `503`. |
-| `EXPLORER_MCP_REQUIRE_TLS` | `true` by default; configure HTTPS or TLS termination for remote access. |
-| `EXPLORER_MCP_READONLY` | `true` by default; mutating tools are then absent from the registry. |
-| `EXPLORER_MCP_ALLOWED_TOPIC_PREFIXES` | Limit the topics accessible to agent tools, including SQL. |
-| `CLAUDE_PROVIDER` | `OPENROUTER` by default; use `OLLAMA` or `SPECTRA` for a local model. |
+| Variable | Default | Meaning |
+|---|---|---|
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Broker address reachable **from inside** the container (not your host's localhost). |
+| `KAFKA_CONSUMER_GROUP_PROTOCOL` | `consumer` | For Kafka 4.x; use `classic` on older brokers. |
+| `KAFKA_MODE` | `PLAIN` | Also supports `SSL` and `CONFLUENT_CLOUD`. |
+| `EXPLORER_MCP_AUTH_TOKEN` | — | Bearer required by `/mcp`; without it MCP returns `503`. |
+| `EXPLORER_MCP_REQUIRE_TLS` | `true` | Configure HTTPS or TLS termination for remote access. |
+| `EXPLORER_MCP_READONLY` | `true` | Mutating tools are then absent from the registry. |
+| `EXPLORER_MCP_ALLOWED_TOPIC_PREFIXES` | `*` | Limit the topics accessible to agent tools, including SQL. |
+| `CLAUDE_PROVIDER` | `OPENROUTER` | Use `OLLAMA` or `SPECTRA` for a local model. |
 
 Mount `/app/data` to keep UI settings and `/app/logs` to keep logs. Give the
 container a memory limit of about 2 GB. All settings and troubleshooting steps:
