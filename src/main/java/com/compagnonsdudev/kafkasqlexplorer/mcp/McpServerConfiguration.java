@@ -28,6 +28,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.McpTraceStore;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.MutatingMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.OperationalMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.OperationalReviewMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.LagSampleStore;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ReadOnlyMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SchemaMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SqlMcpTools;
@@ -282,8 +283,13 @@ public class McpServerConfiguration {
 
     @Bean
     OperationalReviewMcpTools operationalReviewMcpTools(KafkaAdminService kafka,
-                                                        ConsumerLagMcpTools lag, ToolGuard guard) {
-        return new OperationalReviewMcpTools(kafka, lag, guard);
+                                                        ConsumerLagMcpTools lag, ToolGuard guard,
+                                                        McpProperties properties) {
+        String directory = properties.getLagHistoryDirectory();
+        boolean shared = directory != null && !directory.isBlank();
+        return new OperationalReviewMcpTools(kafka, lag, guard,
+                shared ? LagSampleStore.shared(java.nio.file.Path.of(directory)) : LagSampleStore.inMemory(),
+                shared, properties);
     }
 
     /**

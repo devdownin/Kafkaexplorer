@@ -29,6 +29,55 @@ public class McpProperties {
     private long defaultBudgetMs = 20_000L;
     private long hardMaxBudgetMs = 60_000L;
     private String auditTopic = "internal.mcp.audit";
+    /** Mount the same writable directory on every instance to share lag baselines. */
+    private String lagHistoryDirectory;
+    private long lagHistoryTtlMs = 172_800_000L;
+    private List<TopicPolicy> topicPolicies = List.of();
+    private List<DlqRoute> dlqRoutes = List.of();
+
+    /** Explicit operator requirements, selected by environment, never universal Kafka defaults. */
+    public static class TopicPolicy {
+        private String environment;
+        private Integer minReplicas;
+        private Integer minInSyncReplicas;
+        private Long minRetentionMs;
+        private Long maxRetentionMs;
+        private String cleanupPolicy;
+        public String getEnvironment() { return environment; }
+        public void setEnvironment(String environment) { this.environment = environment; }
+        public Integer getMinReplicas() { return minReplicas; }
+        public void setMinReplicas(Integer minReplicas) { this.minReplicas = minReplicas; }
+        public Integer getMinInSyncReplicas() { return minInSyncReplicas; }
+        public void setMinInSyncReplicas(Integer minInSyncReplicas) { this.minInSyncReplicas = minInSyncReplicas; }
+        public Long getMinRetentionMs() { return minRetentionMs; }
+        public void setMinRetentionMs(Long minRetentionMs) { this.minRetentionMs = minRetentionMs; }
+        public Long getMaxRetentionMs() { return maxRetentionMs; }
+        public void setMaxRetentionMs(Long maxRetentionMs) { this.maxRetentionMs = maxRetentionMs; }
+        public String getCleanupPolicy() { return cleanupPolicy; }
+        public void setCleanupPolicy(String cleanupPolicy) { this.cleanupPolicy = cleanupPolicy; }
+    }
+
+    /** Links come from the operator; the tool never guesses a source or replay path from a name. */
+    public static class DlqRoute {
+        private String queueTopic;
+        private String sourceTopic;
+        private List<String> retryTopics = List.of();
+        private String connectorName;
+        private String monitoringReference;
+        private String replayRunbook;
+        public String getQueueTopic() { return queueTopic; }
+        public void setQueueTopic(String queueTopic) { this.queueTopic = queueTopic; }
+        public String getSourceTopic() { return sourceTopic; }
+        public void setSourceTopic(String sourceTopic) { this.sourceTopic = sourceTopic; }
+        public List<String> getRetryTopics() { return retryTopics; }
+        public void setRetryTopics(List<String> retryTopics) { this.retryTopics = retryTopics; }
+        public String getConnectorName() { return connectorName; }
+        public void setConnectorName(String connectorName) { this.connectorName = connectorName; }
+        public String getMonitoringReference() { return monitoringReference; }
+        public void setMonitoringReference(String monitoringReference) { this.monitoringReference = monitoringReference; }
+        public String getReplayRunbook() { return replayRunbook; }
+        public void setReplayRunbook(String replayRunbook) { this.replayRunbook = replayRunbook; }
+    }
 
     public static class Tools {
         private String allowed = ANY;
@@ -105,4 +154,12 @@ public class McpProperties {
     public void setRateLimit(RateLimit rateLimit) { this.rateLimit = rateLimit; }
     public String getAuditTopic() { return auditTopic; }
     public void setAuditTopic(String auditTopic) { this.auditTopic = auditTopic; }
+    public String getLagHistoryDirectory() { return lagHistoryDirectory; }
+    public void setLagHistoryDirectory(String lagHistoryDirectory) { this.lagHistoryDirectory = lagHistoryDirectory; }
+    public long getLagHistoryTtlMs() { return lagHistoryTtlMs; }
+    public void setLagHistoryTtlMs(long lagHistoryTtlMs) { this.lagHistoryTtlMs = lagHistoryTtlMs; }
+    public List<TopicPolicy> getTopicPolicies() { return topicPolicies; }
+    public void setTopicPolicies(List<TopicPolicy> topicPolicies) { this.topicPolicies = topicPolicies; }
+    public List<DlqRoute> getDlqRoutes() { return dlqRoutes; }
+    public void setDlqRoutes(List<DlqRoute> dlqRoutes) { this.dlqRoutes = dlqRoutes; }
 }
