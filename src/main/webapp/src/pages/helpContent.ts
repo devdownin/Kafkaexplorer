@@ -622,6 +622,8 @@ export const SHORTCUTS: Shortcut[] = [
   { key: 'Esc', desc: 'Close a modal, or deselect the focused node', where: 'Global · Graphs' },
   { key: '/', desc: 'Focus the search field', where: 'Topic Explorer' },
   { key: 'j / k', desc: 'Walk up and down the hits', where: 'Topic Explorer' },
+  { key: '↑ ↓ / Home End', desc: 'Move between visible topic hierarchy nodes', where: 'Topic hierarchy' },
+  { key: '← → / Enter / Space', desc: 'Collapse or expand a branch; open a topic with Enter', where: 'Topic hierarchy' },
   { key: 'Scroll / drag', desc: 'Zoom and pan — pointer or touch', where: 'Lineage · Stream Flow · Data Model' },
   { key: '↑ ↓ ← →', desc: 'Pan the graph (hold Shift for larger steps)', where: 'Lineage · Stream Flow · Data Model' },
   { key: '+ / −', desc: 'Zoom the graph in and out', where: 'Lineage · Stream Flow · Data Model' },

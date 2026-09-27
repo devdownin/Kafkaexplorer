@@ -123,6 +123,8 @@ The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPO
 | Inspect brokers, KRaft quorum, client groups, feature flags | **Cluster** |
 | Let an LLM reconstruct and audit your business flows | **Process Mining** |
 
+The hierarchy is inferred from topic names only; it does not describe dependencies or message flow. Names with mixed separators, empty levels or no separator stay in the Dashboard list. Detailed guide: [English](docs/TOPIC-HIERARCHY.md) · [Français](docs/TOPIC-HIERARCHY.fr.md).
+
 Every feature in detail: **[docs/FEATURES.md](docs/FEATURES.md)** · Ready-to-run SQL: **[docs/QUERY-EXAMPLES.md](docs/QUERY-EXAMPLES.md)**
 
 ## 🤖 Bring your own AI

@@ -12,6 +12,7 @@ The complete guided tour of everything Kafka SQL Explorer does. For the short ve
   - **DLT Filtering**: Toggle to hide Dead Letter Topics (`*.dlt`) and focus on functional streams.
 - **Flink Dynamic Tables**: Dedicated section to manage temporary tables and views registered in the local Flink engine.
 - **Command Palette**: `⌘K` / `Ctrl+K` global search over pages, quick actions, Kafka topics and Flink tables.
+- **Topic hierarchy**: From **Dashboard → Topics → Topic hierarchy**, group names under one selected separator (`.`, `-` or `_`). Filter and navigate the tree by keyboard; inspect names excluded for mixed separators, empty levels or no separator. The selected view persists within the browser tab, and long trees render only visible rows. This groups names, not actual data-flow relationships. [Guide](TOPIC-HIERARCHY.md) · [Guide en français](TOPIC-HIERARCHY.fr.md).
 
 ![The dashboard: every topic with its message count, state and last message, over the seeded demo cluster](img/dashboard.png)
 

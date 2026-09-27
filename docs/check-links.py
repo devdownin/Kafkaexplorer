@@ -39,6 +39,7 @@ COMMENT = re.compile(r'<!--.*?-->', re.DOTALL)
 
 MARKDOWN = ['docs/DOCKERHUB.md', 'docs/DOCKERHUB-OPERATIONS.md',
             'README.md', 'README.fr.md', 'docs/FEATURES.md',
+            'docs/TOPIC-HIERARCHY.md', 'docs/TOPIC-HIERARCHY.fr.md',
             'docs/screenshots/README.md',
             # The community-health files. They are read by people who have not cloned the
             # repository — GitHub surfaces them from the issue composer, the "Contribute"
