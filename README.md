@@ -110,6 +110,7 @@ The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPO
 | You want to… | Head to… |
 |---|---|
 | Browse topics, partitions, sizes and sample messages | **Dashboard** & **Topic Explorer** |
+| Browse topics by naming hierarchy | **Dashboard → Topics → Topic hierarchy** — choose `.`, `-` or `_`; mixed separators and empty levels are excluded from the tree |
 | Write and run SQL against topics | **SQL Editor** — or just click fields and let it write itself |
 | Compare two topics side by side, diff by ID | **Compare** |
 | Follow one message across a whole pipeline | **Stream Flow** |

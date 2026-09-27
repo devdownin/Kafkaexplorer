@@ -15,6 +15,7 @@ import { ProgressBar, ConfirmProvider } from './components/ui';
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const QueryWorkbench = lazy(() => import('./pages/QueryWorkbench'));
 const TopicExplorer = lazy(() => import('./pages/TopicExplorer'));
+const TopicHierarchy = lazy(() => import('./pages/TopicHierarchy'));
 const Compare = lazy(() => import('./pages/Compare'));
 const Lineage = lazy(() => import('./pages/Lineage'));
 const Metrics = lazy(() => import('./pages/Metrics'));
@@ -83,6 +84,7 @@ const router = createBrowserRouter([
       { path: '/', element: <Dashboard /> },
       { path: '/query', element: <QueryWorkbench /> },
       { path: '/topic/:name', element: <TopicExplorer /> },
+      { path: '/topics/hierarchy', element: <TopicHierarchy /> },
       { path: '/compare', element: <Compare /> },
       { path: '/lineage', element: <Lineage /> },
       { path: '/metrics', element: <Metrics /> },
