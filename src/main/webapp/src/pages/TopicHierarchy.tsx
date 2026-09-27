@@ -2,9 +2,10 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { EmptyState, ErrorPanel, Input, PageHeader, Select, TableSkeleton, useVirtualRows } from '../components/ui';
+import { isDeadLetterTopic } from './topicKinds';
 import { buildTopicHierarchy, exclusionReason, topicSeparator, visibleBranches, type Separator, type VisibleBranch } from './topicHierarchy';
 
 const STORAGE_KEY = 'topicHierarchy.view';
@@ -31,11 +32,15 @@ function readView(): SavedView {
 
 export default function TopicHierarchy() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [saved] = useState(readView);
   const [topics, setTopics] = useState<string[] | null>(null);
+  const [topicSizes, setTopicSizes] = useState<Record<string, number>>({});
   const [error, setError] = useState(false);
   const [separator, setSeparator] = useState<Separator>(saved.separator);
-  const [query, setQuery] = useState(saved.query);
+  const [query, setQuery] = useState(() => params.get('q') ?? saved.query);
+  const [hideEmpty, setHideEmpty] = useState(() => params.get('empty') === 'true');
+  const [hideDlt, setHideDlt] = useState(() => params.get('dlt') === 'true');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(saved.expanded));
   const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(() => new Set(saved.collapsedRoots));
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -43,11 +48,12 @@ export default function TopicHierarchy() {
   const [showExcluded, setShowExcluded] = useState(false);
   const scrollRef = useRef<HTMLUListElement>(null);
   const pendingFocus = useRef(false);
+  const listUrl = `/?${new URLSearchParams({ q: query, empty: String(hideEmpty), dlt: String(hideDlt) })}#topics`;
 
   useEffect(() => {
     const controller = new AbortController();
-    axios.get<{ topics: string[] }>('/api/dashboard', { signal: controller.signal })
-      .then(response => setTopics(response.data.topics ?? []))
+    axios.get<{ topics: string[]; topicSizes?: Record<string, number> }>('/api/dashboard', { signal: controller.signal })
+      .then(response => { setTopics(response.data.topics ?? []); setTopicSizes(response.data.topicSizes ?? {}); })
       .catch(() => { if (!controller.signal.aborted) setError(true); });
     return () => controller.abort();
   }, []);
@@ -56,13 +62,15 @@ export default function TopicHierarchy() {
     catch { /* Storage may be unavailable; navigation still works. */ }
   }, [separator, query, expanded, collapsedRoots]);
 
+  const matching = useMemo(() => (topics ?? []).filter(topic => topic.toLowerCase().includes(query.trim().toLowerCase()))
+    .filter(topic => !hideDlt || !isDeadLetterTopic(topic))
+    .filter(topic => !hideEmpty || (topicSizes[topic] ?? 0) > 0), [topics, topicSizes, query, hideDlt, hideEmpty]);
   const counts = useMemo(() => Object.fromEntries(choices.map(choice => [choice.separator,
-    (topics ?? []).filter(topic => topicSeparator(topic) === choice.separator).length,
-  ])) as Record<Separator, number>, [topics]);
-  const excluded = useMemo(() => (topics ?? []).map(name => ({ name, reason: exclusionReason(name) }))
-    .filter((entry): entry is { name: string; reason: NonNullable<typeof entry.reason> } => entry.reason !== null)
-    .sort((a, b) => a.name.localeCompare(b.name)), [topics]);
-  const matching = useMemo(() => (topics ?? []).filter(topic => topic.toLowerCase().includes(query.trim().toLowerCase())), [topics, query]);
+    matching.filter(topic => topicSeparator(topic) === choice.separator).length,
+  ])) as Record<Separator, number>, [matching]);
+  const excluded = useMemo(() => matching.map(name => ({ name, reason: exclusionReason(name) ?? `Uses ${topicSeparator(name)} separator` }))
+    .filter(entry => topicSeparator(entry.name) !== separator)
+    .sort((a, b) => a.name.localeCompare(b.name)), [matching, separator]);
   const tree = useMemo(() => buildTopicHierarchy(matching, separator), [matching, separator]);
   const openPaths = useMemo(() => new Set([...expanded, ...tree.filter(root => !collapsedRoots.has(root.path)).map(root => root.path)]), [tree, expanded, collapsedRoots]);
   const expandAll = Boolean(query.trim());
@@ -137,6 +145,10 @@ export default function TopicHierarchy() {
       <PageHeader title="Topic hierarchy" description="Explore topics grouped by the separator used in their names." />
       {error ? <ErrorPanel error={{ title: 'Could not load topics', hint: 'The dashboard topic list is unavailable.', raw: '' }} /> : topics === null ? <TableSkeleton /> : (
         <section className="rounded-xl border border-outline-variant/60 bg-surface-container-low p-4 sm:p-6 space-y-4">
+          <div role="group" aria-label="Topic view" className="inline-flex rounded-lg border border-outline-variant/60 text-[12px] font-medium">
+            <Link to={listUrl} className="inline-flex items-center px-3 h-9 rounded-l-lg text-primary hover:bg-primary/10">List</Link>
+            <span aria-current="page" className="inline-flex items-center gap-1 px-3 h-9 rounded-r-lg bg-primary/10 text-primary"><span aria-hidden="true" className="material-symbols-outlined text-[18px]">account_tree</span>Tree</span>
+          </div>
           <div className="flex flex-wrap items-end gap-3 justify-between">
             <div>
               <label htmlFor="topic-hierarchy-separator" className="block mb-1 text-[12px] font-medium text-on-surface-variant">Naming separator</label>
@@ -145,18 +157,21 @@ export default function TopicHierarchy() {
               </Select>
             </div>
             <Input aria-label="Filter hierarchy" placeholder="Filter topic names…" value={query} onChange={event => { setQuery(event.target.value); setActivePath(null); if (scrollRef.current) scrollRef.current.scrollTop = 0; }} className="h-9 w-full sm:w-64" />
+            <label className="text-[12px]"><input type="checkbox" checked={hideDlt} onChange={event => setHideDlt(event.target.checked)} /> Hide dead letter</label>
+            <label className="text-[12px]"><input type="checkbox" checked={hideEmpty} onChange={event => setHideEmpty(event.target.checked)} /> Hide empty</label>
           </div>
           <p className="text-[12px] text-on-surface-variant">
-            {counts[separator]} topics use this separator. {excluded.length} names have no valid hierarchy.
+            {counts[separator]} topics use this separator. {excluded.length} other topics remain accessible.
             {query && ' Matching paths are expanded to show results.'}
           </p>
+          {!counts[separator] && <p role="status" className="text-[12px] text-on-surface-variant">No hierarchy for {separator}: names need two nonempty levels separated only by {separator}. For example, orders{separator}eu{separator}created. Choose another separator or browse Other topics below.</p>}
           {excluded.length > 0 && (
             <div>
               <button type="button" aria-expanded={showExcluded} onClick={() => setShowExcluded(value => !value)} className="text-[12px] font-medium text-primary hover:underline">
-                {showExcluded ? 'Hide' : 'Inspect'} {excluded.length} excluded names
+                {showExcluded ? 'Hide' : 'Show'} Other topics ({excluded.length})
               </button>
               {showExcluded && (
-                <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-outline-variant/60 bg-surface-container" aria-label="Excluded topic names">
+                <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-outline-variant/60 bg-surface-container" aria-label="Other topics">
                   <ul className="divide-y divide-outline-variant/30">
                     {excluded.slice(0, excludedLimit).map(({ name, reason }) => (
                       <li key={name} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-[12px]">
@@ -195,7 +210,7 @@ export default function TopicHierarchy() {
               <li role="none" aria-hidden="true" style={{ height: window.padBottom }} />
             </ul>
           ) : <EmptyState icon="account_tree" title="No hierarchical topics" description={query ? 'No matching topics use this separator.' : 'Choose another separator or use names with at least two nonempty levels.'} />}
-          <Link to="/" className="inline-block text-[12px] text-primary hover:underline">Back to dashboard topics</Link>
+          <Link to={listUrl} className="inline-block text-[12px] text-primary hover:underline">Back to dashboard topics</Link>
         </section>
       )}
     </div>

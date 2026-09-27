@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import ErrorBanner from '../components/ErrorBanner';
 import {
@@ -65,16 +65,17 @@ function formatLastMessage(ts: number | null | undefined, now: number): string {
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(() => params.get('q') ?? '');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
-  const [hideEmpty, setHideEmpty] = useState(false);
-  const [hideDlt, setHideDlt] = useState(false);
+  const [hideEmpty, setHideEmpty] = useState(() => params.get('empty') === 'true');
+  const [hideDlt, setHideDlt] = useState(() => params.get('dlt') === 'true');
   /** Marquer les topics de reprise — un signalement, pas un filtre : rien n'est retiré. */
   const [markRetry, setMarkRetry] = useState(false);
   /**
@@ -502,7 +503,7 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* Topics */}
-      <section className="space-y-3">
+      <section id="topics" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-[15px] font-semibold text-on-surface flex items-center gap-2 shrink-0">
             Topics
@@ -514,10 +515,13 @@ const Dashboard: React.FC = () => {
             )}
           </h2>
           <div className="flex flex-wrap items-center gap-3 justify-end">
-            <Link to="/topics/hierarchy" className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/60 px-3 h-9 text-[12px] font-medium text-primary hover:bg-primary/10">
+            <div role="group" aria-label="Topic view" className="inline-flex items-center rounded-lg border border-outline-variant/60 text-[12px] font-medium">
+              <span aria-current="page" className="px-3 h-9 inline-flex items-center rounded-l-lg bg-primary/10 text-primary">List</span>
+              <Link to={`/topics/hierarchy?${new URLSearchParams({ q: searchTerm, empty: String(hideEmpty), dlt: String(hideDlt) })}`} className="inline-flex items-center gap-1.5 px-3 h-9 rounded-r-lg text-primary hover:bg-primary/10" aria-label="Tree view of topics">
               <span aria-hidden="true" className="material-symbols-outlined text-[18px]">account_tree</span>
-              Topic hierarchy
-            </Link>
+              Tree
+              </Link>
+            </div>
             <div className="relative w-full max-w-xs sm:w-64">
               <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[18px] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">search</span>
               <Input
