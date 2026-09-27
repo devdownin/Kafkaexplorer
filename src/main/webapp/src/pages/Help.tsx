@@ -624,7 +624,7 @@ GROUP BY window_start, window_end`}
               &ldquo;Which topics share a naming prefix?&rdquo; — <Link to="/topics/hierarchy" className="text-primary hover:underline">Topic hierarchy</Link>
             </h3>
             <p className="text-[12px] text-on-surface leading-relaxed">
-              From Dashboard → Topics, choose one separator: <Code>.</Code>, <Code>-</Code> or <Code>_</Code>.
+              From Explore → Topic hierarchy (or Dashboard → Topics), choose one separator: <Code>.</Code>, <Code>-</Code> or <Code>_</Code>.
               Filter names, open branches with the arrow keys and select a topic to inspect it. The tree groups names
               only; it does not infer data flow.
             </p>
