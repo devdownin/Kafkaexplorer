@@ -123,6 +123,8 @@ Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deu
 | Inspecter brokers, quorum KRaft, groupes clients, feature flags | **Cluster** |
 | Laisser un LLM reconstruire et auditer vos flux métier | **Process Mining** |
 
+La hiérarchie est déduite uniquement des noms : elle ne décrit ni dépendances ni circulation des messages. Les noms avec séparateurs mélangés, niveaux vides ou sans séparateur restent dans la liste du Dashboard. Guide détaillé : [Français](docs/TOPIC-HIERARCHY.fr.md) · [English](docs/TOPIC-HIERARCHY.md).
+
 Chaque fonctionnalité en détail : **[docs/FEATURES.md](docs/FEATURES.md)** · Requêtes prêtes à l'emploi : **[docs/QUERY-EXAMPLES.md](docs/QUERY-EXAMPLES.md)**
 
 ## 🤖 Apportez votre IA

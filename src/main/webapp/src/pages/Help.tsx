@@ -162,6 +162,7 @@ const SupportCell: React.FC<{ value: boolean | 'partial' }> = ({ value }) => {
 
 const QUICK_LINKS = [
   { label: 'SQL Editor', path: '/query', icon: 'terminal' },
+  { label: 'Topic hierarchy', path: '/topics/hierarchy', icon: 'account_tree' },
   { label: 'Stream Flow', path: '/stream-flow', icon: 'waves' },
   { label: 'Lineage Graph', path: '/lineage', icon: 'account_tree' },
   { label: 'Metrics', path: '/metrics', icon: 'monitoring' },
@@ -562,7 +563,7 @@ GROUP BY window_start, window_end`}
         <SectionTitle
           id="beyond"
           icon="route"
-          lead="Some questions are not queries. Two screens answer what SQL here cannot."
+          lead="Some questions are not queries. These screens help you find topics and follow their data."
         >
           Beyond SQL
         </SectionTitle>
@@ -614,6 +615,22 @@ GROUP BY window_start, window_end`}
               Turn a metric into an alert on <Link to="/metrics" className="text-primary hover:underline">Metrics</Link>{' '}
               (a query whose result column is named <Code>metric_value</Code> becomes a Prometheus series), and check a
               whole cluster at once from <Link to="/audit" className="text-primary hover:underline">Audit</Link>.
+            </p>
+          </Card>
+
+          <Card padding="md" className="space-y-3">
+            <h3 className="text-[13px] font-semibold text-on-surface flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary text-[18px]">account_tree</span>
+              &ldquo;Which topics share a naming prefix?&rdquo; — <Link to="/topics/hierarchy" className="text-primary hover:underline">Topic hierarchy</Link>
+            </h3>
+            <p className="text-[12px] text-on-surface leading-relaxed">
+              From Dashboard → Topics, choose one separator: <Code>.</Code>, <Code>-</Code> or <Code>_</Code>.
+              Filter names, open branches with the arrow keys and select a topic to inspect it. The tree groups names
+              only; it does not infer data flow.
+            </p>
+            <p className="text-[12px] text-on-surface-variant leading-relaxed">
+              Inspect excluded names for mixed separators, empty levels or no separator. Your separator, filter and
+              opened branches are restored when you return to this view in the same browser tab.
             </p>
           </Card>
         </div>
