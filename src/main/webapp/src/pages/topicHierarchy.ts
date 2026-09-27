@@ -11,6 +11,37 @@ export interface TopicBranch {
   children: TopicBranch[];
 }
 
+export type ExclusionReason = 'No separator' | 'Mixed separators' | 'Empty level';
+
+export function exclusionReason(name: string): ExclusionReason | null {
+  const separators = (['.', '-', '_'] as const).filter(separator => name.includes(separator));
+  if (separators.length === 0) return 'No separator';
+  if (separators.length > 1) return 'Mixed separators';
+  return name.split(separators[0]).every(part => part.length > 0) ? null : 'Empty level';
+}
+
+export interface VisibleBranch {
+  branch: TopicBranch;
+  depth: number;
+  parent: string | null;
+  position: number;
+  siblings: number;
+}
+
+export function visibleBranches(roots: TopicBranch[], expanded: ReadonlySet<string>, expandAll = false): VisibleBranch[] {
+  const rows: VisibleBranch[] = [];
+  const visit = (siblings: TopicBranch[], depth: number, parent: string | null) => {
+    siblings.forEach((branch, index) => {
+      rows.push({ branch, depth, parent, position: index + 1, siblings: siblings.length });
+      if (branch.children.length && (expandAll || expanded.has(branch.path))) {
+        visit(branch.children, depth + 1, branch.path);
+      }
+    });
+  };
+  visit(roots, 1, null);
+  return rows;
+}
+
 interface MutableBranch {
   label: string;
   path: string;
@@ -20,10 +51,8 @@ interface MutableBranch {
 }
 
 export function topicSeparator(name: string): Separator | null {
-  const separators = (['.', '-', '_'] as const).filter(separator => name.includes(separator));
-  if (separators.length !== 1) return null;
-  const separator = separators[0];
-  return name.split(separator).every(part => part.length > 0) ? separator : null;
+  if (exclusionReason(name)) return null;
+  return (['.', '-', '_'] as const).find(separator => name.includes(separator)) ?? null;
 }
 
 export function buildTopicHierarchy(topics: string[], separator: Separator): TopicBranch[] {
