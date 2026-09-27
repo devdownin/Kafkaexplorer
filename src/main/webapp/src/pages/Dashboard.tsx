@@ -514,6 +514,10 @@ const Dashboard: React.FC = () => {
             )}
           </h2>
           <div className="flex flex-wrap items-center gap-3 justify-end">
+            <Link to="/topics/hierarchy" className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant/60 px-3 h-9 text-[12px] font-medium text-primary hover:bg-primary/10">
+              <span aria-hidden="true" className="material-symbols-outlined text-[18px]">account_tree</span>
+              Topic hierarchy
+            </Link>
             <div className="relative w-full max-w-xs sm:w-64">
               <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[18px] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">search</span>
               <Input

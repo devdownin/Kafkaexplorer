@@ -46,6 +46,7 @@ export const NAV_BY_PATH: Record<string, NavItem> = Object.fromEntries(
 /** Résout le titre de page depuis un pathname (gère les routes dynamiques). */
 export function resolvePageName(pathname: string): string {
   if (NAV_BY_PATH[pathname]) return NAV_BY_PATH[pathname].name;
+  if (pathname === '/topics/hierarchy') return 'Topic hierarchy';
   if (pathname.startsWith('/topic/')) return 'Topic Explorer';
   if (pathname.startsWith('/metrics/')) return 'Metrics Guide';
   return '';
