@@ -34,11 +34,12 @@ describe('TopicHierarchy', () => {
     await user.keyboard('{ArrowLeft}');
     await waitFor(() => expect(within(tree).getByRole('treeitem', { name: /^sales\.eu, / })).toHaveFocus());
 
-    await user.click(screen.getByRole('button', { name: 'Inspect 3 excluded names' }));
+    await user.click(screen.getByRole('button', { name: 'Show Other topics (4)' }));
     expect(screen.getByText('flat')).toBeInTheDocument();
     expect(screen.getByText('No separator')).toBeInTheDocument();
     expect(screen.getByText('Mixed separators')).toBeInTheDocument();
     expect(screen.getByText('Empty level')).toBeInTheDocument();
+    expect(screen.getByText('Uses - separator')).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText('Naming separator'), '-');
     await user.click(screen.getByTitle('sales-eu'));
@@ -47,6 +48,21 @@ describe('TopicHierarchy', () => {
     expect(screen.getByLabelText('Naming separator')).toHaveValue('-');
     await user.selectOptions(screen.getByLabelText('Naming separator'), '.');
     expect(within(screen.getByRole('tree')).getByRole('treeitem', { name: /^sales\.eu, / })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('keeps matching names and filters when switching between list and tree', async () => {
+    api.get.mockResolvedValue({ data: { topics: ['sales.eu', 'sales-us', 'orders.eu', 'flat'], topicSizes: { 'sales.eu': 2, 'sales-us': 1 } } });
+    render(<RouterProvider router={createMemoryRouter([
+      { path: '/topics/hierarchy', element: <TopicHierarchy /> },
+      { path: '/', element: <p>List view</p> },
+    ], { initialEntries: ['/topics/hierarchy?q=sales&empty=true'] })} />);
+    expect(await screen.findByRole('treeitem', { name: 'sales, 1 topics' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Filter hierarchy')).toHaveValue('sales');
+    expect(screen.getByLabelText('Hide empty')).toBeChecked();
+    await userEvent.click(screen.getByRole('button', { name: 'Show Other topics (1)' }));
+    expect(screen.getByText('sales-us')).toBeInTheDocument();
+    expect(screen.queryByText('flat')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'List' })).toHaveAttribute('href', '/?q=sales&empty=true&dlt=false#topics');
   });
 
   it('bounds mounted tree rows with thousands of matching topics', async () => {
