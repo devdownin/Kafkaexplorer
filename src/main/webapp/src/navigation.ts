@@ -20,6 +20,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { name: 'Dashboard',      icon: 'dashboard',       path: '/' },
 
+  { name: 'Topic hierarchy', icon: 'account_tree',    path: '/topics/hierarchy', group: 'Explore' },
   { name: 'SQL Editor',     icon: 'terminal',        path: '/query',          group: 'Explore' },
   { name: 'Compare',        icon: 'compare_arrows',  path: '/compare',        group: 'Explore' },
   { name: 'Stream Flow',    icon: 'waves',           path: '/stream-flow',    group: 'Explore' },
@@ -46,7 +47,6 @@ export const NAV_BY_PATH: Record<string, NavItem> = Object.fromEntries(
 /** Résout le titre de page depuis un pathname (gère les routes dynamiques). */
 export function resolvePageName(pathname: string): string {
   if (NAV_BY_PATH[pathname]) return NAV_BY_PATH[pathname].name;
-  if (pathname === '/topics/hierarchy') return 'Topic hierarchy';
   if (pathname.startsWith('/topic/')) return 'Topic Explorer';
   if (pathname.startsWith('/metrics/')) return 'Metrics Guide';
   return '';

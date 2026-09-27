@@ -1,6 +1,6 @@
 # Topic hierarchy
 
-Open **Dashboard → Topics → Topic hierarchy** (or visit `/topics/hierarchy`) to browse topics by their names. This is a navigation aid: Kafka topics remain flat, and a shared prefix does **not** establish a data flow or parent-child relationship between topics. Use [Lineage](FEATURES.md#5-visual-query-lineage) or [Stream Flow](FEATURES.md#6-message-propagation-stream-flow) to investigate those relationships.
+Open **Explore → Topic hierarchy (or Dashboard → Topics → Topic hierarchy)** (or visit `/topics/hierarchy`) to browse topics by their names. This is a navigation aid: Kafka topics remain flat, and a shared prefix does **not** establish a data flow or parent-child relationship between topics. Use [Lineage](FEATURES.md#5-visual-query-lineage) or [Stream Flow](FEATURES.md#6-message-propagation-stream-flow) to investigate those relationships.
 
 ## Naming rules
 

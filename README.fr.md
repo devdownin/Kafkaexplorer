@@ -110,7 +110,7 @@ Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deu
 | Vous voulez… | Direction… |
 |---|---|
 | Parcourir topics, partitions, volumes et messages | **Dashboard** & **Topic Explorer** |
-| Parcourir les topics par nomenclature | **Dashboard → Topics → Topic hierarchy** — choisir `.`, `-` ou `_` ; naviguer aux flèches, consulter les noms exclus et leur motif, puis retrouver la vue après ouverture d'un topic |
+| Parcourir les topics par nomenclature | **Explore → Topic hierarchy (or Dashboard → Topics → Topic hierarchy)** — choisir `.`, `-` ou `_` ; naviguer aux flèches, consulter les noms exclus et leur motif, puis retrouver la vue après ouverture d'un topic |
 | Écrire et exécuter du SQL sur les topics | **SQL Editor** — ou cliquez sur les champs et laissez-le s'écrire tout seul |
 | Comparer deux topics côte à côte, diff par ID | **Compare** |
 | Suivre un message à travers tout un pipeline | **Stream Flow** |
