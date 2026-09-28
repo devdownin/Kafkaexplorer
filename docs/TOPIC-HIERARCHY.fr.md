@@ -1,6 +1,6 @@
 # Hiérarchie des topics
 
-Ouvrez **Explore → Topic hierarchy (or Dashboard → Topics → Topic hierarchy)** (ou `/topics/hierarchy`) pour parcourir les topics selon leur nom. Il s'agit d'une aide à la navigation : les topics Kafka restent plats et un préfixe commun ne prouve aucun lien de parenté ni de circulation des données. Utilisez Lineage ou Stream Flow pour examiner ces relations.
+Ouvrez **Explore → Topic hierarchy** (ou `/topics/hierarchy`) pour parcourir les topics selon leur nom. Il s'agit d'une aide à la navigation : les topics Kafka restent plats et un préfixe commun ne prouve aucun lien de parenté ni de circulation des données. Utilisez Lineage ou Stream Flow pour examiner ces relations.
 
 ## Règles de nommage
 
