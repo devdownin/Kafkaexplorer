@@ -140,7 +140,7 @@ and the compose file explains each choice it makes.
 
 Full feature tour: **[docs/FEATURES.md](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/FEATURES.md)**
 
-Browse naming conventions from **Explore → Topic hierarchy (or Dashboard → Topics → Topic hierarchy)**: select `.`, `-` or `_`, inspect excluded names and navigate large trees with the keyboard. The tree groups names only; it does not assert a Kafka data flow. [Topic hierarchy guide](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/TOPIC-HIERARCHY.md).
+Browse naming conventions from **Explore → Topic hierarchy**: select `.`, `-` or `_`, inspect excluded names and navigate large trees with the keyboard. The tree groups names only; it does not assert a Kafka data flow. [Topic hierarchy guide](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/TOPIC-HIERARCHY.md).
 
 ## 🖼️ A look around
 

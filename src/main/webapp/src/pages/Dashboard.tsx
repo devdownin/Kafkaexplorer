@@ -515,13 +515,6 @@ const Dashboard: React.FC = () => {
             )}
           </h2>
           <div className="flex flex-wrap items-center gap-3 justify-end">
-            <div role="group" aria-label="Topic view" className="inline-flex items-center rounded-lg border border-outline-variant/60 text-[12px] font-medium">
-              <span aria-current="page" className="px-3 h-9 inline-flex items-center rounded-l-lg bg-primary/10 text-primary">List</span>
-              <Link to={`/topics/hierarchy?${new URLSearchParams({ q: searchTerm, empty: String(hideEmpty), dlt: String(hideDlt) })}`} className="inline-flex items-center gap-1.5 px-3 h-9 rounded-r-lg text-primary hover:bg-primary/10" aria-label="Tree view of topics">
-              <span aria-hidden="true" className="material-symbols-outlined text-[18px]">account_tree</span>
-              Tree
-              </Link>
-            </div>
             <div className="relative w-full max-w-xs sm:w-64">
               <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[18px] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">search</span>
               <Input
