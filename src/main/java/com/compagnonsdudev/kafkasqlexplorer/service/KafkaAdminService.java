@@ -2337,8 +2337,12 @@ public class KafkaAdminService {
             }
             emptyPolls = 0;
             for (org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]> record : polled) {
-                nextOffsets.merge(new TopicPartition(record.topic(), record.partition()),
-                    record.offset() + 1, Math::max);
+                TopicPartition partition = new TopicPartition(record.topic(), record.partition());
+                nextOffsets.merge(partition, record.offset() + 1, Math::max);
+                // A producer can append after endOffsets was captured, while a poll is in flight.
+                // Those records belong to the next snapshot, even if the fetcher delivered them.
+                Long end = endOffsets.get(partition);
+                if (end != null && record.offset() >= end) continue;
                 String value = deserializeValue(record.topic(), record.value());
                 String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
                 records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
