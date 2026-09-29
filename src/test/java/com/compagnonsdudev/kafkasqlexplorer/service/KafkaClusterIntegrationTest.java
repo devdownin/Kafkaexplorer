@@ -445,6 +445,8 @@ class KafkaClusterIntegrationTest {
 
         List<ConsumerRecord<String, String>> direct = adminService.getEarliestRecords(TRIMMED_TOPIC, 100);
         assertEquals(6, direct.size());
+        assertTrue(adminService.scanEarliestRecords(TRIMMED_TOPIC, 100).complete());
+        assertFalse(adminService.scanEarliestRecords(TRIMMED_TOPIC, 3).complete());
         QueryResult rows = flink.executeSql(new QueryRequest(
             "SELECT id, kafka_partition, kafka_offset FROM " + table,
             null, 10, 30_000L, null, null, false, true));

@@ -12,6 +12,11 @@ public record ScanCoverage(String topic, int recordsFetched, int scanCeiling,
     public record PartitionRange(int partition, long firstOffset, long lastOffset) { }
 
     public static ScanCoverage observed(String topic, List<ConsumerRecord<String, String>> records, int ceiling) {
+        return observed(topic, records, ceiling, false);
+    }
+
+    public static ScanCoverage observed(String topic, List<ConsumerRecord<String, String>> records,
+                                        int ceiling, boolean reachedSnapshotEnd) {
         Map<Integer, long[]> ranges = new TreeMap<>();
         for (ConsumerRecord<String, String> record : records) {
             long[] bounds = ranges.computeIfAbsent(record.partition(), ignored -> new long[] {
@@ -24,6 +29,6 @@ public record ScanCoverage(String topic, int recordsFetched, int scanCeiling,
             .toList();
         // A short read is not proof of completeness: the consumer may stop after its poll budget.
         return new ScanCoverage(topic, records.size(), ceiling,
-            records.size() >= ceiling ? "PARTIAL" : "UNVERIFIED", partitions);
+            reachedSnapshotEnd ? "COMPLETE" : records.size() >= ceiling ? "PARTIAL" : "UNVERIFIED", partitions);
     }
 }

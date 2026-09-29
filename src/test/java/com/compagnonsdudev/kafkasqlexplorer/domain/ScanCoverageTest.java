@@ -18,5 +18,6 @@ class ScanCoverageTest {
         assertEquals(List.of(new ScanCoverage.PartitionRange(0, 4, 4),
             new ScanCoverage.PartitionRange(1, 9, 10)), shortScan.partitions());
         assertEquals("PARTIAL", ScanCoverage.observed("orders", records, 3).status());
+        assertEquals("COMPLETE", ScanCoverage.observed("orders", records, 3, true).status());
     }
 }

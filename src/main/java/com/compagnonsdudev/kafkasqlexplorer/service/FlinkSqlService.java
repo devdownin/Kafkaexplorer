@@ -2393,7 +2393,7 @@ public class FlinkSqlService {
      * other side. Sharing also makes the two counts describe the <em>same instant</em>, which is
      * the whole of D4 for that case — the same dissolution the offsets count gets.
      */
-    private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> fetchForDirectRead(
+    private DirectFetch fetchForDirectRead(
             String topic, String readMode, int fetch, boolean shareable) {
         PairScan slot = pairScan.get();
         if (slot != null && shareable) {
@@ -2401,24 +2401,31 @@ public class FlinkSqlService {
             if (open != null && open.topic().equals(topic) && Objects.equals(open.readMode(), readMode)
                 && open.fetch() >= fetch) {
                 slot.reuses++;
-                return open.records();
+                return open.result();
             }
         }
         Long since = sinceTimestampOf(readMode);
-        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records =
-            since != null
-                ? kafkaAdminService.getRecordsSinceTimestamp(topic, since, fetch)
-                : "earliest-offset".equals(readMode)
-                    ? kafkaAdminService.getEarliestRecords(topic, fetch)
-                    : kafkaAdminService.getRecentRecords(topic, fetch);
+        KafkaAdminService.RecordScan scan = since != null ? null
+            : "earliest-offset".equals(readMode)
+                ? kafkaAdminService.scanEarliestRecords(topic, fetch)
+                : kafkaAdminService.scanRecentRecords(topic, fetch);
+        // Older test doubles expose only the list API; real KafkaAdminService always supplies a scan.
+        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = scan != null
+            ? scan.records() : since != null ? kafkaAdminService.getRecordsSinceTimestamp(topic, since, fetch)
+            : "earliest-offset".equals(readMode) ? kafkaAdminService.getEarliestRecords(topic, fetch)
+            : kafkaAdminService.getRecentRecords(topic, fetch);
+        DirectFetch result = new DirectFetch(records,
+            ScanCoverage.observed(topic, records, fetch, scan != null && scan.complete()));
         if (slot != null && shareable && slot.scan == null) {
-            slot.scan = new SharedScan(topic, readMode, fetch, records);
+            slot.scan = new SharedScan(topic, readMode, fetch, result);
         }
-        return records;
+        return result;
     }
 
+    private record DirectFetch(List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records,
+                               ScanCoverage coverage) { }
     private record SharedScan(String topic, String readMode, int fetch,
-                              List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records) {}
+                              DirectFetch result) {}
 
     /** Mutable because the reuse has to be reported back to the caller, not merely performed. */
     private static final class PairScan {
@@ -2566,8 +2573,8 @@ public class FlinkSqlService {
         } else {
             fetch = Math.min(100_000, Math.max(5_000, limit * 100));
         }
-        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records =
-            fetchForDirectRead(topic, readMode, fetch, isAggregate);
+        DirectFetch directFetch = fetchForDirectRead(topic, readMode, fetch, isAggregate);
+        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = directFetch.records();
 
         // Build result rows from JSON messages
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -2624,13 +2631,13 @@ public class FlinkSqlService {
              * answer a silent-drop alarm must never give by accident. The caveat travels with the
              * result rather than being left for whoever reads it to infer.
              */
-            if (records.size() >= fetch) {
+            if (records.size() >= fetch && !"COMPLETE".equals(directFetch.coverage().status())) {
                 aggregate = withExtraWarning(aggregate, AGGREGATE_SCAN_CAPPED
                     + " — the aggregate covers the first " + fetch + " record(s) read from '"
                     + topic + "', not the whole topic, so a count is a floor rather than a total.");
             }
             return aggregate.withScanInfo(directScanInfo(topic, readMode, records.size(), fetch))
-                .withScanCoverage(ScanCoverage.observed(topic, records, fetch));
+                .withScanCoverage(directFetch.coverage());
         }
 
         List<String> columns = requestedCols.isEmpty()
@@ -2657,7 +2664,8 @@ public class FlinkSqlService {
          * plafond (`records.size() >= fetch`) et la page n'est pas pleine, donc il peut rester des
          * lignes au-delà.
          */
-        if (rows.size() < limit && records.size() >= fetch) {
+        if (rows.size() < limit && records.size() >= fetch
+            && !"COMPLETE".equals(directFetch.coverage().status())) {
             notes.add(SCAN_CAPPED + " — this read covered " + records.size() + " record(s) of '"
                 + topic + "', taken " + describeScanEnd(readMode) + ", and returned "
                 + rows.size() + " row(s). Rows matching this query may lie beyond them: narrow the "
@@ -2666,7 +2674,7 @@ public class FlinkSqlService {
         return new QueryResult(columns, rows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
             .withWarnings(notes)
             .withScanInfo(directScanInfo(topic, readMode, records.size(), fetch))
-            .withScanCoverage(ScanCoverage.observed(topic, records, fetch));
+            .withScanCoverage(directFetch.coverage());
     }
 
     private static String directScanInfo(String topic, String readMode, int fetched, int ceiling) {
@@ -2872,8 +2880,8 @@ public class FlinkSqlService {
         }
 
         // Fetch all messages (windows aggregate over the full dataset)
-        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records =
-            fetchForDirectRead(topic, readMode, 100_000, false);
+        DirectFetch directFetch = fetchForDirectRead(topic, readMode, 100_000, false);
+        List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = directFetch.records();
 
         // Parse aggregate expressions from SELECT
         Matcher selMatcher = SELECT_PROJECTION.matcher(sql);
@@ -2943,7 +2951,7 @@ public class FlinkSqlService {
         return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
             .withWarnings(allWarnings)
             .withScanInfo(directScanInfo(topic, readMode, records.size(), 100_000))
-            .withScanCoverage(ScanCoverage.observed(topic, records, 100_000));
+            .withScanCoverage(directFetch.coverage());
     }
 
     /**
