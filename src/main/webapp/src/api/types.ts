@@ -87,6 +87,23 @@ export interface ChangelogInfo {
   capReached: boolean;
 }
 
+/** @java PartitionRange */
+export interface PartitionRange {
+  partition: number;
+  firstOffset: number;
+  lastOffset: number;
+}
+
+/** @java ScanCoverage */
+export interface ScanCoverage {
+  topic: string;
+  recordsFetched: number;
+  scanCeiling: number;
+  /** PARTIAL is proven by the ceiling; UNVERIFIED does not claim the topic was exhausted. */
+  status: 'PARTIAL' | 'UNVERIFIED' | 'COMPLETE';
+  partitions: PartitionRange[];
+}
+
 /**
  * `POST /api/query/run-sync`.
  *
@@ -109,6 +126,7 @@ export interface QueryResult {
   warnings: string[];
   /** Coverage of the bounded Kafka Direct fetch, when available. */
   scanInfo?: string | null;
+  scanCoverage?: ScanCoverage | null;
   /** Non nul quand le moteur a répondu par un changelog — voir `ChangelogInfo`. */
   changelog: ChangelogInfo | null;
 }

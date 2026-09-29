@@ -26,8 +26,14 @@ public record QueryResult(
      */
     ChangelogInfo changelog,
     /** Factual coverage of a bounded direct Kafka fetch, when available. */
-    String scanInfo
+    String scanInfo,
+    ScanCoverage scanCoverage
 ) {
+    public QueryResult(List<String> columns, List<Map<String, Object>> rows, long durationMs,
+                       String error, boolean tableRegistered, String engine,
+                       List<String> warnings, ChangelogInfo changelog, String scanInfo) {
+        this(columns, rows, durationMs, error, tableRegistered, engine, warnings, changelog, scanInfo, null);
+    }
     public QueryResult(List<String> columns, List<Map<String, Object>> rows, long durationMs,
                        String error, boolean tableRegistered, String engine,
                        List<String> warnings, ChangelogInfo changelog) {
@@ -61,16 +67,21 @@ public record QueryResult(
      */
     public QueryResult withWarnings(List<String> newWarnings) {
         return new QueryResult(columns, rows, durationMs, error, tableRegistered, engine,
-            newWarnings == null ? List.of() : List.copyOf(newWarnings), changelog, scanInfo);
+            newWarnings == null ? List.of() : List.copyOf(newWarnings), changelog, scanInfo, scanCoverage);
     }
 
     public QueryResult withChangelog(ChangelogInfo info) {
-        return new QueryResult(columns, rows, durationMs, error, tableRegistered, engine, warnings, info, scanInfo);
+        return new QueryResult(columns, rows, durationMs, error, tableRegistered, engine, warnings, info, scanInfo, scanCoverage);
     }
 
     public QueryResult withScanInfo(String info) {
         return new QueryResult(columns, rows, durationMs, error, tableRegistered, engine,
-            warnings, changelog, info);
+            warnings, changelog, info, scanCoverage);
+    }
+
+    public QueryResult withScanCoverage(ScanCoverage coverage) {
+        return new QueryResult(columns, rows, durationMs, error, tableRegistered, engine,
+            warnings, changelog, scanInfo, coverage);
     }
 
     /**
@@ -83,6 +94,6 @@ public record QueryResult(
      * passing for a normal answer.
      */
     public QueryResult withRegisteredFlag(boolean registered) {
-        return new QueryResult(columns, rows, durationMs, error, registered, engine, warnings, changelog, scanInfo);
+        return new QueryResult(columns, rows, durationMs, error, registered, engine, warnings, changelog, scanInfo, scanCoverage);
     }
 }

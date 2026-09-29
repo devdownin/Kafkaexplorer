@@ -7,7 +7,7 @@ import {
   formatSql, tokenizeSql, sortRows, sortKeyOf, cellText, nextActiveTabId,
   isResultStale, writeStored, readStored, removeStored,
   readLayout, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT, SPLIT_MIN, SIDEBAR_MAX,
-  readSqlParam, buildQueryLink,
+  readSqlParam, readQueryOptions, buildQueryLink,
   NARROW_ALTERNATIVES, WIDE_WINDOW_MIN_PX, dismissNarrowNotice, readNarrowNoticeDismissed,
   starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, offsetAt, resolveOrigin,
@@ -774,6 +774,14 @@ describe('pushHistory', () => {
     expect(out).toEqual([{ sql: 'a', ts: 2, rows: 9 }]);
   });
 
+  it('keeps distinct engine and offset choices for identical SQL', () => {
+    const sql = 'SELECT * FROM t';
+    const flink: HistoryEntry = { sql, ts: 1, engineMode: 'FLINK' };
+    const recent: HistoryEntry = { sql, ts: 2, engineMode: 'KAFKA_DIRECT', offsetMode: 'LATEST' };
+    const oldest: HistoryEntry = { sql, ts: 3, engineMode: 'KAFKA_DIRECT', offsetMode: 'EARLIEST' };
+    expect(pushHistory(pushHistory(pushHistory([], flink), recent), oldest)).toEqual([oldest, recent, flink]);
+  });
+
   it('honours the cap', () => {
     const many = Array.from({ length: 20 }, (_, i) => entry(`q${i}`));
     expect(pushHistory(many, entry('new')).length).toBe(20);
@@ -878,6 +886,13 @@ describe('withoutLeadingCte', () => {
 });
 
 describe('readSqlParam / buildQueryLink', () => {
+  it('round-trips an explicit engine and Kafka offset with the SQL', () => {
+    const link = buildQueryLink('https://host/query', 'SELECT * FROM t',
+      { engineMode: 'KAFKA_DIRECT', offsetMode: 'LATEST' });
+    expect(readQueryOptions(new URL(link).search)).toEqual({ engineMode: 'KAFKA_DIRECT', offsetMode: 'LATEST' });
+    expect(readSqlParam(new URL(link).search)).toBe('SELECT * FROM t');
+    expect(readQueryOptions('?engine=unknown&offset=bogus')).toEqual({ engineMode: 'FLINK', offsetMode: 'EARLIEST' });
+  });
   it('round-trips SQL containing a percent sign', () => {
     // The regression: URLSearchParams.get already decodes, and the caller decoded a second time —
     // which throws URIError on `LIKE '%foo%'` and took the whole page down with it, the read

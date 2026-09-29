@@ -2093,6 +2093,14 @@ public class KafkaAdminService {
     }
 
     public List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getEarliestRecords(String topicName, int maxMessages) {
+        return scanEarliestRecords(topicName, maxMessages).records();
+    }
+
+    /** A fixed-end scan, including whether every partition reached its captured end offset. */
+    public record RecordScan(List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records,
+                             boolean complete) { }
+
+    public RecordScan scanEarliestRecords(String topicName, int maxMessages) {
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
@@ -2103,13 +2111,13 @@ public class KafkaAdminService {
         try {
             Consumer<byte[], byte[]> consumer = lease.consumer();
             List<TopicPartition> partitions = partitionsOf(consumer, topicName);
-            if (partitions.isEmpty()) return records;
+            if (partitions.isEmpty()) return new RecordScan(records, false);
             consumer.assign(partitions);
             // Seeked explicitly rather than through seekToBeginning, because drain() needs to be
             // told where the read starts — see the cursor it keeps. Same offsets either way.
             Map<TopicPartition, Long> startOffsets = consumer.beginningOffsets(partitions);
             startOffsets.forEach(consumer::seek);
-            records.addAll(drain(consumer, startOffsets, consumer.endOffsets(partitions), maxMessages));
+            return drainScan(consumer, startOffsets, consumer.endOffsets(partitions), maxMessages);
         } catch (Exception e) {
             // The borrower does not vouch for a client whose read threw: it is closed, not pooled.
             lease.discard();
@@ -2117,7 +2125,11 @@ public class KafkaAdminService {
         } finally {
             lease.close();
         }
-        return records;
+        return new RecordScan(records, false);
+    }
+
+    public RecordScan scanRecentRecords(String topicName, int maxMessages) {
+        return scanRecordsWithPredicate(topicName, maxMessages, null);
     }
 
     public List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getRecordsSince(String topicName, int minutes, int maxMessages) {
@@ -2150,6 +2162,10 @@ public class KafkaAdminService {
      *    to have full control over seeking.
      */
     private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> getRecordsWithPredicate(String topicName, int maxMessages, Long timestampLimit) {
+        return scanRecordsWithPredicate(topicName, maxMessages, timestampLimit).records();
+    }
+
+    private RecordScan scanRecordsWithPredicate(String topicName, int maxMessages, Long timestampLimit) {
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
         Properties props = new Properties();
         props.putAll(kafkaConfig.getKafkaProperties());
@@ -2162,7 +2178,7 @@ public class KafkaAdminService {
         try {
             Consumer<byte[], byte[]> consumer = lease.consumer();
             List<TopicPartition> partitions = partitionsOf(consumer, topicName);
-            if (partitions.isEmpty()) return records;
+            if (partitions.isEmpty()) return new RecordScan(records, false);
 
             consumer.assign(partitions);
 
@@ -2220,14 +2236,14 @@ public class KafkaAdminService {
             // The end offsets are the ones already read above: drain() compares its cursor
             // against them, and asking the broker a second time for numbers this method is
             // holding is a listOffsets round trip per sample, on the audit's hot path.
-            records.addAll(drain(consumer, startOffsets, endOffsets, maxMessages));
+            return drainScan(consumer, startOffsets, endOffsets, maxMessages);
         } catch (Exception e) {
             lease.discard();
             log.error("Error fetching records for topic {}", LogSafe.name(topicName), e);
         } finally {
             lease.close();
         }
-        return records;
+        return new RecordScan(records, false);
     }
 
     /** How long a record fetcher waits for a topic's metadata — what the describeTopics await used to be. */
@@ -2289,6 +2305,11 @@ public class KafkaAdminService {
     private List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> drain(
             Consumer<byte[], byte[]> consumer, Map<TopicPartition, Long> startOffsets,
             Map<TopicPartition, Long> endOffsets, int maxMessages) {
+        return drainScan(consumer, startOffsets, endOffsets, maxMessages).records();
+    }
+
+    private RecordScan drainScan(Consumer<byte[], byte[]> consumer, Map<TopicPartition, Long> startOffsets,
+                                Map<TopicPartition, Long> endOffsets, int maxMessages) {
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
         List<TopicPartition> partitions = List.copyOf(startOffsets.keySet());
         Map<TopicPartition, Long> nextOffsets = new HashMap<>(startOffsets);
@@ -2316,8 +2337,12 @@ public class KafkaAdminService {
             }
             emptyPolls = 0;
             for (org.apache.kafka.clients.consumer.ConsumerRecord<byte[], byte[]> record : polled) {
-                nextOffsets.merge(new TopicPartition(record.topic(), record.partition()),
-                    record.offset() + 1, Math::max);
+                TopicPartition partition = new TopicPartition(record.topic(), record.partition());
+                nextOffsets.merge(partition, record.offset() + 1, Math::max);
+                // A producer can append after endOffsets was captured, while a poll is in flight.
+                // Those records belong to the next snapshot, even if the fetcher delivered them.
+                Long end = endOffsets.get(partition);
+                if (end != null && record.offset() >= end) continue;
                 String value = deserializeValue(record.topic(), record.value());
                 String key = record.key() != null ? new String(record.key(), StandardCharsets.UTF_8) : null;
                 records.add(new org.apache.kafka.clients.consumer.ConsumerRecord<>(
@@ -2326,7 +2351,7 @@ public class KafkaAdminService {
                 if (records.size() >= maxMessages) break;
             }
         }
-        return records;
+        return new RecordScan(records, !hasUnreadOffsets(partitions, endOffsets, nextOffsets));
     }
 
     /** Pauses every assigned partition whose cursor has reached the end offset this read seeked against. */
