@@ -206,17 +206,19 @@ class SqlMcpToolsTest {
     }
 
     @Test
-    void a_create_table_naming_an_out_of_scope_topic_is_refused_without_listing_anything() throws Exception {
+    void a_create_table_naming_an_out_of_scope_topic_is_refused_as_a_write_without_listing_anything() throws Exception {
         properties.setAllowedTopicPrefixes(List.of("demo."));
 
         assertThatThrownBy(() -> tools().sqlQuery(
                 "CREATE TABLE leak (id STRING) WITH ('connector' = 'kafka', "
                         + "'topic' = 'internal.mcp.audit')", null, null, null))
                 .isInstanceOf(McpToolException.class)
-                .hasMessageContaining("internal.mcp.audit");
+                .satisfies(e -> assertThat(((McpToolException) e).guard())
+                        .isEqualTo(com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpGuard.READONLY));
 
-        // The statement said which topic it wanted, so nothing had to be resolved to refuse it.
+        // Writes are rejected before topic resolution or execution, regardless of their topic.
         verify(kafka, org.mockito.Mockito.never()).listTopics();
+        verify(flink, never()).executeSync(any());
     }
 
     @Test
