@@ -9,6 +9,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.QueryInitResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.service.DdlGeneratorService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
@@ -24,11 +25,19 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
 import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/query")
 public class QueryController {
+
+    // The UI offers at most 5,000 rows. An HTTP caller must not bypass that ceiling or supply
+    // an arbitrarily long result-collection budget. Limit simultaneous requests as well.
+    private static final int MAX_HTTP_ROWS = 5_000;
+    private static final long MAX_HTTP_TIMEOUT_MS = 60_000L;
+    private static final int MAX_HTTP_IN_FLIGHT = 4;
+    private final Semaphore querySlots = new Semaphore(MAX_HTTP_IN_FLIGHT);
 
     private final FlinkSqlService flinkSqlService;
     private final SqlExplorationService sqlExplorationService;
@@ -36,17 +45,19 @@ public class QueryController {
     private final SqlQueryValidator sqlQueryValidator;
     private final SchemaInferenceService schemaInferenceService;
     private final DdlGeneratorService ddlGeneratorService;
+    private final ExplorerConfig explorerConfig;
 
     public QueryController(FlinkSqlService flinkSqlService, SqlExplorationService sqlExplorationService,
                            KafkaAdminService kafkaAdminService,
                            SqlQueryValidator sqlQueryValidator, SchemaInferenceService schemaInferenceService,
-                           DdlGeneratorService ddlGeneratorService) {
+                           DdlGeneratorService ddlGeneratorService, ExplorerConfig explorerConfig) {
         this.flinkSqlService = flinkSqlService;
         this.sqlExplorationService = sqlExplorationService;
         this.kafkaAdminService = kafkaAdminService;
         this.sqlQueryValidator = sqlQueryValidator;
         this.schemaInferenceService = schemaInferenceService;
         this.ddlGeneratorService = ddlGeneratorService;
+        this.explorerConfig = explorerConfig;
     }
 
     /**
@@ -102,7 +113,43 @@ public class QueryController {
     // exercised and no caller needed. Two paths to one behaviour is how they drift.
     @PostMapping(value = "/run-sync", produces = "application/json")
     public QueryResult runSync(@RequestBody QueryRequest request) {
-        return sqlExplorationService.runSync(request);
+        validateHttpRequest(request);
+        acquireQuerySlot();
+        try {
+            return sqlExplorationService.runSync(boundedHttpRequest(request));
+        } finally {
+            querySlots.release();
+        }
+    }
+
+    private QueryRequest boundedHttpRequest(QueryRequest request) {
+        int rows = request.maxRows() != null ? request.maxRows()
+            : Math.clamp(explorerConfig.getDefaultMaxRows(), 1, MAX_HTTP_ROWS);
+        long timeout = request.timeout() != null ? request.timeout()
+            : Math.clamp(explorerConfig.getDefaultQueryTimeoutMs(), 1L, MAX_HTTP_TIMEOUT_MS);
+        return new QueryRequest(request.sql(), request.topic(), rows, timeout,
+            request.readMode(), request.queryId(), request.directRead());
+    }
+
+    private static void validateHttpRequest(QueryRequest request) {
+        if (request == null || request.sql() == null || request.sql().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "SQL is required");
+        }
+        if (request.maxRows() != null && (request.maxRows() < 1 || request.maxRows() > MAX_HTTP_ROWS)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "maxRows must be between 1 and " + MAX_HTTP_ROWS);
+        }
+        if (request.timeout() != null && (request.timeout() < 1 || request.timeout() > MAX_HTTP_TIMEOUT_MS)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "timeout must be between 1 and " + MAX_HTTP_TIMEOUT_MS + " ms");
+        }
+    }
+
+    private void acquireQuerySlot() {
+        if (!querySlots.tryAcquire()) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                "Too many SQL requests are running; retry when one completes");
+        }
     }
 
     /*
@@ -210,11 +257,17 @@ public class QueryController {
 
     @PostMapping("/validate")
     public SqlValidationResponse validate(@RequestBody QueryRequest request) {
+        validateHttpRequest(request);
+        acquireQuerySlot();
         try {
-            sqlQueryValidator.validate(request.sql());
-            return SqlValidationResponse.accepted();
-        } catch (IllegalArgumentException e) {
-            return SqlValidationResponse.rejected(e.getMessage());
+            try {
+                sqlQueryValidator.validate(request.sql());
+                return SqlValidationResponse.accepted();
+            } catch (IllegalArgumentException e) {
+                return SqlValidationResponse.rejected(e.getMessage());
+            }
+        } finally {
+            querySlots.release();
         }
     }
 }

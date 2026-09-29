@@ -16,6 +16,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.ToolCategory;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkTableStore;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
+import com.compagnonsdudev.kafkasqlexplorer.service.SqlStatements;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 
@@ -42,8 +43,8 @@ import java.util.Map;
  *
  * <p>The write surface stays closed here whatever the readonly flag says: {@code FlinkSqlService}
  * whitelists {@code SELECT}, {@code EXPLAIN}, {@code SHOW}, {@code DESCRIBE} and
- * {@code CREATE TABLE}, so a {@code DELETE} or an {@code INSERT} is refused by the engine before
- * this class has an opinion. That is deliberate: one whitelist, in the place that executes.
+ * {@code CREATE TABLE}, so this read-only tool must refuse that mutating exception before it
+ * reaches the engine. The engine remains the authority for the other unsupported statements.
  */
 public class SqlMcpTools implements ReadOnlyMcpTools {
 
@@ -81,8 +82,8 @@ public class SqlMcpTools implements ReadOnlyMcpTools {
             rows. A topic can be queried by name with no DDL: the table is inferred from a sample of
             its records on first use. Call kex_infer_schema first if you need the column names.
 
-            Only SELECT, EXPLAIN, SHOW, DESCRIBE and CREATE TABLE are accepted; anything else is
-            refused by the engine.
+            Only read-only statements are accepted here: SELECT, EXPLAIN, SHOW and DESCRIBE.
+            CREATE TABLE changes the Flink catalogue and is not available through this tool.
 
             Read `engine` in the answer. FLINK means the planner ran the statement, with JOIN and
             subquery support. KAFKA_DIRECT means a bounded direct reader answered instead: it reads
@@ -105,6 +106,15 @@ public class SqlMcpTools implements ReadOnlyMcpTools {
         if (sql == null || sql.isBlank()) {
             throw new McpToolException(McpErrorCode.VALIDATION_FAILED, McpGuard.VALIDATION,
                     "sql is required");
+        }
+
+        // The engine's whitelist includes CREATE TABLE for the interactive editor. This MCP
+        // tool is always registered as read-only, even when explorer.mcp.readonly=true, so it
+        // cannot delegate that statement to the engine. Prepare it just as the engine does to
+        // prevent a leading comment or quoted identifier from changing the classification.
+        if (SqlStatements.classifiableBody(FlinkSqlService.prepareSql(sql)).startsWith("CREATE TABLE")) {
+            throw new McpToolException(McpErrorCode.POLICY_DENIED, McpGuard.READONLY,
+                    "CREATE TABLE changes the Flink catalogue and is not available from kex_sql_query");
         }
 
         // Before the read, not after it: the whole point of a scope check is that what it refuses

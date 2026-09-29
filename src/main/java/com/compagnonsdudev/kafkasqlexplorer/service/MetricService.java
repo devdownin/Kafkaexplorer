@@ -684,6 +684,10 @@ public class MetricService {
      */
     static boolean namesOneSourceOnly(String sql) {
         if (sql == null || sql.isBlank()) return false;
+        // SqlAst walks the FROM tree; a subquery in WHERE or SELECT is outside that tree.
+        // The direct reader cannot evaluate it, even when the outer FROM names one table.
+        String outsideValues = SqlStatements.outsideLiterals(sql);
+        if (outsideValues.replaceAll("\\s+", "").toUpperCase(Locale.ROOT).contains("(SELECT")) return false;
         // Le parseur répond exactement à cette question — une source, aucune jointure, aucune
         // sous-requête — là où les quatre tests lexicaux qui suivent l'approchent. Ils restent
         // pour l'instruction que la grammaire refuse, et ils échouent fermé comme avant.

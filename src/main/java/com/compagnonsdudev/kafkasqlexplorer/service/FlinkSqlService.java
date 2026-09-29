@@ -1147,6 +1147,17 @@ public class FlinkSqlService {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, "SQL Validation Error: " + e.getMessage());
         }
 
+        // directRead is a client-supplied field on the public API as well as a metric hint.
+        // Refuse an incompatible shape before auto-registration can sample a Kafka topic.
+        if (request.wantsDirectRead() && sql.startsWith("SELECT")
+                && (SqlStatements.startsWithCte(strippedSql)
+                    || !MetricService.isSingleTableRead(strippedSql))) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime,
+                "The direct Kafka reader requires one table without joins, subqueries "
+                    + "or window functions; use the Flink planner for this statement.");
+        }
+
         try {
             AutoRegResult autoReg = autoRegisterTableIfNeeded(strippedSql);
             if (autoReg.error() != null) {
@@ -1183,7 +1194,7 @@ public class FlinkSqlService {
                  * ask it only for a single-table read, which is the shape this reader can answer;
                  * see QueryRequest.directRead().
                  */
-                if (request.wantsDirectRead() && extractPrimaryTable(sqlToExecute) != null) {
+                if (request.wantsDirectRead()) {
                     QueryResult direct = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
                     return autoReg.registered() ? withRegisteredFlag(direct) : direct;
                 }

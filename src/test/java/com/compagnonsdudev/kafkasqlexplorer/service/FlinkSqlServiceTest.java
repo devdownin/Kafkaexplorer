@@ -640,6 +640,28 @@ class FlinkSqlServiceTest {
         verify(kafkaAdminService, never()).getRecentRecords(eq("windowed.count.topic"), anyInt());
     }
 
+    @Test
+    void an_explicit_direct_read_refuses_a_join_instead_of_returning_only_the_first_table() {
+        QueryResult result = service.executeSql(QueryRequest.directSql(
+            "SELECT o.order_id FROM orders o JOIN customers c ON o.customer_id = c.customer_id",
+            50, 10_000L, "earliest-offset"));
+
+        assertHasError(result);
+        assertTrue(result.rows().isEmpty());
+        assertTrue(result.error().contains("requires one table"), result.error());
+    }
+
+    @Test
+    void an_explicit_direct_read_refuses_a_subquery() {
+        QueryResult result = service.executeSql(QueryRequest.directSql(
+            "SELECT order_id FROM orders WHERE customer_id IN "
+                + "(SELECT customer_id FROM customers WHERE name = 'Alice')",
+            50, 10_000L, "earliest-offset"));
+
+        assertHasError(result);
+        assertTrue(result.rows().isEmpty());
+    }
+
     /** Registers 'strict.mode.topic' as a 2-row datagen table, with Kafka records behind it. */
     private void stubRegisteredTopicWithRecords() throws Exception {
         doReturn(List.of("strict.mode.topic")).when(kafkaAdminService).listTopics();
