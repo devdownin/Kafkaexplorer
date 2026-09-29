@@ -2,8 +2,8 @@
 """Compare two already-provisioned SQL slices through POST /api/query/run-sync.
 
 The caller supplies equivalent SQL for the direct and bounded Flink tables. This script
-does not create data or silently change a table: dataset size and topic count are labels
-in the JSON result and must be provisioned and verified separately.
+does not create data or silently change a table. Use prepare-sql-benchmark.py and pass its
+manifest to verify the exact fixture and both engines before collecting timings.
 """
 
 import argparse
@@ -118,6 +118,8 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--dataset-records", required=True, type=int)
     parser.add_argument("--catalog-topics", required=True, type=int)
+    parser.add_argument("--fixture-manifest", type=Path,
+                        help="Verified manifest from prepare-sql-benchmark.py")
     parser.add_argument("--runs", type=int, default=30)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--concurrency", type=int, nargs="+", default=[1, 8])
@@ -141,8 +143,25 @@ def main():
            "KAFKA_DIRECT": args.direct_sql_file.read_text().strip()}
     if not all(sql.values()):
         parser.error("SQL files must not be empty")
+    fixture = None
+    if args.fixture_manifest:
+        fixture = json.loads(args.fixture_manifest.read_text())
+        if (fixture["records"] != args.dataset_records
+                or fixture["topics"] != args.catalog_topics
+                or any(statement != fixture["sql"] for statement in sql.values())
+                or args.direct_offset != "earliest-offset"):
+            parser.error("fixture size, SQL or direct offset differs from verified manifest")
+        for mode in ("KAFKA_DIRECT", "FLINK"):
+            probe = run_one(base, sql[mode], mode, args, token)
+            if probe.get("error") or probe.get("rows") != 0:
+                parser.error(f"{mode} fixture preflight failed: {probe}")
+            if mode == "KAFKA_DIRECT" and (probe["recordsFetched"] != fixture["records"]
+                                            or probe["coverage"] != "COMPLETE"):
+                parser.error(f"direct scan did not cover the exact fixture: {probe}")
     report = {"datasetRecords": args.dataset_records, "catalogTopics": args.catalog_topics,
-              "note": "Labels supplied by caller; provision the same captured offset slice for both engines.",
+              "fixture": fixture,
+              "note": "Exact fixture preflight passed" if fixture else
+                      "Labels supplied by caller; provision and verify the same offset slice.",
               "results": {}}
     for concurrency in args.concurrency:
         for mode in ("KAFKA_DIRECT", "FLINK"):

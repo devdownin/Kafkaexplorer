@@ -1190,11 +1190,12 @@ public class FlinkSqlService {
         // Refuse an incompatible shape before auto-registration can sample a Kafka topic.
         if (request.wantsDirectRead() && sql.startsWith("SELECT")
                 && (SqlStatements.startsWithCte(strippedSql)
-                    || !MetricService.isSingleTableRead(strippedSql))) {
+                    || (!MetricService.isSingleTableRead(strippedSql)
+                        && !isDirectTumbleRead(strippedSql)))) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(),
                 System.currentTimeMillis() - startTime,
                 "The direct Kafka reader requires one table without joins, subqueries "
-                    + "or window functions; use the Flink planner for this statement.");
+                    + "or unsupported window functions; use the Flink planner for this statement.");
         }
 
         if (request.wantsDirectRead() && request.wantsFlinkOnly()) {
@@ -1515,6 +1516,13 @@ public class FlinkSqlService {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
                 SqlErrorClassifier.explain(e));
         }
+    }
+
+    /** TUMBLE is the one window whose direct buckets preserve the SQL window shape. */
+    private static boolean isDirectTumbleRead(String sql) {
+        if (!MetricService.namesOneSourceOnly(sql) || !SqlStatements.hasWindowTableCall(sql)) return false;
+        Matcher call = WINDOW_CALL.matcher(sql);
+        return call.find() && "TUMBLE".equalsIgnoreCase(call.group(1));
     }
 
     /**

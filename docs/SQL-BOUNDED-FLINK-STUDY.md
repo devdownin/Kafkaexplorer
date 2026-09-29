@@ -39,21 +39,30 @@ Une véritable option « N derniers globaux » exigerait une décision de produi
 
 ## Fenêtres et jointures
 
-Les tests d'intégration supplémentaires utilisent une source bornée avec un watermark et des horodatages désordonnés pour comparer `TUMBLE` à la fenêtre du lecteur direct ; un message nul est inclus. Une autre paire de topics bornés vérifie une jointure interne. Le lecteur direct doit refuser une jointure ou une sous-requête au lieu de lire seulement la première table. Les fenêtres `HOP`, `SESSION`, les événements plus tardifs que le watermark et les jointures externes restent hors de la comparaison de ce lot.
+Les tests d'intégration supplémentaires utilisent une source bornée avec un watermark et des horodatages désordonnés pour comparer `TUMBLE` à la fenêtre du lecteur direct ; un message nul est inclus. Une seconde lecture laisse une partition vide et émet un événement après la progression du watermark : Flink peut l'écarter tandis que le lecteur direct le compte dans son bucket, une différence de sémantique visible. Une autre paire de topics bornés vérifie une jointure interne. `directRead` accepte TUMBLE sur une seule source, mais refuse les jointures, sous-requêtes et autres fonctions de fenêtre. `HOP`, `SESSION` et les jointures externes ne sont pas comparés ici.
 
 ## Banc de mesure reproductible
 
-`scripts/benchmark-sql-engines.py` appelle le même endpoint `/api/query/run-sync` pour les deux moteurs. Préparer des données et une table Flink **bornée aux mêmes offsets** que la tranche directe ; fournir les deux SQL dans des fichiers. Exemple, après avoir vérifié que la tranche et le catalogue contiennent réellement 10 000 messages et 100 topics :
+`scripts/prepare-sql-benchmark.py` crée un préfixe isolé dans le Compose du dépôt (un topic alimenté, les autres vides), vérifie le nombre de topics et les offsets exacts, puis enregistre une table Flink bornée à cette tranche. Le SQL écarte toutes les lignes avec `WHERE marker = 'NEVER'` afin de forcer une lecture complète sans plafonner le changelog de `COUNT(*)`. Il ne supprime rien et refuse un préfixe déjà existant. Démarrer le stack avant de le lancer, et choisir un nouveau préfixe par campagne :
+
+```bash
+python3 scripts/prepare-sql-benchmark.py \
+  --prefix bench_10k_100 --records 10000 --topics 100 \
+  --url http://localhost:8080 --output-dir /tmp/bench_10k_100
+```
+
+`scripts/benchmark-sql-engines.py` appelle ensuite le même endpoint `/api/query/run-sync` pour les deux moteurs et vérifie avant les mesures que le scan direct couvre exactement les offsets du manifeste, sans erreur ni ligne retournée pour les deux moteurs :
 
 ```bash
 python3 scripts/benchmark-sql-engines.py \
   --url http://localhost:8080 \
-  --flink-sql-file /tmp/flink-bounded.sql \
-  --direct-sql-file /tmp/kafka-direct.sql \
-  --flink-explain-sql-file /tmp/flink-explain.sql \
+  --flink-sql-file /tmp/bench_10k_100/flink.sql \
+  --direct-sql-file /tmp/bench_10k_100/direct.sql \
+  --flink-explain-sql-file /tmp/bench_10k_100/explain.sql \
+  --fixture-manifest /tmp/bench_10k_100/fixture.json \
   --dataset-records 10000 --catalog-topics 100 \
   --runs 30 --warmup 3 --concurrency 1 8 \
   --output /tmp/sql-benchmark-10k-100.json
 ```
 
-Répéter pour 100 000 messages, puis 1 000 topics. Le JSON contient p50/p95 client et serveur, nombre de messages et état de couverture directe, taux de réponses annulées, et pic de heap et de threads échantillonnés via `/actuator/prometheus` lorsqu'il est accessible. `EXPLAIN` donne un **proxy de planification** incluant HTTP et prise du runtime, pas le temps interne exact du planner. `--cancel-after-ms` lance un essai d'annulation séparé ; ne pas mélanger ces mesures aux latences normales. Le jeton facultatif est lu depuis `KEX_BENCH_TOKEN`. Le script ne crée pas les topics : ses tailles sont des étiquettes fournies par l'appelant, à vérifier avant publication d'un résultat. Aucun chiffre p95 n'est revendiqué tant qu'une campagne sur les quatre configurations n'a pas été exécutée.
+Répéter avec un nouveau préfixe pour les trois autres couples 10k/1000, 100k/100 et 100k/1000. Le JSON contient p50/p95 client et serveur, nombre de messages et état de couverture directe, taux de réponses annulées, et pic de heap et de threads échantillonnés via `/actuator/prometheus` lorsqu'il est accessible. `EXPLAIN` donne un **proxy de planification** incluant HTTP et prise du runtime, pas le temps interne exact du planner. `--cancel-after-ms` lance un essai d'annulation séparé ; ne pas mélanger ces mesures aux latences normales. Le jeton facultatif est lu depuis `KEX_BENCH_TOKEN`. Le banc ne supprime ni les topics ni les tables : nettoyer ce jeu isolé séparément après inspection, selon la politique de l'environnement. Aucun chiffre p95 n'est revendiqué tant qu'une campagne sur les quatre configurations n'a pas été exécutée.

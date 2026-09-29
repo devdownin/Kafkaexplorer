@@ -45,6 +45,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -585,6 +587,53 @@ class KafkaClusterIntegrationTest {
     }
 
     @Test
+    void boundedTumbleDropsLateEventAndClosesWithAnEmptyPartition() throws Exception {
+        String topic = "it.bounded.window.late";
+        createProbeTopics(new NewTopic(topic, 2, (short) 1));
+        long epoch = 1_704_067_200_000L;
+        String table = DdlGeneratorService.toTableName(topic);
+        FlinkSqlService flink = flinkService();
+        String columns = "event_ms BIGINT, event_time AS TO_TIMESTAMP_LTZ(event_ms, 3), "
+            + "WATERMARK FOR event_time AS event_time - INTERVAL '3' SECOND";
+        // The stopping offset is known in advance. Starting the bounded job before producing
+        // lets the periodic watermark advance before the last record arrives; preloading all
+        // four records would only test batch-end flushing and could not prove lateness.
+        String ddl = "CREATE TABLE " + table + " (" + columns + ") WITH ("
+            + "'connector' = 'kafka', 'topic' = '" + topic + "', "
+            + "'properties.bootstrap.servers' = '" + KAFKA.getBootstrapServers() + "', "
+            + "'value.format' = 'json', 'scan.startup.mode' = 'specific-offsets', "
+            + "'scan.startup.specific-offsets' = 'partition:0,offset:0;partition:1,offset:0', "
+            + "'scan.bounded.mode' = 'specific-offsets', "
+            + "'scan.bounded.specific-offsets' = 'partition:0,offset:0;partition:1,offset:4')";
+        assertNull(flink.executeSql(QueryRequest.ddl(ddl, 30_000L)).error());
+
+        String prefix = "SELECT window_start, COUNT(*) AS n FROM TABLE(TUMBLE(TABLE " + table;
+        String suffix = ", INTERVAL '10' SECOND)) GROUP BY window_start";
+        CompletableFuture<QueryResult> query = CompletableFuture.supplyAsync(() -> flink.executeSql(new QueryRequest(
+            prefix + ", DESCRIPTOR(event_time)" + suffix,
+            null, 10, 45_000L, null, null, false, true)));
+        try (KafkaProducer<String, String> producer = probeProducer()) {
+            Thread.sleep(5_000L); // allow the Flink Kafka source to subscribe before data arrives
+            for (long delta : new long[] {0, 2_000, 21_000}) {
+                producer.send(new ProducerRecord<>(topic, 1, null,
+                    "{\"event_ms\":" + (epoch + delta) + "}"));
+            }
+            producer.flush();
+            Thread.sleep(2_000L); // allow the periodic watermark past the first window
+            producer.send(new ProducerRecord<>(topic, 1, null,
+                "{\"event_ms\":" + (epoch + 1_000) + "}")).get();
+        }
+        QueryResult bounded = query.get(55, TimeUnit.SECONDS);
+        QueryResult direct = flink.executeSql(QueryRequest.directSql(
+            prefix + ", DESCRIPTOR(event_ms)" + suffix, 10, 30_000L, "earliest-offset"));
+        assertNull(direct.error(), String.valueOf(direct.error()));
+        assertNull(bounded.error(), String.valueOf(bounded.error()));
+        assertEquals(List.of("1", "3"), values(direct, "n"), "direct buckets all four records");
+        assertEquals(List.of("1", "2"), values(bounded, "n"),
+            "Flink drops the late record and completes despite the empty partition");
+    }
+
+    @Test
     void boundedJoinReadsTwoCapturedTopicsWhileDirectRejectsTheShape() throws Exception {
         String left = "it.bounded.join.left";
         String right = "it.bounded.join.right";
@@ -611,7 +660,7 @@ class KafkaClusterIntegrationTest {
         assertEquals("FLINK", bounded.engine());
         assertEquals(List.of("A"), values(bounded, "id"));
         assertNotNull(direct.error());
-        assertTrue(direct.error().contains("JOIN"), direct.error());
+        assertTrue(direct.error().contains("joins"), direct.error());
     }
 
     private static void createProbeTopics(NewTopic... topics) throws Exception {
