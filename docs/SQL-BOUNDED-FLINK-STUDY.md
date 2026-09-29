@@ -24,3 +24,9 @@ Référence : [options du connecteur Kafka Flink](https://nightlies.apache.org/f
 Le premier passage CI a confirmé les six offsets mais a coupé le changelog de `COUNT(*)` au plafond de dix lignes : la dernière correction affichée valait 5. Six messages peuvent produire plus de six lignes de corrections. Le test collecte donc vingt lignes au maximum et exige que ce plafond ne soit pas atteint avant de comparer la valeur finale.
 
 Cette tranche fixe ne résout pas encore « les N derniers messages » en présence de nouvelles écritures ni les divergences possibles pour `WHERE`, fenêtres, jointures et délais. Les mesures et ces cas restent nécessaires avant d'envisager Flink SQL comme mode unique.
+
+## Tranche figée sur huit partitions
+
+`boundedFlinkSnapshotKeepsSelectiveFilterStableAfterAppends` capture les offsets de début et de fin de huit partitions, lit la tranche avec Kafka Direct, puis ajoute des messages qui correspondent au filtre **avant** de lancer Flink. Il compare les couples partition/offset sélectionnés par `WHERE status = 'KEEP'` et la valeur finale de `COUNT(*)` avec la tranche initiale. L'objectif est de prouver que les nouveaux messages n'entrent pas dans le résultat malgré un filtre qui les sélectionnerait.
+
+Ce cas n'établit ni l'ordre global des « N derniers » entre partitions, ni l'équivalence des fenêtres et jointures, ni le coût du démarrage de Flink. Ces points restent des critères de décision, pas des hypothèses validées par les deux tests.

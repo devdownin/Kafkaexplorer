@@ -10,6 +10,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
+import com.compagnonsdudev.kafkasqlexplorer.domain.TopicDescriptor;
 import com.compagnonsdudev.kafkasqlexplorer.parser.AvroSchemaInferrer;
 import com.compagnonsdudev.kafkasqlexplorer.parser.JsonSchemaInferrer;
 import com.compagnonsdudev.kafkasqlexplorer.parser.XmlSchemaInferrer;
@@ -463,6 +464,80 @@ class KafkaClusterIntegrationTest {
         assertNotNull(count.changelog());
         assertFalse(count.changelog().capReached(), "the final aggregate update must be collected");
         assertEquals(6L, ((Number) count.rows().get(count.rows().size() - 1).get("n")).longValue());
+    }
+
+    /** Later appends must not leak into the frozen slice, even across eight partitions. */
+    @Test
+    void boundedFlinkSnapshotKeepsSelectiveFilterStableAfterAppends() throws Exception {
+        String topic = "it.bounded.concurrent";
+        int partitions = 8;
+        Properties adminProps = new Properties();
+        adminProps.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        Properties producerProps = new Properties();
+        producerProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        producerProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        producerProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        try (Admin admin = Admin.create(adminProps)) {
+            admin.createTopics(List.of(new NewTopic(topic, partitions, (short) 1))).all().get();
+        }
+        try (KafkaProducer<String, String> producer = new KafkaProducer<>(producerProps)) {
+            for (int partition = 0; partition < partitions; partition++) {
+                producer.send(new ProducerRecord<>(topic, partition, null,
+                    "{\"id\":\"" + partition + "-keep\",\"status\":\"KEEP\"}"));
+                producer.send(new ProducerRecord<>(topic, partition, null,
+                    "{\"id\":\"" + partition + "-drop\",\"status\":\"DROP\"}"));
+            }
+            producer.flush();
+
+            TopicDescriptor snapshot = adminService.getTopicDescriptor(topic);
+            List<ConsumerRecord<String, String>> direct = adminService.getEarliestRecords(topic, 100);
+            assertEquals(16, direct.size());
+            for (int partition = 0; partition < partitions; partition++) {
+                producer.send(new ProducerRecord<>(topic, partition, null,
+                    "{\"id\":\"" + partition + "-late\",\"status\":\"KEEP\"}"));
+            }
+            producer.flush();
+
+            String starts = java.util.stream.IntStream.range(0, partitions)
+                .mapToObj(p -> "partition:" + p + ",offset:" + snapshot.minOffsets().get(p))
+                .collect(java.util.stream.Collectors.joining(";"));
+            String ends = java.util.stream.IntStream.range(0, partitions)
+                .mapToObj(p -> "partition:" + p + ",offset:" + snapshot.maxOffsets().get(p))
+                .collect(java.util.stream.Collectors.joining(";"));
+            String table = "it_bounded_eight_partitions";
+            FlinkSqlService flink = flinkService();
+            String ddl = "CREATE TABLE " + table + " (id STRING, status STRING, "
+                + "kafka_partition INT METADATA FROM 'partition' VIRTUAL, "
+                + "kafka_offset BIGINT METADATA FROM 'offset' VIRTUAL) WITH ("
+                + "'connector' = 'kafka', 'topic' = '" + topic + "', "
+                + "'properties.bootstrap.servers' = '" + KAFKA.getBootstrapServers() + "', "
+                + "'value.format' = 'json', 'scan.startup.mode' = 'specific-offsets', "
+                + "'scan.startup.specific-offsets' = '" + starts + "', "
+                + "'scan.bounded.mode' = 'specific-offsets', "
+                + "'scan.bounded.specific-offsets' = '" + ends + "')";
+            QueryResult created = flink.executeSql(QueryRequest.ddl(ddl, 30_000L));
+            assertNull(created.error(), String.valueOf(created.error()));
+
+            QueryResult filtered = flink.executeSql(new QueryRequest(
+                "SELECT id, kafka_partition, kafka_offset FROM " + table + " WHERE status = 'KEEP'",
+                null, 20, 30_000L, null, null, false, true));
+            assertNull(filtered.error(), String.valueOf(filtered.error()));
+            assertEquals("FLINK", filtered.engine());
+            assertEquals(direct.stream().filter(r -> r.value().contains("\"status\":\"KEEP\""))
+                    .map(r -> r.partition() + ":" + r.offset()).collect(java.util.stream.Collectors.toSet()),
+                filtered.rows().stream().map(r -> r.get("kafka_partition") + ":" + r.get("kafka_offset"))
+                    .collect(java.util.stream.Collectors.toSet()));
+            assertEquals(8, filtered.rows().size());
+            assertTrue(filtered.rows().stream().noneMatch(r -> String.valueOf(r.get("id")).contains("late")));
+
+            QueryResult count = flink.executeSql(new QueryRequest(
+                "SELECT COUNT(*) AS n FROM " + table, null, 40, 30_000L, null, null, false, true));
+            assertNull(count.error(), String.valueOf(count.error()));
+            assertEquals("FLINK", count.engine());
+            assertNotNull(count.changelog());
+            assertFalse(count.changelog().capReached());
+            assertEquals(direct.size(), ((Number) count.rows().get(count.rows().size() - 1).get("n")).intValue());
+        }
     }
 
     /**
