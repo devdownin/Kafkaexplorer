@@ -446,7 +446,11 @@ class KafkaClusterIntegrationTest {
 
         List<ConsumerRecord<String, String>> direct = adminService.getEarliestRecords(TRIMMED_TOPIC, 100);
         assertEquals(6, direct.size());
-        assertTrue(adminService.scanEarliestRecords(TRIMMED_TOPIC, 100).complete());
+        KafkaAdminService.RecordScan completeScan = adminService.scanEarliestRecords(TRIMMED_TOPIC, 100);
+        assertTrue(completeScan.complete());
+        assertEquals(3, completeScan.boundaries().size());
+        assertTrue(completeScan.boundaries().stream().allMatch(b ->
+            b.startOffset() == 2 && b.endOffsetExclusive() == 4 && b.nextOffset() == 4));
         assertFalse(adminService.scanEarliestRecords(TRIMMED_TOPIC, 3).complete());
         QueryResult rows = flink.executeSql(new QueryRequest(
             "SELECT id, kafka_partition, kafka_offset FROM " + table,
@@ -463,6 +467,7 @@ class KafkaClusterIntegrationTest {
         assertEquals("FLINK", count.engine());
         assertNotNull(count.changelog());
         assertFalse(count.changelog().capReached(), "the final aggregate update must be collected");
+        assertTrue(count.changelog().sourceCompleted(), "bounded Kafka source must end before the row cap");
         assertEquals(6L, ((Number) count.rows().get(count.rows().size() - 1).get("n")).longValue());
     }
 
@@ -536,8 +541,110 @@ class KafkaClusterIntegrationTest {
             assertEquals("FLINK", count.engine());
             assertNotNull(count.changelog());
             assertFalse(count.changelog().capReached());
+            assertTrue(count.changelog().sourceCompleted());
             assertEquals(direct.size(), ((Number) count.rows().get(count.rows().size() - 1).get("n")).intValue());
         }
+    }
+
+    @Test
+    void boundedTumbleAgreesWithDirectOnOutOfOrderEventTimeAndTombstone() throws Exception {
+        String topic = "it.bounded.window";
+        createProbeTopics(new NewTopic(topic, 1, (short) 1));
+        long epoch = 1_704_067_200_000L;
+        try (KafkaProducer<String, String> producer = probeProducer()) {
+            for (long delta : new long[] {0, 2_000, 1_000, 11_000}) {
+                producer.send(new ProducerRecord<>(topic, 0, null,
+                    "{\"event_ms\":" + (epoch + delta) + ",\"id\":\"" + delta + "\"}"));
+            }
+            producer.send(new ProducerRecord<>(topic, 0, "deleted", null));
+            producer.flush();
+        }
+        TopicDescriptor snapshot = adminService.getTopicDescriptor(topic);
+        String table = DdlGeneratorService.toTableName(topic);
+        FlinkSqlService flink = flinkService();
+        String ddl = boundedProbeDdl(table, topic,
+            "event_ms BIGINT, id STRING, event_time AS TO_TIMESTAMP_LTZ(event_ms, 3), "
+                + "WATERMARK FOR event_time AS event_time - INTERVAL '3' SECOND",
+            snapshot);
+        assertNull(flink.executeSql(QueryRequest.ddl(ddl, 30_000L)).error());
+
+        String suffix = " INTERVAL '10' SECOND)) GROUP BY window_start";
+        QueryResult direct = flink.executeSql(QueryRequest.directSql(
+            "SELECT window_start, COUNT(*) AS n FROM TABLE(TUMBLE(TABLE " + table
+                + ", DESCRIPTOR(event_ms)," + suffix, 10, 30_000L, "earliest-offset"));
+        QueryResult bounded = flink.executeSql(new QueryRequest(
+            "SELECT window_start, COUNT(*) AS n FROM TABLE(TUMBLE(TABLE " + table
+                + ", DESCRIPTOR(event_time)," + suffix,
+            null, 10, 30_000L, null, null, false, true));
+        assertNull(direct.error(), String.valueOf(direct.error()));
+        assertNull(bounded.error(), String.valueOf(bounded.error()));
+        assertEquals("KAFKA_DIRECT", direct.engine());
+        assertEquals("FLINK", bounded.engine());
+        assertEquals(List.of("1", "3"), values(direct, "n"));
+        assertEquals(values(direct, "n"), values(bounded, "n"));
+    }
+
+    @Test
+    void boundedJoinReadsTwoCapturedTopicsWhileDirectRejectsTheShape() throws Exception {
+        String left = "it.bounded.join.left";
+        String right = "it.bounded.join.right";
+        createProbeTopics(new NewTopic(left, 1, (short) 1), new NewTopic(right, 1, (short) 1));
+        try (KafkaProducer<String, String> producer = probeProducer()) {
+            for (String id : List.of("A", "B"))
+                producer.send(new ProducerRecord<>(left, "{\"id\":\"" + id + "\"}"));
+            for (String id : List.of("A", "C"))
+                producer.send(new ProducerRecord<>(right, "{\"id\":\"" + id + "\"}"));
+            producer.flush();
+        }
+        String leftTable = DdlGeneratorService.toTableName(left);
+        String rightTable = DdlGeneratorService.toTableName(right);
+        FlinkSqlService flink = flinkService();
+        assertNull(flink.executeSql(QueryRequest.ddl(boundedProbeDdl(leftTable, left, "id STRING",
+            adminService.getTopicDescriptor(left)), 30_000L)).error());
+        assertNull(flink.executeSql(QueryRequest.ddl(boundedProbeDdl(rightTable, right, "id STRING",
+            adminService.getTopicDescriptor(right)), 30_000L)).error());
+        String sql = "SELECT l.id AS id FROM " + leftTable + " l JOIN " + rightTable + " r ON l.id = r.id";
+        QueryResult bounded = flink.executeSql(new QueryRequest(sql, null, 10, 30_000L,
+            null, null, false, true));
+        QueryResult direct = flink.executeSql(QueryRequest.directSql(sql, 10, 30_000L, "earliest-offset"));
+        assertNull(bounded.error(), String.valueOf(bounded.error()));
+        assertEquals("FLINK", bounded.engine());
+        assertEquals(List.of("A"), values(bounded, "id"));
+        assertNotNull(direct.error());
+        assertTrue(direct.error().contains("JOIN"), direct.error());
+    }
+
+    private static void createProbeTopics(NewTopic... topics) throws Exception {
+        Properties props = new Properties();
+        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        try (Admin admin = Admin.create(props)) {
+            admin.createTopics(List.of(topics)).all().get();
+        }
+    }
+
+    private static KafkaProducer<String, String> probeProducer() {
+        Properties props = new Properties();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        return new KafkaProducer<>(props);
+    }
+
+    private static String boundedProbeDdl(String table, String topic, String columns,
+                                          TopicDescriptor snapshot) {
+        String starts = snapshot.minOffsets().entrySet().stream().sorted(Map.Entry.comparingByKey())
+            .map(e -> "partition:" + e.getKey() + ",offset:" + e.getValue())
+            .collect(java.util.stream.Collectors.joining(";"));
+        String ends = snapshot.maxOffsets().entrySet().stream().sorted(Map.Entry.comparingByKey())
+            .map(e -> "partition:" + e.getKey() + ",offset:" + e.getValue())
+            .collect(java.util.stream.Collectors.joining(";"));
+        return "CREATE TABLE " + table + " (" + columns + ") WITH ("
+            + "'connector' = 'kafka', 'topic' = '" + topic + "', "
+            + "'properties.bootstrap.servers' = '" + KAFKA.getBootstrapServers() + "', "
+            + "'value.format' = 'json', 'scan.startup.mode' = 'specific-offsets', "
+            + "'scan.startup.specific-offsets' = '" + starts + "', "
+            + "'scan.bounded.mode' = 'specific-offsets', "
+            + "'scan.bounded.specific-offsets' = '" + ends + "')";
     }
 
     /**

@@ -85,6 +85,8 @@ export interface ChangelogInfo {
   retractions: number;
   /** Le plafond a été atteint : la suite des corrections est coupée, la dernière ligne n'est pas forcément l'état final. */
   capReached: boolean;
+  /** True only when Flink's result iterator reached the source end before the row cap. */
+  sourceCompleted?: boolean;
 }
 
 /** @java PartitionRange */
@@ -92,6 +94,14 @@ export interface PartitionRange {
   partition: number;
   firstOffset: number;
   lastOffset: number;
+}
+
+/** @java PartitionBoundary */
+export interface PartitionBoundary {
+  partition: number;
+  startOffset: number;
+  endOffsetExclusive: number;
+  nextOffset: number;
 }
 
 /** @java ScanCoverage */
@@ -102,6 +112,7 @@ export interface ScanCoverage {
   /** PARTIAL is proven by the ceiling; UNVERIFIED does not claim the topic was exhausted. */
   status: 'PARTIAL' | 'UNVERIFIED' | 'COMPLETE';
   partitions: PartitionRange[];
+  boundaries: PartitionBoundary[];
 }
 
 /**

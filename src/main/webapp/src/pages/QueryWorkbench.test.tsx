@@ -1037,7 +1037,7 @@ describe('QueryWorkbench — the engine badge says why the direct reader answere
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     await screen.findByText('KAFKA_DIRECT');
 
-    expect(screen.getByText(/This scan starts at the recent end/)).toBeInTheDocument();
+    expect(screen.getByText(/Latest samples per-partition tails/)).toBeInTheDocument();
     // Et surtout : aucun bandeau d'avertissement sur une requête où rien n'a échoué.
     expect(screen.queryByText(/Engine caveat/)).not.toBeInTheDocument();
   });
@@ -1046,7 +1046,47 @@ describe('QueryWorkbench — the engine badge says why the direct reader answere
     directResult();
     await run();
 
-    expect(screen.queryByText(/This scan starts at the recent end/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Latest samples per-partition tails/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Engine caveat/)).not.toBeInTheDocument();
+  });
+});
+
+describe('QueryWorkbench — bounded scan evidence', () => {
+  it('shows captured partition cursors and the Flink completion state', async () => {
+    post.mockImplementation((url: string) => (url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: {
+          columns: ['n'], rows: [{ n: 3 }], error: null, engine: 'KAFKA_DIRECT',
+          scanCoverage: { topic: 't', recordsFetched: 3, scanCeiling: 10, status: 'COMPLETE',
+            partitions: [{ partition: 0, firstOffset: 4, lastOffset: 6 }],
+            boundaries: [{ partition: 0, startOffset: 4, endOffsetExclusive: 7, nextOffset: 7 }] },
+        } } )));
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
+    await userEvent.type(editor(), 'SELECT COUNT(*) AS n FROM t');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findByText(/Captured slice \(end exclusive\): partition 0: \[4, 7\), next 7/))
+      .toBeInTheDocument();
+  });
+
+  it('labels a completed Flink changelog and a capped one distinctly', async () => {
+    let capped = false;
+    post.mockImplementation((url: string) => (url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } })
+      : Promise.resolve({ data: {
+          columns: ['n'], rows: [{ n: 3 }], error: null, engine: 'FLINK',
+          changelog: { rowsReturned: 1, corrections: 1, retractions: 0,
+            capReached: capped, sourceCompleted: !capped },
+        } })));
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT COUNT(*) AS n FROM t');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findByText(/source completed; final updates collected/)).toBeInTheDocument();
+
+    capped = true;
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findByText(/row cap reached; final updates are not guaranteed/)).toBeInTheDocument();
   });
 });
