@@ -9,6 +9,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.ChangelogInfo;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicDescriptor;
 import com.compagnonsdudev.kafkasqlexplorer.parser.AvroSchemaInferrer;
@@ -583,28 +584,50 @@ class KafkaClusterIntegrationTest {
         assertEquals("KAFKA_DIRECT", direct.engine());
         assertEquals("FLINK", bounded.engine());
         assertEquals(List.of("1", "3"), values(direct, "n"));
-        assertEquals(values(direct, "n"), values(bounded, "n"));
+        assertEquals(values(direct, "n"), finalWindowCounts(bounded));
     }
 
     @Test
-    void boundedTumbleDropsLateEventAndClosesWithAnEmptyPartition() throws Exception {
-        String topic = "it.bounded.window.late";
-        createProbeTopics(new NewTopic(topic, 2, (short) 1));
+    void boundedTumbleWithEmptyPartitionDefersTheWatermarkUntilSourceCompletion() throws Exception {
+        WindowProbe probe = stagedWindowProbe(true);
+        assertEquals(List.of("1", "3"), values(probe.direct(), "n"));
+        assertEquals(List.of("1", "3"), finalWindowCounts(probe.bounded()),
+            "the idle partition holds back the watermark until bounded source completion");
+    }
+
+    @Test
+    void boundedTumbleDropsAnEventAfterTheWatermarkPassedItsWindow() throws Exception {
+        WindowProbe probe = stagedWindowProbe(false);
+        assertEquals(List.of("1", "3"), values(probe.direct(), "n"));
+        assertEquals(List.of("1", "2"), finalWindowCounts(probe.bounded()),
+            "the watermark advanced before the final 1-second record arrived");
+    }
+
+    private record WindowProbe(QueryResult direct, QueryResult bounded) { }
+
+    private static WindowProbe stagedWindowProbe(boolean idlePartition) throws Exception {
+        String topic = "it.bounded.window." + (idlePartition ? "idle" : "late");
+        createProbeTopics(new NewTopic(topic, idlePartition ? 2 : 1, (short) 1));
+        int activePartition = idlePartition ? 1 : 0;
         long epoch = 1_704_067_200_000L;
         String table = DdlGeneratorService.toTableName(topic);
         FlinkSqlService flink = flinkService();
         String columns = "event_ms BIGINT, event_time AS TO_TIMESTAMP_LTZ(event_ms, 3), "
             + "WATERMARK FOR event_time AS event_time - INTERVAL '3' SECOND";
         // The stopping offset is known in advance. Starting the bounded job before producing
-        // lets the periodic watermark advance before the last record arrives; preloading all
-        // four records would only test batch-end flushing and could not prove lateness.
+        // lets us observe whether a periodic watermark advances before the last record.
+        // In the two-partition case the other partition remains empty until completion.
+        String starts = idlePartition
+            ? "partition:0,offset:0;partition:1,offset:0" : "partition:0,offset:0";
+        String ends = idlePartition
+            ? "partition:0,offset:0;partition:1,offset:4" : "partition:0,offset:4";
         String ddl = "CREATE TABLE " + table + " (" + columns + ") WITH ("
             + "'connector' = 'kafka', 'topic' = '" + topic + "', "
             + "'properties.bootstrap.servers' = '" + KAFKA.getBootstrapServers() + "', "
             + "'value.format' = 'json', 'scan.startup.mode' = 'specific-offsets', "
-            + "'scan.startup.specific-offsets' = 'partition:0,offset:0;partition:1,offset:0', "
+            + "'scan.startup.specific-offsets' = '" + starts + "', "
             + "'scan.bounded.mode' = 'specific-offsets', "
-            + "'scan.bounded.specific-offsets' = 'partition:0,offset:0;partition:1,offset:4')";
+            + "'scan.bounded.specific-offsets' = '" + ends + "')";
         assertNull(flink.executeSql(QueryRequest.ddl(ddl, 30_000L)).error());
 
         String prefix = "SELECT window_start, COUNT(*) AS n FROM TABLE(TUMBLE(TABLE " + table;
@@ -615,12 +638,12 @@ class KafkaClusterIntegrationTest {
         try (KafkaProducer<String, String> producer = probeProducer()) {
             Thread.sleep(5_000L); // allow the Flink Kafka source to subscribe before data arrives
             for (long delta : new long[] {0, 2_000, 21_000}) {
-                producer.send(new ProducerRecord<>(topic, 1, null,
+                producer.send(new ProducerRecord<>(topic, activePartition, null,
                     "{\"event_ms\":" + (epoch + delta) + "}"));
             }
             producer.flush();
-            Thread.sleep(2_000L); // allow the periodic watermark past the first window
-            producer.send(new ProducerRecord<>(topic, 1, null,
+            Thread.sleep(2_000L); // allow the watermark to emit, unless an empty partition stalls it
+            producer.send(new ProducerRecord<>(topic, activePartition, null,
                 "{\"event_ms\":" + (epoch + 1_000) + "}")).get();
         }
         QueryResult bounded = query.get(55, TimeUnit.SECONDS);
@@ -628,9 +651,7 @@ class KafkaClusterIntegrationTest {
             prefix + ", DESCRIPTOR(event_ms)" + suffix, 10, 30_000L, "earliest-offset"));
         assertNull(direct.error(), String.valueOf(direct.error()));
         assertNull(bounded.error(), String.valueOf(bounded.error()));
-        assertEquals(List.of("1", "3"), values(direct, "n"), "direct buckets all four records");
-        assertEquals(List.of("1", "2"), values(bounded, "n"),
-            "Flink drops the late record and completes despite the empty partition");
+        return new WindowProbe(direct, bounded);
     }
 
     @Test
@@ -916,6 +937,20 @@ class KafkaClusterIntegrationTest {
             .map(row -> String.valueOf(row.get(column)))
             .sorted()
             .toList();
+    }
+
+    /** Apply Flink's +I/-U/+U rows before comparing the final value of each window. */
+    private static List<String> finalWindowCounts(QueryResult result) {
+        assertNotNull(result.changelog(), "a window aggregate must expose its corrections");
+        assertTrue(result.changelog().sourceCompleted(), "the bounded source must finish");
+        Map<String, String> latest = new LinkedHashMap<>();
+        for (Map<String, Object> row : result.rows()) {
+            String key = String.valueOf(row.get("window_start"));
+            String kind = String.valueOf(row.getOrDefault(ChangelogInfo.ROW_KIND_KEY, "+I"));
+            if ("-U".equals(kind) || "-D".equals(kind)) latest.remove(key);
+            else latest.put(key, String.valueOf(row.get("n")));
+        }
+        return latest.values().stream().sorted().toList();
     }
 
     /**

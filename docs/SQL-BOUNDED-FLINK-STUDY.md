@@ -39,7 +39,7 @@ Une véritable option « N derniers globaux » exigerait une décision de produi
 
 ## Fenêtres et jointures
 
-Les tests d'intégration supplémentaires utilisent une source bornée avec un watermark et des horodatages désordonnés pour comparer `TUMBLE` à la fenêtre du lecteur direct ; un message nul est inclus. Une seconde lecture laisse une partition vide et émet un événement après la progression du watermark : Flink peut l'écarter tandis que le lecteur direct le compte dans son bucket, une différence de sémantique visible. Une autre paire de topics bornés vérifie une jointure interne. `directRead` accepte TUMBLE sur une seule source, mais refuse les jointures, sous-requêtes et autres fonctions de fenêtre. `HOP`, `SESSION` et les jointures externes ne sont pas comparés ici.
+Les tests d'intégration supplémentaires utilisent une source bornée avec un watermark et des horodatages désordonnés pour comparer `TUMBLE` à la fenêtre du lecteur direct ; un message nul est inclus. Les résultats Flink d'une agrégation sont un **changelog** (`+I`, `-U`, `+U`) : la comparaison applique ces corrections par fenêtre avant de juger la valeur finale. Deux lectures étagées distinguent un événement tardif sur une partition active d'une partition vide qui retarde la progression du watermark jusqu'à la fin de source. Une autre paire de topics bornés vérifie une jointure interne. `directRead` accepte TUMBLE sur une seule source, mais refuse les jointures, sous-requêtes et autres fonctions de fenêtre. `HOP`, `SESSION` et les jointures externes ne sont pas comparés ici.
 
 ## Banc de mesure reproductible
 
