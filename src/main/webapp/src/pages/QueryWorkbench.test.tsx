@@ -396,6 +396,23 @@ describe('QueryWorkbench — what Run sends', () => {
       : Promise.resolve({ data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT' } }));
   });
 
+  it('uses Flink strictly by default and switches to an explicit bounded Kafka scan', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT * FROM orders');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await waitFor(() => expect(runSync()).toBeTruthy());
+    expect(runSync()![1]).toMatchObject({ flinkOnly: true, directRead: false, readMode: null });
+
+    post.mockClear();
+    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Latest' }));
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await waitFor(() => expect(runSync()).toBeTruthy());
+    expect(runSync()![1]).toMatchObject({ flinkOnly: false, directRead: true,
+      readMode: 'latest-offset' });
+  });
+
   it('sends the whole tab when it holds one statement', async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');

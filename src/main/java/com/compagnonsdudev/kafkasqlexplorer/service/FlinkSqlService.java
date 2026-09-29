@@ -1119,6 +1119,10 @@ public class FlinkSqlService {
                 && !isIntrospectionStatement(sql)) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0, STATEMENT_NOT_ALLOWED);
         }
+        if (request.wantsDirectRead() && !sql.startsWith("SELECT")) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0,
+                "Kafka Direct exploration supports SELECT only. Choose Flink SQL for this statement.");
+        }
         /*
          * `CREATE TABLE … AS SELECT` est un INSERT déguisé, et la whitelist le laissait passer
          * parce qu'elle classe sur le premier mot — le même défaut que `INSERT OVERWRITE` un cran
@@ -1158,6 +1162,12 @@ public class FlinkSqlService {
                     + "or window functions; use the Flink planner for this statement.");
         }
 
+        if (request.wantsDirectRead() && request.wantsFlinkOnly()) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime,
+                "Choose either Flink SQL or Kafka Direct for this request.");
+        }
+
         try {
             AutoRegResult autoReg = autoRegisterTableIfNeeded(strippedSql);
             if (autoReg.error() != null) {
@@ -1173,6 +1183,12 @@ public class FlinkSqlService {
 
             boolean isCte = SqlStatements.startsWithCte(sqlToExecute);
             if (SqlStatements.classifiableBody(sqlToExecute).startsWith("SELECT")) {
+                if (request.wantsFlinkOnly() && autoReg.deferredToDirectReader()) {
+                    return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                        System.currentTimeMillis() - startTime,
+                        "Flink SQL cannot read this topic: no schema could be inferred. "
+                            + "Declare a Flink table with a schema, or choose Kafka Direct exploration.");
+                }
                 // Prefer the real Flink planner when enabled and not tripped by the circuit breaker.
                 // The FlinkRelMetadataQuery NPE that historically forced the bypass is version
                 // dependent, so on an *engine* failure we fall back to the in-process direct Kafka
@@ -1229,7 +1245,7 @@ public class FlinkSqlService {
                  * `scan.bounded.mode`, typiquement, qui la fait terminer), donc elle part au
                  * planner comme demandé.
                  */
-                if (SqlStatements.hasWindowTableCall(sqlToExecute)
+                if (!request.wantsFlinkOnly() && SqlStatements.hasWindowTableCall(sqlToExecute)
                         && MetricService.namesOneSourceOnly(sqlToExecute)
                         && !SqlStatements.carriesAnOptionsHint(sqlToExecute)
                         && isGeneratedKafkaTable(extractPrimaryTable(sqlToExecute))) {
@@ -1286,7 +1302,8 @@ public class FlinkSqlService {
                  * vraiment mériter — un prédicat non appliqué, un plafond de scan atteint — sont
                  * ajoutées par {@code kafkaDirectSelect}, sur les seules requêtes concernées.
                  */
-                if (namesARecentReadMode(readMode) && extractPrimaryTable(sqlToExecute) != null) {
+                if (!request.wantsFlinkOnly() && namesARecentReadMode(readMode)
+                        && extractPrimaryTable(sqlToExecute) != null) {
                     if (MetricService.isSingleTableRead(sqlToExecute)) {
                         QueryResult direct = kafkaDirectSelect(sqlToExecute, readMode, limit, startTime);
                         return autoReg.registered() ? withRegisteredFlag(direct) : direct;
@@ -1358,6 +1375,12 @@ public class FlinkSqlService {
                             engineFailure = SqlErrorClassifier.readable(explained);
                         }
                     }
+                }
+                if (request.wantsFlinkOnly()) {
+                    return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                        System.currentTimeMillis() - startTime,
+                        engineFailure != null ? "Flink SQL could not answer: " + engineFailure
+                            : plannerUnavailableMessage());
                 }
                 /*
                  * A common table expression never falls back to the direct reader.
@@ -2571,7 +2594,7 @@ public class FlinkSqlService {
                     + " — the aggregate covers the first " + fetch + " record(s) read from '"
                     + topic + "', not the whole topic, so a count is a floor rather than a total.");
             }
-            return aggregate;
+            return aggregate.withScanInfo(directScanInfo(topic, readMode, records.size(), fetch));
         }
 
         List<String> columns = requestedCols.isEmpty()
@@ -2605,7 +2628,14 @@ public class FlinkSqlService {
                 + "WHERE clause, or read from the other end.");
         }
         return new QueryResult(columns, rows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
-            .withWarnings(notes);
+            .withWarnings(notes)
+            .withScanInfo(directScanInfo(topic, readMode, records.size(), fetch));
+    }
+
+    private static String directScanInfo(String topic, String readMode, int fetched, int ceiling) {
+        return "Fetched " + fetched + " Kafka record(s) from '" + topic + "' "
+            + describeScanEnd(readMode) + " (scan ceiling: " + ceiling + "). "
+            + "Filters and aggregates only cover this fetched slice.";
     }
 
     /** The head of the caveat a projection carries when its scan stopped on the row it was capped at. */
@@ -2874,7 +2904,8 @@ public class FlinkSqlService {
         List<String> allWarnings = new ArrayList<>(windowWarnings);
         allWarnings.addAll(whereWarnings);
         return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
-            .withWarnings(allWarnings);
+            .withWarnings(allWarnings)
+            .withScanInfo(directScanInfo(topic, readMode, records.size(), 100_000));
     }
 
     /**

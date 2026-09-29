@@ -153,6 +153,14 @@ class QueryControllerTest {
     }
 
     @Test
+    void rejectsConflictingEngineChoicesBeforeExecution() throws Exception {
+        mockMvc.perform(post("/api/query/run-sync").contentType("application/json")
+                .content("{\"sql\":\"SELECT * FROM orders\",\"directRead\":true,\"flinkOnly\":true}"))
+            .andExpect(status().isBadRequest());
+        verifyNoInteractions(sqlExplorationService);
+    }
+
+    @Test
     void returnsTheGeneratedDdl() throws Exception {
         when(schemaInferenceService.detectFormat(anyString())).thenReturn(MessageFormat.JSON);
         when(schemaInferenceService.inferSchema(anyString(), any())).thenReturn(Map.of("id", "STRING"));

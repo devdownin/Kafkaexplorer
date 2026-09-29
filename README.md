@@ -58,7 +58,7 @@ These are generated, not photographed: `docs/screenshots/` drives the compiled S
 
 - 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.
 - 🧠 **Zero-config schemas** — topics are sampled, their structure inferred (JSON, XML, Avro via Schema Registry), and registered as Flink tables in one click.
-- 📝 **A real SQL editor** — Monaco (the VS Code engine), auto-completion of topics and tables, query history, earliest/latest read modes.
+- 📝 **A real SQL editor** — Monaco (the VS Code engine), auto-completion of topics and tables, query history, Flink SQL by default, and an explicit bounded Kafka Direct exploration mode with earliest/latest scans and scan coverage.
 - 🕸️ **Lineage & tracing** — an interactive graph of topics → tables → live jobs, resolved by Flink's own parser; plus cross-topic message tracing by key, header, JSONPath or XPath, which streams its hops as it finds them, says exactly what it scanned, resumes where a time budget stopped it, and compares two keys side by side.
 - 🗺️ **A data model you did not have to draw** — pick a set of topics and read them as tables, with the relations between them deduced from key-column names. Kafka has no foreign keys, so every edge is a claim: it carries a confidence grade, states its evidence in plain words, and opens as a ready `JOIN` — one relation or a whole subgraph.
 - 🩺 **One-click cluster audit** — poison messages, duplicates, flow drop-offs and latency, computed across your whole cluster in the background.
