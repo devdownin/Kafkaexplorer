@@ -24,8 +24,15 @@ public record QueryResult(
      * of the rows returned withdraw or replace an earlier one. Null means every row emitted is an
      * insert, which is the ordinary case — see {@link ChangelogInfo}.
      */
-    ChangelogInfo changelog
+    ChangelogInfo changelog,
+    /** Factual coverage of a bounded direct Kafka fetch, when available. */
+    String scanInfo
 ) {
+    public QueryResult(List<String> columns, List<Map<String, Object>> rows, long durationMs,
+                       String error, boolean tableRegistered, String engine,
+                       List<String> warnings, ChangelogInfo changelog) {
+        this(columns, rows, durationMs, error, tableRegistered, engine, warnings, changelog, null);
+    }
     /** Backwards-compatible constructor (no tableRegistered, no engine, no warnings). */
     public QueryResult(List<String> columns, List<Map<String, Object>> rows, long durationMs, String error) {
         this(columns, rows, durationMs, error, false, null, List.of(), null);
@@ -54,11 +61,16 @@ public record QueryResult(
      */
     public QueryResult withWarnings(List<String> newWarnings) {
         return new QueryResult(columns, rows, durationMs, error, tableRegistered, engine,
-            newWarnings == null ? List.of() : List.copyOf(newWarnings), changelog);
+            newWarnings == null ? List.of() : List.copyOf(newWarnings), changelog, scanInfo);
     }
 
     public QueryResult withChangelog(ChangelogInfo info) {
-        return new QueryResult(columns, rows, durationMs, error, tableRegistered, engine, warnings, info);
+        return new QueryResult(columns, rows, durationMs, error, tableRegistered, engine, warnings, info, scanInfo);
+    }
+
+    public QueryResult withScanInfo(String info) {
+        return new QueryResult(columns, rows, durationMs, error, tableRegistered, engine,
+            warnings, changelog, info);
     }
 
     /**
@@ -71,6 +83,6 @@ public record QueryResult(
      * passing for a normal answer.
      */
     public QueryResult withRegisteredFlag(boolean registered) {
-        return new QueryResult(columns, rows, durationMs, error, registered, engine, warnings, changelog);
+        return new QueryResult(columns, rows, durationMs, error, registered, engine, warnings, changelog, scanInfo);
     }
 }

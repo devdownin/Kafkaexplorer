@@ -736,6 +736,21 @@ class FlinkSqlServiceTest {
     }
 
     @Test
+    void strictFlinkDoesNotFallBackWhenThePlannerCircuitIsOpen() throws Exception {
+        stubRegisteredTopicWithRecords();
+        service.tripFlinkSelectAt(System.currentTimeMillis());
+
+        QueryResult result = service.executeSql(new QueryRequest(
+            "SELECT event_id FROM strict_mode_topic", null, 10, 5_000L,
+            null, "strict-flink", false, true));
+
+        assertHasError(result);
+        assertTrue(result.rows().isEmpty());
+        assertTrue(result.error().contains("Flink"), result.error());
+        assertNotEquals("KAFKA_DIRECT", result.engine());
+    }
+
+    @Test
     void repeatedTyposDoNotTripTheSelectCircuitBreaker() throws Exception {
         stubRegisteredTopicWithRecords();
 
@@ -823,6 +838,8 @@ class FlinkSqlServiceTest {
         assertNoError(latest);
         assertEquals("KAFKA_DIRECT", latest.engine(),
             "the planner cannot express \"the most recent N records\", so it must not answer it");
+        assertTrue(latest.scanInfo().contains("Fetched "), latest.scanInfo());
+        assertTrue(latest.scanInfo().contains("strict.mode.topic"), latest.scanInfo());
     }
 
     /**

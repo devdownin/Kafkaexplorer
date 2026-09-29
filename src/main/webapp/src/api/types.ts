@@ -107,6 +107,8 @@ export interface QueryResult {
    * un résultat filtré.
    */
   warnings: string[];
+  /** Coverage of the bounded Kafka Direct fetch, when available. */
+  scanInfo?: string | null;
   /** Non nul quand le moteur a répondu par un changelog — voir `ChangelogInfo`. */
   changelog: ChangelogInfo | null;
 }

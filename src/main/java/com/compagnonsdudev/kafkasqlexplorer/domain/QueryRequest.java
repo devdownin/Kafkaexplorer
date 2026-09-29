@@ -30,17 +30,25 @@ public record QueryRequest(
      * the shape it can answer honestly — {@code MetricService.isSingleTableRead} is that check.
      * Absent or false, nothing changes and the planner is consulted first, as always.
      */
-    Boolean directRead
+    Boolean directRead,
+    /** Require Flink to answer SELECT; never switch engines implicitly. */
+    Boolean flinkOnly
 ) {
     /** Backwards-compatible form for callers that never cancel (audit, table preview, tests). */
     public QueryRequest(String sql, String topic, Integer maxRows, Long timeout, String readMode) {
-        this(sql, topic, maxRows, timeout, readMode, null, null);
+        this(sql, topic, maxRows, timeout, readMode, null, null, null);
     }
 
     /** Backwards-compatible form for callers that name their run but take the usual engine. */
     public QueryRequest(String sql, String topic, Integer maxRows, Long timeout, String readMode,
                         String queryId) {
-        this(sql, topic, maxRows, timeout, readMode, queryId, null);
+        this(sql, topic, maxRows, timeout, readMode, queryId, null, null);
+    }
+
+    /** Backwards-compatible form for existing direct-reader callers. */
+    public QueryRequest(String sql, String topic, Integer maxRows, Long timeout, String readMode,
+                        String queryId, Boolean directRead) {
+        this(sql, topic, maxRows, timeout, readMode, queryId, directRead, null);
     }
 
     public static QueryRequest sql(String sql, Integer maxRows, Long timeout, String readMode) {
@@ -49,7 +57,7 @@ public record QueryRequest(
 
     /** As {@link #sql}, but answered by the direct Kafka reader — see {@link #directRead()}. */
     public static QueryRequest directSql(String sql, Integer maxRows, Long timeout, String readMode) {
-        return new QueryRequest(sql, null, maxRows, timeout, readMode, null, Boolean.TRUE);
+        return new QueryRequest(sql, null, maxRows, timeout, readMode, null, Boolean.TRUE, null);
     }
 
     public static QueryRequest ddl(String sql, Long timeout) {
@@ -59,5 +67,9 @@ public record QueryRequest(
     /** True when the caller explicitly asked for the direct reader. */
     public boolean wantsDirectRead() {
         return Boolean.TRUE.equals(directRead);
+    }
+
+    public boolean wantsFlinkOnly() {
+        return Boolean.TRUE.equals(flinkOnly);
     }
 }

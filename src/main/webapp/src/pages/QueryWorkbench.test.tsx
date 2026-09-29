@@ -396,6 +396,23 @@ describe('QueryWorkbench — what Run sends', () => {
       : Promise.resolve({ data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT' } }));
   });
 
+  it('uses Flink strictly by default and switches to an explicit bounded Kafka scan', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT * FROM orders');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await waitFor(() => expect(runSync()).toBeTruthy());
+    expect(runSync()![1]).toMatchObject({ flinkOnly: true, directRead: false, readMode: null });
+
+    post.mockClear();
+    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Latest' }));
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await waitFor(() => expect(runSync()).toBeTruthy());
+    expect(runSync()![1]).toMatchObject({ flinkOnly: false, directRead: true,
+      readMode: 'latest-offset' });
+  });
+
   it('sends the whole tab when it holds one statement', async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
@@ -952,7 +969,7 @@ describe('QueryWorkbench — the engine badge', () => {
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
 
     expect(await screen.findByText(/Unknown table/)).toBeInTheDocument();
-    expect(screen.queryByText('Kafka Direct')).not.toBeInTheDocument();
+    expect(screen.queryByText('KAFKA_DIRECT')).not.toBeInTheDocument();
   });
 
   it('names the engine the result reports', async () => {
@@ -988,7 +1005,7 @@ describe('QueryWorkbench — saved queries', () => {
 });
 
 /*
- * Le lecteur direct choisi par le mode de lecture n'est pas un repli, et le backend a cessé de le
+ * Le lecteur direct choisi explicitement n'est pas un repli, et le backend a cessé de le
  * dire dans `warnings` : la phrase y était ouverte par « This query fell back… », donc le bandeau
  * jaune « Engine caveat » s'affichait sur *chaque* requête tant que « Offset » restait sur
  * « Latest ». La raison se lit maintenant sur la pastille du moteur, qui n'a pas le ton d'une
@@ -1004,6 +1021,7 @@ describe('QueryWorkbench — the engine badge says why the direct reader answere
   const run = async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
+    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
     await userEvent.type(editor(), 'SELECT id FROM t');
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     return screen.findByText('KAFKA_DIRECT');
@@ -1013,12 +1031,13 @@ describe('QueryWorkbench — the engine badge says why the direct reader answere
     directResult();
     renderPage();
     await screen.findByText('demo.orders.1.received');
+    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
     await userEvent.click(screen.getByRole('button', { name: 'Latest' }));
     await userEvent.type(editor(), 'SELECT id FROM t');
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     await screen.findByText('KAFKA_DIRECT');
 
-    expect(screen.getByText(/Offset is set to Latest/)).toBeInTheDocument();
+    expect(screen.getByText(/This scan starts at the recent end/)).toBeInTheDocument();
     // Et surtout : aucun bandeau d'avertissement sur une requête où rien n'a échoué.
     expect(screen.queryByText(/Engine caveat/)).not.toBeInTheDocument();
   });
@@ -1027,7 +1046,7 @@ describe('QueryWorkbench — the engine badge says why the direct reader answere
     directResult();
     await run();
 
-    expect(screen.queryByText(/Offset is set to Latest/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/This scan starts at the recent end/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Engine caveat/)).not.toBeInTheDocument();
   });
 });

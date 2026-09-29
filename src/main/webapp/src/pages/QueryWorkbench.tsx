@@ -613,6 +613,7 @@ const QueryWorkbench: React.FC = () => {
     [statements, cursorOffset],
   );
   const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>('EARLIEST');
+  const [engineMode, setEngineMode] = useState<'FLINK' | 'KAFKA_DIRECT'>('FLINK');
   const [panelError, setPanelError] = useState<QueryErrorInfo | null>(null);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -1189,10 +1190,12 @@ const QueryWorkbench: React.FC = () => {
           /* let execution handle it */
         }
       }
-      const readMode = offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset';
+      const readMode = engineMode === 'KAFKA_DIRECT'
+        ? (offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset') : null;
       const limit = maxRows;
       const response = await axios.post<QueryResult>('/api/query/run-sync',
-        { sql: sqlToRun, readMode, maxRows: limit, queryId },
+        { sql: sqlToRun, readMode, maxRows: limit, queryId,
+          flinkOnly: engineMode === 'FLINK', directRead: engineMode === 'KAFKA_DIRECT' },
         { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
       const ms = Date.now() - start;
       setExecutionMs(ms);
@@ -1746,7 +1749,12 @@ const QueryWorkbench: React.FC = () => {
               mondes. */}
           <div className="flex items-center gap-4 min-w-0 overflow-x-auto custom-scrollbar">
             <div className="flex items-center gap-2 shrink-0">
-              <Tooltip content="Which end of each topic the direct reader starts from. Earliest replays history; Latest reads what arrives from now on.">
+              <span className="text-[12px] text-on-surface-variant">Engine</span>
+              <Segmented ariaLabel="Query engine" value={engineMode} onChange={setEngineMode}
+                options={[{ value: 'FLINK', label: 'Flink SQL' }, { value: 'KAFKA_DIRECT', label: 'Kafka Direct' }]} />
+            </div>
+            {engineMode === 'KAFKA_DIRECT' && <div className="flex items-center gap-2 shrink-0">
+              <Tooltip content="Choose which end of the topic to scan. Kafka Direct reads a bounded slice; filters and aggregates may be partial.">
                 <span tabIndex={0} className="text-[12px] text-on-surface-variant rounded">Offset</span>
               </Tooltip>
               <Segmented
@@ -1755,7 +1763,7 @@ const QueryWorkbench: React.FC = () => {
                 onChange={setOffsetMode}
                 options={[{ value: 'EARLIEST', label: 'Earliest' }, { value: 'LATEST', label: 'Latest' }]}
               />
-            </div>
+            </div>}
             <div className="flex items-center gap-2 shrink-0">
               <label htmlFor="kse-max-rows" className="text-[12px] text-on-surface-variant">Rows</label>
               <Select
@@ -2048,12 +2056,10 @@ const QueryWorkbench: React.FC = () => {
                 {(results?.engine || executing) && (
                   <Tooltip content={
                     !results?.engine
-                      ? 'Which engine answers is decided per query — the Flink planner when it can, the direct Kafka reader otherwise. The badge names it once the result is in.'
+                      ? 'The selected engine answers this query. The badge names it once a result is available.'
                       : results.engine === 'KAFKA_DIRECT'
                         ? 'Kafka Direct: a bounded scan over Kafka messages. It supports SELECT, WHERE, aggregates and TUMBLE windows — but no multi-topic JOIN, which is the limit worth knowing before reading these rows.'
-                          + (ranOffsetMode === 'LATEST'
-                            ? ' It answered this query because Offset is set to Latest: "the most recent records" is a question the Flink planner has no way to express. Switch to Earliest to get the planner back.'
-                            : '')
+                          + (ranOffsetMode === 'LATEST' ? ' This scan starts at the recent end of the topic.' : '')
                         : 'Flink: executed by the embedded Flink SQL engine (EXPLAIN / DDL).'
                   }>
                   <span tabIndex={0} className="rounded">
@@ -2162,6 +2168,11 @@ const QueryWorkbench: React.FC = () => {
                 prédicats WHERE que le lecteur direct n'a pas su appliquer. Le backend les
                 calcule depuis toujours ; l'UI les jetait, et présentait donc un scan non
                 filtré comme un résultat filtré. */}
+            {!queryError && results?.scanInfo && (
+              <p className="text-xs text-on-surface-variant px-4 py-2" role="status">
+                {results.scanInfo}
+              </p>
+            )}
             {!queryError && !!results?.warnings?.length && (
               <div className="mx-4 mt-3 flex items-start gap-2 px-3 py-2 rounded-lg border border-warning/30 bg-warning/10 shrink-0" role="status">
                 <span className="material-symbols-outlined text-warning text-[18px] mt-px shrink-0">warning</span>
