@@ -66,3 +66,13 @@ python3 scripts/benchmark-sql-engines.py \
 ```
 
 Répéter avec un nouveau préfixe pour les trois autres couples 10k/1000, 100k/100 et 100k/1000. Le JSON contient p50/p95 client et serveur, nombre de messages et état de couverture directe, taux de réponses annulées, et pic de heap et de threads échantillonnés via `/actuator/prometheus` lorsqu'il est accessible. `EXPLAIN` donne un **proxy de planification** incluant HTTP et prise du runtime, pas le temps interne exact du planner. `--cancel-after-ms` lance un essai d'annulation séparé ; ne pas mélanger ces mesures aux latences normales. Le jeton facultatif est lu depuis `KEX_BENCH_TOKEN`. Le banc ne supprime ni les topics ni les tables : nettoyer ce jeu isolé séparément après inspection, selon la politique de l'environnement. Aucun chiffre p95 n'est revendiqué tant qu'une campagne sur les quatre configurations n'a pas été exécutée.
+
+## Prototype dans l'éditeur
+
+Le choix **Flink SQL → Read: Snapshot** demande `boundedSnapshot: true` avec `flinkOnly: true` à `/api/query/run-sync`. Pour un `SELECT` sur une seule table Kafka auto-enregistrée, le serveur capture les offsets de début et de fin exclusifs de chaque partition, puis applique les options `scan.startup.mode` et `scan.bounded.mode` à offsets spécifiques dans un hint Flink. Le résultat indique les bornes capturées et distingue la fin de source d'un plafond de lignes atteint. Un filtre peut retourner zéro ligne tout en ayant parcouru la tranche entière ; le plafond compte les lignes du changelog, pas les messages Kafka lus.
+
+Le prototype refuse les tables déclarées manuellement, les jointures, les sous-requêtes et les hints `OPTIONS` déjà présents. Les fenêtres sur une table manuelle bornée restent possibles, comme dans les tests d'intégration ; elles ne sont pas encore prises en charge par ce commutateur. Le mode **Kafka Direct → Latest** reste un échantillon de queues de partitions, sans classement global des N derniers messages. Le mode Snapshot Flink lit depuis le début des enregistrements encore retenus : il ne prétend pas reproduire cet échantillon.
+
+## Décision de moteur par défaut
+
+Le choix Kafka Direct reste explicite jusqu'à ce que les quatre campagnes 10k/100, 10k/1000, 100k/100 et 100k/1000 aient été exécutées avec 30 mesures après échauffement, à 1 et 8 clients. Vérifier sur la même tranche la projection, le filtre, le `COUNT`, les fenêtres et les jointures prises en charge, puis les annulations, les dépassements de délai, le p95 et la pression mémoire. Documenter séparément les divergences de `HOP`, `SESSION` et jointures externes avant d'élargir le commutateur. Aucun seuil p95 n'est fixé sans la mesure de référence et le budget de latence du déploiement visé.

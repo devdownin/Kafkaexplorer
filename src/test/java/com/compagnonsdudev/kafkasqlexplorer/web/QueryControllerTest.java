@@ -161,6 +161,21 @@ class QueryControllerTest {
     }
 
     @Test
+    void boundedSnapshotRequiresStrictFlinkAndSurvivesHttpBounds() throws Exception {
+        mockMvc.perform(post("/api/query/run-sync").contentType("application/json")
+                .content("{\"sql\":\"SELECT * FROM orders\",\"boundedSnapshot\":true}"))
+            .andExpect(status().isBadRequest());
+        verifyNoInteractions(sqlExplorationService);
+
+        mockMvc.perform(post("/api/query/run-sync").contentType("application/json")
+                .content("{\"sql\":\"SELECT * FROM orders\",\"boundedSnapshot\":true,\"flinkOnly\":true}"))
+            .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<QueryRequest> sent = org.mockito.ArgumentCaptor.forClass(QueryRequest.class);
+        verify(sqlExplorationService).runSync(sent.capture());
+        assertTrue(sent.getValue().wantsBoundedSnapshot());
+    }
+
+    @Test
     void returnsTheGeneratedDdl() throws Exception {
         when(schemaInferenceService.detectFormat(anyString())).thenReturn(MessageFormat.JSON);
         when(schemaInferenceService.inferSchema(anyString(), any())).thenReturn(Map.of("id", "STRING"));

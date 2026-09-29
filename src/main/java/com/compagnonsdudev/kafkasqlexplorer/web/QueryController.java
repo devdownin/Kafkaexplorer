@@ -128,7 +128,8 @@ public class QueryController {
         long timeout = request.timeout() != null ? request.timeout()
             : Math.clamp(explorerConfig.getDefaultQueryTimeoutMs(), 1L, MAX_HTTP_TIMEOUT_MS);
         return new QueryRequest(request.sql(), request.topic(), rows, timeout,
-            request.readMode(), request.queryId(), request.directRead(), request.flinkOnly());
+            request.readMode(), request.queryId(), request.directRead(), request.flinkOnly(),
+            request.boundedSnapshot());
     }
 
     private static void validateHttpRequest(QueryRequest request) {
@@ -138,6 +139,10 @@ public class QueryController {
         if (request.wantsDirectRead() && request.wantsFlinkOnly()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "directRead and flinkOnly cannot both be true");
+        }
+        if (request.wantsBoundedSnapshot() && (!request.wantsFlinkOnly() || request.wantsDirectRead())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "boundedSnapshot requires Flink SQL without directRead");
         }
         if (request.maxRows() != null && (request.maxRows() < 1 || request.maxRows() > MAX_HTTP_ROWS)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,

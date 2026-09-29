@@ -474,6 +474,23 @@ class KafkaClusterIntegrationTest {
         assertEquals(6L, ((Number) count.rows().get(count.rows().size() - 1).get("n")).longValue());
     }
 
+    @Test
+    void editorSnapshotRunsTheGeneratedTableOverCapturedOffsets() throws Exception {
+        FlinkSqlService flink = flinkService();
+        List<KafkaAdminService.SnapshotRange> bounds = adminService.captureSnapshotRanges(TRIMMED_TOPIC);
+        assertEquals(3, bounds.size());
+        assertTrue(bounds.stream().allMatch(b -> b.beginning() == 2 && b.endExclusive() == 4));
+
+        QueryResult result = flink.executeSql(new QueryRequest(
+            "SELECT id FROM it_trimmed_multipart", null, 20, 30_000L, null,
+            null, false, true, true));
+        assertNull(result.error(), String.valueOf(result.error()));
+        assertEquals("FLINK", result.engine());
+        assertEquals(6, result.rows().size());
+        assertTrue(result.scanInfo().contains("Source completed within the row cap"));
+        assertTrue(result.scanInfo().contains("partition 0: [2, 4)"));
+    }
+
     /** Later appends must not leak into the frozen slice, even across eight partitions. */
     @Test
     void boundedFlinkSnapshotKeepsSelectiveFilterStableAfterAppends() throws Exception {

@@ -616,6 +616,8 @@ const QueryWorkbench: React.FC = () => {
     () => readQueryOptions(location.search).offsetMode);
   const [engineMode, setEngineMode] = useState<'FLINK' | 'KAFKA_DIRECT'>(
     () => readQueryOptions(location.search).engineMode);
+  const [boundedSnapshot, setBoundedSnapshot] = useState(
+    () => readQueryOptions(location.search).boundedSnapshot);
   const [panelError, setPanelError] = useState<QueryErrorInfo | null>(null);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -1197,7 +1199,8 @@ const QueryWorkbench: React.FC = () => {
       const limit = maxRows;
       const response = await axios.post<QueryResult>('/api/query/run-sync',
         { sql: sqlToRun, readMode, maxRows: limit, queryId,
-          flinkOnly: engineMode === 'FLINK', directRead: engineMode === 'KAFKA_DIRECT' },
+          flinkOnly: engineMode === 'FLINK', directRead: engineMode === 'KAFKA_DIRECT',
+          boundedSnapshot: engineMode === 'FLINK' && boundedSnapshot },
         { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
       const ms = Date.now() - start;
       setExecutionMs(ms);
@@ -1207,7 +1210,7 @@ const QueryWorkbench: React.FC = () => {
       // que l'on veut rouvrir pour la corriger, et elle n'y était pas.
       saveToHistory({
         sql: sqlToRun,
-        engineMode, offsetMode,
+        engineMode, offsetMode, boundedSnapshot: engineMode === 'FLINK' && boundedSnapshot,
         ts: Date.now(),
         ms,
         ok: !response.data.error,
@@ -1246,7 +1249,8 @@ const QueryWorkbench: React.FC = () => {
         setResults(null);
         return { status: 'cancelled', ms, result: null, error: null };
       }
-      saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: false, engineMode, offsetMode });
+      saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: false, engineMode, offsetMode,
+        boundedSnapshot: engineMode === 'FLINK' && boundedSnapshot });
       // describeApiError couvre aussi ce que le corps de réponse ne dit pas : backend
       // injoignable, requête interrompue. Sans lui, une panne de transport s'affichait
       // « Query execution failed », qui n'apprend rien.
@@ -1398,11 +1402,11 @@ const QueryWorkbench: React.FC = () => {
   /** Lien rejouable vers la requête de l'onglet courant. */
   const copyQueryLink = useCallback(() => {
     const link = buildQueryLink(`${window.location.origin}${location.pathname}`, sql,
-      { engineMode, offsetMode });
+      { engineMode, offsetMode, boundedSnapshot });
     if (!link) { toast('Nothing to link — the tab is empty', 'info'); return; }
     void copyText(link).then(ok =>
       toast(ok ? 'Link copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'));
-  }, [sql, location.pathname, engineMode, offsetMode, toast]);
+  }, [sql, location.pathname, engineMode, offsetMode, boundedSnapshot, toast]);
 
   // Idem : la ref se met à jour dans un effet, pas au milieu du rendu.
   useEffect(() => { runQueryRef.current = runQuery; runAllRef.current = () => void runAllStatements(); });
@@ -1768,6 +1772,14 @@ const QueryWorkbench: React.FC = () => {
                 options={[{ value: 'EARLIEST', label: 'Earliest' }, { value: 'LATEST', label: 'Latest' }]}
               />
             </div>}
+            {engineMode === 'FLINK' && <div className="flex items-center gap-2 shrink-0">
+              <Tooltip content="Snapshot fixes each partition's beginning and end offsets before Flink starts. It reads all retained records of one automatically registered Kafka topic. A row cap may cut off the result; custom tables and joins need their own bounded definitions.">
+                <span tabIndex={0} className="text-[12px] text-on-surface-variant rounded">Read</span>
+              </Tooltip>
+              <Segmented ariaLabel="Flink read scope" value={boundedSnapshot ? 'SNAPSHOT' : 'STREAM'}
+                onChange={value => setBoundedSnapshot(value === 'SNAPSHOT')}
+                options={[{ value: 'STREAM', label: 'Stream' }, { value: 'SNAPSHOT', label: 'Snapshot' }]} />
+            </div>}
             <div className="flex items-center gap-2 shrink-0">
               <label htmlFor="kse-max-rows" className="text-[12px] text-on-surface-variant">Rows</label>
               <Select
@@ -1805,6 +1817,7 @@ const QueryWorkbench: React.FC = () => {
                           openSql(h.sql);
                           setEngineMode(h.engineMode ?? 'FLINK');
                           setOffsetMode(h.offsetMode ?? 'EARLIEST');
+                          setBoundedSnapshot(h.boundedSnapshot ?? false);
                           setShowHistory(false);
                         }}
                         title={h.sql}
@@ -1871,6 +1884,11 @@ const QueryWorkbench: React.FC = () => {
             </Button>
           </div>
         </header>
+        {engineMode === 'KAFKA_DIRECT' && offsetMode === 'LATEST' && (
+          <p className="px-4 md:px-6 py-1.5 text-xs text-on-surface-variant bg-surface-container-low">
+            Latest scans the tails of each partition up to the row cap; it does not select the globally newest N messages.
+          </p>
+        )}
 
         {/* Split pane */}
         <div ref={containerRef} className="flex-1 flex flex-col min-h-0 overflow-hidden">

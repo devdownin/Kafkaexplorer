@@ -1287,6 +1287,7 @@ export interface HistoryEntry {
   /** Requested mode, distinct from the engine reported after execution. */
   engineMode?: 'FLINK' | 'KAFKA_DIRECT';
   offsetMode?: 'EARLIEST' | 'LATEST';
+  boundedSnapshot?: boolean;
   /** Faux quand la requête a échoué. Absent sur une entrée d'une version antérieure. */
   ok?: boolean;
 }
@@ -1306,7 +1307,8 @@ export function pushHistory(
   if (!sql) return [...history];
   return [{ ...entry, sql }, ...history.filter(h => h.sql !== sql
     || h.engineMode !== entry.engineMode
-    || (h.engineMode === 'KAFKA_DIRECT' && h.offsetMode !== entry.offsetMode))].slice(0, cap);
+    || (h.engineMode === 'KAFKA_DIRECT' && h.offsetMode !== entry.offsetMode)
+    || (h.engineMode === 'FLINK' && !!h.boundedSnapshot !== !!entry.boundedSnapshot))].slice(0, cap);
 }
 
 /** `1.2s` sous la seconde près, `340ms` en deçà. */
@@ -1328,6 +1330,7 @@ export function describeHistoryEntry(entry: HistoryEntry): string {
   if (entry.engine) parts.push(entry.engine === 'KAFKA_DIRECT' ? 'Kafka Direct' : entry.engine);
   else if (entry.engineMode) parts.push(entry.engineMode === 'FLINK' ? 'Flink SQL' : 'Kafka Direct');
   if (entry.engineMode === 'KAFKA_DIRECT' && entry.offsetMode) parts.push(entry.offsetMode === 'LATEST' ? 'Latest' : 'Earliest');
+  if (entry.engineMode === 'FLINK' && entry.boundedSnapshot) parts.push('Snapshot');
   return parts.join(' · ');
 }
 
@@ -1362,16 +1365,17 @@ export function readSqlParam(search: string): string | null {
  * « Link »). Les requêtes sauvegardées vivant dans le `localStorage` d'un seul navigateur, montrer
  * une requête à quelqu'un passait par un copier-coller.
  */
-export function readQueryOptions(search: string): { engineMode: 'FLINK' | 'KAFKA_DIRECT'; offsetMode: 'EARLIEST' | 'LATEST' } {
+export function readQueryOptions(search: string): { engineMode: 'FLINK' | 'KAFKA_DIRECT'; offsetMode: 'EARLIEST' | 'LATEST'; boundedSnapshot: boolean } {
   const params = new URLSearchParams(search);
   return {
     engineMode: params.get('engine') === 'KAFKA_DIRECT' ? 'KAFKA_DIRECT' : 'FLINK',
     offsetMode: params.get('offset') === 'LATEST' ? 'LATEST' : 'EARLIEST',
+    boundedSnapshot: params.get('snapshot') === '1' && params.get('engine') !== 'KAFKA_DIRECT',
   };
 }
 
 export function buildQueryLink(baseUrl: string, sql: string,
-  options?: { engineMode: 'FLINK' | 'KAFKA_DIRECT'; offsetMode: 'EARLIEST' | 'LATEST' }): string {
+  options?: { engineMode: 'FLINK' | 'KAFKA_DIRECT'; offsetMode: 'EARLIEST' | 'LATEST'; boundedSnapshot?: boolean }): string {
   const trimmed = (sql ?? '').trim();
   if (!trimmed) return '';
   const params = new URLSearchParams();
@@ -1379,6 +1383,7 @@ export function buildQueryLink(baseUrl: string, sql: string,
   if (options) {
     params.set('engine', options.engineMode);
     if (options.engineMode === 'KAFKA_DIRECT') params.set('offset', options.offsetMode);
+    if (options.engineMode === 'FLINK' && options.boundedSnapshot) params.set('snapshot', '1');
   }
   return `${baseUrl}?${params.toString()}`;
 }

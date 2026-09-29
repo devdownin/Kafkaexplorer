@@ -2106,6 +2106,41 @@ public class KafkaAdminService {
         }
     }
 
+    /** An immutable source slice. End offsets are exclusive and captured before the Flink job starts. */
+    public record SnapshotRange(int partition, long beginning, long endExclusive) {}
+
+    public List<SnapshotRange> captureSnapshotRanges(String topicName) {
+        Properties props = new Properties();
+        props.putAll(kafkaConfig.getKafkaProperties());
+        ExplorerConsumerGroups.configure(props, "sql-snapshot");
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ByteArrayDeserializer.class.getName());
+        KafkaConsumerPool.Lease lease = consumerPool.lease(props);
+        try {
+            Consumer<byte[], byte[]> consumer = lease.consumer();
+            List<TopicPartition> partitions = partitionsOf(consumer, topicName);
+            if (partitions.isEmpty()) throw new IllegalStateException("Topic has no readable partitions");
+            // A metadata-only read: no poll, and no extra records buffered in this process.
+            Map<TopicPartition, Long> beginnings = consumer.beginningOffsets(partitions);
+            Map<TopicPartition, Long> ends = consumer.endOffsets(partitions);
+            List<SnapshotRange> ranges = new ArrayList<>();
+            for (TopicPartition tp : partitions) {
+                Long beginning = beginnings.get(tp);
+                Long end = ends.get(tp);
+                if (beginning == null || end == null || end < beginning) {
+                    throw new IllegalStateException("Incomplete Kafka offset snapshot");
+                }
+                ranges.add(new SnapshotRange(tp.partition(), beginning, end));
+            }
+            return List.copyOf(ranges);
+        } catch (Exception e) {
+            lease.discard();
+            throw new IllegalStateException("Could not capture the Kafka offset snapshot", e);
+        } finally {
+            lease.close();
+        }
+    }
+
     public RecordScan scanEarliestRecords(String topicName, int maxMessages) {
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
         Properties props = new Properties();
