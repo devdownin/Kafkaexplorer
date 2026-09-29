@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Provision an isolated Kafka benchmark fixture in the repository's Compose stack.
 
-Creates one populated topic and enough empty topics to reach the requested catalogue size.
+Creates one populated topic and enough empty topics to reach the requested total catalogue size.
 Never deletes topics and refuses a prefix already present in Kafka. Requires Docker Compose
 with the repository's `kafka` service running and the Explorer HTTP endpoint available.
 """
@@ -72,11 +72,16 @@ def main():
         parser.error("output directory must be absent or empty")
 
     topic = args.prefix + "_data"
-    names = [topic] + [f"{args.prefix}_{i:04d}" for i in range(1, args.topics)]
     existing = set(kafka("kafka-topics.sh", "--list").splitlines())
+    visible = {name for name in existing if not name.startswith("__")}
     if any(name.startswith(args.prefix + "_") for name in existing):
         parser.error("prefix already has topics in this cluster; choose another (nothing was deleted)")
-    print(f"Creating {args.topics} topics; no existing topics will be modified", flush=True)
+    to_create = args.topics - len(visible)
+    if to_create < 1:
+        parser.error(f"catalogue already has {len(visible)} visible topics; use a clean stack or a larger target")
+    names = [topic] + [f"{args.prefix}_{i:04d}" for i in range(1, to_create)]
+    print(f"Creating {to_create} topics after {len(visible)} existing; "
+          f"target catalogue {args.topics}", flush=True)
 
     def create(name):
         kafka("kafka-topics.sh", "--create", "--topic", name,
@@ -107,9 +112,10 @@ def main():
 
     end = offsets(topic, -1)
     actual = set(kafka("kafka-topics.sh", "--list").splitlines())
-    if end - beginning != args.records or set(names) - actual:
+    actual_visible = {name for name in actual if not name.startswith("__")}
+    if end - beginning != args.records or set(names) - actual or len(actual_visible) != args.topics:
         raise RuntimeError(f"Fixture mismatch: offsets [{beginning}, {end}), "
-                           f"{len(set(names) & actual)}/{args.topics} topics present")
+                           f"{len(actual_visible)}/{args.topics} visible topics present")
 
     table = topic
     ddl = (f"CREATE TABLE {table} (id BIGINT, marker STRING) WITH ("
@@ -127,6 +133,7 @@ def main():
     (args.output_dir / "explain.sql").write_text("EXPLAIN " + sql)
     (args.output_dir / "fixture.json").write_text(json.dumps({
         "topic": topic, "table": table, "topics": args.topics,
+        "existingTopics": len(visible), "createdTopics": len(names),
         "records": args.records, "startOffset": beginning, "endOffsetExclusive": end,
         "sql": sql.strip(), "note": "New isolated prefix; exact Kafka offsets verified after production."
     }, indent=2) + "\n")

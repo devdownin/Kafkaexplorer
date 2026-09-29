@@ -43,7 +43,7 @@ Les tests d'intégration supplémentaires utilisent une source bornée avec un w
 
 ## Banc de mesure reproductible
 
-`scripts/prepare-sql-benchmark.py` crée un préfixe isolé dans le Compose du dépôt (un topic alimenté, les autres vides), vérifie le nombre de topics et les offsets exacts, puis enregistre une table Flink bornée à cette tranche. Le SQL écarte toutes les lignes avec `WHERE marker = 'NEVER'` afin de forcer une lecture complète sans plafonner le changelog de `COUNT(*)`. Il ne supprime rien et refuse un préfixe déjà existant. Démarrer le stack avant de le lancer, et choisir un nouveau préfixe par campagne :
+`scripts/prepare-sql-benchmark.py` crée un préfixe isolé dans le Compose du dépôt (un topic alimenté, les autres vides), en tenant compte des topics déjà présents pour atteindre **100 ou 1 000 topics visibles au total**. Il vérifie le catalogue et les offsets exacts, puis enregistre une table Flink bornée à cette tranche. Le SQL écarte toutes les lignes avec `WHERE marker = 'NEVER'` afin de forcer une lecture complète sans plafonner le changelog de `COUNT(*)`. Il ne supprime rien et refuse un préfixe déjà existant. Démarrer le stack avant de le lancer, et choisir un nouveau préfixe par campagne ; un cluster qui a déjà dépassé la taille cible est refusé :
 
 ```bash
 python3 scripts/prepare-sql-benchmark.py \
@@ -51,7 +51,7 @@ python3 scripts/prepare-sql-benchmark.py \
   --url http://localhost:8080 --output-dir /tmp/bench_10k_100
 ```
 
-`scripts/benchmark-sql-engines.py` appelle ensuite le même endpoint `/api/query/run-sync` pour les deux moteurs et vérifie avant les mesures que le scan direct couvre exactement les offsets du manifeste, sans erreur ni ligne retournée pour les deux moteurs :
+`scripts/benchmark-sql-engines.py` appelle ensuite le même endpoint `/api/query/run-sync` pour les deux moteurs et vérifie avant les mesures le catalogue réel via `/api/dashboard`, puis que le scan direct couvre exactement les offsets du manifeste, sans erreur ni ligne retournée pour les deux moteurs. Attendre l'expiration du cache de topics (30 s par défaut) si l'application avait déjà lu le catalogue avant la préparation :
 
 ```bash
 python3 scripts/benchmark-sql-engines.py \

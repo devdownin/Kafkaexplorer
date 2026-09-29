@@ -28,6 +28,12 @@ def post(url, payload, token, timeout):
         return json.load(response)
 
 
+def get(url, token, timeout):
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as response:
+        return json.load(response)
+
+
 def percentile(samples, p):
     ordered = sorted(samples)
     return ordered[math.ceil(len(ordered) * p / 100) - 1] if ordered else None
@@ -151,6 +157,9 @@ def main():
                 or any(statement != fixture["sql"] for statement in sql.values())
                 or args.direct_offset != "earliest-offset"):
             parser.error("fixture size, SQL or direct offset differs from verified manifest")
+        dashboard = get(base + "/api/dashboard", token, 60)
+        if not dashboard.get("health") or len(dashboard.get("topics") or []) != fixture["topics"]:
+            parser.error("live catalogue differs from fixture; wait for its cache or re-provision")
         for mode in ("KAFKA_DIRECT", "FLINK"):
             probe = run_one(base, sql[mode], mode, args, token)
             if probe.get("error") or probe.get("rows") != 0:

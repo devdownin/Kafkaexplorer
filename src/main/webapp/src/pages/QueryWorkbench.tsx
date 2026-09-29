@@ -2177,10 +2177,10 @@ const QueryWorkbench: React.FC = () => {
                 prédicats WHERE que le lecteur direct n'a pas su appliquer. Le backend les
                 calcule depuis toujours ; l'UI les jetait, et présentait donc un scan non
                 filtré comme un résultat filtré. */}
-            {!queryError && results?.scanInfo && (
+            {!queryError && (results?.scanInfo || results?.scanCoverage) && (
               <div className="text-xs text-on-surface-variant px-4 py-2" role="status">
-                <p>{results.scanInfo}</p>
-                {results.scanCoverage && <p>
+                {results?.scanInfo && <p>{results.scanInfo}</p>}
+                {results?.scanCoverage && <p>
                   Coverage: {results.scanCoverage.status === 'PARTIAL' ? 'partial (scan ceiling reached)'
                     : results.scanCoverage.status === 'COMPLETE' ? 'complete for the bounded snapshot'
                       : 'unverified (the consumer may have stopped before the topic end)'}.
@@ -2189,7 +2189,7 @@ const QueryWorkbench: React.FC = () => {
                       `partition ${p.partition}: ${p.firstOffset}–${p.lastOffset}`).join(', ')
                     : 'no records returned'}.
                 </p>}
-                {!!results.scanCoverage?.boundaries?.length && <p>
+                {!!results?.scanCoverage?.boundaries?.length && <p>
                   Captured slice (end exclusive): {results.scanCoverage.boundaries.map(p =>
                     `partition ${p.partition}: [${p.startOffset}, ${p.endOffsetExclusive}), next ${p.nextOffset}`
                   ).join('; ')}.

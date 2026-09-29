@@ -1052,7 +1052,7 @@ describe('QueryWorkbench — the engine badge says why the direct reader answere
 });
 
 describe('QueryWorkbench — bounded scan evidence', () => {
-  it('shows captured partition cursors and the Flink completion state', async () => {
+  it('shows captured partition cursors even without a separate scanInfo string', async () => {
     post.mockImplementation((url: string) => (url === '/api/query/validate'
       ? Promise.resolve({ data: { valid: true } })
       : Promise.resolve({ data: {
