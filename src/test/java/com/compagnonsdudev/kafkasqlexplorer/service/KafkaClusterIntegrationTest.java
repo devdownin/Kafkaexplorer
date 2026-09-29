@@ -9,6 +9,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.ChangelogInfo;
 import com.compagnonsdudev.kafkasqlexplorer.domain.SnapshotConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicDescriptor;
 import com.compagnonsdudev.kafkasqlexplorer.parser.AvroSchemaInferrer;
@@ -45,6 +46,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -446,7 +449,11 @@ class KafkaClusterIntegrationTest {
 
         List<ConsumerRecord<String, String>> direct = adminService.getEarliestRecords(TRIMMED_TOPIC, 100);
         assertEquals(6, direct.size());
-        assertTrue(adminService.scanEarliestRecords(TRIMMED_TOPIC, 100).complete());
+        KafkaAdminService.RecordScan completeScan = adminService.scanEarliestRecords(TRIMMED_TOPIC, 100);
+        assertTrue(completeScan.complete());
+        assertEquals(3, completeScan.boundaries().size());
+        assertTrue(completeScan.boundaries().stream().allMatch(b ->
+            b.startOffset() == 2 && b.endOffsetExclusive() == 4 && b.nextOffset() == 4));
         assertFalse(adminService.scanEarliestRecords(TRIMMED_TOPIC, 3).complete());
         QueryResult rows = flink.executeSql(new QueryRequest(
             "SELECT id, kafka_partition, kafka_offset FROM " + table,
@@ -463,6 +470,7 @@ class KafkaClusterIntegrationTest {
         assertEquals("FLINK", count.engine());
         assertNotNull(count.changelog());
         assertFalse(count.changelog().capReached(), "the final aggregate update must be collected");
+        assertTrue(count.changelog().sourceCompleted(), "bounded Kafka source must end before the row cap");
         assertEquals(6L, ((Number) count.rows().get(count.rows().size() - 1).get("n")).longValue());
     }
 
@@ -536,8 +544,179 @@ class KafkaClusterIntegrationTest {
             assertEquals("FLINK", count.engine());
             assertNotNull(count.changelog());
             assertFalse(count.changelog().capReached());
+            assertTrue(count.changelog().sourceCompleted());
             assertEquals(direct.size(), ((Number) count.rows().get(count.rows().size() - 1).get("n")).intValue());
         }
+    }
+
+    @Test
+    void boundedTumbleAgreesWithDirectOnOutOfOrderEventTimeAndTombstone() throws Exception {
+        String topic = "it.bounded.window";
+        createProbeTopics(new NewTopic(topic, 1, (short) 1));
+        long epoch = 1_704_067_200_000L;
+        try (KafkaProducer<String, String> producer = probeProducer()) {
+            for (long delta : new long[] {0, 2_000, 1_000, 11_000}) {
+                producer.send(new ProducerRecord<>(topic, 0, null,
+                    "{\"event_ms\":" + (epoch + delta) + ",\"id\":\"" + delta + "\"}"));
+            }
+            producer.send(new ProducerRecord<>(topic, 0, "deleted", null));
+            producer.flush();
+        }
+        TopicDescriptor snapshot = adminService.getTopicDescriptor(topic);
+        String table = DdlGeneratorService.toTableName(topic);
+        FlinkSqlService flink = flinkService();
+        String ddl = boundedProbeDdl(table, topic,
+            "event_ms BIGINT, id STRING, event_time AS TO_TIMESTAMP_LTZ(event_ms, 3), "
+                + "WATERMARK FOR event_time AS event_time - INTERVAL '3' SECOND",
+            snapshot);
+        assertNull(flink.executeSql(QueryRequest.ddl(ddl, 30_000L)).error());
+
+        String suffix = " INTERVAL '10' SECOND)) GROUP BY window_start, window_end";
+        QueryResult direct = flink.executeSql(QueryRequest.directSql(
+            "SELECT window_start, window_end, COUNT(*) AS n FROM TABLE(TUMBLE(TABLE " + table
+                + ", DESCRIPTOR(event_ms)," + suffix, 10, 30_000L, "earliest-offset"));
+        QueryResult bounded = flink.executeSql(new QueryRequest(
+            "SELECT window_start, window_end, COUNT(*) AS n FROM TABLE(TUMBLE(TABLE " + table
+                + ", DESCRIPTOR(event_time)," + suffix,
+            null, 10, 30_000L, null, null, false, true));
+        assertNull(direct.error(), String.valueOf(direct.error()));
+        assertNull(bounded.error(), String.valueOf(bounded.error()));
+        assertEquals("KAFKA_DIRECT", direct.engine());
+        assertEquals("FLINK", bounded.engine());
+        assertEquals(List.of("1", "3"), values(direct, "n"));
+        assertEquals(values(direct, "n"), finalWindowCounts(bounded));
+    }
+
+    @Test
+    void boundedTumbleClosesWithAnEmptyPartition() throws Exception {
+        WindowProbe probe = stagedWindowProbe(true);
+        assertEquals(List.of("1", "3"), values(probe.direct(), "n"));
+        assertEquals(List.of("1", "3"), finalWindowCounts(probe.bounded()),
+            "the bounded source closes its windows despite an empty partition");
+    }
+
+    @Test
+    void boundedTumbleDropsAnEventAfterTheWatermarkPassedItsWindow() throws Exception {
+        WindowProbe probe = stagedWindowProbe(false);
+        assertEquals(List.of("1", "3"), values(probe.direct(), "n"));
+        assertEquals(List.of("1", "2"), finalWindowCounts(probe.bounded()),
+            "the watermark advanced before the final 1-second record arrived");
+    }
+
+    private record WindowProbe(QueryResult direct, QueryResult bounded) { }
+
+    private static WindowProbe stagedWindowProbe(boolean idlePartition) throws Exception {
+        String topic = "it.bounded.window." + (idlePartition ? "idle" : "late");
+        createProbeTopics(new NewTopic(topic, idlePartition ? 2 : 1, (short) 1));
+        int activePartition = idlePartition ? 1 : 0;
+        long epoch = 1_704_067_200_000L;
+        String table = DdlGeneratorService.toTableName(topic);
+        FlinkSqlService flink = flinkService();
+        String columns = "event_ms BIGINT, event_time AS TO_TIMESTAMP_LTZ(event_ms, 3), "
+            + "WATERMARK FOR event_time AS event_time - INTERVAL '3' SECOND";
+        // The stopping offset is known in advance. Starting the bounded job before producing
+        // lets the single-partition case emit a periodic watermark before its last record.
+        // The two-partition case has an empty partition and no late event.
+        String starts = idlePartition
+            ? "partition:0,offset:0;partition:1,offset:0" : "partition:0,offset:0";
+        String ends = idlePartition
+            ? "partition:0,offset:0;partition:1,offset:4" : "partition:0,offset:4";
+        String ddl = "CREATE TABLE " + table + " (" + columns + ") WITH ("
+            + "'connector' = 'kafka', 'topic' = '" + topic + "', "
+            + "'properties.bootstrap.servers' = '" + KAFKA.getBootstrapServers() + "', "
+            + "'value.format' = 'json', 'scan.startup.mode' = 'specific-offsets', "
+            + "'scan.startup.specific-offsets' = '" + starts + "', "
+            + "'scan.bounded.mode' = 'specific-offsets', "
+            + "'scan.bounded.specific-offsets' = '" + ends + "')";
+        assertNull(flink.executeSql(QueryRequest.ddl(ddl, 30_000L)).error());
+
+        String prefix = "SELECT window_start, window_end, COUNT(*) AS n FROM TABLE(TUMBLE(TABLE " + table;
+        String suffix = ", INTERVAL '10' SECOND)) GROUP BY window_start, window_end";
+        CompletableFuture<QueryResult> query = CompletableFuture.supplyAsync(() -> flink.executeSql(new QueryRequest(
+            prefix + ", DESCRIPTOR(event_time)" + suffix,
+            null, 10, 45_000L, null, null, false, true)));
+        try (KafkaProducer<String, String> producer = probeProducer()) {
+            Thread.sleep(5_000L); // allow the Flink Kafka source to subscribe before data arrives
+            long[] first = idlePartition ? new long[] {0, 2_000, 1_000}
+                : new long[] {0, 2_000, 21_000};
+            for (long delta : first) {
+                producer.send(new ProducerRecord<>(topic, activePartition, null,
+                    "{\"event_ms\":" + (epoch + delta) + "}"));
+            }
+            producer.flush();
+            if (!idlePartition) Thread.sleep(2_000L); // emit the watermark before the late event
+            producer.send(new ProducerRecord<>(topic, activePartition, null,
+                "{\"event_ms\":" + (epoch + (idlePartition ? 21_000 : 1_000)) + "}")).get();
+        }
+        QueryResult bounded = query.get(55, TimeUnit.SECONDS);
+        QueryResult direct = flink.executeSql(QueryRequest.directSql(
+            prefix + ", DESCRIPTOR(event_ms)" + suffix, 10, 30_000L, "earliest-offset"));
+        assertNull(direct.error(), String.valueOf(direct.error()));
+        assertNull(bounded.error(), String.valueOf(bounded.error()));
+        return new WindowProbe(direct, bounded);
+    }
+
+    @Test
+    void boundedJoinReadsTwoCapturedTopicsWhileDirectRejectsTheShape() throws Exception {
+        String left = "it.bounded.join.left";
+        String right = "it.bounded.join.right";
+        createProbeTopics(new NewTopic(left, 1, (short) 1), new NewTopic(right, 1, (short) 1));
+        try (KafkaProducer<String, String> producer = probeProducer()) {
+            for (String id : List.of("A", "B"))
+                producer.send(new ProducerRecord<>(left, "{\"id\":\"" + id + "\"}"));
+            for (String id : List.of("A", "C"))
+                producer.send(new ProducerRecord<>(right, "{\"id\":\"" + id + "\"}"));
+            producer.flush();
+        }
+        String leftTable = DdlGeneratorService.toTableName(left);
+        String rightTable = DdlGeneratorService.toTableName(right);
+        FlinkSqlService flink = flinkService();
+        assertNull(flink.executeSql(QueryRequest.ddl(boundedProbeDdl(leftTable, left, "id STRING",
+            adminService.getTopicDescriptor(left)), 30_000L)).error());
+        assertNull(flink.executeSql(QueryRequest.ddl(boundedProbeDdl(rightTable, right, "id STRING",
+            adminService.getTopicDescriptor(right)), 30_000L)).error());
+        String sql = "SELECT l.id AS id FROM " + leftTable + " l JOIN " + rightTable + " r ON l.id = r.id";
+        QueryResult bounded = flink.executeSql(new QueryRequest(sql, null, 10, 30_000L,
+            null, null, false, true));
+        QueryResult direct = flink.executeSql(QueryRequest.directSql(sql, 10, 30_000L, "earliest-offset"));
+        assertNull(bounded.error(), String.valueOf(bounded.error()));
+        assertEquals("FLINK", bounded.engine());
+        assertEquals(List.of("A"), values(bounded, "id"));
+        assertNotNull(direct.error());
+        assertTrue(direct.error().contains("joins"), direct.error());
+    }
+
+    private static void createProbeTopics(NewTopic... topics) throws Exception {
+        Properties props = new Properties();
+        props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        try (Admin admin = Admin.create(props)) {
+            admin.createTopics(List.of(topics)).all().get();
+        }
+    }
+
+    private static KafkaProducer<String, String> probeProducer() {
+        Properties props = new Properties();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
+        return new KafkaProducer<>(props);
+    }
+
+    private static String boundedProbeDdl(String table, String topic, String columns,
+                                          TopicDescriptor snapshot) {
+        String starts = snapshot.minOffsets().entrySet().stream().sorted(Map.Entry.comparingByKey())
+            .map(e -> "partition:" + e.getKey() + ",offset:" + e.getValue())
+            .collect(java.util.stream.Collectors.joining(";"));
+        String ends = snapshot.maxOffsets().entrySet().stream().sorted(Map.Entry.comparingByKey())
+            .map(e -> "partition:" + e.getKey() + ",offset:" + e.getValue())
+            .collect(java.util.stream.Collectors.joining(";"));
+        return "CREATE TABLE " + table + " (" + columns + ") WITH ("
+            + "'connector' = 'kafka', 'topic' = '" + topic + "', "
+            + "'properties.bootstrap.servers' = '" + KAFKA.getBootstrapServers() + "', "
+            + "'value.format' = 'json', 'scan.startup.mode' = 'specific-offsets', "
+            + "'scan.startup.specific-offsets' = '" + starts + "', "
+            + "'scan.bounded.mode' = 'specific-offsets', "
+            + "'scan.bounded.specific-offsets' = '" + ends + "')";
     }
 
     /**
@@ -760,6 +939,22 @@ class KafkaClusterIntegrationTest {
             .map(row -> String.valueOf(row.get(column)))
             .sorted()
             .toList();
+    }
+
+    /** Apply Flink's +I/-U/+U rows before comparing the final value of each window. */
+    private static List<String> finalWindowCounts(QueryResult result) {
+        // A proper window aggregate emits only final inserts; an ordinary GROUP BY over
+        // window_start instead produces updates. Both forms are compared by final state.
+        if (result.changelog() == null) return values(result, "n");
+        assertTrue(result.changelog().sourceCompleted(), "the bounded source must finish");
+        Map<String, String> latest = new LinkedHashMap<>();
+        for (Map<String, Object> row : result.rows()) {
+            String key = String.valueOf(row.get("window_start"));
+            String kind = String.valueOf(row.getOrDefault(ChangelogInfo.ROW_KIND_KEY, "+I"));
+            if ("-U".equals(kind) || "-D".equals(kind)) latest.remove(key);
+            else latest.put(key, String.valueOf(row.get("n")));
+        }
+        return latest.values().stream().sorted().toList();
     }
 
     /**

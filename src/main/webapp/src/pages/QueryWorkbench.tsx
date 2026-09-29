@@ -1758,7 +1758,7 @@ const QueryWorkbench: React.FC = () => {
                 options={[{ value: 'FLINK', label: 'Flink SQL' }, { value: 'KAFKA_DIRECT', label: 'Kafka Direct' }]} />
             </div>
             {engineMode === 'KAFKA_DIRECT' && <div className="flex items-center gap-2 shrink-0">
-              <Tooltip content="Choose which end of the topic to scan. Kafka Direct reads a bounded slice; filters and aggregates may be partial.">
+              <Tooltip content="Choose which end of the topic to scan. Latest samples a tail of each partition; it does not select the globally newest N messages. Filters and aggregates may be partial.">
                 <span tabIndex={0} className="text-[12px] text-on-surface-variant rounded">Offset</span>
               </Tooltip>
               <Segmented
@@ -2068,7 +2068,7 @@ const QueryWorkbench: React.FC = () => {
                       ? 'The selected engine answers this query. The badge names it once a result is available.'
                       : results.engine === 'KAFKA_DIRECT'
                         ? 'Kafka Direct: a bounded scan over Kafka messages. It supports SELECT, WHERE, aggregates and TUMBLE windows — but no multi-topic JOIN, which is the limit worth knowing before reading these rows.'
-                          + (ranOffsetMode === 'LATEST' ? ' This scan starts at the recent end of the topic.' : '')
+                          + (ranOffsetMode === 'LATEST' ? ' Latest samples per-partition tails, without a global newest-N ordering.' : '')
                         : 'Flink: executed by the embedded Flink SQL engine (EXPLAIN / DDL).'
                   }>
                   <span tabIndex={0} className="rounded">
@@ -2177,10 +2177,10 @@ const QueryWorkbench: React.FC = () => {
                 prédicats WHERE que le lecteur direct n'a pas su appliquer. Le backend les
                 calcule depuis toujours ; l'UI les jetait, et présentait donc un scan non
                 filtré comme un résultat filtré. */}
-            {!queryError && results?.scanInfo && (
+            {!queryError && (results?.scanInfo || results?.scanCoverage) && (
               <div className="text-xs text-on-surface-variant px-4 py-2" role="status">
-                <p>{results.scanInfo}</p>
-                {results.scanCoverage && <p>
+                {results?.scanInfo && <p>{results.scanInfo}</p>}
+                {results?.scanCoverage && <p>
                   Coverage: {results.scanCoverage.status === 'PARTIAL' ? 'partial (scan ceiling reached)'
                     : results.scanCoverage.status === 'COMPLETE' ? 'complete for the bounded snapshot'
                       : 'unverified (the consumer may have stopped before the topic end)'}.
@@ -2189,7 +2189,21 @@ const QueryWorkbench: React.FC = () => {
                       `partition ${p.partition}: ${p.firstOffset}–${p.lastOffset}`).join(', ')
                     : 'no records returned'}.
                 </p>}
+                {!!results?.scanCoverage?.boundaries?.length && <p>
+                  Captured slice (end exclusive): {results.scanCoverage.boundaries.map(p =>
+                    `partition ${p.partition}: [${p.startOffset}, ${p.endOffsetExclusive}), next ${p.nextOffset}`
+                  ).join('; ')}.
+                </p>}
               </div>
+            )}
+            {!queryError && results?.changelog && (
+              <p className="text-xs text-on-surface-variant px-4 py-2" role="status">
+                Flink changelog: {results.changelog.sourceCompleted
+                  ? 'source completed; final updates collected'
+                  : results.changelog.capReached
+                    ? 'row cap reached; final updates are not guaranteed'
+                    : 'source completion not verified'}.
+              </p>
             )}
             {!queryError && !!results?.warnings?.length && (
               <div className="mx-4 mt-3 flex items-start gap-2 px-3 py-2 rounded-lg border border-warning/30 bg-warning/10 shrink-0" role="status">

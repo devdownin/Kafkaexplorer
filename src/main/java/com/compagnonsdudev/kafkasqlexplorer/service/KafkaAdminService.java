@@ -2098,7 +2098,13 @@ public class KafkaAdminService {
 
     /** A fixed-end scan, including whether every partition reached its captured end offset. */
     public record RecordScan(List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records,
-                             boolean complete) { }
+                             boolean complete,
+                             List<com.compagnonsdudev.kafkasqlexplorer.domain.ScanCoverage.PartitionBoundary> boundaries) {
+        public RecordScan(List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records,
+                          boolean complete) {
+            this(records, complete, List.of());
+        }
+    }
 
     public RecordScan scanEarliestRecords(String topicName, int maxMessages) {
         List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> records = new ArrayList<>();
@@ -2351,7 +2357,14 @@ public class KafkaAdminService {
                 if (records.size() >= maxMessages) break;
             }
         }
-        return new RecordScan(records, !hasUnreadOffsets(partitions, endOffsets, nextOffsets));
+        List<com.compagnonsdudev.kafkasqlexplorer.domain.ScanCoverage.PartitionBoundary> boundaries =
+            partitions.stream().filter(tp -> endOffsets.containsKey(tp))
+                .sorted(java.util.Comparator.comparingInt(TopicPartition::partition))
+                .map(tp -> new com.compagnonsdudev.kafkasqlexplorer.domain.ScanCoverage.PartitionBoundary(
+                    tp.partition(), startOffsets.get(tp), endOffsets.get(tp),
+                    Math.min(nextOffsets.get(tp), endOffsets.get(tp))))
+                .toList();
+        return new RecordScan(records, !hasUnreadOffsets(partitions, endOffsets, nextOffsets), boundaries);
     }
 
     /** Pauses every assigned partition whose cursor has reached the end offset this read seeked against. */

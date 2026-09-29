@@ -27,13 +27,18 @@ package com.compagnonsdudev.kafkasqlexplorer.domain;
  * @param retractions    lignes qui <em>retirent</em> une ligne précédente ({@code -U}, {@code -D})
  * @param capReached     le plafond de lignes a été atteint, donc la suite des corrections est
  *                       coupée et la dernière ligne n'est pas nécessairement l'état final
+ * @param sourceCompleted l'itérateur Flink a signalé la fin de la source avant le plafond
  */
 public record ChangelogInfo(
     int rowsReturned,
     int corrections,
     int retractions,
-    boolean capReached
+    boolean capReached,
+    boolean sourceCompleted
 ) {
+    public ChangelogInfo(int rowsReturned, int corrections, int retractions, boolean capReached) {
+        this(rowsReturned, corrections, retractions, capReached, false);
+    }
     /** Le nom réservé sous lequel chaque ligne porte son {@code RowKind}. */
     public static final String ROW_KIND_KEY = "__row_kind";
 }

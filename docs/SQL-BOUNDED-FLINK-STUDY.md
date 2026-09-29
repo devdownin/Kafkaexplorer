@@ -30,3 +30,39 @@ Cette tranche fixe ne résout pas encore « les N derniers messages » en prése
 `boundedFlinkSnapshotKeepsSelectiveFilterStableAfterAppends` capture les offsets de début et de fin de huit partitions, lit la tranche avec Kafka Direct, puis ajoute des messages qui correspondent au filtre **avant** de lancer Flink. Il compare les couples partition/offset sélectionnés par `WHERE status = 'KEEP'` et la valeur finale de `COUNT(*)` avec la tranche initiale. L'objectif est de prouver que les nouveaux messages n'entrent pas dans le résultat malgré un filtre qui les sélectionnerait.
 
 Ce cas n'établit ni l'ordre global des « N derniers » entre partitions, ni l'équivalence des fenêtres et jointures, ni le coût du démarrage de Flink. Ces points restent des critères de décision, pas des hypothèses validées par les deux tests.
+
+## Définition de « Latest » aujourd'hui
+
+Kafka Direct capture l'offset de fin de chaque partition et démarre à `max(beginning, end - (N / partitions + 1))`. Il collecte ensuite **au plus N messages au total**, dans l'ordre où les polls les livrent. « Latest » veut donc dire *échantillon borné des queues de partitions*, ni les N plus grands horodatages Kafka ni les N derniers selon un ordre global. Les bornes de début et de fin affichées dans le résultat rendent cette définition vérifiable. Une partition très active peut dépasser son quota tandis qu'une autre est vide ; le résultat peut alors contenir moins de N messages bien qu'il reste des messages plus anciens sur la première.
+
+Une véritable option « N derniers globaux » exigerait une décision de produit distincte : horodatage Kafka décroissant, puis partition et offset pour départager les égalités, avec un coût de lecture potentiellement supérieur à N. Elle n'est pas introduite par ce prototype. La capture d'offsets de Flink reproduit une **tranche choisie**, pas automatiquement la sélection des N derniers globaux.
+
+## Fenêtres et jointures
+
+Les tests d'intégration supplémentaires utilisent une source bornée avec un watermark et des horodatages désordonnés pour comparer `TUMBLE` à la fenêtre du lecteur direct ; un message nul est inclus. Ils groupent par **`window_start` et `window_end`** pour exercer la véritable agrégation de fenêtre Flink. Une lecture étagée présente un événement après la progression du watermark sur une partition active ; une autre vérifie la fermeture avec une partition vide. Si le planner émet un changelog (`+I`, `-U`, `+U`), la comparaison applique ses corrections par fenêtre avant de juger la valeur finale. Une autre paire de topics bornés vérifie une jointure interne. `directRead` accepte TUMBLE sur une seule source, mais refuse les jointures, sous-requêtes et autres fonctions de fenêtre. `HOP`, `SESSION` et les jointures externes ne sont pas comparés ici.
+
+## Banc de mesure reproductible
+
+`scripts/prepare-sql-benchmark.py` crée un préfixe isolé dans le Compose du dépôt (un topic alimenté, les autres vides), en tenant compte des topics déjà présents pour atteindre **100 ou 1 000 topics visibles au total**. Il vérifie le catalogue et les offsets exacts, puis enregistre une table Flink bornée à cette tranche. Le SQL écarte toutes les lignes avec `WHERE marker = 'NEVER'` afin de forcer une lecture complète sans plafonner le changelog de `COUNT(*)`. Il ne supprime rien et refuse un préfixe déjà existant. Démarrer le stack avant de le lancer, et choisir un nouveau préfixe par campagne ; un cluster qui a déjà dépassé la taille cible est refusé :
+
+```bash
+python3 scripts/prepare-sql-benchmark.py \
+  --prefix bench_10k_100 --records 10000 --topics 100 \
+  --url http://localhost:8080 --output-dir /tmp/bench_10k_100
+```
+
+`scripts/benchmark-sql-engines.py` appelle ensuite le même endpoint `/api/query/run-sync` pour les deux moteurs et vérifie avant les mesures le catalogue réel via `/api/dashboard`, puis que le scan direct couvre exactement les offsets du manifeste, sans erreur ni ligne retournée pour les deux moteurs. Attendre l'expiration du cache de topics (30 s par défaut) si l'application avait déjà lu le catalogue avant la préparation :
+
+```bash
+python3 scripts/benchmark-sql-engines.py \
+  --url http://localhost:8080 \
+  --flink-sql-file /tmp/bench_10k_100/flink.sql \
+  --direct-sql-file /tmp/bench_10k_100/direct.sql \
+  --flink-explain-sql-file /tmp/bench_10k_100/explain.sql \
+  --fixture-manifest /tmp/bench_10k_100/fixture.json \
+  --dataset-records 10000 --catalog-topics 100 \
+  --runs 30 --warmup 3 --concurrency 1 8 \
+  --output /tmp/sql-benchmark-10k-100.json
+```
+
+Répéter avec un nouveau préfixe pour les trois autres couples 10k/1000, 100k/100 et 100k/1000. Le JSON contient p50/p95 client et serveur, nombre de messages et état de couverture directe, taux de réponses annulées, et pic de heap et de threads échantillonnés via `/actuator/prometheus` lorsqu'il est accessible. `EXPLAIN` donne un **proxy de planification** incluant HTTP et prise du runtime, pas le temps interne exact du planner. `--cancel-after-ms` lance un essai d'annulation séparé ; ne pas mélanger ces mesures aux latences normales. Le jeton facultatif est lu depuis `KEX_BENCH_TOKEN`. Le banc ne supprime ni les topics ni les tables : nettoyer ce jeu isolé séparément après inspection, selon la politique de l'environnement. Aucun chiffre p95 n'est revendiqué tant qu'une campagne sur les quatre configurations n'a pas été exécutée.

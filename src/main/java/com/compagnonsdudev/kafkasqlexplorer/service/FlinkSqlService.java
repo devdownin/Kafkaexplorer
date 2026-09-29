@@ -1190,11 +1190,12 @@ public class FlinkSqlService {
         // Refuse an incompatible shape before auto-registration can sample a Kafka topic.
         if (request.wantsDirectRead() && sql.startsWith("SELECT")
                 && (SqlStatements.startsWithCte(strippedSql)
-                    || !MetricService.isSingleTableRead(strippedSql))) {
+                    || (!MetricService.isSingleTableRead(strippedSql)
+                        && !isDirectTumbleRead(strippedSql)))) {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(),
                 System.currentTimeMillis() - startTime,
                 "The direct Kafka reader requires one table without joins, subqueries "
-                    + "or window functions; use the Flink planner for this statement.");
+                    + "or unsupported window functions; use the Flink planner for this statement.");
         }
 
         if (request.wantsDirectRead() && request.wantsFlinkOnly()) {
@@ -1515,6 +1516,13 @@ public class FlinkSqlService {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), duration,
                 SqlErrorClassifier.explain(e));
         }
+    }
+
+    /** TUMBLE is the one window whose direct buckets preserve the SQL window shape. */
+    private static boolean isDirectTumbleRead(String sql) {
+        if (!MetricService.namesOneSourceOnly(sql) || !SqlStatements.hasWindowTableCall(sql)) return false;
+        Matcher call = WINDOW_CALL.matcher(sql);
+        return call.find() && "TUMBLE".equalsIgnoreCase(call.group(1));
     }
 
     /**
@@ -1965,7 +1973,8 @@ public class FlinkSqlService {
      * et le décider pour lui est exactement ce que le marqueur évite — mais un résultat tronqué
      * ne se lit plus du tout de la même façon, alors il le dit.
      */
-    private static QueryResult describeChangelog(QueryResult result, int corrections, int retractions, int limit) {
+    private static QueryResult describeChangelog(QueryResult result, int corrections, int retractions,
+                                                  int limit, boolean sourceCompleted) {
         if (corrections <= 0) return result;
         int rows = result.rows().size();
         boolean capReached = rows >= limit;
@@ -1982,7 +1991,7 @@ public class FlinkSqlService {
                     + "\"Rows\" to see it through.", limit));
         }
         return result.withWarnings(warnings)
-            .withChangelog(new ChangelogInfo(rows, corrections, retractions, capReached));
+            .withChangelog(new ChangelogInfo(rows, corrections, retractions, capReached, sourceCompleted));
     }
 
     /**
@@ -2032,6 +2041,8 @@ public class FlinkSqlService {
                 new java.util.concurrent.atomic.AtomicInteger();
             final java.util.concurrent.atomic.AtomicInteger retractions =
                 new java.util.concurrent.atomic.AtomicInteger();
+            final java.util.concurrent.atomic.AtomicBoolean sourceCompleted =
+                new java.util.concurrent.atomic.AtomicBoolean();
 
             // We use a CompletableFuture to implement the timeout logic.
             // Streaming queries might not produce data immediately, so we don't want to block indefinitely.
@@ -2050,7 +2061,11 @@ public class FlinkSqlService {
                         // comme un dépassement de délai, donc un repli silencieux sur le
                         // lecteur direct. Le quota se vérifie en premier : il se lit sans
                         // rien demander à personne.
-                        while (count < limit && it.hasNext()) {
+                        while (count < limit) {
+                            if (!it.hasNext()) {
+                                sourceCompleted.set(true);
+                                break;
+                            }
                             Row row = it.next();
                             if (count == 0 && log.isDebugEnabled()) {
                                 log.debug("[FlinkSQL] queryId={} first row arity={} kind={} rowString='{}'",
@@ -2136,7 +2151,8 @@ public class FlinkSqlService {
 
             long duration = System.currentTimeMillis() - startTime;
             QueryResult answered = new QueryResult(columns, rows, duration, null, false, "FLINK");
-            return describeChangelog(answered, corrections.get(), retractions.get(), limit);
+            return describeChangelog(answered, corrections.get(), retractions.get(), limit,
+                sourceCompleted.get());
         } catch (Exception e) {
             log.error("Flink SQL execution error — query='{}' error='{}'",
                 LogSafe.text(finalSql), LogSafe.text(e.getMessage()), e);
@@ -2415,7 +2431,8 @@ public class FlinkSqlService {
             : "earliest-offset".equals(readMode) ? kafkaAdminService.getEarliestRecords(topic, fetch)
             : kafkaAdminService.getRecentRecords(topic, fetch);
         DirectFetch result = new DirectFetch(records,
-            ScanCoverage.observed(topic, records, fetch, scan != null && scan.complete()));
+            ScanCoverage.observed(topic, records, fetch, scan != null && scan.complete(),
+                scan != null ? scan.boundaries() : List.of()));
         if (slot != null && shareable && slot.scan == null) {
             slot.scan = new SharedScan(topic, readMode, fetch, result);
         }
@@ -2464,6 +2481,11 @@ public class FlinkSqlService {
     }
 
     private QueryResult kafkaDirectSelect(String sql, String readMode, int limit, long startTime) {
+        if (!MetricService.namesOneSourceOnly(sql)) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(),
+                System.currentTimeMillis() - startTime,
+                "Kafka Direct reads one topic only; JOIN and subqueries require Flink SQL.");
+        }
         // Chaque lecture lexicale de cette méthode se fait sur le texte dont les littéraux sont
         // neutralisés, et une seule fois : les positions y sont celles de `sql`, donc ce qui est
         // capturé hors littéral est le texte d'origine. Sans cela, `WHERE note = 'from ailleurs'`
