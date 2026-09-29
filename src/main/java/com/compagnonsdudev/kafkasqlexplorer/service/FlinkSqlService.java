@@ -7,6 +7,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.FlinkJobSummary;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
+import com.compagnonsdudev.kafkasqlexplorer.domain.ScanCoverage;
 import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.parser.SecureXml;
 import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
@@ -2628,7 +2629,8 @@ public class FlinkSqlService {
                     + " — the aggregate covers the first " + fetch + " record(s) read from '"
                     + topic + "', not the whole topic, so a count is a floor rather than a total.");
             }
-            return aggregate.withScanInfo(directScanInfo(topic, readMode, records.size(), fetch));
+            return aggregate.withScanInfo(directScanInfo(topic, readMode, records.size(), fetch))
+                .withScanCoverage(ScanCoverage.observed(topic, records, fetch));
         }
 
         List<String> columns = requestedCols.isEmpty()
@@ -2663,7 +2665,8 @@ public class FlinkSqlService {
         }
         return new QueryResult(columns, rows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
             .withWarnings(notes)
-            .withScanInfo(directScanInfo(topic, readMode, records.size(), fetch));
+            .withScanInfo(directScanInfo(topic, readMode, records.size(), fetch))
+            .withScanCoverage(ScanCoverage.observed(topic, records, fetch));
     }
 
     private static String directScanInfo(String topic, String readMode, int fetched, int ceiling) {
@@ -2939,7 +2942,8 @@ public class FlinkSqlService {
         allWarnings.addAll(whereWarnings);
         return new QueryResult(columns, resultRows, System.currentTimeMillis() - startTime, null, false, "KAFKA_DIRECT")
             .withWarnings(allWarnings)
-            .withScanInfo(directScanInfo(topic, readMode, records.size(), 100_000));
+            .withScanInfo(directScanInfo(topic, readMode, records.size(), 100_000))
+            .withScanCoverage(ScanCoverage.observed(topic, records, 100_000));
     }
 
     /**

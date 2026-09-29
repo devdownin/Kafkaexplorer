@@ -424,6 +424,43 @@ class KafkaClusterIntegrationTest {
         assertEquals(3, result.rows().size());
     }
 
+    /** A bounded Flink source must read the same fixed Kafka slice as the direct reader. */
+    @Test
+    void boundedFlinkOffsetPrototypeMatchesDirectSnapshot() throws Exception {
+        FlinkSqlService flink = flinkService();
+        String table = "it_bounded_offset_probe";
+        String starts = "partition:0,offset:2;partition:1,offset:2;partition:2,offset:2";
+        String ends = "partition:0,offset:4;partition:1,offset:4;partition:2,offset:4";
+        String ddl = "CREATE TABLE " + table + " (id STRING, "
+            + "kafka_partition INT METADATA FROM 'partition' VIRTUAL, "
+            + "kafka_offset BIGINT METADATA FROM 'offset' VIRTUAL) WITH ("
+            + "'connector' = 'kafka', 'topic' = '" + TRIMMED_TOPIC + "', "
+            + "'properties.bootstrap.servers' = '" + KAFKA.getBootstrapServers() + "', "
+            + "'format' = 'json', 'scan.startup.mode' = 'specific-offsets', "
+            + "'scan.startup.specific-offsets' = '" + starts + "', "
+            + "'scan.bounded.mode' = 'specific-offsets', "
+            + "'scan.bounded.specific-offsets' = '" + ends + "')";
+        QueryResult created = flink.executeSql(QueryRequest.ddl(ddl, 30_000L));
+        assertNull(created.error(), String.valueOf(created.error()));
+
+        List<ConsumerRecord<String, String>> direct = adminService.getEarliestRecords(TRIMMED_TOPIC, 100);
+        assertEquals(6, direct.size());
+        QueryResult rows = flink.executeSql(new QueryRequest(
+            "SELECT id, kafka_partition, kafka_offset FROM " + table,
+            null, 10, 30_000L, null, null, false, true));
+        assertNull(rows.error(), String.valueOf(rows.error()));
+        assertEquals("FLINK", rows.engine());
+        assertEquals(direct.stream().map(r -> r.partition() + ":" + r.offset()).collect(java.util.stream.Collectors.toSet()),
+            rows.rows().stream().map(r -> r.get("kafka_partition") + ":" + r.get("kafka_offset"))
+                .collect(java.util.stream.Collectors.toSet()));
+
+        QueryResult count = flink.executeSql(new QueryRequest(
+            "SELECT COUNT(*) AS n FROM " + table, null, 10, 30_000L, null, null, false, true));
+        assertNull(count.error(), String.valueOf(count.error()));
+        assertEquals("FLINK", count.engine());
+        assertEquals(6L, ((Number) count.rows().get(count.rows().size() - 1).get("n")).longValue());
+    }
+
     /**
      * And the same table works as a <em>sink</em>, which is the half no fallback ever covered.
      *

@@ -109,6 +109,14 @@ export interface QueryResult {
   warnings: string[];
   /** Coverage of the bounded Kafka Direct fetch, when available. */
   scanInfo?: string | null;
+  scanCoverage?: {
+    topic: string;
+    recordsFetched: number;
+    scanCeiling: number;
+    /** PARTIAL is proven by the ceiling; UNVERIFIED does not claim the topic was exhausted. */
+    status: 'PARTIAL' | 'UNVERIFIED' | 'COMPLETE';
+    partitions: { partition: number; firstOffset: number; lastOffset: number }[];
+  } | null;
   /** Non nul quand le moteur a répondu par un changelog — voir `ChangelogInfo`. */
   changelog: ChangelogInfo | null;
 }

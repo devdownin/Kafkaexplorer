@@ -1284,6 +1284,9 @@ export interface HistoryEntry {
   rows?: number;
   /** `FLINK` ou `KAFKA_DIRECT`, tel que rapporté par le moteur. */
   engine?: string;
+  /** Requested mode, distinct from the engine reported after execution. */
+  engineMode?: 'FLINK' | 'KAFKA_DIRECT';
+  offsetMode?: 'EARLIEST' | 'LATEST';
   /** Faux quand la requête a échoué. Absent sur une entrée d'une version antérieure. */
   ok?: boolean;
 }
@@ -1291,7 +1294,7 @@ export interface HistoryEntry {
 export const HISTORY_CAP = 20;
 
 /**
- * Ajoute une entrée en tête, en dédupliquant sur le SQL : relancer la même requête met à jour son
+ * Ajoute une entrée en tête, en dédupliquant sur SQL et mode : relancer la même requête met à jour son
  * résultat plutôt que d'accumuler des lignes identiques dont seule l'heure diffère.
  */
 export function pushHistory(
@@ -1301,7 +1304,9 @@ export function pushHistory(
 ): HistoryEntry[] {
   const sql = entry.sql.trim();
   if (!sql) return [...history];
-  return [{ ...entry, sql }, ...history.filter(h => h.sql !== sql)].slice(0, cap);
+  return [{ ...entry, sql }, ...history.filter(h => h.sql !== sql
+    || h.engineMode !== entry.engineMode
+    || (h.engineMode === 'KAFKA_DIRECT' && h.offsetMode !== entry.offsetMode))].slice(0, cap);
 }
 
 /** `1.2s` sous la seconde près, `340ms` en deçà. */
@@ -1321,6 +1326,8 @@ export function describeHistoryEntry(entry: HistoryEntry): string {
     parts.push(`${entry.rows.toLocaleString()} ${entry.rows === 1 ? 'row' : 'rows'}`);
   }
   if (entry.engine) parts.push(entry.engine === 'KAFKA_DIRECT' ? 'Kafka Direct' : entry.engine);
+  else if (entry.engineMode) parts.push(entry.engineMode === 'FLINK' ? 'Flink SQL' : 'Kafka Direct');
+  if (entry.engineMode === 'KAFKA_DIRECT' && entry.offsetMode) parts.push(entry.offsetMode === 'LATEST' ? 'Latest' : 'Earliest');
   return parts.join(' · ');
 }
 
@@ -1355,11 +1362,24 @@ export function readSqlParam(search: string): string | null {
  * « Link »). Les requêtes sauvegardées vivant dans le `localStorage` d'un seul navigateur, montrer
  * une requête à quelqu'un passait par un copier-coller.
  */
-export function buildQueryLink(baseUrl: string, sql: string): string {
+export function readQueryOptions(search: string): { engineMode: 'FLINK' | 'KAFKA_DIRECT'; offsetMode: 'EARLIEST' | 'LATEST' } {
+  const params = new URLSearchParams(search);
+  return {
+    engineMode: params.get('engine') === 'KAFKA_DIRECT' ? 'KAFKA_DIRECT' : 'FLINK',
+    offsetMode: params.get('offset') === 'LATEST' ? 'LATEST' : 'EARLIEST',
+  };
+}
+
+export function buildQueryLink(baseUrl: string, sql: string,
+  options?: { engineMode: 'FLINK' | 'KAFKA_DIRECT'; offsetMode: 'EARLIEST' | 'LATEST' }): string {
   const trimmed = (sql ?? '').trim();
   if (!trimmed) return '';
   const params = new URLSearchParams();
   params.set('sql', trimmed);
+  if (options) {
+    params.set('engine', options.engineMode);
+    if (options.engineMode === 'KAFKA_DIRECT') params.set('offset', options.offsetMode);
+  }
   return `${baseUrl}?${params.toString()}`;
 }
 

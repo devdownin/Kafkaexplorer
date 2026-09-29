@@ -29,7 +29,7 @@ import {
   forgetOldestResults, summariseBatch, describeStatementRun, MAX_RETAINED_BATCH_ROWS,
   buildCompletionEntries, type CompletionEntry,
   type PlannedStatement, type StatementRun,
-  readSqlParam, buildQueryLink,
+  readSqlParam, readQueryOptions, buildQueryLink,
   sidebarSqlFor, sidebarActionLabel,
   describeChangelog, exportColumns, exportRows, explainPlan,
 } from './queryWorkbenchLogic';
@@ -612,8 +612,10 @@ const QueryWorkbench: React.FC = () => {
     () => statementIndexAt(statements, cursorOffset),
     [statements, cursorOffset],
   );
-  const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>('EARLIEST');
-  const [engineMode, setEngineMode] = useState<'FLINK' | 'KAFKA_DIRECT'>('FLINK');
+  const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>(
+    () => readQueryOptions(location.search).offsetMode);
+  const [engineMode, setEngineMode] = useState<'FLINK' | 'KAFKA_DIRECT'>(
+    () => readQueryOptions(location.search).engineMode);
   const [panelError, setPanelError] = useState<QueryErrorInfo | null>(null);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -1205,6 +1207,7 @@ const QueryWorkbench: React.FC = () => {
       // que l'on veut rouvrir pour la corriger, et elle n'y était pas.
       saveToHistory({
         sql: sqlToRun,
+        engineMode, offsetMode,
         ts: Date.now(),
         ms,
         ok: !response.data.error,
@@ -1243,7 +1246,7 @@ const QueryWorkbench: React.FC = () => {
         setResults(null);
         return { status: 'cancelled', ms, result: null, error: null };
       }
-      saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: false });
+      saveToHistory({ sql: sqlToRun, ts: Date.now(), ms, ok: false, engineMode, offsetMode });
       // describeApiError couvre aussi ce que le corps de réponse ne dit pas : backend
       // injoignable, requête interrompue. Sans lui, une panne de transport s'affichait
       // « Query execution failed », qui n'apprend rien.
@@ -1394,11 +1397,12 @@ const QueryWorkbench: React.FC = () => {
 
   /** Lien rejouable vers la requête de l'onglet courant. */
   const copyQueryLink = useCallback(() => {
-    const link = buildQueryLink(`${window.location.origin}${location.pathname}`, sql);
+    const link = buildQueryLink(`${window.location.origin}${location.pathname}`, sql,
+      { engineMode, offsetMode });
     if (!link) { toast('Nothing to link — the tab is empty', 'info'); return; }
     void copyText(link).then(ok =>
       toast(ok ? 'Link copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'));
-  }, [sql, location.pathname, toast]);
+  }, [sql, location.pathname, engineMode, offsetMode, toast]);
 
   // Idem : la ref se met à jour dans un effet, pas au milieu du rendu.
   useEffect(() => { runQueryRef.current = runQuery; runAllRef.current = () => void runAllStatements(); });
@@ -1797,7 +1801,12 @@ const QueryWorkbench: React.FC = () => {
                       // l'onglet actif au clic, effaçant sans préavis ce qu'on était en train
                       // d'écrire. Elle suit désormais la même règle que les requêtes sauvegardées.
                       <button key={`${h.ts}-${h.sql}`} role="menuitem"
-                        onClick={() => { openSql(h.sql); setShowHistory(false); }}
+                        onClick={() => {
+                          openSql(h.sql);
+                          setEngineMode(h.engineMode ?? 'FLINK');
+                          setOffsetMode(h.offsetMode ?? 'EARLIEST');
+                          setShowHistory(false);
+                        }}
                         title={h.sql}
                         className="w-full text-left px-3 py-2 hover:bg-primary/10 border-b border-outline-variant/40 last:border-0 transition-colors">
                         <div className="flex items-start gap-2">
@@ -2169,9 +2178,18 @@ const QueryWorkbench: React.FC = () => {
                 calcule depuis toujours ; l'UI les jetait, et présentait donc un scan non
                 filtré comme un résultat filtré. */}
             {!queryError && results?.scanInfo && (
-              <p className="text-xs text-on-surface-variant px-4 py-2" role="status">
-                {results.scanInfo}
-              </p>
+              <div className="text-xs text-on-surface-variant px-4 py-2" role="status">
+                <p>{results.scanInfo}</p>
+                {results.scanCoverage && <p>
+                  Coverage: {results.scanCoverage.status === 'PARTIAL' ? 'partial (scan ceiling reached)'
+                    : results.scanCoverage.status === 'COMPLETE' ? 'complete for the bounded snapshot'
+                      : 'unverified (the consumer may have stopped before the topic end)'}.
+                  {' '}Observed offsets: {results.scanCoverage.partitions.length
+                    ? results.scanCoverage.partitions.map(p =>
+                      `partition ${p.partition}: ${p.firstOffset}–${p.lastOffset}`).join(', ')
+                    : 'no records returned'}.
+                </p>}
+              </div>
             )}
             {!queryError && !!results?.warnings?.length && (
               <div className="mx-4 mt-3 flex items-start gap-2 px-3 py-2 rounded-lg border border-warning/30 bg-warning/10 shrink-0" role="status">

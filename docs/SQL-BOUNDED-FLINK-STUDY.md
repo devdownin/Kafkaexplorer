@@ -16,3 +16,9 @@ Les tables créées par l'utilisateur peuvent porter leurs propres options et wa
 4. N'activer un éventuel remplacement que si la sémantique de la tranche est identique et le p95 acceptable. Conserver le mode Kafka Direct explicite tant que ces critères ne sont pas vérifiés.
 
 Référence : [options du connecteur Kafka Flink](https://nightlies.apache.org/flink/flink-docs-release-1.19/docs/connectors/table/kafka/), notamment `scan.startup.mode` et `scan.bounded.mode`. Le prototype doit confirmer leur comportement avec la version effectivement embarquée par ce dépôt.
+
+## Premier essai reproductible
+
+`KafkaClusterIntegrationTest.boundedFlinkOffsetPrototypeMatchesDirectSnapshot` déclare une table Flink isolée sur trois partitions dont les débuts sont à l'offset 2 et les fins à l'offset 4. Il compare les couples `(partition, offset)` rendus par Flink aux messages lus directement, puis leur nombre à `COUNT(*)`. Ce test constitue une vérification du connecteur effectif avec Docker et n'active aucun changement de moteur dans l'éditeur.
+
+Cette tranche fixe ne résout pas encore « les N derniers messages » en présence de nouvelles écritures ni les divergences possibles pour `WHERE`, fenêtres, jointures et délais. Les mesures et ces cas restent nécessaires avant d'envisager Flink SQL comme mode unique.
