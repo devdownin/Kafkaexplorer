@@ -839,7 +839,7 @@ class FlinkSqlServiceTest {
         assertEquals("KAFKA_DIRECT", latest.engine(),
             "the planner cannot express \"the most recent N records\", so it must not answer it");
         assertTrue(latest.scanInfo().contains("Fetched "), latest.scanInfo());
-        assertTrue(latest.scanInfo().contains("strict_mode_topic"), latest.scanInfo());
+        assertTrue(latest.scanInfo().contains("strict.mode.topic"), latest.scanInfo());
     }
 
     /**
