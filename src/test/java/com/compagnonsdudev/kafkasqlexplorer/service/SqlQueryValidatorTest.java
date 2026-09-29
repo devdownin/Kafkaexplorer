@@ -121,6 +121,17 @@ class SqlQueryValidatorTest {
         assertEquals("SELECT COUNT(*) AS metric_value FROM orders", explained());
     }
 
+    @Test
+    void permissive_policy_still_checks_syntax_with_the_planner() {
+        config.setAllowCrossJoin(true);
+        config.setAllowSystemTableAccess(true);
+        when(tableEnv.explainSql(anyString())).thenThrow(
+            new RuntimeException("SQL parse failed: Encountered FROM at line 1, column 12"));
+        assertThrows(IllegalArgumentException.class,
+            () -> validator.validate("SELECT id, FROM orders"));
+        assertEquals("SELECT id, FROM orders", explained());
+    }
+
     /** Ce que le plan nomme est refusé, et l'instruction vide ne coûte rien. */
     @Test
     void aSystemTableInThePlanIsRefusedAndBlankCostsNothing() {

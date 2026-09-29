@@ -22,10 +22,10 @@ const NOT_A_TABLE = new Set(['TABLE', 'LATERAL', 'UNNEST', 'SELECT']);
  * ou `WHERE label = 'from customers'`, ne doit pas faire entrer une table dans la portée.
  */
 export function stripSqlNoise(sql: string): string {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/--[^\n]*/g, ' ')
-    .replace(/'(?:[^']|'')*'/g, "''");
+  // A comment marker inside a quoted value is data. Scan in source order so neither
+  // `--` nor `/*` can consume the rest of a statement from inside a literal.
+  return sql.replace(/'(?:''|[^'])*'|\/\*[\s\S]*?(?:\*\/|$)|--[^\n]*/g, token =>
+    token.startsWith("'") ? "''" : ' ');
 }
 
 /**

@@ -24,6 +24,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -327,6 +330,53 @@ class FlinkSqlServiceJobRegistryTest {
         verify(client, atLeastOnce()).getJobID();
         assertTrue(heldJobs.isEmpty(),
             "the read has returned, so nothing is holding its JobClient any more");
+    }
+
+    @Test
+    void concurrentReadsCannotReuseTheSameClientIdBeforeAJobIsRegistered() throws Exception {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(tableEnv.listTables()).thenAnswer(invocation -> {
+            entered.countDown();
+            if (!release.await(5, TimeUnit.SECONDS)) throw new AssertionError("read was not released");
+            return new String[0];
+        });
+        QueryRequest request = new QueryRequest("SELECT * FROM orders", null, 10, 1000L,
+            null, "same-client-id");
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread first = new Thread(() -> {
+            try { service.executeSql(request); }
+            catch (Throwable t) { failure.set(t); }
+        });
+        first.start();
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            var second = service.executeSql(request);
+            assertTrue(second.error().contains("already running"), second.error());
+            verify(tableEnv, times(1)).listTables();
+        } finally {
+            release.countDown();
+            first.join(5000);
+        }
+        assertFalse(first.isAlive());
+        assertNull(failure.get());
+    }
+
+    @Test
+    void aReadCannotReuseTheIdOfAnExistingJob() {
+        JobClient client = mock(JobClient.class);
+        when(client.getJobID()).thenReturn(new JobID());
+        FlinkSqlService.JobInfo existing = new FlinkSqlService.JobInfo(
+            "shared-id", "SELECT * FROM orders", "SELECT", "ASYNC_JOB", client,
+            System.currentTimeMillis());
+        heldJobs.put("shared-id", existing);
+
+        var result = service.executeSql(new QueryRequest("SELECT * FROM orders", null,
+            10, 1000L, null, "shared-id"));
+
+        assertTrue(result.error().contains("already running"));
+        assertSame(existing, heldJobs.get("shared-id"));
+        verifyNoInteractions(tableEnv);
     }
 
 }
