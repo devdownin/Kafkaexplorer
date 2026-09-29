@@ -2,7 +2,9 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
+import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MessageFormat;
+import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.service.DdlGeneratorService;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
@@ -17,11 +19,18 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -53,6 +62,8 @@ class QueryControllerTest {
     private DdlGeneratorService ddlGeneratorService;
     private KafkaAdminService kafkaAdminService;
     private FlinkSqlService flinkSqlService;
+    private SqlExplorationService sqlExplorationService;
+    private ExplorerConfig explorerConfig;
     private MockMvc mockMvc;
 
     @BeforeEach
@@ -61,14 +72,84 @@ class QueryControllerTest {
         ddlGeneratorService = Mockito.mock(DdlGeneratorService.class);
         kafkaAdminService = Mockito.mock(KafkaAdminService.class);
         flinkSqlService = Mockito.mock(FlinkSqlService.class);
+        sqlExplorationService = Mockito.mock(SqlExplorationService.class);
+        explorerConfig = new ExplorerConfig();
         QueryController controller = new QueryController(
             flinkSqlService,
-            Mockito.mock(SqlExplorationService.class),
+            sqlExplorationService,
             kafkaAdminService,
             Mockito.mock(SqlQueryValidator.class),
             schemaInferenceService,
-            ddlGeneratorService);
+            ddlGeneratorService,
+            explorerConfig);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+    }
+
+    @Test
+    void http_query_cannot_override_the_ui_ceiling_or_supply_an_unbounded_budget() throws Exception {
+        for (String body : List.of(
+                "{\"sql\":\"SELECT 1\",\"maxRows\":5001}",
+                "{\"sql\":\"SELECT 1\",\"maxRows\":0}",
+                "{\"sql\":\"SELECT 1\",\"timeout\":60001}",
+                "{\"sql\":\"SELECT 1\",\"timeout\":-1}")) {
+            mockMvc.perform(post("/api/query/run-sync").contentType("application/json").content(body))
+                .andExpect(status().isBadRequest());
+        }
+        verifyNoInteractions(sqlExplorationService);
+    }
+
+    @Test
+    void omitted_http_budgets_are_bounded_even_when_configured_defaults_are_larger() throws Exception {
+        explorerConfig.setDefaultMaxRows(10_000);
+        explorerConfig.setDefaultQueryTimeoutMs(120_000);
+        mockMvc.perform(post("/api/query/run-sync").contentType("application/json")
+                .content("{\"sql\":\"SELECT 1\",\"topic\":\"orders\",\"queryId\":\"query-1\",\"readMode\":\"latest\",\"directRead\":true}"))
+            .andExpect(status().isOk());
+
+        org.mockito.ArgumentCaptor<QueryRequest> sent = org.mockito.ArgumentCaptor.forClass(QueryRequest.class);
+        verify(sqlExplorationService).runSync(sent.capture());
+        QueryRequest bounded = sent.getValue();
+        assertEquals(Integer.valueOf(5_000), bounded.maxRows());
+        assertEquals(Long.valueOf(60_000L), bounded.timeout());
+        assertEquals("orders", bounded.topic());
+        assertEquals("query-1", bounded.queryId());
+        assertEquals("latest", bounded.readMode());
+        assertEquals(Boolean.TRUE, bounded.directRead());
+    }
+
+    @Test
+    void http_query_admits_only_four_in_flight_requests() throws Exception {
+        CountDownLatch entered = new CountDownLatch(4);
+        CountDownLatch release = new CountDownLatch(1);
+        when(sqlExplorationService.runSync(any())).thenAnswer(invocation -> {
+            entered.countDown();
+            if (!release.await(5, TimeUnit.SECONDS)) throw new AssertionError("query was not released");
+            return null;
+        });
+        ExecutorService callers = Executors.newFixedThreadPool(4);
+        try {
+            List<Future<?>> running = new java.util.ArrayList<>();
+            for (int i = 0; i < 4; i++) {
+                running.add(callers.submit(() -> {
+                    mockMvc.perform(post("/api/query/run-sync")
+                        .contentType("application/json").content("{\"sql\":\"SELECT 1\"}"))
+                        .andExpect(status().isOk());
+                    return null;
+                }));
+            }
+            org.junit.jupiter.api.Assertions.assertTrue(entered.await(5, TimeUnit.SECONDS));
+            mockMvc.perform(post("/api/query/run-sync").contentType("application/json")
+                    .content("{\"sql\":\"SELECT 1\"}"))
+                .andExpect(status().isTooManyRequests());
+            mockMvc.perform(post("/api/query/validate").contentType("application/json")
+                    .content("{\"sql\":\"SELECT 1\"}"))
+                .andExpect(status().isTooManyRequests());
+            release.countDown();
+            for (Future<?> runningCall : running) runningCall.get(5, TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+            callers.shutdownNow();
+        }
     }
 
     @Test

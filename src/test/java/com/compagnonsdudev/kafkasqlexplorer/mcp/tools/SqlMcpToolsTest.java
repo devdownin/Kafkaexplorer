@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -102,6 +103,18 @@ class SqlMcpToolsTest {
         assertThatThrownBy(() -> tools().sqlQuery("  ", null, null, null))
                 .isInstanceOf(McpToolException.class)
                 .satisfies(e -> assertThat(((McpToolException) e).jsonRpcCode()).isEqualTo(-32046));
+    }
+
+    @Test
+    void the_read_only_sql_tool_never_creates_a_table_even_after_comments() {
+        assertThatThrownBy(() -> tools().sqlQuery(
+                "-- describe the table\nCREATE TABLE orders (id STRING) WITH ('connector'='blackhole')",
+                null, null, null))
+                .isInstanceOf(McpToolException.class)
+                .hasMessageContaining("changes the Flink catalogue")
+                .satisfies(e -> assertThat(((McpToolException) e).guard())
+                        .isEqualTo(com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpGuard.READONLY));
+        verify(flink, never()).executeSync(any());
     }
 
     @Test

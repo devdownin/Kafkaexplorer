@@ -40,7 +40,7 @@ Tous les serveurs recensés sont des processus opaques : la surface se découvre
 
 | Capacité applicative | Outil MCP dérivé | Pourquoi c'est un différenciant |
 |---|---|---|
-| Moteur Flink 2.3 embarqué, SQL whitelisté (`SELECT`/`EXPLAIN`/`CREATE TABLE`) | `kex_sql_query` | SQL sur **Kafka vanilla**, sans Confluent Cloud, sans DDL à écrire |
+| Moteur Flink 2.3 embarqué, SQL de lecture (`SELECT`/`EXPLAIN`/`SHOW`/`DESCRIBE`) | `kex_sql_query` | SQL sur **Kafka vanilla**, sans Confluent Cloud, sans DDL à écrire |
 | Inférence de schéma JSON/XML/Avro par échantillonnage | `kex_infer_schema` | Rend un topic non typé interrogeable ; aucun concurrent ne le fait |
 | Stream Flow : traçage clé/header/JSONPath/XPath cross-topic, latence par hop, reprise sur budget | `kex_trace_key`, `kex_resume_trace`, `kex_compare_traces` | Une question métier = **un** appel, pas N `consume` |
 | Data Model : relations déduites, graduées HIGH/MEDIUM/LOW, avec preuve | `kex_deduce_data_model` | Fournit à l'agent les prédicats de jointure qu'il inventerait sinon |
@@ -145,7 +145,7 @@ public record Warning(Severity severity, String code, String message) {
 | `kex_describe_topic` | `topic` | partitions, offsets min/max, taille estimée, format détecté, groupes, badge DLT | |
 | `kex_preview_messages` | `topic`, `partition?`, `n≤50`, `readMode` | échantillon formaté (pretty JSON/XML), DLP appliquée | remplace `consume_messages`, borné |
 | `kex_infer_schema` | `topics[]≤30`, `sampleSize≤500` | colonnes + type + confiance + format + DDL Flink prêt | Avro via Schema Registry si dispo |
-| `kex_sql_query` | `sql`, `readMode=earliest\|latest`, `maxRows≤1000`, `timeoutMs≤30000` | lignes + schéma + moteur ayant répondu | whitelist `SELECT`/`EXPLAIN`/`CREATE TABLE` ; annulation du job Flink garantie sur timeout |
+| `kex_sql_query` | `sql`, `readMode=earliest\|latest`, `maxRows≤1000`, `timeoutMs≤30000` | lignes + schéma + moteur ayant répondu | lecture seule : `SELECT`/`EXPLAIN`/`SHOW`/`DESCRIBE` ; `CREATE TABLE` refusé ici, disponible dans l'éditeur Web ; annulation du job Flink garantie sur timeout |
 | `kex_list_tables` | — | tables Flink enregistrées + DDL **avec secrets rédigés** | |
 
 #### Corrélation / diagnostic — le cœur différenciant
