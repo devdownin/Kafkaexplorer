@@ -13,6 +13,10 @@ describe('stripSqlNoise', () => {
     expect(stripSqlNoise("WHERE label = 'from customers' AND x = 'it''s'"))
       .not.toMatch(/customers/);
   });
+  it('keeps the following FROM when comment markers appear inside a literal', () => {
+    expect(tablesInScope("SELECT 'x--y', '/* note */' FROM orders"))
+      .toEqual(['orders']);
+  });
 });
 
 describe('tablesInScope', () => {

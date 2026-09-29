@@ -91,6 +91,8 @@ public class FlinkSqlService {
      * a Flink job attached, and this map has already been that once.
      */
     private final Map<String, JobInfo> heldJobs = new ConcurrentHashMap<>();
+    /** Reserve client ids before planning, when there is not yet a JobClient in heldJobs. */
+    private final Set<String> activeQueryIds = ConcurrentHashMap.newKeySet();
 
     /**
      * The status of a job whose status could not be read.
@@ -843,7 +845,7 @@ public class FlinkSqlService {
 
         for (Map.Entry<String, JobInfo> e : entries) {
             if (summaries.get(e.getKey()).endedAt() != null) {
-                heldJobs.remove(e.getKey());
+                heldJobs.remove(e.getKey(), e.getValue());
             }
         }
     }
@@ -912,13 +914,24 @@ public class FlinkSqlService {
     }
 
     public FlinkJobSummary submitJob(QueryRequest request) {
-        long startedAt = System.currentTimeMillis();
         // L'identifiant de l'appelant quand il en fournit un, comme en lecture — `submitJob` en
         // fabriquait un et ne le rendait que dans sa réponse. Si celle-ci se perd (délai réseau,
         // onglet fermé), le job tourne et personne n'a son id : il n'est plus annulable qu'en le
         // reconnaissant à son SQL dans le tableau de bord. `resolveQueryId` refuse ce qui ne peut
         // pas servir de clé de magasin ni de ligne de journal et en fabrique un à la place.
         String queryId = resolveQueryId(request.queryId());
+        if (!reserveQueryId(queryId)) {
+            throw new IllegalArgumentException("A query with this queryId is already running.");
+        }
+        try {
+            return submitJobReserved(request, queryId);
+        } finally {
+            activeQueryIds.remove(queryId);
+        }
+    }
+
+    private FlinkJobSummary submitJobReserved(QueryRequest request, String queryId) {
+        long startedAt = System.currentTimeMillis();
         String strippedSql = prepareSql(request.sql());
         String statementType = extractStatementType(strippedSql);
 
@@ -1101,8 +1114,29 @@ public class FlinkSqlService {
     }
 
     public QueryResult executeSql(QueryRequest request) {
-        long startTime = System.currentTimeMillis();
         String queryId = resolveQueryId(request.queryId());
+        if (!reserveQueryId(queryId)) {
+            return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0,
+                "A query with this queryId is already running.");
+        }
+        try {
+            return executeSqlReserved(request, queryId);
+        } finally {
+            activeQueryIds.remove(queryId);
+        }
+    }
+
+    private boolean reserveQueryId(String queryId) {
+        if (!activeQueryIds.add(queryId)) return false;
+        if (heldJobs.containsKey(queryId)) {
+            activeQueryIds.remove(queryId);
+            return false;
+        }
+        return true;
+    }
+
+    private QueryResult executeSqlReserved(QueryRequest request, String queryId) {
+        long startTime = System.currentTimeMillis();
         // Normalize double-quoted identifiers to backticks before any parsing/validation
         String originalSql = normalizeIdentifierQuotes(request.sql().trim());
         // Strip comments before keyword checks — a query like "-- comment\nSELECT ..."
@@ -2108,7 +2142,7 @@ public class FlinkSqlService {
         if (info.endedAt() == null) {
             info.markEnded(System.currentTimeMillis());
         }
-        heldJobs.remove(info.queryId());
+        heldJobs.remove(info.queryId(), info);
     }
 
     /**
@@ -3124,7 +3158,7 @@ public class FlinkSqlService {
             // unguarded `cancel()` that used to sit here answered the Stop button with a 500
             // instead, on the most ordinary race there is: pressing Stop as the query completes.
             info.markEnded(System.currentTimeMillis());
-            heldJobs.remove(queryId);
+            heldJobs.remove(queryId, info);
             return CancelOutcome.NO_ACTIVE_JOB;
         }
         // Nothing under that id: it finished and was swept, it was a KAFKA_DIRECT scan that never

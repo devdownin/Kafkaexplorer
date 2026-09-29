@@ -76,10 +76,6 @@ public class SqlQueryValidator {
             }
         }
 
-        if (explorerConfig.isAllowCrossJoin() && explorerConfig.isAllowSystemTableAccess()) {
-            return;
-        }
-
         /*
          * EXPLAIN ne s'applique pas à du DDL (CREATE TABLE, ALTER, DROP) : Flink répond
          * « Unsupported operation: CreateTableOperation ». Il s'applique en revanche à un INSERT,
