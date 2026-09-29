@@ -436,7 +436,7 @@ class KafkaClusterIntegrationTest {
             + "kafka_offset BIGINT METADATA FROM 'offset' VIRTUAL) WITH ("
             + "'connector' = 'kafka', 'topic' = '" + TRIMMED_TOPIC + "', "
             + "'properties.bootstrap.servers' = '" + KAFKA.getBootstrapServers() + "', "
-            + "'format' = 'json', 'scan.startup.mode' = 'specific-offsets', "
+            + "'value.format' = 'json', 'scan.startup.mode' = 'specific-offsets', "
             + "'scan.startup.specific-offsets' = '" + starts + "', "
             + "'scan.bounded.mode' = 'specific-offsets', "
             + "'scan.bounded.specific-offsets' = '" + ends + "')";

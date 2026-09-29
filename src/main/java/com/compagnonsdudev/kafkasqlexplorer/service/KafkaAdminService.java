@@ -2111,7 +2111,7 @@ public class KafkaAdminService {
         try {
             Consumer<byte[], byte[]> consumer = lease.consumer();
             List<TopicPartition> partitions = partitionsOf(consumer, topicName);
-            if (partitions.isEmpty()) return new RecordScan(records, true);
+            if (partitions.isEmpty()) return new RecordScan(records, false);
             consumer.assign(partitions);
             // Seeked explicitly rather than through seekToBeginning, because drain() needs to be
             // told where the read starts — see the cursor it keeps. Same offsets either way.
@@ -2178,7 +2178,7 @@ public class KafkaAdminService {
         try {
             Consumer<byte[], byte[]> consumer = lease.consumer();
             List<TopicPartition> partitions = partitionsOf(consumer, topicName);
-            if (partitions.isEmpty()) return new RecordScan(records, true);
+            if (partitions.isEmpty()) return new RecordScan(records, false);
 
             consumer.assign(partitions);
 
