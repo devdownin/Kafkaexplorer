@@ -457,9 +457,11 @@ class KafkaClusterIntegrationTest {
                 .collect(java.util.stream.Collectors.toSet()));
 
         QueryResult count = flink.executeSql(new QueryRequest(
-            "SELECT COUNT(*) AS n FROM " + table, null, 10, 30_000L, null, null, false, true));
+            "SELECT COUNT(*) AS n FROM " + table, null, 20, 30_000L, null, null, false, true));
         assertNull(count.error(), String.valueOf(count.error()));
         assertEquals("FLINK", count.engine());
+        assertNotNull(count.changelog());
+        assertFalse(count.changelog().capReached(), "the final aggregate update must be collected");
         assertEquals(6L, ((Number) count.rows().get(count.rows().size() - 1).get("n")).longValue());
     }
 

@@ -21,4 +21,6 @@ Référence : [options du connecteur Kafka Flink](https://nightlies.apache.org/f
 
 `KafkaClusterIntegrationTest.boundedFlinkOffsetPrototypeMatchesDirectSnapshot` déclare une table Flink isolée sur trois partitions dont les débuts sont à l'offset 2 et les fins à l'offset 4. Il compare les couples `(partition, offset)` rendus par Flink aux messages lus directement, puis leur nombre à `COUNT(*)`. Ce test constitue une vérification du connecteur effectif avec Docker et n'active aucun changement de moteur dans l'éditeur.
 
+Le premier passage CI a confirmé les six offsets mais a coupé le changelog de `COUNT(*)` au plafond de dix lignes : la dernière correction affichée valait 5. Six messages peuvent produire plus de six lignes de corrections. Le test collecte donc vingt lignes au maximum et exige que ce plafond ne soit pas atteint avant de comparer la valeur finale.
+
 Cette tranche fixe ne résout pas encore « les N derniers messages » en présence de nouvelles écritures ni les divergences possibles pour `WHERE`, fenêtres, jointures et délais. Les mesures et ces cas restent nécessaires avant d'envisager Flink SQL comme mode unique.
