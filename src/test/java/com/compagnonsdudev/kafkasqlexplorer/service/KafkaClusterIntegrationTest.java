@@ -712,7 +712,7 @@ class KafkaClusterIntegrationTest {
     }
 
     @Test
-    void hoppingAndSessionWindowsOverCapturedOffsetsExposeDirectApproximation() throws Exception {
+    void hoppingAndSessionWindowsUseBoundedFlinkWhileDirectRefusesThem() throws Exception {
         String topic = "it.bounded.hop";
         createProbeTopics(new NewTopic(topic, 1, (short) 1));
         long epoch = 1_704_067_200_000L;
@@ -737,10 +737,10 @@ class KafkaClusterIntegrationTest {
         QueryResult direct = flink.executeSql(QueryRequest.directSql(prefix + ", DESCRIPTOR(event_ms)" + suffix,
             30, 30_000L, "earliest-offset"));
         assertNull(bounded.error(), String.valueOf(bounded.error()));
-        assertNull(direct.error(), String.valueOf(direct.error()));
-        assertTrue(direct.warnings().stream().anyMatch(w -> w.contains("approximated HOP")));
-        assertTrue(finalWindowCounts(bounded).size() > direct.rows().size(),
-            "overlapping Flink windows must not be mistaken for direct tumbling buckets");
+        assertNotNull(direct.error());
+        assertTrue(direct.error().contains("unsupported window functions"), direct.error());
+        assertTrue(finalWindowCounts(bounded).size() > 2,
+            "overlapping Flink windows must produce more than two tumbling buckets");
 
         String session = "SELECT window_start, window_end, COUNT(*) AS n FROM TABLE(SESSION(TABLE "
             + table + " PARTITION BY id, DESCRIPTOR(%s), INTERVAL '5' SECOND)) "
@@ -750,12 +750,10 @@ class KafkaClusterIntegrationTest {
         QueryResult directSession = flink.executeSql(QueryRequest.directSql(
             session.formatted("event_ms"), 30, 30_000L, "earliest-offset"));
         assertNull(boundedSession.error(), String.valueOf(boundedSession.error()));
-        assertNull(directSession.error(), String.valueOf(directSession.error()));
-        assertTrue(directSession.warnings().stream().anyMatch(w -> w.contains("approximated SESSION")));
+        assertNotNull(directSession.error());
+        assertTrue(directSession.error().contains("unsupported window functions"), directSession.error());
         assertEquals(List.of("1", "4"), finalWindowCounts(boundedSession),
             "four events separated by less than five seconds form one session");
-        assertEquals(List.of("1", "2", "2"), values(directSession, "n"),
-            "direct five-second buckets split that session");
     }
 
     private static void createProbeTopics(NewTopic... topics) throws Exception {
