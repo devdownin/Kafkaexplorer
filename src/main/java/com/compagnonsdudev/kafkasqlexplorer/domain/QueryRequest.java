@@ -32,8 +32,14 @@ public record QueryRequest(
      */
     Boolean directRead,
     /** Require Flink to answer SELECT; never switch engines implicitly. */
-    Boolean flinkOnly
+    Boolean flinkOnly,
+    /** Opt in to a fixed-offset Flink snapshot of one generated Kafka table. */
+    Boolean boundedSnapshot
 ) {
+    public QueryRequest(String sql, String topic, Integer maxRows, Long timeout, String readMode,
+                        String queryId, Boolean directRead, Boolean flinkOnly) {
+        this(sql, topic, maxRows, timeout, readMode, queryId, directRead, flinkOnly, null);
+    }
     /** Backwards-compatible form for callers that never cancel (audit, table preview, tests). */
     public QueryRequest(String sql, String topic, Integer maxRows, Long timeout, String readMode) {
         this(sql, topic, maxRows, timeout, readMode, null, null, null);
@@ -71,5 +77,9 @@ public record QueryRequest(
 
     public boolean wantsFlinkOnly() {
         return Boolean.TRUE.equals(flinkOnly);
+    }
+
+    public boolean wantsBoundedSnapshot() {
+        return Boolean.TRUE.equals(boundedSnapshot);
     }
 }

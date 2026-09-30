@@ -402,14 +402,22 @@ describe('QueryWorkbench — what Run sends', () => {
     await userEvent.type(editor(), 'SELECT * FROM orders');
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     await waitFor(() => expect(runSync()).toBeTruthy());
-    expect(runSync()![1]).toMatchObject({ flinkOnly: true, directRead: false, readMode: null });
+    expect(runSync()![1]).toMatchObject({ flinkOnly: true, directRead: false,
+      boundedSnapshot: false, readMode: null });
+
+    post.mockClear();
+    await userEvent.click(screen.getByRole('button', { name: 'Snapshot' }));
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await waitFor(() => expect(runSync()).toBeTruthy());
+    expect(runSync()![1]).toMatchObject({ flinkOnly: true, directRead: false,
+      boundedSnapshot: true, readMode: null });
 
     post.mockClear();
     await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
     await userEvent.click(screen.getByRole('button', { name: 'Latest' }));
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     await waitFor(() => expect(runSync()).toBeTruthy());
-    expect(runSync()![1]).toMatchObject({ flinkOnly: false, directRead: true,
+    expect(runSync()![1]).toMatchObject({ flinkOnly: false, directRead: true, boundedSnapshot: false,
       readMode: 'latest-offset' });
   });
 

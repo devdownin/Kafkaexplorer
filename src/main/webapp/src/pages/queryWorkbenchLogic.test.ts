@@ -889,9 +889,12 @@ describe('readSqlParam / buildQueryLink', () => {
   it('round-trips an explicit engine and Kafka offset with the SQL', () => {
     const link = buildQueryLink('https://host/query', 'SELECT * FROM t',
       { engineMode: 'KAFKA_DIRECT', offsetMode: 'LATEST' });
-    expect(readQueryOptions(new URL(link).search)).toEqual({ engineMode: 'KAFKA_DIRECT', offsetMode: 'LATEST' });
+    expect(readQueryOptions(new URL(link).search)).toEqual({ engineMode: 'KAFKA_DIRECT', offsetMode: 'LATEST', boundedSnapshot: false });
     expect(readSqlParam(new URL(link).search)).toBe('SELECT * FROM t');
-    expect(readQueryOptions('?engine=unknown&offset=bogus')).toEqual({ engineMode: 'FLINK', offsetMode: 'EARLIEST' });
+    expect(readQueryOptions('?engine=unknown&offset=bogus')).toEqual({ engineMode: 'FLINK', offsetMode: 'EARLIEST', boundedSnapshot: false });
+    const snapshot = buildQueryLink('https://kex.example/query', 'SELECT * FROM t',
+      { engineMode: 'FLINK', offsetMode: 'EARLIEST', boundedSnapshot: true });
+    expect(readQueryOptions(new URL(snapshot).search).boundedSnapshot).toBe(true);
   });
   it('round-trips SQL containing a percent sign', () => {
     // The regression: URLSearchParams.get already decodes, and the caller decoded a second time —

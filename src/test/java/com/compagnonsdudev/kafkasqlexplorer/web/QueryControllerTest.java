@@ -26,6 +26,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -158,6 +159,21 @@ class QueryControllerTest {
                 .content("{\"sql\":\"SELECT * FROM orders\",\"directRead\":true,\"flinkOnly\":true}"))
             .andExpect(status().isBadRequest());
         verifyNoInteractions(sqlExplorationService);
+    }
+
+    @Test
+    void boundedSnapshotRequiresStrictFlinkAndSurvivesHttpBounds() throws Exception {
+        mockMvc.perform(post("/api/query/run-sync").contentType("application/json")
+                .content("{\"sql\":\"SELECT * FROM orders\",\"boundedSnapshot\":true}"))
+            .andExpect(status().isBadRequest());
+        verifyNoInteractions(sqlExplorationService);
+
+        mockMvc.perform(post("/api/query/run-sync").contentType("application/json")
+                .content("{\"sql\":\"SELECT * FROM orders\",\"boundedSnapshot\":true,\"flinkOnly\":true}"))
+            .andExpect(status().isOk());
+        org.mockito.ArgumentCaptor<QueryRequest> sent = org.mockito.ArgumentCaptor.forClass(QueryRequest.class);
+        verify(sqlExplorationService).runSync(sent.capture());
+        assertTrue(sent.getValue().wantsBoundedSnapshot());
     }
 
     @Test

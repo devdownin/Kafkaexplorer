@@ -1158,6 +1158,10 @@ public class FlinkSqlService {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(), 0,
                 "Kafka Direct exploration supports SELECT only. Choose Flink SQL for this statement.");
         }
+        if (request.wantsBoundedSnapshot() && (!request.wantsFlinkOnly() || !sql.startsWith("SELECT"))) {
+            return new QueryResult(List.of(), List.of(), 0,
+                "A bounded snapshot requires a Flink SQL SELECT.");
+        }
         /*
          * `CREATE TABLE … AS SELECT` est un INSERT déguisé, et la whitelist le laissait passer
          * parce qu'elle classe sur le premier mot — le même défaut que `INSERT OVERWRITE` un cran
@@ -1219,6 +1223,50 @@ public class FlinkSqlService {
 
             boolean isCte = SqlStatements.startsWithCte(sqlToExecute);
             if (SqlStatements.classifiableBody(sqlToExecute).startsWith("SELECT")) {
+                List<KafkaAdminService.SnapshotRange> snapshotRanges = null;
+                if (request.wantsBoundedSnapshot()) {
+                    if (!MetricService.isSingleTableRead(sqlToExecute)
+                            || SqlStatements.carriesAnOptionsHint(sqlToExecute)) {
+                        return new QueryResult(List.of(), List.of(), System.currentTimeMillis() - startTime,
+                            "A Flink snapshot requires one Kafka topic without an OPTIONS hint. "
+                                + "Run a query over a manually bounded table for joins or custom options.");
+                    }
+                    String tableName = extractPrimaryTable(sqlToExecute);
+                    if (!isGeneratedKafkaTable(tableName)) {
+                        return new QueryResult(List.of(), List.of(), System.currentTimeMillis() - startTime,
+                            "A Flink snapshot requires an automatically registered Kafka topic table.");
+                    }
+                    List<String> topics = kafkaAdminService.listTopics().stream()
+                        .filter(t -> DdlGeneratorService.toTableName(t).equals(DdlGeneratorService.toTableName(tableName)))
+                        .toList();
+                    if (topics.size() != 1) {
+                        return new QueryResult(List.of(), List.of(), System.currentTimeMillis() - startTime,
+                            "A Flink snapshot requires one unambiguous Kafka topic.");
+                    }
+                    try {
+                        snapshotRanges = kafkaAdminService.captureSnapshotRanges(topics.getFirst());
+                    } catch (IllegalStateException e) {
+                        return new QueryResult(List.of(), List.of(), System.currentTimeMillis() - startTime,
+                            "Could not capture the Kafka offsets for a bounded Flink scan.");
+                    }
+                    String starts = snapshotRanges.stream()
+                        .map(r -> "partition:" + r.partition() + ",offset:" + r.beginning())
+                        .collect(Collectors.joining(";"));
+                    String ends = snapshotRanges.stream()
+                        .map(r -> "partition:" + r.partition() + ",offset:" + r.endExclusive())
+                        .collect(Collectors.joining(";"));
+                    Matcher source = Pattern.compile("(?i)\\bFROM\\s+([`\\w.]+)").matcher(sqlToExecute);
+                    if (!source.find() || !source.group(1).replace("`", "").equalsIgnoreCase(tableName)) {
+                        return new QueryResult(List.of(), List.of(), System.currentTimeMillis() - startTime,
+                            "The Kafka topic reference could not be located for a bounded Flink scan.");
+                    }
+                    String hint = " /*+ OPTIONS('scan.startup.mode'='specific-offsets', "
+                        + "'scan.startup.specific-offsets'='" + starts + "', "
+                        + "'scan.bounded.mode'='specific-offsets', "
+                        + "'scan.bounded.specific-offsets'='" + ends + "') */";
+                    sqlToExecute = sqlToExecute.substring(0, source.end(1)) + hint
+                        + sqlToExecute.substring(source.end(1));
+                }
                 if (request.wantsFlinkOnly() && autoReg.deferredToDirectReader()) {
                     return new QueryResult(Collections.emptyList(), Collections.emptyList(),
                         System.currentTimeMillis() - startTime,
@@ -1351,6 +1399,16 @@ public class FlinkSqlService {
                         QueryResult flinkResult = executeViaFlinkPlanner(queryId, sqlToExecute, "SELECT", limit, timeout, startTime);
                         if (flinkResult.error() == null) {
                             clearFlinkSelectLatch();
+                            if (snapshotRanges != null) {
+                                String bounds = snapshotRanges.stream()
+                                    .map(r -> "partition " + r.partition() + ": [" + r.beginning()
+                                        + ", " + r.endExclusive() + ")")
+                                    .collect(Collectors.joining("; "));
+                                flinkResult = flinkResult.withScanInfo("Captured Flink snapshot (end exclusive): "
+                                    + bounds + ". " + (flinkResult.rows().size() < limit
+                                        ? "Source completed within the row cap."
+                                        : "Row cap reached; the final answer may be incomplete."));
+                            }
                             if (unhonouredReadMode != null) {
                                 flinkResult = withExtraWarning(flinkResult, "The read mode \""
                                     + unhonouredReadMode + "\" was not applied: this statement needs "

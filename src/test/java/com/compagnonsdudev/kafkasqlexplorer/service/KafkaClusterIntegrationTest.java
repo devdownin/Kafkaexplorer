@@ -474,6 +474,23 @@ class KafkaClusterIntegrationTest {
         assertEquals(6L, ((Number) count.rows().get(count.rows().size() - 1).get("n")).longValue());
     }
 
+    @Test
+    void editorSnapshotRunsTheGeneratedTableOverCapturedOffsets() throws Exception {
+        FlinkSqlService flink = flinkService();
+        List<KafkaAdminService.SnapshotRange> bounds = adminService.captureSnapshotRanges(TRIMMED_TOPIC);
+        assertEquals(3, bounds.size());
+        assertTrue(bounds.stream().allMatch(b -> b.beginning() == 2 && b.endExclusive() == 4));
+
+        QueryResult result = flink.executeSql(new QueryRequest(
+            "SELECT id FROM it_trimmed_multipart", null, 20, 30_000L, null,
+            null, false, true, true));
+        assertNull(result.error(), String.valueOf(result.error()));
+        assertEquals("FLINK", result.engine());
+        assertEquals(6, result.rows().size());
+        assertTrue(result.scanInfo().contains("Source completed within the row cap"));
+        assertTrue(result.scanInfo().contains("partition 0: [2, 4)"));
+    }
+
     /** Later appends must not leak into the frozen slice, even across eight partitions. */
     @Test
     void boundedFlinkSnapshotKeepsSelectiveFilterStableAfterAppends() throws Exception {
@@ -684,6 +701,59 @@ class KafkaClusterIntegrationTest {
         assertEquals(List.of("A"), values(bounded, "id"));
         assertNotNull(direct.error());
         assertTrue(direct.error().contains("joins"), direct.error());
+
+        QueryResult outer = flink.executeSql(new QueryRequest(
+            "SELECT l.id AS id, r.id AS matched FROM " + leftTable + " l LEFT JOIN " + rightTable
+                + " r ON l.id = r.id", null, 20, 30_000L, null, null, false, true));
+        assertNull(outer.error(), String.valueOf(outer.error()));
+        assertTrue(outer.rows().size() < 20, "the bounded outer join must finish before the row cap");
+        assertTrue(outer.rows().stream().anyMatch(row -> "B".equals(row.get("id"))
+            && row.get("matched") == null));
+    }
+
+    @Test
+    void hoppingAndSessionWindowsUseBoundedFlinkWhileDirectRefusesThem() throws Exception {
+        String topic = "it.bounded.hop";
+        createProbeTopics(new NewTopic(topic, 1, (short) 1));
+        long epoch = 1_704_067_200_000L;
+        try (KafkaProducer<String, String> producer = probeProducer()) {
+            for (long delta : new long[] {0, 3_000, 6_000, 9_000, 20_000}) {
+                producer.send(new ProducerRecord<>(topic, 0, null,
+                    "{\"event_ms\":" + (epoch + delta) + ",\"id\":\"A\"}"));
+            }
+            producer.flush();
+        }
+        String table = DdlGeneratorService.toTableName(topic);
+        FlinkSqlService flink = flinkService();
+        assertNull(flink.executeSql(QueryRequest.ddl(boundedProbeDdl(table, topic,
+            "event_ms BIGINT, id STRING, event_time AS TO_TIMESTAMP_LTZ(event_ms, 3), "
+                + "WATERMARK FOR event_time AS event_time - INTERVAL '3' SECOND",
+            adminService.getTopicDescriptor(topic)), 30_000L)).error());
+        String prefix = "SELECT window_start, window_end, COUNT(*) AS n FROM TABLE(HOP(TABLE " + table;
+        String suffix = ", INTERVAL '5' SECOND, INTERVAL '10' SECOND)) "
+            + "GROUP BY window_start, window_end";
+        QueryResult bounded = flink.executeSql(new QueryRequest(prefix + ", DESCRIPTOR(event_time)" + suffix,
+            null, 30, 30_000L, null, null, false, true));
+        QueryResult direct = flink.executeSql(QueryRequest.directSql(prefix + ", DESCRIPTOR(event_ms)" + suffix,
+            30, 30_000L, "earliest-offset"));
+        assertNull(bounded.error(), String.valueOf(bounded.error()));
+        assertNotNull(direct.error());
+        assertTrue(direct.error().contains("unsupported window functions"), direct.error());
+        assertTrue(finalWindowCounts(bounded).size() > 2,
+            "overlapping Flink windows must produce more than two tumbling buckets");
+
+        String session = "SELECT window_start, window_end, COUNT(*) AS n FROM TABLE(SESSION(TABLE "
+            + table + " PARTITION BY id, DESCRIPTOR(%s), INTERVAL '5' SECOND)) "
+            + "GROUP BY window_start, window_end";
+        QueryResult boundedSession = flink.executeSql(new QueryRequest(
+            session.formatted("event_time"), null, 30, 30_000L, null, null, false, true));
+        QueryResult directSession = flink.executeSql(QueryRequest.directSql(
+            session.formatted("event_ms"), 30, 30_000L, "earliest-offset"));
+        assertNull(boundedSession.error(), String.valueOf(boundedSession.error()));
+        assertNotNull(directSession.error());
+        assertTrue(directSession.error().contains("unsupported window functions"), directSession.error());
+        assertEquals(List.of("1", "4"), finalWindowCounts(boundedSession),
+            "four events separated by less than five seconds form one session");
     }
 
     private static void createProbeTopics(NewTopic... topics) throws Exception {
