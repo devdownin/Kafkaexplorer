@@ -148,13 +148,16 @@ Plongée dans l'architecture : **[docs/architecture.md](docs/architecture.md)**
 Préparation de TimesFM : un journal PostgreSQL optionnel capture les métriques sélectionnées sous
 forme d'observations horodatées et versionnées. Une couche interne prépare les contextes réguliers,
 marque les imputations courtes des jauges et refuse les resets de compteurs ou historiques inadmissibles.
-Le module est désactivé par défaut ; l'inférence et les
-outils MCP prédictifs seront ajoutés ensuite. Voir **[configuration et limites de l'historique](docs/notes/timesfm-history.md)**.
+Le module est désactivé par défaut. L'exécution reste explicite et démarre en mode `SHADOW` ;
+elle est bornée, locale au processus et ne planifie ni ne déclenche d'alerte. Voir
+**[configuration et limites de l'historique](docs/notes/timesfm-history.md)**.
 
 Le service TimesFM CPU-only s'active avec l'overlay optionnel `compose/timesfm.yml`. Il exige
 `TIMESFM_TOKEN`, réserve par défaut 4 CPU et 8 Gio, et télécharge le checkpoint épinglé dans un
-volume persistant. Cette étape démarre uniquement la dépendance d'inférence : les prévisions ne
-sont pas encore planifiées, persistées ni exposées par MCP.
+volume persistant. Lorsque l'inférence et MCP sont activés, cinq outils prévisionnels en lecture
+seule exposent les snapshots existants et les limites ; MCP ne lance jamais l'inférence. Les seuils
+restent définis par l'opérateur et portent la direction, l'horizon, la confiance, la qualité de
+l'historique, la provenance série/version et la visibilité `SHADOW`/`VISIBLE`/`ACTIVE`.
 
 ## 🏗️ Build et Développement
 
@@ -197,6 +200,3 @@ Lancez **`mvn verify`** avant d'ouvrir une pull request : c'est la porte complè
 
 ---
 
-<div align="center">
-<sub>© 2026 Kafka SQL Explorer — Compagnons du dev. Si ce projet vous épargne une après-midi de debug, une ⭐ nous fait toujours plaisir.</sub>
-</div>

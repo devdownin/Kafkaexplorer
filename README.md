@@ -147,13 +147,17 @@ Architecture deep-dive: **[docs/architecture.md](docs/architecture.md)**
 
 Preparing TimesFM: an optional PostgreSQL journal now captures selected metrics as timestamped,
 versioned observations. An internal preparation layer reconstructs regular contexts, marks short
-gauge imputations, and rejects counter resets or inadmissible history. It is disabled by default; forecast inference and predictive MCP tools
-are subsequent steps. See **[history configuration and limitations](docs/notes/timesfm-history.md)**.
+gauge imputations, and rejects counter resets or inadmissible history. See **[history configuration
+and limitations](docs/notes/timesfm-history.md)**.
 
 The CPU-only TimesFM service is available through the opt-in `compose/timesfm.yml` overlay. It
 requires `TIMESFM_TOKEN`, reserves 4 CPU / 8 GiB by default, and downloads the pinned checkpoint
-into a persistent cache. This starts the inference dependency only; forecasts are not scheduled,
-persisted or exposed through MCP yet.
+into a persistent cache. Forecast execution remains explicit and defaults to `SHADOW`: it is
+bounded, process-local and does not schedule, persist or alert. When both inference and MCP are
+enabled, five read-only forecast tools expose existing snapshots and limits; MCP never starts
+inference. Operator-owned thresholds carry direction, horizon, confidence, history quality,
+series/version provenance and `SHADOW`/`VISIBLE`/`ACTIVE` visibility. See the TimesFM note for
+the evaluation metrics and rollout boundaries.
 
 ## 🏗️ Build and Development
 
@@ -195,7 +199,3 @@ Run **`mvn verify`** before opening a pull request: it is the complete gate — 
 [AGPL v3](LICENSE) — free to use, study, share and improve.
 
 ---
-
-<div align="center">
-<sub>© 2026 Kafka SQL Explorer — Compagnons du dev. If this project saves you a debugging afternoon, a ⭐ makes our day.</sub>
-</div>

@@ -1,7 +1,8 @@
 # TimesFM integration — observation journal and series preparation
 
-These deliveries implement history and deterministic series preparation. Inference, predictive alerts, the five new
-MCP tools and the forecast UI are subsequent deliveries. It does not advertise forecasts from
+These deliveries implement history, deterministic series preparation, bounded inference, the
+read-only forecast MCP views and explicit threshold provenance. There is still no scheduler,
+durable forecast persistence, alert delivery or forecast UI. It does not advertise forecasts from
 an empty or unverified history.
 
 ## Architecture decision
@@ -183,10 +184,39 @@ suite depend on a GPU, a model download or network availability.
 
 The Java client publishes bounded operational counters and a duration timer without series or
 business labels: calls, busy refusals, timeouts, unavailable responses and invalid model output.
-The service remains deliberately isolated from Kafka, SQL and MCP. This PR does **not** schedule
-forecasts, persist forecast results, expose a forecast endpoint through MCP, or activate alerts.
-Those actions require the orchestration, provenance authorization and `SHADOW` workflow described
-in the integration plan maintained with this delivery.
+The service remains deliberately isolated from Kafka and SQL. The Java orchestration layer invokes
+it explicitly in `SHADOW`; it does **not** schedule forecasts, persist forecast results or activate
+alerts. MCP exposes only already-produced process-local snapshots through the read-only views
+described below.
+
+## P1 orchestration, MCP and evaluation slice
+
+The next slice adds an explicit `ForecastOrchestrator` seam. Calls are bounded by the existing
+TimesFM client (four series, 60 points) and default to `SHADOW`: a run can populate only a
+process-local read model capped at 256 snapshots. There is still no scheduler, durable forecast
+table, alert, or activation mutation. `ACTIVE` is represented in the contract so a later rollout
+can require a separate operator decision rather than silently changing semantics.
+
+When inference is enabled and MCP is enabled, five read-only tools are registered through the same
+catalogue and interception guards: `kex_forecast_catalog`, `kex_forecast_get`,
+`kex_forecast_latest`, `kex_forecast_metadata` and `kex_forecast_limits`. They can only inspect
+snapshots already produced by an internal caller; no MCP argument starts model inference. Missing
+series are reported as `NOT_FOUND`, and every response states the shadow-only limitation.
+
+`ForecastBacktestEvaluator` is a pure offline evaluator for rolling-origin corpora. It reports MAE,
+MASE against the naive-last-difference scale, mean pinball loss for Q10/Q50/Q90, empirical Q10–Q90
+coverage and mean interval width. It rejects mismatched or non-finite inputs. Baseline generation,
+corpus selection and activation thresholds remain an evaluation job concern, not a request-time
+MCP side effect.
+
+Threshold policy is now explicit and operator-owned through `ForecastThresholdPolicy`. A policy
+must name the series and definition version, threshold, direction (`ABOVE`/`BELOW`), horizon,
+confidence, history quality and visibility (`SHADOW`, `VISIBLE` or `ACTIVE`).
+`ForecastThresholdEvaluator` refuses provenance mismatches and evaluates the conservative Q10 bound
+for upper breaches or Q90 for lower breaches. No threshold is inferred from TimesFM, a baseline or
+the current value. Every breach carries its threshold, direction, horizon, confidence, quality,
+series/version provenance and visibility so a future alert cannot be mistaken for an unqualified
+model assertion.
 
 ## Observability and access
 
@@ -197,9 +227,10 @@ The persisted counter counts accepted append attempts, including deduplicated re
 the database, not that counter, gives the exact number of unique observations. No per-series labels
 are added to these technical counters. Monitor failures and gaps before using the history.
 
-The journal has no public REST or MCP endpoint in this delivery. A later history tool must resolve
-and authorize **all** resources of a series before exposing its values or labels; a definition hash
-alone is not resource provenance. No forecasts are exposed until these controls are implemented.
+The journal has no public REST endpoint in this delivery. The forecast MCP views expose only
+snapshots whose series/version provenance is already present; a definition hash alone is not
+resource provenance. A future history tool must resolve and authorize **all** resources of a series
+before exposing its raw values or labels.
 
 ## Verification and rollback
 
@@ -207,17 +238,3 @@ Targeted tests cover canonical identity, semantic version separation, file-backe
 duplicate writes, bounded reads/purge, asynchronous failure isolation, backpressure, nested property
 binding and disabled startup. `MetricServiceTest` checks that every counter-label series is captured
 without another SQL execution. `MetricObservationPostgresTest` exercises actual PostgreSQL under
-Testcontainers and skips explicitly when Docker is unavailable; H2 results alone do not certify
-PostgreSQL integration.
-
-Preparation tests verify known bucket means/maxima/last values, actual-time and zero counter
-rates, resets within/between buckets, short causal gap filling, over-limit/long gaps, scope and unit
-changes, quality rejection, ambiguous duplicates, percentile handling and future-data exclusion.
-JDBC-to-corpus tests verify a reopened store reconstructs exactly the same JSON and cover the
-default 30-second collection cadence with 512 prepared points. No model or network is used.
-An oversized-label fixture proves that a payload limit cannot yield a partial `READY` context.
-
-Run `./mvnw verify` and the repository documentation checks. Set `enabled=false` to stop new capture;
-ordinary collection remains unchanged and stored observations can be retained for later analysis.
-Do not drop the journal table to roll back. Quantitative collection overhead, crash recovery with
-actual PostgreSQL and long-running retention remain pilot checks, not claims from unit tests.

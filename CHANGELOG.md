@@ -31,7 +31,9 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   JSON corpus export. Internal and conditional on history activation; no additional Kafka query.
 - Added an opt-in CPU-only TimesFM overlay with private networking, bounded resources, persistent
   verified model cache, operational Micrometer counters/timer, and an opt-in real-checkpoint smoke
-  test. Forecast scheduling, persistence, alerts and MCP exposure remain disabled.
+  test. Added bounded `SHADOW` orchestration, a retrospective evaluator, explicit operator-owned
+  threshold policies and five read-only forecast MCP views. Scheduling, durable forecast
+  persistence and alert delivery remain disabled.
 
 ## [2.1.4] — 2026-09-27
 

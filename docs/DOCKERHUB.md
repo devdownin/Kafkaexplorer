@@ -133,6 +133,7 @@ and the compose file explains each choice it makes.
 - 📉 **Consumer lag that grades itself** — who reads a topic and how far behind, with `stalled` (nothing assigned), `partial` (never committed on some partitions) and `ahead` called out rather than folded into one number.
 - ⏱️ **Backlog in time, not just in records** — the same 4 000 messages are four seconds of traffic on one topic and four days on another. Ask any group how long its oldest unread message has been waiting, from the topic page or as a scheduled metric; a partition that could not be read says so instead of reporting zero.
 - 💡 **KPIs proposed from what your cluster was observed doing** — the Metrics page derives them from your audit, your traces, your running Flink jobs and your Process Mining mapping. Every card names the measurement it rests on and where its thresholds come from; nothing is created until you preview and save it.
+- 🔮 **TimesFM forecasting, safely staged** — the optional CPU service prepares bounded metric contexts and runs forecasts in `SHADOW` by default. Five read-only MCP tools expose existing forecast snapshots and provenance; no MCP call starts inference, and thresholds remain explicit operator policy rather than model guesses.
 - 🤖 **AI process mining** — reconstruct business flows as flowcharts and hunt anomalies with OpenRouter (the default: one key, most hosted vendors), Claude, any local LLM (Ollama, vLLM, LM Studio…), or a fully private [SpectraLLM](https://github.com/devdownin/SpectraLLM). Point it at a local provider and nothing leaves your network; the default is hosted, and both pages that call a model say which of the two you are on — read off the address, not the provider's name.
 - 💰 **What the AI cost, and a cap if you want one** — every analysis shows the tokens and the **price the provider reported**, per call and per run, never an estimate; nothing is shown where a provider prices nothing, rather than a misleading zero. `CLAUDE_SESSION_COST_LIMIT_USD` stops a live session once it has spent that much, which is what bounds a tab left open overnight.
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, in the UI and on `/actuator/prometheus`.
@@ -268,7 +269,9 @@ explorer:
         replay-runbook: runbooks/orders-dlq.md
 ```
 
-These are examples, not suggested universal thresholds. Scope agent access to the
+These are examples, not suggested universal thresholds. Forecast thresholds are likewise
+operator-owned and include direction, horizon, confidence, history quality and series/version
+provenance. Scope agent access to the
 appropriate topic and group prefixes. The [complete deployment reference](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/DOCKERHUB-OPERATIONS.md#operational-mcp-reviews)
 explains the properties and limitations.
 
@@ -301,6 +304,3 @@ for vulnerability reports.
 
 - [Full feature tour](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/FEATURES.md)
 - [Detailed settings, probes and troubleshooting](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/DOCKERHUB-OPERATIONS.md)
-- [README en français](https://github.com/devdownin/Kafkaexplorer/blob/main/README.fr.md)
-- [Source and releases](https://github.com/devdownin/Kafkaexplorer)
-- [AGPL v3 license](https://github.com/devdownin/Kafkaexplorer/blob/main/LICENSE)

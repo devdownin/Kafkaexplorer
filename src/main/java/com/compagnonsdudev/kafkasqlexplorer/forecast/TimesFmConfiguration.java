@@ -15,4 +15,14 @@ public class TimesFmConfiguration {
         if (inference.getServiceUrl() == null) throw new IllegalArgumentException("TimesFM service URL is required");
         return new TimesFmClient(inference, registry);
     }
+
+    @Bean
+    ForecastSnapshotStore forecastSnapshotStore() {
+        return new ForecastSnapshotStore();
+    }
+
+    @Bean
+    ForecastOrchestrator forecastOrchestrator(TimesFmClient client, ForecastSnapshotStore snapshots) {
+        return new ForecastOrchestrator(client, snapshots);
+    }
 }
