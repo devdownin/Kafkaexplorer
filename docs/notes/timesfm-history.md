@@ -188,6 +188,26 @@ forecasts, persist forecast results, expose a forecast endpoint through MCP, or 
 Those actions require the orchestration, provenance authorization and `SHADOW` workflow described
 in the integration plan maintained with this delivery.
 
+## P1 orchestration, MCP and evaluation slice
+
+The next slice adds an explicit `ForecastOrchestrator` seam. Calls are bounded by the existing
+TimesFM client (four series, 60 points) and default to `SHADOW`: a run can populate only a
+process-local read model capped at 256 snapshots. There is still no scheduler, durable forecast
+table, alert, or activation mutation. `ACTIVE` is represented in the contract so a later rollout
+can require a separate operator decision rather than silently changing semantics.
+
+When inference is enabled and MCP is enabled, five read-only tools are registered through the same
+catalogue and interception guards: `kex_forecast_catalog`, `kex_forecast_get`,
+`kex_forecast_latest`, `kex_forecast_metadata` and `kex_forecast_limits`. They can only inspect
+snapshots already produced by an internal caller; no MCP argument starts model inference. Missing
+series are reported as `NOT_FOUND`, and every response states the shadow-only limitation.
+
+`ForecastBacktestEvaluator` is a pure offline evaluator for rolling-origin corpora. It reports MAE,
+MASE against the naive-last-difference scale, mean pinball loss for Q10/Q50/Q90, empirical Q10–Q90
+coverage and mean interval width. It rejects mismatched or non-finite inputs. Baseline generation,
+corpus selection and activation thresholds remain an evaluation job concern, not a request-time
+MCP side effect.
+
 ## Observability and access
 
 Prometheus exposes `explorer_forecast_history_persisted_total`,
