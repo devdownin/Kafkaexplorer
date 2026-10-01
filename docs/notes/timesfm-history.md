@@ -208,6 +208,15 @@ coverage and mean interval width. It rejects mismatched or non-finite inputs. Ba
 corpus selection and activation thresholds remain an evaluation job concern, not a request-time
 MCP side effect.
 
+Threshold policy is now explicit and operator-owned through `ForecastThresholdPolicy`. A policy
+must name the series and definition version, threshold, direction (`ABOVE`/`BELOW`), horizon,
+confidence, history quality and visibility (`SHADOW`, `VISIBLE` or `ACTIVE`).
+`ForecastThresholdEvaluator` refuses provenance mismatches and evaluates the conservative Q10 bound
+for upper breaches or Q90 for lower breaches. No threshold is inferred from TimesFM, a baseline or
+the current value. Every breach carries its threshold, direction, horizon, confidence, quality,
+series/version provenance and visibility so a future alert cannot be mistaken for an unqualified
+model assertion.
+
 ## Observability and access
 
 Prometheus exposes `explorer_forecast_history_persisted_total`,
