@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package com.compagnonsdudev.kafkasqlexplorer.forecast;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -9,8 +11,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class TimesFmConfigurationTest {
     private ApplicationContextRunner runner() {
-        return new ApplicationContextRunner().withUserConfiguration(MetricHistoryConfigurationTest.Binding.class,
-            ForecastingProperties.class, TimesFmConfiguration.class);
+        return new ApplicationContextRunner()
+            .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
+            .withUserConfiguration(MetricHistoryConfigurationTest.Binding.class,
+                ForecastingProperties.class, TimesFmConfiguration.class);
     }
 
     @Test void disabledFeatureDoesNotCreateOrValidateAClient() {
