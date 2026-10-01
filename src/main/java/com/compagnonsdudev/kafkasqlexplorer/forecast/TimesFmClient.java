@@ -3,6 +3,10 @@ package com.compagnonsdudev.kafkasqlexplorer.forecast;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Metrics;
+import io.micrometer.core.instrument.Timer;
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -36,19 +40,38 @@ public final class TimesFmClient implements AutoCloseable {
     private final Duration timeout;
     private final HttpClient http;
     private final Semaphore slot = new Semaphore(1);
+    private final MeterRegistry registry;
+    private final Counter requests, busy, timeouts, unavailable, invalidOutput;
+    private final Timer duration;
 
     public TimesFmClient(TimesFmInferenceProperties properties) {
+        this(properties, Metrics.globalRegistry);
+    }
+
+    public TimesFmClient(TimesFmInferenceProperties properties, MeterRegistry registry) {
         endpoint = properties.validateEnabled();
         token = properties.getToken();
         timeout = properties.getTimeout();
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3))
             .followRedirects(HttpClient.Redirect.NEVER).build();
+        this.registry = registry;
+        requests = Counter.builder("explorer_forecasting_requests_total").description("TimesFM calls").register(registry);
+        busy = Counter.builder("explorer_forecasting_busy_total").description("TimesFM calls rejected while busy").register(registry);
+        timeouts = Counter.builder("explorer_forecasting_timeouts_total").description("TimesFM calls that timed out").register(registry);
+        unavailable = Counter.builder("explorer_forecasting_unavailable_total").description("TimesFM unavailable calls").register(registry);
+        invalidOutput = Counter.builder("explorer_forecasting_invalid_output_total").description("TimesFM invalid responses").register(registry);
+        duration = Timer.builder("explorer_forecasting_duration_seconds").description("TimesFM call duration")
+            .publishPercentiles(0.5, 0.95).register(registry);
     }
 
     public List<MetricForecast> forecast(List<PreparedMetricSeries> contexts, int horizon) {
         var series = List.copyOf(contexts);
         validateInput(series, horizon);
-        if (!slot.tryAcquire()) throw new TimesFmInferenceException(BUSY);
+        if (!slot.tryAcquire()) {
+            busy.increment();
+            throw new TimesFmInferenceException(BUSY);
+        }
+        Timer.Sample sample = Timer.start(registry);
         try {
             String requestId = UUID.randomUUID().toString();
             var inputs = series.stream().map(s -> Map.of("seriesId", s.seriesId(), "values",
@@ -87,12 +110,25 @@ public final class TimesFmClient implements AutoCloseable {
             if (!response.headers().firstValue("Content-Type").orElse("").split(";")[0].trim().equals("application/json")) {
                 throw new TimesFmInferenceException(INVALID_OUTPUT);
             }
-            return decode(JSON.readTree(response.body()), requestId, series, horizon);
-        } catch (TimesFmInferenceException | IllegalArgumentException e) {
+            var result = decode(JSON.readTree(response.body()), requestId, series, horizon);
+            requests.increment();
+            return result;
+        } catch (TimesFmInferenceException e) {
+            switch (e.state()) {
+                case TIMEOUT -> timeouts.increment();
+                case UNAVAILABLE -> unavailable.increment();
+                case INVALID_OUTPUT -> invalidOutput.increment();
+                case BUSY -> busy.increment();
+            }
+            throw e;
+        } catch (IllegalArgumentException e) {
+            invalidOutput.increment();
             throw e;
         } catch (Exception e) {
+            invalidOutput.increment();
             throw new TimesFmInferenceException(INVALID_OUTPUT);
         } finally {
+            sample.stop(duration);
             slot.release();
         }
     }

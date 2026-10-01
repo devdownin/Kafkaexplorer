@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package com.compagnonsdudev.kafkasqlexplorer.forecast;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,7 +10,9 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty(prefix = "explorer.forecasting.inference", name = "enabled", havingValue = "true")
 public class TimesFmConfiguration {
     @Bean(destroyMethod = "close")
-    TimesFmClient timesFmClient(ForecastingProperties configuration) {
-        return new TimesFmClient(configuration.getInference());
+    TimesFmClient timesFmClient(ForecastingProperties configuration, MeterRegistry registry) {
+        var inference = configuration.getInference();
+        if (inference.getServiceUrl() == null) throw new IllegalArgumentException("TimesFM service URL is required");
+        return new TimesFmClient(inference, registry);
     }
 }

@@ -1,0 +1,53 @@
+# Optional TimesFM CPU service.
+#
+#   TIMESFM_TOKEN="$(openssl rand -hex 32)" \
+#   docker compose -f docker-compose.yml -f compose/timesfm.yml up -d
+#
+# The model is downloaded once into the named volume and verified against the pinned SHA-256.
+# This overlay is intentionally separate from the base stack: enabling it opts into model
+# download, CPU/RAM consumption and forecast-service authentication.
+services:
+  timesfm:
+    build:
+      context: ./services/timesfm
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    volumes:
+      - timesfm_models:/models
+    environment:
+      # Empty is accepted by Compose so the offline configuration checker can resolve the
+      # overlay; the application fails closed because the token is validated before readiness.
+      TIMESFM_TOKEN: ${TIMESFM_TOKEN:-}
+      TIMESFM_CACHE_DIR: /models
+      TIMESFM_THREADS: ${TIMESFM_THREADS:-4}
+    cpus: ${TIMESFM_CPUS:-4.0}
+    mem_limit: ${TIMESFM_MEM_LIMIT:-8g}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 5m
+    networks:
+      - timesfm_private
+
+  explorer:
+    depends_on:
+      timesfm:
+        condition: service_healthy
+    environment:
+      EXPLORER_FORECASTING_INFERENCE_ENABLED: "true"
+      EXPLORER_FORECASTING_INFERENCE_SERVICE_URL: http://timesfm:8000
+      EXPLORER_FORECASTING_INFERENCE_TOKEN: ${TIMESFM_TOKEN:-}
+      EXPLORER_FORECASTING_INFERENCE_TIMEOUT: ${TIMESFM_TIMEOUT:-35s}
+    networks:
+      - timesfm_private
+
+networks:
+  timesfm_private:
+    internal: true
+
+volumes:
+  timesfm_models:
