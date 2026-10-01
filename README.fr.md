@@ -1,1 +1,202 @@
-/bin/bash: -c: line 1: unexpected EOF while looking for matching `''
+<div align="center">
+
+# ⚡ Kafka SQL Explorer
+
+### Voyez votre Kafka. Interrogez-le comme une base de données. Auditez-le avec l'IA.
+
+[![CI](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml/badge.svg)](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/devdownin/Kafkaexplorer/badge)](https://scorecard.dev/viewer/?uri=github.com/devdownin/Kafkaexplorer)
+[![Docker Hub](https://img.shields.io/docker/pulls/compagnonsdudev/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer)
+[![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
+[![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)
+[![Kafka 4.3](https://img.shields.io/badge/Kafka-4.3_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
+[![Flink 2.3](https://img.shields.io/badge/Flink-2.3-E6526F?logo=apacheflink&logoColor=white)](https://flink.apache.org/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+[Site web](https://devdownin.github.io/Kafkaexplorer/) · [Tour des fonctionnalités](docs/FEATURES.md) · [Démarrage rapide](#-démarrage-rapide) · [Contribuer](CONTRIBUTING.md) · [🇬🇧 English](README.md)
+
+</div>
+
+---
+
+**Arrêtez de plisser les yeux devant un console consumer.** Kafka SQL Explorer est une application web qui transforme n'importe quel cluster Kafka en quelque chose que l'on peut *voir et interroger* : parcourez les topics, cliquez sur un champ d'un message, et obtenez une requête Flink SQL prête à exécuter — pas de DDL à écrire, pas de schéma à deviner, pas de gymnastique CLI. Un JAR, une URL, zéro installation côté cluster.
+
+Pensé pour les data engineers, les architectes, et tous ceux qui se sont un jour demandé *« qu'est-ce qui circule vraiment dans ce topic ? »*
+
+![Le tableau de bord : chaque topic, son nombre de messages, son état et la date de son dernier message](docs/img/dashboard.png)
+
+<details>
+<summary>Autres écrans — Topic Explorer, Éditeur SQL, Stream Flow, Modèle de données, Files d'échec, Audit, Cluster</summary>
+
+**Topic Explorer** — cherchez dans tout le topic, et lisez ce qui a réellement été couvert.
+![Topic Explorer](docs/img/topic-explorer.png)
+
+**Éditeur SQL** — Monaco, complétion limitée aux tables citées, et le moteur qui a répondu affiché sur le résultat.
+![Éditeur SQL](docs/img/sql-editor.png)
+
+**Stream Flow** — une clé d'enregistrement à travers le cluster, avec la latence de chaque saut et un tableau de preuves vérifiable.
+![Stream Flow](docs/img/stream-flow.png)
+
+**Modèle de données** — les topics lus comme des tables, avec les relations entre eux déduites et graduées.
+![Modèle de données](docs/img/data-model.png)
+
+**Files d'échec et de reprise** — chaque file, ce qui y est tombé, et la part du trafic de sa source que ça représente.
+![Files d'échec et de reprise](docs/img/dead-letter.png)
+
+**Audit du cluster** — constats gradués, et chaque run énonce son propre périmètre.
+![Audit du cluster](docs/img/audit.png)
+
+**Cluster** — quorum de contrôleurs KRaft, groupes clients, versions de fonctionnalités.
+![Cluster](docs/img/cluster.png)
+
+Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilote le SPA compilé au-dessus de réponses d'API figées, calquées sur le jeu de données de démo. Voir son [README](docs/screenshots/README.md) pour les régénérer après un changement d'UI.
+
+</details>
+
+## ✨ Points forts
+
+- 🖱️ **Cliquer, c'est requêter** — cliquez sur une clé JSON ou une balise XML dans l'aperçu d'un message et elle atterrit dans votre `SELECT`/`WHERE`, `JSON_VALUE`/XPath générés pour vous.
+- 🧠 **Schémas sans configuration** — les topics sont échantillonnés, leur structure inférée (JSON, XML, Avro via Schema Registry) et enregistrée comme table Flink en un clic.
+- 📝 **Un vrai éditeur SQL** — Monaco (le moteur de VS Code), auto-complétion des topics et tables, historique de requêtes, lecture earliest/latest.
+- 🕸️ **Lignage & traçage** — un graphe interactif topics → tables → jobs actifs, résolu par le parseur de Flink lui-même ; plus le traçage d'un message à travers les topics par clé, header, JSONPath ou XPath, qui affiche ses sauts au fil de la recherche, dit exactement ce qu'il a lu, reprend là où le budget l'a arrêté, et compare deux clés côte à côte.
+- 🗺️ **Un modèle de données que vous n'avez pas eu à dessiner** — choisissez des topics et lisez-les comme des tables, avec les relations entre elles déduites des noms de colonnes clés. Kafka n'a pas de clés étrangères : chaque arête est donc une affirmation, qui porte son grade de confiance, énonce son évidence en toutes lettres, et s'ouvre en `JOIN` prêt à l'emploi — une relation ou tout un sous-graphe.
+- 🩺 **Audit du cluster en un clic** — messages toxiques, doublons, pertes en ligne et latence des flux, calculés sur tout le cluster en tâche de fond.
+- 🤖 **Process mining assisté par IA** — reconstruisez vos flux métier en flowcharts et traquez les anomalies avec OpenRouter (le défaut : une clé, la plupart des fournisseurs hébergés), Claude, un LLM local (Ollama…) ou un [SpectraLLM](https://github.com/devdownin/SpectraLLM) privé.
+- 🔭 **Nativement Kafka 4** — quorum de contrôleurs KRaft, groupes KIP-848, share groups (KIP-932) et versions de features, visibles dans l'UI et exportés vers Prometheus.
+- 🔌 **Un serveur MCP pour votre agent** — on expose la couche d'analyse, pas une dixième traduction de l'`AdminClient` : du SQL sur du Kafka vanilla, l'inférence de schéma, et des réponses qui disent ce qu'elles n'ont **pas** lu. Désactivé par défaut, en lecture seule une fois actif, et la lecture seule est tenue à l'enregistrement — un outil mutant n'est pas enregistré du tout, donc ni listé ni invocable.
+- 🎁 **Un bac à sable inclus** — 79 topics de démo créés automatiquement, du pipeline de commandes en 6 étapes à la supply chain de 60 topics, tous avec clé de record et headers : une commande à tracer à travers les partitions, une corrélation qui ne vit que dans les headers, une vraie série temporelle à fenêtrer, des doublons et des messages poison pour l'audit.
+
+## 🚀 Démarrage rapide
+
+Une seule commande — Kafka 4.3 (KRaft), l'application et tous les topics de démo :
+
+```bash
+docker compose up -d
+```
+
+Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
+
+<details>
+<summary>Autres façons de lancer</summary>
+
+- **Avec Confluent Schema Registry** (topics Avro) : `docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d`
+- **Avec un LLM local pré-câblé** (Ollama) : `docker compose -f docker-compose.yml -f compose/ollama.yml up -d`
+- **Avec le serveur MCP activé** (pour un agent) : `docker compose -f docker-compose.yml -f compose/mcp.yml up -d` — l'endpoint est `http://localhost:8080/mcp`, la console est la page **MCP** de l'application, et chaque garde est une variable `.env`. `/mcp` exige un jeton bearer (`EXPLORER_MCP_AUTH_TOKEN`) : l'overlay livre une valeur de développement qui ne protège rien, donc exportez la vôtre (`export EXPLORER_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"`) dès que la pile est joignable par quelqu'un d'autre que vous. L'overlay désactive aussi l'exigence de TLS parce que c'est une pile loopback — partout ailleurs, terminez le TLS et laissez `explorer.mcp.require-tls` à true. Le reste de l'application n'authentifie toujours personne : garder `BIND_ADDR` sur la loopback. Vérifier qu'il répond : `MCP_AUTH_TOKEN=… docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe`.
+- **Avec une IA privée à côté** (SpectraLLM, images seules — rien n'est construit, aucun checkout de SpectraLLM) : `docker compose -f compose/spectra-hub.yml up -d` — l'explorateur sur 8080, l'interface SpectraLLM sur 8088. Le premier démarrage télécharge ~4,8 Go de poids en arrière-plan, et rien ne l'attend. Des overlays voisins ajoutent le GPU (`.gpu.yml`), les limites mémoire (`.limits.yml`), ou font indexer les topics eux-mêmes par SpectraLLM (`.ingest.yml`). Pour un portable, quatre lignes de `.env` remplacent le modèle 7B par un 3B — voir `.env.example`.
+- **La même stack, mais en tirant l'image publiée au lieu de la construire** : `docker compose -f docker-compose.yml -f compose/image.yml up -d`
+- **Depuis les sources** (JDK 25) : lancez Kafka avec `docker compose up -d kafka`, puis `./mvnw spring-boot:run`
+- **Builder sans rien installer d'autre que Docker** — ni JDK, ni Maven, ni Node :
+  ```bash
+  docker compose -f compose/build.yml run --rm verify    # le gate complet, comme la CI
+  docker compose -f compose/build.yml run --rm package   # le JAR dans ./target
+  docker compose -f compose/build.yml run --rm frontend  # ESLint + Vitest seuls
+  ```
+- **Stack de dev avec rechargement à chaud** (backend + Vite + Kafka, toujours sans installation locale) : `docker compose -f compose/dev.yml up`
+- **Image précompilée** (Docker Hub ou GHCR, même image, `linux/amd64` + `linux/arm64`) :
+  ```bash
+  docker run -p 127.0.0.1:8080:8080 -e KAFKA_BOOTSTRAP_SERVERS=votre-broker:9092 compagnonsdudev/kafkaexplorer:latest
+  # ou : ghcr.io/devdownin/kafkaexplorer:latest
+  ```
+  Tags, variables d'environnement, volumes et sondes : **[docs/DOCKERHUB.md](docs/DOCKERHUB.md)** — la page publiée comme [présentation Docker Hub](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer).
+- **Sur votre propre cluster** : pointez `kafka.bootstrap-servers` vers n'importe quel broker Kafka 2.1+ (PLAIN, SSL ou Confluent Cloud) — rien à installer côté cluster.
+
+Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deux `-f`. Posez `COMPOSE_FILE=docker-compose.yml:compose/schema-registry.yml` dans un `.env` à la racine et un simple `docker compose up -d` désigne cette combinaison — voir `.env.example`.
+
+</details>
+
+## 🧭 Le tour du propriétaire
+
+| Vous voulez… | Direction… |
+|---|---|
+| Parcourir topics, partitions, volumes et messages | **Dashboard** & **Topic Explorer** |
+| Parcourir les topics par nomenclature | **Explore → Topic hierarchy** — choisir `.`, `-` ou `_` ; naviguer aux flèches, consulter les noms exclus et leur motif, puis retrouver la vue après ouverture d'un topic |
+| Écrire et exécuter du SQL sur les topics | **SQL Editor** — ou cliquez sur les champs et laissez-le s'écrire tout seul |
+| Comparer deux topics côte à côte, diff par ID | **Compare** |
+| Suivre un message à travers tout un pipeline | **Stream Flow** |
+| Visualiser topics → tables → jobs en cours | **Lineage** |
+| Lire un ensemble de topics comme un diagramme entité-relation | **Data Model** — relations déduites, graduées, ouvrables en SQL |
+| Transformer du SQL en métriques Prometheus avec graphiques | **Metrics** |
+| Se voir proposer des KPI tirés de ce que le cluster a montré | **Metrics** — proposés d'après l'audit et les traces |
+| Voir ce qui s'accumule dans vos topics DLQ, DLT et de reprise | **Dead Letter** — les arrivées, et la part de la source que ça représente |
+| Vérifier la santé de tout le cluster en un clic | **Audit** |
+| Inspecter brokers, quorum KRaft, groupes clients, feature flags | **Cluster** |
+| Laisser un LLM reconstruire et auditer vos flux métier | **Process Mining** |
+
+La hiérarchie est déduite uniquement des noms : elle ne décrit ni dépendances ni circulation des messages. Les noms avec séparateurs mélangés, niveaux vides ou sans séparateur restent dans la liste du Dashboard. Guide détaillé : [Français](docs/TOPIC-HIERARCHY.fr.md) · [English](docs/TOPIC-HIERARCHY.md).
+
+Chaque fonctionnalité en détail : **[docs/FEATURES.md](docs/FEATURES.md)** · Requêtes prêtes à l'emploi : **[docs/QUERY-EXAMPLES.md](docs/QUERY-EXAMPLES.md)**
+
+## 🤖 Apportez votre IA
+
+Le Process Mining fonctionne avec le LLM que vous avez déjà — **OpenRouter** (le défaut : une seule clé devant la plupart des fournisseurs hébergés, donc `OPENROUTER_API_KEY=sk-or-v1-…` suffit), **Claude (Anthropic)**, tout ce qui parle l'API OpenAI (**Ollama**, vLLM, LM Studio…), ou un **SpectraLLM** entièrement privé avec RAG. Fournisseur, modèle et test de connectivité se configurent en direct depuis l'interface — et sur OpenRouter le modèle se choisit dans une liste de ceux qui conviennent, le moins cher d'abord, puis s'essaie sans l'enregistrer.
+
+Le défaut est un point d'accès *hébergé* : les digests de messages qu'il construit quittent donc votre machine. Ollama et SpectraLLM gardent tout sur votre réseau, et la page Réglages indique dans lequel des deux cas vous êtes — lu sur l'adresse réellement configurée, pas sur le nom du fournisseur.
+
+→ **[Guide des fournisseurs LLM](docs/LLM-PROVIDERS.md)** *(en anglais)*
+
+## 🛠️ Sous le capot
+
+Un unique JAR Spring Boot 4.1 embarquant Apache Flink 2.3 comme moteur SQL, avec un frontend React 19 + Tailwind. Clients Kafka 4.3 (compatibles brokers 2.1+), Avro via Confluent Schema Registry, métriques Prometheus sur `/actuator/prometheus`. Le SQL est restreint par liste blanche (`SELECT` / `EXPLAIN` / `CREATE TABLE` uniquement), le parsing XML est durci contre les attaques XXE, et les secrets sont masqués dans tout DDL affiché par l'UI.
+
+Un serveur MCP optionnel, dans le même processus (Spring AI 2.0), expose ces mêmes services à un agent LLM — mêmes caches, mêmes budgets, aucun second client Kafka — derrière une garde calquée sur KIP-1318 : la portée ressource appliquée au SQL autant qu'aux noms de topics, un allow/deny par outil tenu par l'absence de `tools/list`, une limite de débit, des jetons d'approbation, le DLP sur tout ce qui sort, et un journal d'appels en ajout seul. Inactif sauf `explorer.mcp.enabled=true`, en lecture seule une fois actif, et derrière un jeton bearer sur TLS dès lors. Voir **[SPEC-MCP.md](SPEC-MCP.md)**.
+
+Les outils de revue opérationnelle `kex_topic_configuration`, `kex_topic_policy_review`, `kex_consumer_lag_trend` et `kex_dlq_review` exposent les mesures et les limites de leurs diagnostics. Définissez `explorer.mcp.lag-history-directory` sur un volume accessible en écriture depuis chaque instance et prenant en charge les verrous interprocessus : le relevé de lag reste alors disponible après un redémarrage (validité de 48 heures par défaut, configurable). Sans ce volume, le relevé reste dans le processus pendant 30 minutes. Les règles de topic dépendent de l'environnement déclaré et les liens DLQ vers source, retry et runbook restent des déclarations à vérifier. Les exemples de configuration figurent dans [`docs/DOCKERHUB.md`](docs/DOCKERHUB.md) et `application.yml`.
+
+Plongée dans l'architecture : **[docs/architecture.md](docs/architecture.md)**
+
+Préparation de TimesFM : un journal PostgreSQL optionnel capture les métriques sélectionnées sous
+forme d'observations horodatées et versionnées. Une couche interne prépare les contextes réguliers,
+marque les imputations courtes des jauges et refuse les resets de compteurs ou historiques inadmissibles.
+Le module est désactivé par défaut. L'exécution reste explicite et démarre en mode `SHADOW` ;
+elle est bornée, locale au processus et ne planifie ni ne déclenche d'alerte. Voir
+**[configuration et limites de l'historique](docs/notes/timesfm-history.md)**.
+
+Le service TimesFM CPU-only s'active avec l'overlay optionnel `compose/timesfm.yml`. Il exige
+`TIMESFM_TOKEN`, réserve par défaut 4 CPU et 8 Gio, et télécharge le checkpoint épinglé dans un
+volume persistant. Lorsque l'inférence et MCP sont activés, cinq outils prévisionnels en lecture
+seule exposent les snapshots existants et les limites ; MCP ne lance jamais l'inférence. Les seuils
+restent définis par l'opérateur et portent la direction, l'horizon, la confiance, la qualité de
+l'historique, la provenance série/version et la visibilité `SHADOW`/`VISIBLE`/`ACTIVE`.
+
+## 🏗️ Build et Développement
+
+Il y a plusieurs façons de builder et de travailler sur le projet, selon vos besoins.
+
+### 1. Build de production Docker (Recommandé)
+Le projet utilise un build Docker "multi-stage" optimisé qui sépare le front et le back pour une meilleure mise en cache, puis package le tout dans un JRE ultra-léger :
+```bash
+docker build -t kafka-sql-explorer:latest .
+```
+
+### 2. Environnement de Développement (Hot-Reload)
+Pour développer avec rechargement à chaud (Hot Module Replacement pour le frontend via Vite et rechargement de classe pour le backend via Spring Boot DevTools) :
+```bash
+docker compose -f compose/dev.yml up --build
+```
+- Le **frontend** sera accessible sur `http://localhost:5173`
+- Le **backend** API sera sur `http://localhost:8080` (proxyfié automatiquement par le front)
+
+### 3. Build standard (localement)
+Si vous souhaitez compiler l'intégralité du projet localement (sans Docker pour la compilation), Maven s'occupera de tout via un profil activé par défaut (téléchargement de Node, build du React, et packaging Spring Boot) :
+```bash
+./mvnw clean package
+```
+## 🤝 Contribuer
+
+Les contributions sont bienvenues — le code est volontairement très commenté pour servir aussi de ressource d'apprentissage sur l'intégration Flink SQL + Spring Boot.
+
+Lancez **`mvn verify`** avant d'ouvrir une pull request : c'est la porte complète — tests Java, ESLint et Vitest — et c'est exactement ce que fait la CI. `mvn test` est la boucle rapide côté back et ne lance *pas* les vérifications du front.
+
+- Lisez le **[guide de contribution](CONTRIBUTING.md)** pour démarrer
+- Restez bienveillants : **[Code de conduite](CODE_OF_CONDUCT.md)**
+- Besoin d'aide ou une question ? **[Support](SUPPORT.md)**
+- Ce qui change d'une version à l'autre : **[Changelog](CHANGELOG.md)**
+- Une faille de sécurité ? Suivez la **[politique de sécurité](SECURITY.md)**
+
+## 📄 Licence
+
+[AGPL v3](LICENSE) — libre d'utiliser, d'étudier, de partager et d'améliorer.
+
+---
+
