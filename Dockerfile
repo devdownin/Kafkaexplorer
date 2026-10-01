@@ -15,7 +15,7 @@
 # what the digest is.
 
 # --- Stage 1: Build Frontend ---
-FROM node:26.8.2-alpine@sha256:ef24c5053d50fdc3e4e56eb4e7ddb7861874ab0fdc797046ba897581deb8e868 AS frontend-builder
+FROM node:26.10.0-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS frontend-builder
 WORKDIR /app
 
 # Manifest first: this layer is reused as long as the dependencies do not move.
@@ -42,7 +42,7 @@ RUN ./node_modules/.bin/tsc \
  && ./node_modules/.bin/vite build --outDir /app/dist --emptyOutDir
 
 # --- Stage 2: Build Backend ---
-FROM maven:3-eclipse-temurin-26@sha256:4e980a3c7def35292c12ce1a1dc7872f02165f11717204c7b1c2dc477e40c1b8 AS backend-builder
+FROM maven:3-eclipse-temurin-26@sha256:b2c1ad85954592f9928e84327c65201f308ad9b5d8ed7d5b823717c97bf23fbb AS backend-builder
 WORKDIR /app
 
 # The dependency tree resolved in its own layer, keyed on pom.xml alone, so it is
@@ -90,7 +90,7 @@ RUN cp target/kafka-sql-explorer-*.jar app.jar \
  && java -Djarmode=tools -jar app.jar extract --layers --launcher --destination extracted
 
 # --- Stage 3: Runtime ---
-FROM eclipse-temurin:25-jre-alpine@sha256:3137541deb3cac6626b5d9a4a2187bc0d6a34312f858bd2c67dd01e732e6b682
+FROM eclipse-temurin:25-jre-alpine@sha256:3c0a9084927a221ccd1d007fcaf614465672c0af37aaa834c5184483afe56d61
 WORKDIR /app
 
 # The app writes two things under its working directory: logs/kafkaexplorer.log
