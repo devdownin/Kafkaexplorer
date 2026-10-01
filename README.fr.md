@@ -145,6 +145,12 @@ Les outils de revue opérationnelle `kex_topic_configuration`, `kex_topic_policy
 
 Plongée dans l'architecture : **[docs/architecture.md](docs/architecture.md)**
 
+Préparation de TimesFM : un journal PostgreSQL optionnel capture les métriques sélectionnées sous
+forme d'observations horodatées et versionnées. Une couche interne prépare les contextes réguliers,
+marque les imputations courtes des jauges et refuse les resets de compteurs ou historiques inadmissibles.
+Le module est désactivé par défaut ; l'inférence et les
+outils MCP prédictifs seront ajoutés ensuite. Voir **[configuration et limites de l'historique](docs/notes/timesfm-history.md)**.
+
 ## 🏗️ Build et Développement
 
 Il y a plusieurs façons de builder et de travailler sur le projet, selon vos besoins.

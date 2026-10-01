@@ -145,6 +145,11 @@ Operational review tools add `kex_topic_configuration` (effective topic settings
 
 Architecture deep-dive: **[docs/architecture.md](docs/architecture.md)**
 
+Preparing TimesFM: an optional PostgreSQL journal now captures selected metrics as timestamped,
+versioned observations. An internal preparation layer reconstructs regular contexts, marks short
+gauge imputations, and rejects counter resets or inadmissible history. It is disabled by default; forecast inference and predictive MCP tools
+are subsequent steps. See **[history configuration and limitations](docs/notes/timesfm-history.md)**.
+
 ## 🏗️ Build and Development
 
 There are several ways to build and work on the project depending on your needs.
