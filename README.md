@@ -1,1 +1,201 @@
-/bin/bash: -c: line 1: unexpected EOF while looking for matching `''
+<div align="center">
+
+# ⚡ Kafka SQL Explorer
+
+### See your Kafka. Query it like a database. Audit it with AI.
+
+[![CI](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml/badge.svg)](https://github.com/devdownin/Kafkaexplorer/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/devdownin/Kafkaexplorer/badge)](https://scorecard.dev/viewer/?uri=github.com/devdownin/Kafkaexplorer)
+[![Docker Hub](https://img.shields.io/docker/pulls/compagnonsdudev/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer)
+[![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
+[![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)
+[![Kafka 4.3](https://img.shields.io/badge/Kafka-4.3_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
+[![Flink 2.3](https://img.shields.io/badge/Flink-2.3-E6526F?logo=apacheflink&logoColor=white)](https://flink.apache.org/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+[Website](https://devdownin.github.io/Kafkaexplorer/) · [Feature Tour](docs/FEATURES.md) · [Quick Start](#-quick-start) · [Contributing](CONTRIBUTING.md) · [🇫🇷 Français](README.fr.md)
+
+</div>
+
+---
+
+**Stop squinting at console consumers.** Kafka SQL Explorer is a web app that turns any Kafka cluster into something you can *see and query*: browse topics, click on a message field, and get a runnable Flink SQL query — no DDL to write, no schema to guess, no CLI gymnastics. One JAR, one URL, zero cluster-side installation.
+
+Built for data engineers, architects and anyone who has ever asked *"what's actually flowing through this topic?"*
+
+![The dashboard: every topic, its message count, its state and when it last received something](docs/img/dashboard.png)
+
+<details>
+<summary>More screens — Topic Explorer, SQL Editor, Stream Flow, Data Model, Dead Letter, Audit, Cluster</summary>
+
+**Topic Explorer** — search the whole topic and see what was actually covered.
+![Topic Explorer](docs/img/topic-explorer.png)
+
+**SQL Editor** — Monaco, scoped completion, and the engine that answered stated on the result.
+![SQL Editor](docs/img/sql-editor.png)
+
+**Stream Flow** — one record key across the cluster, with per-hop latency and a checkable evidence table.
+![Stream Flow](docs/img/stream-flow.png)
+
+**Data Model** — topics read as tables, with the relations between them deduced and graded.
+![Data Model](docs/img/data-model.png)
+
+**Dead Letter & Retry** — every failure queue, what landed in it, and what share of its source that is.
+![Dead Letter & Retry](docs/img/dead-letter.png)
+
+**Cluster Audit** — graded findings, and every run states its own scope.
+![Cluster Audit](docs/img/audit.png)
+
+**Cluster** — KRaft controller quorum, client groups, feature versions.
+![Cluster](docs/img/cluster.png)
+
+These are generated, not photographed: `docs/screenshots/` drives the compiled SPA over canned API responses shaped like the demo dataset. See its [README](docs/screenshots/README.md) to regenerate them after a UI change.
+
+</details>
+
+## ✨ Highlights
+
+- 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.
+- 🧠 **Zero-config schemas** — topics are sampled, their structure inferred (JSON, XML, Avro via Schema Registry), and registered as Flink tables in one click.
+- 📝 **A real SQL editor** — Monaco (the VS Code engine), auto-completion of topics and tables, query history, Flink SQL by default, and an explicit bounded Kafka Direct exploration mode with earliest/latest scans and scan coverage.
+- 🕸️ **Lineage & tracing** — an interactive graph of topics → tables → live jobs, resolved by Flink's own parser; plus cross-topic message tracing by key, header, JSONPath or XPath, which streams its hops as it finds them, says exactly what it scanned, resumes where a time budget stopped it, and compares two keys side by side.
+- 🗺️ **A data model you did not have to draw** — pick a set of topics and read them as tables, with the relations between them deduced from key-column names. Kafka has no foreign keys, so every edge is a claim: it carries a confidence grade, states its evidence in plain words, and opens as a ready `JOIN` — one relation or a whole subgraph.
+- 🩺 **One-click cluster audit** — poison messages, duplicates, flow drop-offs and latency, computed across your whole cluster in the background.
+- 🤖 **AI-powered process mining** — reconstruct business flows as flowcharts and hunt anomalies with OpenRouter (the default: one key, most hosted vendors), Claude, any local LLM (Ollama…), or a private [SpectraLLM](https://github.com/devdownin/SpectraLLM).
+- 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, visible in the UI and exported to Prometheus.
+- 🔌 **An MCP server for your agent** — expose the analysis layer, not a tenth translation of the `AdminClient`: SQL over vanilla Kafka, schema inference, and answers that say what they did **not** read. Off by default, read-only when on, and read-only is enforced at registration — a mutating tool is not registered at all, so it is neither listed nor invocable.
+- 🎁 **A batteries-included sandbox** — 76 demo topics seeded automatically, from a 6-step order pipeline to a 60-topic supply chain, all keyed and header-stamped: an order to trace across partitions, a header-only correlation to follow, a real time series to window, duplicates and poison records for the audit to find.
+
+## 🚀 Quick Start
+
+One command — Kafka 4.3 (KRaft), the app, and all demo topics:
+
+```bash
+docker compose up -d
+```
+
+Then open **http://localhost:8080** and start clicking. That's it.
+
+<details>
+<summary>Other ways to run it</summary>
+
+- **With Confluent Schema Registry** (Avro topics): `docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d`
+- **With a local LLM pre-wired** (Ollama): `docker compose -f docker-compose.yml -f compose/ollama.yml up -d`
+- **With the MCP server on** (for an agent): `docker compose -f docker-compose.yml -f compose/mcp.yml up -d` — the endpoint is `http://localhost:8080/mcp`, the console is the app's own **MCP** page, and every guard is an `.env` variable. `/mcp` requires a bearer token (`EXPLORER_MCP_AUTH_TOKEN`): the overlay ships a development default that protects nothing, so export your own (`export EXPLORER_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"`) for anything reachable by more than you. The overlay also turns TLS enforcement off because it is a loopback stack — everywhere else, terminate TLS and leave `explorer.mcp.require-tls` true. The rest of the application still authenticates nobody: keep `BIND_ADDR` on the loopback. Check it answers with `MCP_AUTH_TOKEN=… docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe`.
+- **With a private AI stack beside it** (SpectraLLM, images only — nothing built, no SpectraLLM checkout): `docker compose -f compose/spectra-hub.yml up -d` — Explorer on 8080, SpectraLLM UI on 8088. The first boot downloads ~4.8 GB of model weights in the background and nothing waits for it. Overlays next to it add a GPU (`.gpu.yml`), memory limits (`.limits.yml`), or have SpectraLLM index the topics themselves (`.ingest.yml`). For a laptop, four `.env` lines swap the 7B chat model for a 3B — see `.env.example`.
+- **The same stack, but pulling the published image instead of building it**: `docker compose -f docker-compose.yml -f compose/image.yml up -d`
+- **From source** (JDK 25): start Kafka with `docker compose up -d kafka`, then `./mvnw spring-boot:run`
+- **Build with nothing installed but Docker** — no JDK, no Maven, no Node:
+  ```bash
+  docker compose -f compose/build.yml run --rm verify    # the full CI gate
+  docker compose -f compose/build.yml run --rm package   # JAR into ./target
+  docker compose -f compose/build.yml run --rm frontend  # ESLint + Vitest only
+  ```
+- **Hot-reload dev stack** (backend + Vite + Kafka, still nothing installed locally): `docker compose -f compose/dev.yml up`
+- **Prebuilt image** (Docker Hub or GHCR, same image, `linux/amd64` + `linux/arm64`):
+  ```bash
+  docker run -p 127.0.0.1:8080:8080 -e KAFKA_BOOTSTRAP_SERVERS=your-broker:9092 compagnonsdudev/kafkaexplorer:latest
+  # or: ghcr.io/devdownin/kafkaexplorer:latest
+  ```
+  Tags, environment variables, volumes and probes: **[docs/DOCKERHUB.md](docs/DOCKERHUB.md)** — the page published as the [Docker Hub overview](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer).
+- **Against your own cluster**: point `kafka.bootstrap-servers` at any Kafka 2.1+ broker (PLAIN, SSL or Confluent Cloud) — nothing to install cluster-side.
+
+The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPOSE_FILE=docker-compose.yml:compose/schema-registry.yml` in a root `.env` and a bare `docker compose up -d` means that combination — see `.env.example`.
+
+</details>
+
+## 🧭 Take the tour
+
+| You want to… | Head to… |
+|---|---|
+| Browse topics, partitions, sizes and sample messages | **Dashboard** & **Topic Explorer** |
+| Browse topics by naming hierarchy | **Explore → Topic hierarchy** — choose `.`, `-` or `_`; navigate with arrow keys, inspect excluded names and their reasons, and resume your view after opening a topic |
+| Write and run SQL against topics | **SQL Editor** — or just click fields and let it write itself |
+| Compare two topics side by side, diff by ID | **Compare** |
+| Follow one message across a whole pipeline | **Stream Flow** |
+| Visualize topics → tables → running jobs | **Lineage** |
+| Read a set of topics as an entity-relation diagram | **Data Model** — relations deduced, graded, and openable as SQL |
+| Turn SQL into Prometheus metrics with live charts | **Metrics** |
+| Get KPIs proposed from what your cluster was observed doing | **Metrics** — suggested from the audit and traced flows |
+| See what is piling up in your DLQ, DLT and retry topics | **Dead Letter** — arrivals, and the share of the source that represents |
+| Health-check the entire cluster in one click | **Audit** |
+| Inspect brokers, KRaft quorum, client groups, feature flags | **Cluster** |
+| Let an LLM reconstruct and audit your business flows | **Process Mining** |
+
+The hierarchy is inferred from topic names only; it does not describe dependencies or message flow. Names with mixed separators, empty levels or no separator stay in the Dashboard list. Detailed guide: [English](docs/TOPIC-HIERARCHY.md) · [Français](docs/TOPIC-HIERARCHY.fr.md).
+
+Every feature in detail: **[docs/FEATURES.md](docs/FEATURES.md)** · Ready-to-run SQL: **[docs/QUERY-EXAMPLES.md](docs/QUERY-EXAMPLES.md)**
+
+## 🤖 Bring your own AI
+
+Process Mining works with the LLM you already have — **OpenRouter** (the default: one key in front of most hosted vendors, so `OPENROUTER_API_KEY=sk-or-v1-…` is the whole setup), **Anthropic Claude**, anything speaking the OpenAI API (**Ollama**, vLLM, LM Studio…), or a fully private, RAG-enabled **SpectraLLM**. Provider, model and connectivity test are all configurable live from the UI — and on OpenRouter the model is picked from a list of those that fit, cheapest first, then tried without saving it.
+
+The default is a *hosted* endpoint, so the message digests it builds leave your machine. Ollama and SpectraLLM keep every byte on your own network, and the Settings page says which of the two you are on — read off the address actually configured, not off the provider's name.
+
+→ **[LLM provider guide](docs/LLM-PROVIDERS.md)**
+
+## 🛠️ Under the hood
+
+A single Spring Boot 4.1 JAR embedding Apache Flink 2.3 as the SQL engine, with a React 19 + Tailwind frontend. Kafka clients 4.3 (compatible with brokers 2.1+), Avro via Confluent Schema Registry, Prometheus metrics on `/actuator/prometheus`. SQL is whitelisted (`SELECT` / `EXPLAIN` / `CREATE TABLE` only), XML parsing is XXE-hardened, and credentials are redacted from any DDL shown in the UI.
+
+An optional in-process MCP server (Spring AI 2.0) exposes the same services to an LLM agent — same caches, same budgets, no second Kafka client — behind a KIP-1318-shaped guard: resource scope applied to SQL as well as to topic names, per-tool allow/deny enforced by absence from `tools/list`, a rate limit, approval tokens, DLP on everything that leaves, and an append-only call trail. Off unless `explorer.mcp.enabled=true`, read-only when on, and behind a bearer token over TLS once it is. See **[SPEC-MCP.md](SPEC-MCP.md)**.
+
+Operational review tools add `kex_topic_configuration` (effective topic settings and replica/ISR counts), `kex_topic_policy_review` (operator-defined rules per environment), `kex_consumer_lag_trend` (two complete offset/commit snapshots, with producer and consumer rates), and `kex_dlq_review` (DLQ retention, bounded header checks and explicitly declared source/retry/replay links). Set `explorer.mcp.lag-history-directory` to the same writable volume on every instance to retain the lag baseline across instances and restarts (48-hour validity by default, configurable); the filesystem must support cross-process locks. Without it, the baseline stays in this server process for up to 30 minutes. Missing broker data is reported as unmeasured, and the DLQ review does not reprocess records. Configuration examples are in [`docs/DOCKERHUB.md`](docs/DOCKERHUB.md) and `application.yml`.
+
+Architecture deep-dive: **[docs/architecture.md](docs/architecture.md)**
+
+Preparing TimesFM: an optional PostgreSQL journal now captures selected metrics as timestamped,
+versioned observations. An internal preparation layer reconstructs regular contexts, marks short
+gauge imputations, and rejects counter resets or inadmissible history. See **[history configuration
+and limitations](docs/notes/timesfm-history.md)**.
+
+The CPU-only TimesFM service is available through the opt-in `compose/timesfm.yml` overlay. It
+requires `TIMESFM_TOKEN`, reserves 4 CPU / 8 GiB by default, and downloads the pinned checkpoint
+into a persistent cache. Forecast execution remains explicit and defaults to `SHADOW`: it is
+bounded, process-local and does not schedule, persist or alert. When both inference and MCP are
+enabled, five read-only forecast tools expose existing snapshots and limits; MCP never starts
+inference. Operator-owned thresholds carry direction, horizon, confidence, history quality,
+series/version provenance and `SHADOW`/`VISIBLE`/`ACTIVE` visibility. See the TimesFM note for
+the evaluation metrics and rollout boundaries.
+
+## 🏗️ Build and Development
+
+There are several ways to build and work on the project depending on your needs.
+
+### 1. Docker Production Build (Recommended)
+The project uses an optimized multi-stage Docker build that separates frontend and backend compilation for better caching, then packages everything into a lightweight JRE image:
+```bash
+docker build -t kafka-sql-explorer:latest .
+```
+
+### 2. Development Environment (Hot-Reload)
+To develop with live-reloading (Hot Module Replacement for the Vite frontend and class reloading for the Spring Boot backend):
+```bash
+docker compose -f compose/dev.yml up --build
+```
+- The **frontend** is available at `http://localhost:5173`
+- The **backend** API runs on `http://localhost:8080` (automatically proxied by the frontend)
+
+### 3. Standard Local Build
+If you prefer to compile the entire project locally without Docker, Maven handles everything via a default-activated profile (downloading Node.js, building the React app, and packaging the Spring Boot executable):
+```bash
+./mvnw clean package
+```
+## 🤝 Contributing
+
+Contributions are welcome — the codebase is deliberately heavily commented to double as a learning resource for Flink SQL + Spring Boot integration.
+
+Run **`mvn verify`** before opening a pull request: it is the complete gate — Java tests, ESLint and Vitest — and it is exactly what CI runs. `mvn test` is the fast backend-only loop and does *not* run the frontend checks.
+
+- Read the **[Contributing Guide](CONTRIBUTING.md)** to get started
+- Be excellent to each other: **[Code of Conduct](CODE_OF_CONDUCT.md)**
+- Need help or have a question? **[Support](SUPPORT.md)**
+- What changed between releases: **[Changelog](CHANGELOG.md)**
+- Found a vulnerability? Follow the **[Security Policy](SECURITY.md)**
+
+## 📄 License
+
+[AGPL v3](LICENSE) — free to use, study, share and improve.
+
+---
