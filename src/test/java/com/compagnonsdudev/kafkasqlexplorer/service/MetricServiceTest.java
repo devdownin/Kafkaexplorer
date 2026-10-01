@@ -40,6 +40,32 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class MetricServiceTest {
 
+    @Test
+    void observationCaptureUsesEveryLabelSeriesAndDoesNotRescanKafka() {
+        var journal = Mockito.mock(com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal.class);
+        Mockito.when(journal.selects(Mockito.anyString())).thenReturn(true);
+        service.setObservationJournal(journal);
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(new QueryResult(
+            List.of("metric_value", "region", "metric_name"), List.of(
+                Map.of("metric_value", 3.0, "region", "eu", "metric_name", "source-eu"),
+                Map.of("metric_value", 4.0, "region", "eu", "metric_name", "source-eu"),
+                Map.of("metric_value", 9.0, "region", "us", "metric_name", "source-us")), 1L, null));
+        service.save(new MetricConfig(null, "observed-counter", "COUNTER",
+            "SELECT amount AS metric_value, region FROM t", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream().filter(m -> "observed-counter".equals(m.name()))
+            .findFirst().orElseThrow().id();
+
+        service.refreshMetric(id);
+
+        Mockito.verify(journal).capture(Mockito.any(), Mockito.nullable(String.class),
+            Mockito.eq(List.of(
+                new com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal.Sample(Map.of("region", "eu", "metric_name", "source-eu"), 7.0),
+                new com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal.Sample(Map.of("region", "us", "metric_name", "source-us"), 9.0))),
+            Mockito.anyMap(), Mockito.eq(false), Mockito.anyLong());
+        Mockito.verify(flinkSqlService, Mockito.times(1)).executeSql(Mockito.any());
+    }
+
     private MetricService service;
     private FlinkSqlService flinkSqlService;
     private MeterRegistry meterRegistry;

@@ -20,7 +20,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- An opt-in PostgreSQL observation journal for selected metrics, preparing the TimesFM integration.
+  Captures timestamped values by labels and component, versions semantic edits, and writes outside
+  the metric refresh thread. Missing data stays unknown; queue/persistence losses are counted.
+  Disabled by default; forecasting and predictive alerts are not yet enabled.
+- Deterministic metric-series preparation with explicit gauge/counter transformations, UTC windows,
+  causal short-gap imputation, reset/quality/version checks, bounded history reads and a versioned
+  JSON corpus export. Internal and conditional on history activation; no additional Kafka query.
 
 ## [2.1.4] — 2026-09-27
 

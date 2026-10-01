@@ -1,0 +1,26 @@
+[project]
+name = "kex-timesfm-service"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi==0.142.1",
+  "uvicorn==0.54.0",
+  "numpy==2.4.6",
+  "timesfm==2.0.2",
+  "torch==2.11.0+cpu",
+  "huggingface-hub==1.11.0",
+]
+
+[dependency-groups]
+test = ["httpx==0.28.1", "pytest==9.0.2"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

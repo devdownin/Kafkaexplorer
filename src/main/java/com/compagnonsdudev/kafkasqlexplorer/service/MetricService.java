@@ -15,6 +15,8 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.QueryRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.QueryResult;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicTimeLag;
 import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
+import com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal;
+import org.springframework.beans.factory.annotation.Autowired;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Gauge;
@@ -49,6 +51,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.TreeMap;
 
 /**
  * Bridges Flink SQL queries to Prometheus metrics via Micrometer.
@@ -78,6 +81,14 @@ import java.util.regex.Pattern;
  */
 @Service
 public class MetricService {
+
+    private MetricObservationJournal observationJournal;
+
+    /** Optional: normal metric collection has no dependency on a forecasting database. */
+    @Autowired(required = false)
+    public void setObservationJournal(MetricObservationJournal journal) {
+        this.observationJournal = journal;
+    }
 
     private static final Logger log = LoggerFactory.getLogger(MetricService.class);
     private static final int MAX_HISTORY = 50;
@@ -1966,6 +1977,7 @@ public class MetricService {
     }
 
     private void refreshSingleMetric(String id, MetricConfig config) {
+        String observedEndpoint = kafkaConfig.getBootstrapServers();
         try {
             MetricConfig normalized = normalizeMetric(config);
             validateMetric(normalized);
@@ -1980,11 +1992,14 @@ public class MetricService {
             MetricComputationResult result = computeMetric(normalized, false);
             if (result.error() != null) {
                 updateMetricState(id, null, result.error(), result.summary());
+                captureObservation(normalized, observedEndpoint, List.of(), Map.of(), result.summary(), true);
             } else if (!result.rows().isEmpty()) {
                 Map<String, String> configuredLabels = resolveConfiguredLabels(normalized);
                 processRows(id, normalized, result.rows(), result.displayValue(), result.summary(), configuredLabels);
+                captureObservation(normalized, observedEndpoint, result.rows(), configuredLabels, result.summary(), false);
             } else {
                 updateMetricState(id, null, "No rows returned — check table name and Kafka connectivity", result.summary());
+                captureObservation(normalized, observedEndpoint, List.of(), Map.of(), result.summary(), true);
             }
         } catch (Exception e) {
             String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
@@ -1994,6 +2009,40 @@ public class MetricService {
                 msg = msg + " → Check that the table is registered in Flink (run CREATE TABLE in the Query Workbench first)";
             }
             updateMetricState(id, null, msg, Map.of());
+            captureObservation(config, observedEndpoint, List.of(), Map.of(), Map.of(), true);
+        }
+    }
+
+    private void captureObservation(MetricConfig config, String endpoint, List<Map<String, Object>> rows,
+        Map<String, String> configuredLabels, Map<String, Object> summary, boolean failed) {
+        MetricObservationJournal journal = observationJournal;
+        if (journal == null || !journal.selects(config.id())) return;
+        try {
+            String type = config.type() == null ? "GAUGE" : config.type().toUpperCase(Locale.ROOT);
+            Map<Map<String, String>, Double> values = new LinkedHashMap<>();
+            // A distribution's individual rows are observations, not a time series gauge.
+            if (!failed && ("GAUGE".equals(type) || "COUNTER".equals(type))) for (var row : rows) {
+                Double value = extractValue(row);
+                if (value == null || !Double.isFinite(value)) continue;
+                Map<String, String> labels = new TreeMap<>();
+                Set<String> sourceLabelKeys = new HashSet<>(configuredLabels.keySet());
+                row.keySet().stream().filter(k -> !isReservedColumn(k))
+                    .map(messageFieldExtractorService::sanitizeLabelKey).forEach(sourceLabelKeys::add);
+                for (Tag tag : buildTags(config.id(), config, row, configuredLabels)) {
+                    if (sourceLabelKeys.contains(tag.getKey()))
+                        labels.put(tag.getKey(), tag.getValue());
+                }
+                Map<String, String> key = Map.copyOf(labels);
+                if ("COUNTER".equals(type)) values.merge(key, value, Double::sum);
+                else values.put(key, value);
+            }
+            var samples = values.entrySet().stream()
+                .map(e -> new MetricObservationJournal.Sample(e.getKey(), e.getValue())).toList();
+            journal.capture(config, endpoint, samples, summary, failed, System.currentTimeMillis());
+        } catch (Exception e) {
+            // Observation capture must not turn a successfully refreshed gauge into an error.
+            journal.rejectFrame();
+            log.warn("Metric observation capture failed ({})", e.getClass().getSimpleName());
         }
     }
 

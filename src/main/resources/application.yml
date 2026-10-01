@@ -73,6 +73,24 @@ kafka:
   # confluent-secret: YOUR_API_SECRET
 
 explorer:
+  # Optional capture only: no model, forecast or new alert is activated by this switch.
+  forecasting:
+    inference:
+      enabled: false
+      service-url: http://timesfm:8000
+      token: ""
+      timeout: 35s
+    history:
+      enabled: false
+      cluster-id: ""
+      collector-id: ""
+      jdbc-url: ""
+      username: ""
+      password: ""
+      metric-ids: []
+      queue-capacity: 128
+      max-series-per-refresh: 100
+      retention: 30d
   # Label shown in the header's connection pill. A display name, not a fact about the broker:
   # nothing verifies it, and POST /api/config can repoint the app while it stays put. It used to
   # read "KRAFT 4.2", so every deployment asserted a Kafka version it had never checked. Name your
