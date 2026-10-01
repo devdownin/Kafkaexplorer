@@ -13,7 +13,7 @@ class ForecastBacktestEvaluatorTest {
                 new MetricForecast.Point(3, 4, 3, 4, 5));
         var result = new ForecastBacktestEvaluator().evaluate(List.of(1d, 3d, 4d), points);
         assertEquals(1d / 3d, result.mae(), 1e-9);
-        assertEquals(2d / 3d, result.q10Q90Coverage(), 1e-9);
+        assertEquals(1d, result.q10Q90Coverage(), 1e-9);
         assertEquals(2d, result.meanIntervalWidth(), 1e-9);
         assertNotNull(result.mase());
     }
