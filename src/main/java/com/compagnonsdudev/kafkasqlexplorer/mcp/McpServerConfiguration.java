@@ -34,6 +34,8 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SchemaMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SqlMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.StreamFlowMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.TopicMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastSnapshotStore;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
 import com.compagnonsdudev.kafkasqlexplorer.service.DataModelService;
@@ -51,6 +53,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -290,6 +293,12 @@ public class McpServerConfiguration {
         return new OperationalReviewMcpTools(kafka, lag, guard,
                 shared ? LagSampleStore.shared(java.nio.file.Path.of(directory)) : LagSampleStore.inMemory(),
                 shared, properties);
+    }
+
+    @Bean
+    @ConditionalOnBean(ForecastSnapshotStore.class)
+    ForecastMcpTools forecastMcpTools(ForecastSnapshotStore snapshots, ToolGuard guard) {
+        return new ForecastMcpTools(snapshots, guard);
     }
 
     /**
