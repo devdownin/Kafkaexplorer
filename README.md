@@ -150,6 +150,11 @@ versioned observations. An internal preparation layer reconstructs regular conte
 gauge imputations, and rejects counter resets or inadmissible history. It is disabled by default; forecast inference and predictive MCP tools
 are subsequent steps. See **[history configuration and limitations](docs/notes/timesfm-history.md)**.
 
+The CPU-only TimesFM service is available through the opt-in `compose/timesfm.yml` overlay. It
+requires `TIMESFM_TOKEN`, reserves 4 CPU / 8 GiB by default, and downloads the pinned checkpoint
+into a persistent cache. This starts the inference dependency only; forecasts are not scheduled,
+persisted or exposed through MCP yet.
+
 ## 🏗️ Build and Development
 
 There are several ways to build and work on the project depending on your needs.

@@ -158,6 +158,36 @@ policy and canonical input. Policy changes or data changes can therefore invalid
 The caller controls offline storage and source authorization; this is not a public download API.
 These are prepared observations, not forecasts or evidence of predictive accuracy.
 
+## TimesFM service and operational status
+
+The inference service is an opt-in CPU-only container. Start it with the dedicated overlay only
+after creating a secret of at least 32 visible ASCII characters:
+
+```sh
+TIMESFM_TOKEN="$(openssl rand -hex 32)" \
+docker compose -f docker-compose.yml -f compose/timesfm.yml up -d
+```
+
+The overlay gives the service four CPU and eight GiB by default, a private internal network, a
+read-only root filesystem, a persistent model-cache volume, and a five-minute startup period for
+the first checkpoint download. The entrypoint downloads and verifies the pinned checkpoint before
+starting Uvicorn. Tune `TIMESFM_CPUS`, `TIMESFM_MEM_LIMIT` and `TIMESFM_THREADS` only after measuring
+the real workload. The token is never stored in the repository or passed in a forecast request.
+
+The default build never downloads the model. The opt-in smoke test is run from
+`services/timesfm` with `./smoke-real-model.sh`; it requires `TIMESFM_RUN_REAL_MODEL=1`, a model
+cache and network access to the pinned Hugging Face revision. It reports cold-start plus one
+512-point/60-step inference, peak RSS and the model identity. `TIMESFM_SMOKE_MAX_SECONDS` and
+`TIMESFM_SMOKE_MAX_RSS_MB` make the acceptance budget explicit without making the ordinary test
+suite depend on a GPU, a model download or network availability.
+
+The Java client publishes bounded operational counters and a duration timer without series or
+business labels: calls, busy refusals, timeouts, unavailable responses and invalid model output.
+The service remains deliberately isolated from Kafka, SQL and MCP. This PR does **not** schedule
+forecasts, persist forecast results, expose a forecast endpoint through MCP, or activate alerts.
+Those actions require the orchestration, provenance authorization and `SHADOW` workflow described
+in the integration plan maintained with this delivery.
+
 ## Observability and access
 
 Prometheus exposes `explorer_forecast_history_persisted_total`,

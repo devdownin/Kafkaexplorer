@@ -29,6 +29,9 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Deterministic metric-series preparation with explicit gauge/counter transformations, UTC windows,
   causal short-gap imputation, reset/quality/version checks, bounded history reads and a versioned
   JSON corpus export. Internal and conditional on history activation; no additional Kafka query.
+- Added an opt-in CPU-only TimesFM overlay with private networking, bounded resources, persistent
+  verified model cache, operational Micrometer counters/timer, and an opt-in real-checkpoint smoke
+  test. Forecast scheduling, persistence, alerts and MCP exposure remain disabled.
 
 ## [2.1.4] — 2026-09-27
 

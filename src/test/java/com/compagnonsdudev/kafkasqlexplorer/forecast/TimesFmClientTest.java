@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpServer;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -33,6 +34,7 @@ class TimesFmClientTest {
     private final AtomicReference<JsonNode> captured = new AtomicReference<>();
     private final AtomicReference<String> capturedToken = new AtomicReference<>();
     private Consumer<ObjectNode> mutate = root -> {};
+    private SimpleMeterRegistry meters;
     private int status = 200;
     private byte[] rawResponse;
     private String contentType = "application/json";
@@ -45,6 +47,7 @@ class TimesFmClientTest {
         if (client != null) client.close();
         if (server != null) server.stop(0);
         if (executor != null) executor.shutdownNow();
+        if (meters != null) meters.close();
     }
 
     private void start(Duration timeout) throws Exception {
@@ -92,7 +95,8 @@ class TimesFmClientTest {
         properties.setServiceUrl("http://127.0.0.1:" + server.getAddress().getPort());
         properties.setToken(TOKEN);
         properties.setTimeout(timeout);
-        client = new TimesFmClient(properties);
+        meters = new SimpleMeterRegistry();
+        client = new TimesFmClient(properties, meters);
     }
 
     static PreparedMetricSeries context(String id, PreparedMetricSeries.Status status) {
@@ -118,6 +122,8 @@ class TimesFmClientTest {
         assertEquals("MEDIAN", forecast.centralStatistic());
         assertEquals("input", forecast.inputFingerprint());
         assertEquals("policy", forecast.profileFingerprint());
+        assertEquals(1.0, meters.get("explorer_forecasting_requests_total").counter().count());
+        assertEquals(1.0, meters.get("explorer_forecasting_duration_seconds").timer().count());
         assertEquals("definition", forecast.definitionVersion());
         assertEquals("messages", forecast.outputUnit());
         assertEquals("Bearer " + TOKEN, capturedToken.get());
@@ -167,6 +173,8 @@ class TimesFmClientTest {
             () -> client.forecast(List.of(context("b", PreparedMetricSeries.Status.READY)), 2)).state());
         assertEquals(TIMEOUT, first.get(3, TimeUnit.SECONDS).state());
         assertEquals(1, calls.get());
+        assertEquals(1.0, meters.get("explorer_forecasting_busy_total").counter().count());
+        assertEquals(1.0, meters.get("explorer_forecasting_timeouts_total").counter().count());
     }
 
     @ParameterizedTest @ValueSource(ints = {302, 401, 429, 502, 503, 504})

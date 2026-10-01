@@ -151,6 +151,11 @@ marque les imputations courtes des jauges et refuse les resets de compteurs ou h
 Le module est désactivé par défaut ; l'inférence et les
 outils MCP prédictifs seront ajoutés ensuite. Voir **[configuration et limites de l'historique](docs/notes/timesfm-history.md)**.
 
+Le service TimesFM CPU-only s'active avec l'overlay optionnel `compose/timesfm.yml`. Il exige
+`TIMESFM_TOKEN`, réserve par défaut 4 CPU et 8 Gio, et télécharge le checkpoint épinglé dans un
+volume persistant. Cette étape démarre uniquement la dépendance d'inférence : les prévisions ne
+sont pas encore planifiées, persistées ni exposées par MCP.
+
 ## 🏗️ Build et Développement
 
 Il y a plusieurs façons de builder et de travailler sur le projet, selon vos besoins.

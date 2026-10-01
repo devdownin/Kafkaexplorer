@@ -24,3 +24,6 @@ torch = { index = "pytorch-cpu" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "real_model: downloads and executes the pinned checkpoint; opt-in only",
+]
