@@ -123,8 +123,8 @@ See `docs/notes/docker-and-stacks.md` for what is load-bearing in each of them.
 
 ### Stack
 
-- **Backend**: Spring Boot 4.1.x, **Java 25** (`java.version` in pom.xml, pinned by
-  `requireJavaVersion` in the enforcer plugin), embedded Apache Flink 2.3.x (`flink.version`).
+- **Backend**: Spring Boot 4.1.x, **Java 21 target** (`java.version` in pom.xml;
+  `requireJavaVersion` accepts JDK 21 or newer). Docker builds with JDK 26 and runs on JRE 25, embedded Apache Flink 2.3.x (`flink.version`).
   Kafka connector `flink-connector-kafka:5.0.0-2.2` — the suffix names the **Flink minor the
   connector was built against**, not a range, and no `-2.3` build is published yet. Check Maven
   Central before assuming a bump exists.

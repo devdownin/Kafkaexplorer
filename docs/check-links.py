@@ -1,101 +1,139 @@
 #!/usr/bin/env python3
-"""Resolve every documentation link that points back into this repository.
+"""Check tracked Markdown and documentation HTML repository links and anchors without network access.
 
-`docs/DOCKERHUB.md` is the reason this exists. It is rendered by Docker Hub, *outside*
-the repository, so all of its links must be absolute and none of them can be verified by
-looking at the page: a link that rots is invisible until a visitor clicks it and lands on
-a 404 — on the page that is supposed to sell the image. The same goes for its screenshots,
-which are served from GitHub Pages rather than from the repository.
-
-The READMEs and the feature tour are checked too. GitHub resolves their relative links, so
-rot there is at least visible in-repo, but the check costs nothing once it is written.
-
-Only links *into this repository* are resolved. Nothing reaches the network: a link checker
-that makes HTTP calls fails on someone else's outage, and a CI step that goes red for
-reasons outside the repository is a step people learn to ignore.
-
-Exit code 1 and a list of what is broken, or 0 and a count.
+Docker Hub and Pages render outside the repository, so absolute links back to this
+repository are resolved too. External availability is checked separately: an outage
+on another site must not turn the repository's documentation CI red.
 """
-
 from __future__ import annotations
 
+import html
 import re
+import subprocess
 import sys
+import unicodedata
+from collections import Counter
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
-
-# Absolute forms that address this repository's own content.
-BLOB = re.compile(r'https://github\.com/devdownin/Kafkaexplorer/blob/main/([^)\s"\'#]+)')
-PAGES = re.compile(r'https://devdownin\.github\.io/Kafkaexplorer/([^)\s"\'#]+)')
-# Markdown link and image targets: ](target)
-MD_TARGET = re.compile(r'\]\(\s*([^)\s]+)')
-# HTML asset references in the landing page.
-HTML_SRC = re.compile(r'(?:src|href)="([^"]+)"')
-# Comments are not rendered, so nothing inside one is a link. Stripping them is not
-# cosmetic: DOCKERHUB.md opens with a note to maintainers that spells out the Pages URL
-# shape as `…/img/…`, and that ellipsis was reported as a broken image.
 COMMENT = re.compile(r'<!--.*?-->', re.DOTALL)
-
-MARKDOWN = ['timesfm.md', 'docs/notes/timesfm-pilot.md', 'docs/notes/timesfm-history.md', 'SPEC-MCP.md', 'docs/DOCKERHUB.md', 'docs/DOCKERHUB-OPERATIONS.md',
-            'README.md', 'README.fr.md', 'docs/FEATURES.md',
-            'docs/TOPIC-HIERARCHY.md', 'docs/TOPIC-HIERARCHY.fr.md',
-            'docs/screenshots/README.md',
-            # The community-health files. They are read by people who have not cloned the
-            # repository — GitHub surfaces them from the issue composer, the "Contribute"
-            # panel and the security tab — and they cross-reference each other heavily, so a
-            # renamed file breaks several of them at once and none of it is visible in a diff.
-            'CONTRIBUTING.md', 'SECURITY.md', 'SUPPORT.md', 'CHANGELOG.md',
-            'CODE_OF_CONDUCT.md']
-HTML = ['docs/index.html']
+MD_TARGET = re.compile(r'\]\(\s*(<[^>]+>|[^\s)]+)')
+HTML_TARGET = re.compile(r'(?:src|href)=["\']([^"\']+)["\']')
+REFERENCE = re.compile(r'^\s{0,3}\[([^]]+)\]:\s*(<[^>]+>|\S+)', re.MULTILINE)
+REFERENCE_USE = re.compile(r'\[([^]\n]+)\](?:\[([^]\n]*)\])?(?![\[(])')
+HTML_ID = re.compile(r'(?:id|name)=["\']([^"\']+)["\']')
 
 
-def is_local(target: str) -> bool:
-    """A relative path into the repository — not a URL, an anchor or a mail link."""
-    return not (target.startswith(('http://', 'https://', '#', 'mailto:', 'data:')))
+def rendered_text(path: Path) -> str:
+    """Remove comments and fenced code, preserving Markdown heading order."""
+    text = COMMENT.sub('', path.read_text(encoding='utf-8'))
+    if path.suffix.lower() != '.md':
+        return text
+    lines = []
+    fence = None
+    for line in text.splitlines():
+        match = re.match(r'^\s*(`{3,}|~{3,})', line)
+        if fence:
+            if match and match[1][0] == fence[0] and len(match[1]) >= len(fence):
+                fence = None
+        elif match:
+            fence = match[1]
+        else:
+            lines.append(line)
+    return '\n'.join(lines)
+
+
+def anchors(path: Path) -> set[str]:
+    text = rendered_text(path)
+    result = set(HTML_ID.findall(text))
+    if path.suffix.lower() != '.md':
+        return result
+    seen: Counter[str] = Counter()
+    lines = text.splitlines()
+    headings = []
+    for i, line in enumerate(lines):
+        match = re.match(r'^\s{0,3}#{1,6}\s+(.+?)\s*#*$', line)
+        if match:
+            headings.append(match[1])
+        elif i and re.fullmatch(r'\s{0,3}(?:=+|-+)\s*', line) and lines[i - 1].strip():
+            headings.append(lines[i - 1].strip())
+    for heading in headings:
+        heading = re.sub(r'<[^>]*>', '', heading)
+        heading = re.sub(r'\[([^]]+)\]\([^)]*\)', r'\1', heading)
+        heading = html.unescape(heading).lower().replace('`', '').replace('*', '')
+        slug = ''.join(c for c in heading if c in '-_ ' or unicodedata.category(c)[0] in 'LN')
+        slug = slug.replace(' ', '-')
+        # GitHub de-duplicates against all previously allocated anchors, including
+        # headings that already end in a numeric suffix.
+        candidate = slug
+        while candidate in result:
+            seen[slug] += 1
+            candidate = f'{slug}-{seen[slug]}'
+        result.add(candidate)
+    return result
+
+
+def targets(text: str) -> list[str]:
+    result = MD_TARGET.findall(text) + HTML_TARGET.findall(text)
+    definitions = {key.casefold(): value for key, value in REFERENCE.findall(text)}
+    result.extend(definitions.values())
+    for label, ref in REFERENCE_USE.findall(REFERENCE.sub('', text)):
+        value = definitions.get((ref or label).casefold())
+        if value:
+            result.append(value)
+    return [html.unescape(value.strip('<>')) for value in result]
+
+
+def resolve(path: Path, raw: str) -> tuple[Path, str] | None:
+    url = urlsplit(raw)
+    fragment = unquote(url.fragment)
+    if url.scheme or url.netloc:
+        if url.netloc == 'github.com' and url.path.startswith('/devdownin/Kafkaexplorer/blob/main/'):
+            dest = ROOT / unquote(url.path.split('/blob/main/', 1)[1])
+        elif url.netloc == 'raw.githubusercontent.com' and url.path.startswith('/devdownin/Kafkaexplorer/main/'):
+            dest = ROOT / unquote(url.path.split('/main/', 1)[1])
+        elif url.netloc == 'devdownin.github.io' and url.path.startswith('/Kafkaexplorer/'):
+            dest = ROOT / 'docs' / unquote(url.path[len('/Kafkaexplorer/'):])
+        else:
+            return None
+    else:
+        dest = path.parent / unquote(url.path) if url.path else path
+    if dest.is_dir():
+        dest = dest / 'index.html'
+    return dest, fragment
 
 
 def check() -> list[str]:
-    broken: list[str] = []
+    broken = []
     checked = 0
-
-    # The Docker Hub repository API exposes only the first 25,000 bytes of the overview.
-    # Keep the visible page below the limit and put the detailed reference in a separate file.
+    names = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).decode().split('\0')
+    docs = [ROOT / name for name in names
+            if Path(name).suffix.lower() == '.md'
+            or (name.startswith('docs/') and Path(name).suffix.lower() == '.html')]
     hub = ROOT / 'docs/DOCKERHUB.md'
     if hub.exists() and hub.stat().st_size > 25_000:
         broken.append(f'docs/DOCKERHUB.md: {hub.stat().st_size} bytes exceeds the Docker Hub 25,000-byte limit')
-
-    for name in MARKDOWN + HTML:
-        path = ROOT / name
+    cache = {}
+    for path in docs:
+        name = path.relative_to(ROOT)
         if not path.exists():
-            broken.append(f'{name}: listed for checking but missing from the repository')
+            broken.append(f'{name}: tracked document missing')
             continue
-        text = COMMENT.sub('', path.read_text(encoding='utf-8'))
-        targets = MD_TARGET.findall(text) if name.endswith('.md') else HTML_SRC.findall(text)
-
-        for raw in targets:
-            if not is_local(raw):
+        for raw in targets(rendered_text(path)):
+            resolved = resolve(path, raw)
+            if resolved is None:
                 continue
-            # A trailing anchor addresses a heading, not a different file.
-            rel = raw.split('#', 1)[0]
-            if not rel:
-                continue
+            dest, fragment = resolved
             checked += 1
-            if not (path.parent / rel).resolve().exists():
-                broken.append(f'{name}: relative link "{raw}" resolves to nothing')
-
-        for repo_path in BLOB.findall(text):
-            checked += 1
-            if not (ROOT / repo_path).exists():
-                broken.append(f'{name}: github.com/…/blob/main/{repo_path} is not in the repository')
-
-        for pages_path in PAGES.findall(text):
-            checked += 1
-            # GitHub Pages publishes ./docs, so /Kafkaexplorer/img/x.png is docs/img/x.png.
-            if not (ROOT / 'docs' / pages_path).exists():
-                broken.append(f'{name}: Pages URL /{pages_path} has no docs/{pages_path} behind it')
-
-    print(f'{checked} repository links checked across {len(MARKDOWN) + len(HTML)} files')
+            if not dest.exists():
+                broken.append(f'{name}: link "{raw}" resolves to nothing')
+            elif fragment and dest.suffix.lower() in ('.md', '.html'):
+                if dest not in cache:
+                    cache[dest] = anchors(dest)
+                if fragment not in cache[dest]:
+                    broken.append(f'{name}: link "{raw}" has no matching anchor')
+    print(f'{checked} repository links and anchors checked across {len(docs)} files')
     return broken
 
 

@@ -45,7 +45,7 @@ older tag, please reproduce on the
 
 ## Response expectations
 
-This is an open-source project maintained by [Compagnons du dev](https://compagnonsdudev.com)
+This is an open-source project maintained by [Compagnons du dev](https://github.com/devdownin)
 alongside other work. Issues are read, but there is no response-time commitment — except for
 security reports, which are acknowledged within 48 hours.
 

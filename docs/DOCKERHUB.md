@@ -85,7 +85,7 @@ volumes:
 ```
 
 The [repository's own stacks](https://github.com/devdownin/Kafkaexplorer#-quick-start) go
-further: `docker compose up -d` there also seeds **76 demo topics** — a 6-step order
+further: `docker compose up -d` there also seeds **79 demo topics** — a 6-step order
 pipeline to trace across partitions, header-only correlations, a real time series to
 window, plus duplicates and poison records for the audit to find.
 
