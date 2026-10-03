@@ -49,12 +49,11 @@ public final class ForecastPilotService {
     var spec = resolve(id);
     try (var c = store.open()) {
       var r = store.latest(c, id);
-      if (r == null) return null;
+      if (r == null || !r.key().equals(key(spec, r.context()))) return null;
       boolean stale =
-          !r.key().equals(key(spec, r.context()))
-              || r.forecast() != null
-                  && (r.forecast().points().isEmpty()
-                      || r.forecast().points().getLast().at() < System.currentTimeMillis());
+          r.forecast() != null
+              && (r.forecast().points().isEmpty()
+                  || r.forecast().points().getLast().at() < System.currentTimeMillis());
       var visibility =
           !stale
                   && r.state().equals("READY")
@@ -74,7 +73,7 @@ public final class ForecastPilotService {
           r.evaluatedPoints(),
           r.evaluatedThrough(),
           r.baselineMae(),
-          stale ? "No current forecast horizon or configuration changed" : r.reason());
+          stale ? "No current forecast horizon" : r.reason());
     }
   }
 

@@ -109,7 +109,8 @@ inspection. Recovery requires an explicit configuration/policy revision, new rea
 and fresh operator activation. Inference timeout, BUSY, service outage or invalid output uses a
 labelled seasonal-naive point forecast (season > 1), otherwise last value. Baselines carry no
 confidence interval, never become ACTIVE and never create predicted threshold breaches. Invalid
-history produces no forecast. Expired horizons or changed specification read as STALE/SHADOW.
+history produces no forecast. Expired horizons read as STALE/SHADOW. A specification mismatch withholds the old record entirely
+until a compatible result exists, so changed source approvals cannot expose old contexts or quality.
 The same input is not retried until input/specification changes, including after a fallback.
 
 ## MCP contract

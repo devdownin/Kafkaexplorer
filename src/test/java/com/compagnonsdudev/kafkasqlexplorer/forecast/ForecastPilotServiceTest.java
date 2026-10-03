@@ -204,4 +204,27 @@ class ForecastPilotServiceTest {
     assertEquals("TIMESFM", measured.value().currentStrategy());
     verify(client, never()).forecast(anyList(), anyInt());
   }
+
+  @Test
+  void changedApprovalNeverExposesOldContextOrQuality() throws Exception {
+    var old = record(context, 1, "READY");
+    var incompatible =
+        new ForecastRecord(
+            "b".repeat(64),
+            old.generatedAt(),
+            old.state(),
+            old.strategy(),
+            old.visibility(),
+            old.context(),
+            old.forecast(),
+            old.quality(),
+            old.evaluatedPoints(),
+            old.evaluatedThrough(),
+            old.baselineMae(),
+            old.reason());
+    when(store.latest(connection, spec.seriesId())).thenReturn(incompatible);
+    assertNull(pilot.get(spec.seriesId()));
+    assertNull(pilot.breach(spec.seriesId()));
+    verify(client, never()).forecast(anyList(), anyInt());
+  }
 }
