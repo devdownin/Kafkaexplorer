@@ -27,7 +27,22 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
   }
 
   public record Metric(
-      String seriesId, String metricId, String environment, int horizon, String unit) {}
+      String seriesId, String metricId, String environment, int horizon, String unit,
+      Sources sources) {}
+
+  public record Sources(String definitionVersion, List<String> topics, List<String> groups,
+                        boolean complete) {}
+
+  private Sources sources(ForecastPilotProperties.Series series) {
+    // A redacted identifier must never become a navigable resource name.
+    var topics = series.topics().stream().filter(t -> t.equals(guard.dlp().scrub(t))).toList();
+    var groups = series.groups().stream().filter(g -> g.equals(guard.dlp().scrub(g))).toList();
+    String version = guard.dlp().scrub(series.definitionVersion());
+    boolean complete = topics.size() == series.topics().size() && groups.size() == series.groups().size()
+        && series.environment().equals(guard.dlp().scrub(series.environment()))
+        && series.definitionVersion().equals(version);
+    return new Sources(version, topics, groups, complete);
+  }
 
   private ForecastPilotProperties.Series authorize(String id) {
     ForecastPilotProperties.Series s;
@@ -78,7 +93,8 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
                         guard.dlp().scrub(s.metricId()),
                         guard.dlp().scrub(s.environment()),
                         s.horizon(),
-                        guard.dlp().scrub(s.unit())))
+                        guard.dlp().scrub(s.unit()),
+                        sources(s)))
             .toList();
     return result(rows);
   }

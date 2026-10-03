@@ -84,6 +84,40 @@ class ForecastPilotContractTest {
   }
 
   @Test
+  void catalogueOnlyExposesAuthorizedSourceProvenance() {
+    var p = new McpProperties();
+    assertTrue(tools(p).catalog().data().isEmpty());
+    p.setAllowedForecastEnvironments(List.of("production"));
+    p.setAllowedTopicPrefixes(List.of("orders"));
+    p.setAllowedGroupPrefixes(List.of("consumer"));
+    var source = tools(p).catalog().data().getFirst().sources();
+    assertEquals("v1", source.definitionVersion());
+    assertEquals(List.of("orders"), source.topics());
+    assertEquals(List.of("consumer"), source.groups());
+    assertTrue(source.complete());
+    p.setAllowedGroupPrefixes(List.of("other"));
+    assertTrue(tools(p).catalog().data().isEmpty());
+  }
+
+  @Test
+  void redactedIdentifiersAreNotResourceLinks() {
+    var original = series();
+    var p = new ForecastPilotProperties();
+    p.setSeries(List.of(new ForecastPilotProperties.Series(original.seriesId(), original.metricId(),
+        original.environment(), original.definitionVersion(), original.unit(),
+        List.of("orders.person@example.com"), original.groups(), original.profile(), original.horizon(),
+        original.seasonLength(), original.threshold(), original.maxMae(), original.minimumCoverage(),
+        original.minimumEvaluatedPoints())));
+    var properties = new McpProperties();
+    properties.setAllowedForecastEnvironments(List.of("production"));
+    var tools = new ForecastMcpTools(new ForecastPilotService(p, null, null, null, null),
+        new ToolGuard(properties, new DlpScrubber(properties)));
+    var source = tools.catalog().data().getFirst().sources();
+    assertTrue(source.topics().isEmpty());
+    assertFalse(source.complete());
+  }
+
+  @Test
   void disabledConfigurationHasNoPilotBeans() {
     try (var context = new AnnotationConfigApplicationContext()) {
       context

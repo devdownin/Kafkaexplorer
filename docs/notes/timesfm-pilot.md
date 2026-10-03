@@ -1,5 +1,12 @@
 # TimesFM production pilot
 
+The `kex_list_forecastable_metrics` catalogue also exposes `sources` with the operator-declared
+`definitionVersion`, `topics`, `groups` and `complete` flag. Sources are returned only after exact
+environment approval and authorization of every topic/group. Identifiers changed by DLP redaction
+are omitted and provenance is marked incomplete; clients must not turn a masked name into a
+resource link. This is an additive field: existing clients can ignore it. Source declarations
+describe scope, not a measured incident or a discovered process association.
+
 The pilot is disabled by default. It uses the existing PostgreSQL history and internal CPU
 service; enable them first using [the history runbook](timesfm-history.md). The operator owns
 series identity, metric semantics, source resources, environment, thresholds and quality gates.
