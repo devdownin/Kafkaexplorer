@@ -1,0 +1,349 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+package com.compagnonsdudev.kafkasqlexplorer.forecast;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+
+/** No inference on read paths. All resource approval is deployment-owned. */
+public final class ForecastPilotService {
+  private final ForecastPilotProperties properties;
+  private final ForecastPilotStore store;
+  private final MetricSeriesPreparationService preparation;
+  private final TimesFmClient client;
+  private final MeterRegistry meters;
+  private final AtomicBoolean running = new AtomicBoolean();
+  private int nextSeries;
+
+  public ForecastPilotService(
+      ForecastPilotProperties properties,
+      ForecastPilotStore store,
+      MetricSeriesPreparationService preparation,
+      TimesFmClient client,
+      MeterRegistry meters) {
+    this.properties = properties;
+    this.store = store;
+    this.preparation = preparation;
+    this.client = client;
+    this.meters = meters;
+    properties.validate();
+  }
+
+  public List<ForecastPilotProperties.Series> series() {
+    return properties.getSeries();
+  }
+
+  public ForecastPilotProperties.Series resolve(String id) {
+    return properties.resolve(id);
+  }
+
+  public ForecastRecord get(String id) throws Exception {
+    var spec = resolve(id);
+    try (var c = store.open()) {
+      var r = store.latest(c, id);
+      if (r == null) return null;
+      boolean stale =
+          !r.key().equals(key(spec, r.context()))
+              || r.forecast() != null
+                  && (r.forecast().points().isEmpty()
+                      || r.forecast().points().getLast().at() < System.currentTimeMillis());
+      var visibility =
+          !stale
+                  && r.state().equals("READY")
+                  && r.strategy().equals("TIMESFM")
+                  && store.active(c, id)
+              ? ForecastThresholdPolicy.Visibility.ACTIVE
+              : ForecastThresholdPolicy.Visibility.SHADOW;
+      return new ForecastRecord(
+          r.key(),
+          r.generatedAt(),
+          stale ? "STALE" : r.state(),
+          r.strategy(),
+          visibility,
+          r.context(),
+          r.forecast(),
+          r.quality(),
+          r.evaluatedPoints(),
+          r.evaluatedThrough(),
+          r.baselineMae(),
+          stale ? "No current forecast horizon or configuration changed" : r.reason());
+    }
+  }
+
+  @Scheduled(
+      fixedDelayString = "#{@forecastPilotProperties.getInterval().toMillis()}",
+      initialDelayString = "#{@forecastPilotProperties.getInterval().toMillis()}")
+  public void refresh() {
+    if (!running.compareAndSet(false, true)) return;
+    try {
+      var approved = series();
+      long deadline =
+          System.nanoTime() + Math.min(properties.getInterval().toMillis(), 60000) * 1000000;
+      for (int i = 0; i < approved.size(); i++) {
+        if (System.nanoTime() >= deadline) {
+          counter("explorer_forecast_pilot_skipped_total", "CYCLE_BUDGET").increment();
+          break;
+        }
+        var s = approved.get(nextSeries);
+        nextSeries = (nextSeries + 1) % approved.size();
+        try {
+          refresh(s, System.currentTimeMillis());
+        } catch (Exception e) {
+          counter("explorer_forecast_pilot_failures_total", "DEPENDENCY").increment();
+          LoggerFactory.getLogger(getClass()).warn("Forecast pilot dependency unavailable");
+        }
+      }
+    } finally {
+      running.set(false);
+    }
+  }
+
+  public void refresh(ForecastPilotProperties.Series spec, long cutoff) throws Exception {
+    String owner = UUID.randomUUID().toString();
+    try (var c = store.open()) {
+      if (!store.acquire(c, owner)) {
+        c.rollback();
+        counter("explorer_forecast_pilot_skipped_total", "LEASE_BUSY").increment();
+        return;
+      }
+      store.purge(c, System.currentTimeMillis() - properties.getRetention().toMillis());
+      store.checkSeriesBudget(c, spec.seriesId(), properties.getMaxSeries());
+      var context =
+          preparation.prepare(
+              spec.seriesId(), spec.definitionVersion(), spec.unit(), cutoff, spec.profile());
+      String key = key(spec, context);
+      if (store.contains(c, key)) {
+        c.rollback();
+        return;
+      }
+      var previous = store.latest(c, spec.seriesId());
+      if (previous != null && previous.key().equals(key)) {
+        c.rollback();
+        return;
+      }
+      if (previous != null
+          && (!previous.key().equals(key(spec, previous.context()))
+              || !previous.context().definitionVersion().equals(context.definitionVersion())
+              || !previous.context().profileFingerprint().equals(context.profileFingerprint()))) {
+        previous = null;
+        store.disable(c, spec.seriesId());
+      }
+      ForecastBacktestEvaluator.Evaluation quality = previous == null ? null : previous.quality();
+      int evaluated = previous == null ? 0 : previous.evaluatedPoints();
+      long evaluatedThrough = previous == null ? 0 : previous.evaluatedThrough();
+      var matured =
+          store.matured(
+              c,
+              spec.seriesId(),
+              context.toExclusive() - spec.horizon() * spec.profile().stepMillis(),
+              evaluatedThrough);
+      Map<String, Double> baselineScores = previous == null ? Map.of() : previous.baselineMae();
+      boolean degraded = previous != null && previous.state().equals("DEGRADED");
+      if (context.status() == PreparedMetricSeries.Status.READY
+          && matured != null
+          && matured.forecast() != null
+          && matured.strategy().equals("TIMESFM")
+          && matured.key().equals(key(spec, matured.context()))
+          && context.imputedPoints() == 0
+          && matured.context().definitionVersion().equals(context.definitionVersion())
+          && matured.context().profileFingerprint().equals(context.profileFingerprint())) {
+        var values = new LinkedHashMap<Long, Double>();
+        context.points().forEach(p -> values.put(p.endAt(), p.value()));
+        var points = matured.forecast().points();
+        if (points.stream().allMatch(p -> values.containsKey(p.at()))) {
+          var actual = points.stream().map(p -> values.get(p.at())).toList();
+          var training =
+              matured.context().points().stream().map(PreparedMetricSeries.Point::value).toList();
+          quality =
+              new ForecastBacktestEvaluator()
+                  .evaluate(training, actual, points, spec.seasonLength());
+          evaluated += actual.size();
+          evaluatedThrough = points.getLast().at();
+          var scores = new LinkedHashMap<String, Double>();
+          ForecastBaselines.predict(training, actual.size(), spec.seasonLength())
+              .forEach((name, p) -> scores.put(name, ForecastBaselines.mae(actual, p)));
+          baselineScores = Map.copyOf(scores);
+          double cohortMae = quality.mae();
+          boolean baselineWins = baselineScores.values().stream().anyMatch(mae -> cohortMae > mae);
+          degraded |=
+              evaluated >= spec.minimumEvaluatedPoints()
+                  && (spec.maxMae() != null && quality.mae() > spec.maxMae()
+                      || quality.q10Q90Coverage() < spec.minimumCoverage()
+                      || baselineWins);
+        }
+      }
+      if (degraded) {
+        store.disable(c, spec.seriesId());
+        if (previous == null || !previous.state().equals("DEGRADED"))
+          counter("explorer_forecast_drift_total", "DEGRADED").increment();
+      }
+      MetricForecast forecast = null;
+      String strategy = "UNAVAILABLE";
+      String reason = context.reason();
+      String state = degraded ? "DEGRADED" : context.status().name();
+      if (context.status() == PreparedMetricSeries.Status.READY) {
+        try {
+          forecast = client.forecast(List.of(context), spec.horizon()).getFirst();
+          strategy = "TIMESFM";
+        } catch (TimesFmInferenceException e) {
+          forecast = fallback(context, spec);
+          strategy = spec.seasonLength() > 1 ? "SEASONAL_NAIVE" : "LAST_VALUE";
+          reason = "TimesFM " + e.state() + "; point baseline has no calibrated interval";
+        }
+        state = degraded ? "DEGRADED" : "READY";
+      }
+      counter("explorer_forecast_strategy_total", strategy).increment();
+      var visibility =
+          store.active(c, spec.seriesId()) && !degraded && strategy.equals("TIMESFM")
+              ? ForecastThresholdPolicy.Visibility.ACTIVE
+              : ForecastThresholdPolicy.Visibility.SHADOW;
+      var record =
+          new ForecastRecord(
+              key,
+              System.currentTimeMillis(),
+              state,
+              strategy,
+              visibility,
+              context,
+              forecast,
+              quality,
+              evaluated,
+              evaluatedThrough,
+              baselineScores,
+              reason);
+      store.save(c, spec.seriesId(), record, owner);
+      store.purge(c, System.currentTimeMillis() - properties.getRetention().toMillis());
+      c.commit();
+    }
+  }
+
+  /**
+   * Activation is explicit and blocked until TimesFM beats all baselines on realised measurements.
+   */
+  public void activate(String id, boolean active) throws Exception {
+    var spec = resolve(id);
+    try (var c = store.open()) {
+      if (!store.acquire(c, UUID.randomUUID().toString()))
+        throw new IllegalArgumentException("Pilot is refreshing; retry activation");
+      var r = store.latest(c, id);
+      if (active
+          && (r == null
+              || !r.key().equals(key(spec, r.context()))
+              || !r.hasRealisedQuality()
+              || !r.state().equals("READY")
+              || r.forecast() == null
+              || r.forecast().points().getLast().at() < System.currentTimeMillis()
+              || r.evaluatedPoints() < spec.minimumEvaluatedPoints()
+              || r.baselineMae().size() != 4
+              || r.baselineMae().values().stream().anyMatch(mae -> r.quality().mae() > mae)
+              || r.quality().q10Q90Coverage() < spec.minimumCoverage()
+              || spec.maxMae() != null && r.quality().mae() > spec.maxMae()))
+        throw new IllegalArgumentException(
+            "Activation requires realised quality and all four baseline comparisons");
+      store.activate(c, id, active);
+      c.commit();
+    }
+  }
+
+  public record PredictedBreach(
+      ForecastThresholdEvaluator.Breach threshold,
+      String resultKey,
+      long generatedAt,
+      long historyEndAt,
+      String modelId,
+      String modelRevision,
+      String inputFingerprint,
+      String profileFingerprint) {}
+
+  public PredictedBreach breach(String id) throws Exception {
+    var spec = resolve(id);
+    var r = get(id);
+    if (spec.threshold() == null
+        || r == null
+        || r.forecast() == null
+        || !r.strategy().equals("TIMESFM")
+        || !r.state().equals("READY")) return null;
+    var p = spec.threshold();
+    var effective =
+        new ForecastThresholdPolicy(
+            p.seriesId(),
+            p.definitionVersion(),
+            p.threshold(),
+            p.direction(),
+            p.horizonPoints(),
+            .9,
+            r.context().status().name(),
+            r.visibility());
+    var breach = new ForecastThresholdEvaluator().evaluate(r.forecast(), effective);
+    return new PredictedBreach(
+        breach,
+        r.key(),
+        r.generatedAt(),
+        r.context().toExclusive(),
+        r.forecast().modelId(),
+        r.forecast().modelRevision(),
+        r.forecast().inputFingerprint(),
+        r.forecast().profileFingerprint());
+  }
+
+  private Counter counter(String name, String state) {
+    return Counter.builder(name).tag("state", state).register(meters);
+  }
+
+  public static String key(ForecastPilotProperties.Series s, PreparedMetricSeries c)
+      throws Exception {
+    String raw =
+        s.toString()
+            + "|"
+            + s.definitionVersion()
+            + "|"
+            + c.inputFingerprint()
+            + "|"
+            + c.profileFingerprint()
+            + "|"
+            + c.toExclusive()
+            + "|"
+            + s.horizon()
+            + "|"
+            + TimesFmClient.MODEL_REVISION;
+    return java.util.HexFormat.of()
+        .formatHex(
+            MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private static MetricForecast fallback(PreparedMetricSeries c, ForecastPilotProperties.Series s) {
+    var train = c.points().stream().map(PreparedMetricSeries.Point::value).toList();
+    var values =
+        ForecastBaselines.predict(train, s.horizon(), s.seasonLength())
+            .get(s.seasonLength() > 1 ? "SEASONAL_NAIVE" : "LAST_VALUE");
+    var points = new java.util.ArrayList<MetricForecast.Point>();
+    for (int i = 0; i < values.size(); i++) {
+      double v = values.get(i);
+      points.add(
+          new MetricForecast.Point(
+              c.toExclusive() + (i + 1) * c.profile().stepMillis(), v, v, v, v));
+    }
+    return new MetricForecast(
+        UUID.randomUUID().toString(),
+        c.seriesId(),
+        c.definitionVersion(),
+        c.inputFingerprint(),
+        c.profileFingerprint(),
+        c.outputUnit(),
+        c.toExclusive(),
+        "BASELINE",
+        "v1",
+        "kex-baseline-v1",
+        "POINT",
+        0,
+        points);
+  }
+}

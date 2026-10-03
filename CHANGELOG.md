@@ -22,6 +22,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Opt-in TimesFM production pilot: PostgreSQL forecasts and activation, global transaction lock
+  and lease fencing, retained-series quota, realised quality against four baselines, drift latch,
+  point-only fallback and Metrics Forecast UI. Five canonical MCP tools authorize configured
+  environment and all source resources before durable reads. CPU benchmark covers 1/4/8 threads.
+  No MCP inference or automatic alert delivery; see `timesfm.md` for acceptance and limitations.
+
 - An opt-in PostgreSQL observation journal for selected metrics, preparing the TimesFM integration.
   Captures timestamped values by labels and component, versions semantic edits, and writes outside
   the metric refresh thread. Missing data stays unknown; queue/persistence losses are counted.

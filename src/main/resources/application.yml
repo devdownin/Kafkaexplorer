@@ -73,8 +73,14 @@ kafka:
   # confluent-secret: YOUR_API_SECRET
 
 explorer:
-  # Optional capture only: no model, forecast or new alert is activated by this switch.
+  # History, inference and production pilot are separate opt-in switches; no automatic alerts.
   forecasting:
+    pilot:
+      enabled: false
+      interval: 5m
+      retention: 7d
+      max-series: 20
+      series: [] # Explicit source/semantic approval; see docs/notes/timesfm-pilot.md.
     inference:
       enabled: false
       service-url: http://timesfm:8000
@@ -337,6 +343,7 @@ explorer:
     # restricts every tool at once, e.g. "demo.,sandbox.".
     allowed-topic-prefixes: "*"
     allowed-group-prefixes: "*"
+    allowed-forecast-environments: [] # Exact approval; empty denies forecast MCP reads.
 
     # Every call of a tool named here needs a token an operator mints from the MCP console, good
     # for one call of that one tool within fifteen minutes. Any tool may be listed, not only the

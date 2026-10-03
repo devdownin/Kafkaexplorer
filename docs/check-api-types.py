@@ -49,6 +49,8 @@ DOMAIN = ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/domain'
 # of the tree it could not see. Listed rather than discovered by a recursive glob, so adding a
 # package stays a decision.
 EXTRA_RECORD_DIRS = [
+    ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/forecast',
+    ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/web',
     ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/mcp/console',
     ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/mcp/contract',
     ROOT / 'src/main/java/com/compagnonsdudev/kafkasqlexplorer/mcp/observability',
@@ -56,7 +58,7 @@ EXTRA_RECORD_DIRS = [
 
 # @java <Name> in the doc comment preceding an interface / type alias.
 TS_BLOCK = re.compile(
-    r'@java\s+(\w+)\s*\*/\s*export\s+(?:interface\s+(\w+)\s*\{(.*?)\n\}|type\s+(\w+)\s*=\s*([^;]+);)',
+    r'@java\s+([\w.]+)\s*\*/\s*export\s+(?:interface\s+(\w+)\s*\{(.*?)\n\}|type\s+(\w+)\s*=\s*([^;]+);)',
     re.DOTALL)
 # One TS field: name, optional '?', type up to the end of the line.
 TS_FIELD = re.compile(r'^\s{2}(\w+)(\??):\s*([^;]+);', re.MULTILINE)
@@ -164,6 +166,8 @@ def java_to_ts(java_type: str, known: set[str], renames: dict[str, str] | None =
         return DECLARED[java_type]
     if java_type in renames:
         return renames[java_type]
+    if '.' in java_type and java_type.rsplit('.', 1)[1] in renames:
+        return renames[java_type.rsplit('.', 1)[1]]
     if java_type in known:
         return java_type
     generic = re.fullmatch(r'([\w.]+)<(.+)>', java_type, re.DOTALL)
@@ -280,15 +284,22 @@ def parse_java() -> tuple[dict[str, list[tuple[str, str]]], set[str]]:
         sources.extend(sorted(extra.glob('*.java')))
     for path in sources:
         source = strip_comments(path.read_text(encoding='utf-8'))
+        nested = {m.group(1) for m in JAVA_RECORD.finditer(source) if m.group(1) != path.stem}
+        nested.update(m.group(1) for m in JAVA_ENUM.finditer(source))
         for match in JAVA_RECORD.finditer(source):
             components = []
             for component in split_generics(match.group(2)):
                 parts = strip_annotations(component).split()
                 if len(parts) >= 2:
-                    components.append((parts[-1], ' '.join(parts[:-1])))
+                    java_type = ' '.join(parts[:-1])
+                    for name in nested:
+                        java_type = re.sub(r'(?<![\w.])' + re.escape(name) + r'(?![\w.])', path.stem + '.' + name, java_type)
+                    components.append((parts[-1], java_type))
             records[match.group(1)] = components
+            records[path.stem + '.' + match.group(1)] = components
         for enum in JAVA_ENUM.finditer(source):
             enums.add(enum.group(1))
+            enums.add(path.stem + '.' + enum.group(1))
     return records, enums
 
 
@@ -334,6 +345,8 @@ def main() -> int:
         renames[simple] = ts_name
     for simple in contested:
         renames.pop(simple, None)
+
+    renames.update({java: ts for java, ts, _, _ in declarations if "." in java})
 
     problems: list[str] = []
     checked = 0

@@ -37,7 +37,7 @@ HTML_SRC = re.compile(r'(?:src|href)="([^"]+)"')
 # shape as `…/img/…`, and that ellipsis was reported as a broken image.
 COMMENT = re.compile(r'<!--.*?-->', re.DOTALL)
 
-MARKDOWN = ['docs/DOCKERHUB.md', 'docs/DOCKERHUB-OPERATIONS.md',
+MARKDOWN = ['timesfm.md', 'docs/notes/timesfm-pilot.md', 'docs/notes/timesfm-history.md', 'SPEC-MCP.md', 'docs/DOCKERHUB.md', 'docs/DOCKERHUB-OPERATIONS.md',
             'README.md', 'README.fr.md', 'docs/FEATURES.md',
             'docs/TOPIC-HIERARCHY.md', 'docs/TOPIC-HIERARCHY.fr.md',
             'docs/screenshots/README.md',

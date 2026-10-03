@@ -15,7 +15,7 @@ class ForecastBacktestEvaluatorTest {
         assertEquals(1d / 3d, result.mae(), 1e-9);
         assertEquals(1d, result.q10Q90Coverage(), 1e-9);
         assertEquals(2d, result.meanIntervalWidth(), 1e-9);
-        assertNotNull(result.mase());
+        assertNull(result.mase());
     }
 
     @Test void rejectsMismatchedOrNonFiniteInput() {

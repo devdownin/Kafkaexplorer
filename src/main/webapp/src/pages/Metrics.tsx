@@ -24,6 +24,7 @@ import { clearDraft, readDraft, writeDraft } from '../draftStore';
 import type { AuditHistory, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse, TableMetadata } from '../api/types';
 import { hasRunningMetric } from './metricsHealth';
 import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop';
+import { ForecastPanel } from '../components/metrics/ForecastPanel';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
 import { TemplateParamsEditor } from '../components/metrics/TemplateParamsEditor';
@@ -743,6 +744,7 @@ const Metrics: React.FC = () => {
           Au-dessus des gabarits génériques, parce qu'une proposition qui nomme un topic de ce
           cluster et la mesure dont elle sort vaut mieux qu'un COUNT(*) sur la première table
           trouvée — et en dessous des métriques existantes, qui restent le sujet de la page. */}
+      <ForecastPanel />
       <SuggestionsPanel
         response={suggestions}
         loading={suggestionsLoading}

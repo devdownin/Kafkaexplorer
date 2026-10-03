@@ -1,9 +1,10 @@
 # TimesFM integration — observation journal and series preparation
 
 These deliveries implement history, deterministic series preparation, bounded inference, the
-read-only forecast MCP views and explicit threshold provenance. There is still no scheduler,
-durable forecast persistence, alert delivery or forecast UI. It does not advertise forecasts from
-an empty or unverified history.
+bounded internal orchestration and explicit threshold provenance. The optional production pilot
+now adds scheduling, durable forecasts, scoped MCP views and UI; see [the pilot runbook](timesfm-pilot.md).
+This note describes the underlying history and inference contracts. Empty or unverified history
+is never submitted to TimesFM.
 
 ## Architecture decision
 
@@ -185,29 +186,21 @@ suite depend on a GPU, a model download or network availability.
 The Java client publishes bounded operational counters and a duration timer without series or
 business labels: calls, busy refusals, timeouts, unavailable responses and invalid model output.
 The service remains deliberately isolated from Kafka and SQL. The Java orchestration layer invokes
-it explicitly in `SHADOW`; it does **not** schedule forecasts, persist forecast results or activate
-alerts. MCP exposes only already-produced process-local snapshots through the read-only views
-described below.
+it explicitly in `SHADOW`. Scheduling and durable reads require the separately enabled pilot;
+neither path delivers alerts.
 
 ## P1 orchestration, MCP and evaluation slice
 
-The next slice adds an explicit `ForecastOrchestrator` seam. Calls are bounded by the existing
-TimesFM client (four series, 60 points) and default to `SHADOW`: a run can populate only a
-process-local read model capped at 256 snapshots. There is still no scheduler, durable forecast
-table, alert, or activation mutation. `ACTIVE` is represented in the contract so a later rollout
-can require a separate operator decision rather than silently changing semantics.
+`ForecastOrchestrator` retains the internal explicit execution seam and a bounded process-local
+snapshot store. The production pilot uses PostgreSQL instead; these snapshots are not exposed
+through MCP. The five former snapshot catalogue/get/latest/metadata/limits tools are replaced
+by the canonical pilot surface described in [the pilot runbook](timesfm-pilot.md).
 
-When inference is enabled and MCP is enabled, five read-only tools are registered through the same
-catalogue and interception guards: `kex_forecast_catalog`, `kex_forecast_get`,
-`kex_forecast_latest`, `kex_forecast_metadata` and `kex_forecast_limits`. They can only inspect
-snapshots already produced by an internal caller; no MCP argument starts model inference. Missing
-series are reported as `NOT_FOUND`, and every response states the shadow-only limitation.
-
-`ForecastBacktestEvaluator` is a pure offline evaluator for rolling-origin corpora. It reports MAE,
-MASE against the naive-last-difference scale, mean pinball loss for Q10/Q50/Q90, empirical Q10–Q90
-coverage and mean interval width. It rejects mismatched or non-finite inputs. Baseline generation,
-corpus selection and activation thresholds remain an evaluation job concern, not a request-time
-MCP side effect.
+`ForecastBacktestEvaluator` reports MAE, MASE using the **training** seasonal naive error scale,
+mean pinball loss for Q10/Q50/Q90, empirical Q10–Q90 coverage and mean interval width. When
+training is omitted or its scale is zero, MASE is unmeasured. Quantiles must be finite and ordered.
+The pilot evaluates matured, non-overlapping horizons against realised observations and compares
+last value, moving average, seasonal naive and linear trend on the same horizon.
 
 Threshold policy is now explicit and operator-owned through `ForecastThresholdPolicy`. A policy
 must name the series and definition version, threshold, direction (`ABOVE`/`BELOW`), horizon,
@@ -227,14 +220,6 @@ The persisted counter counts accepted append attempts, including deduplicated re
 the database, not that counter, gives the exact number of unique observations. No per-series labels
 are added to these technical counters. Monitor failures and gaps before using the history.
 
-The journal has no public REST endpoint in this delivery. The forecast MCP views expose only
-snapshots whose series/version provenance is already present; a definition hash alone is not
-resource provenance. A future history tool must resolve and authorize **all** resources of a series
-before exposing its raw values or labels.
-
-## Verification and rollback
-
-Targeted tests cover canonical identity, semantic version separation, file-backed JDBC reopen,
-duplicate writes, bounded reads/purge, asynchronous failure isolation, backpressure, nested property
-binding and disabled startup. `MetricServiceTest` checks that every counter-label series is captured
-without another SQL execution. `MetricObservationPostgresTest` exercises actual PostgreSQL under
+The journal has no general raw-history REST endpoint. The pilot exposes prepared contexts only
+for configured series. MCP resolves approved metric, environment and all source topics/groups
+before reading persistence; a definition hash alone never grants access.

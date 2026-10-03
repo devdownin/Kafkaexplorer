@@ -20,6 +20,7 @@ public class McpProperties {
     private Dlp dlp = new Dlp();
     private List<String> allowedTopicPrefixes = List.of(ANY);
     private List<String> allowedGroupPrefixes = List.of(ANY);
+    private List<String> allowedForecastEnvironments = List.of();
     private Set<String> approvalRequiredTools = Set.of("kex_produce_message", "kex_set_cluster_target", "kex_create_metric");
     private int hardMaxRows = 1000;
     private int hardMaxRecords = 50;
@@ -132,6 +133,8 @@ public class McpProperties {
     public void setDlp(Dlp dlp) { this.dlp = dlp; }
     public List<String> getAllowedTopicPrefixes() { return allowedTopicPrefixes; }
     public void setAllowedTopicPrefixes(List<String> allowedTopicPrefixes) { this.allowedTopicPrefixes = allowedTopicPrefixes; }
+    public List<String> getAllowedForecastEnvironments() { return allowedForecastEnvironments; }
+    public void setAllowedForecastEnvironments(List<String> v) { allowedForecastEnvironments = List.copyOf(v); }
     public List<String> getAllowedGroupPrefixes() { return allowedGroupPrefixes; }
     public void setAllowedGroupPrefixes(List<String> allowedGroupPrefixes) { this.allowedGroupPrefixes = allowedGroupPrefixes; }
     public Set<String> getApprovalRequiredTools() { return approvalRequiredTools; }

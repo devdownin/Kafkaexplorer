@@ -1484,3 +1484,101 @@ export interface McpTryResult {
   message: string | null;
   structuredContent: unknown;
 }
+
+/** @java SeriesPreparationProfile.Transformation */
+export type ForecastTransformation = 'GAUGE_MEAN' | 'GAUGE_MAX' | 'GAUGE_LAST' | 'COUNTER_RATE';
+/** @java PreparedMetricSeries.Status */
+export type ForecastPreparationStatus = 'READY' | 'WARMING_UP' | 'INSUFFICIENT_HISTORY' | 'STALE' | 'INVALID_DATA' | 'SCOPE_CHANGED' | 'COUNTER_RESET' | 'HISTORY_LIMIT';
+/** @java ForecastThresholdPolicy.Visibility */
+export type ForecastVisibility = 'SHADOW' | 'VISIBLE' | 'ACTIVE';
+/** @java ForecastBacktestEvaluator.Evaluation */
+export interface ForecastEvaluation {
+  mae: number;
+  mase: number | null;
+  meanPinballLoss: number;
+  q10Q90Coverage: number;
+  meanIntervalWidth: number;
+}
+/** @java SeriesPreparationProfile */
+export interface ForecastProfile {
+  stepMillis: number;
+  contextPoints: number;
+  transformation: ForecastTransformation;
+}
+/** @java PreparedMetricSeries.Point */
+export interface ForecastHistoryPoint {
+  endAt: number;
+  value: number | null;
+  imputed: boolean;
+  samples: number;
+}
+/** @java PreparedMetricSeries */
+export interface ForecastContext {
+  status: ForecastPreparationStatus;
+  reason: string;
+  seriesId: string;
+  definitionVersion: string;
+  sourceUnit: string;
+  outputUnit: string;
+  fromInclusive: number;
+  toExclusive: number;
+  profile: ForecastProfile;
+  profileFingerprint: string;
+  inputFingerprint: string;
+  observedPoints: number;
+  missingPoints: number;
+  imputedPoints: number;
+  points: ForecastHistoryPoint[];
+}
+/** @java MetricForecast.Point */
+export interface ForecastPoint {
+  at: number;
+  central: number;
+  q10: number;
+  q50: number;
+  q90: number;
+}
+/** @java MetricForecast */
+export interface MetricForecast {
+  requestId: string;
+  seriesId: string;
+  definitionVersion: string;
+  inputFingerprint: string;
+  profileFingerprint: string;
+  outputUnit: string;
+  historyEndAt: number;
+  modelId: string;
+  modelRevision: string;
+  adapterVersion: string;
+  centralStatistic: string;
+  durationMillis: number;
+  points: ForecastPoint[];
+}
+/** @java ForecastRecord */
+export interface ForecastRecord {
+  key: string;
+  generatedAt: number;
+  state: string;
+  strategy: string;
+  visibility: ForecastVisibility;
+  context: ForecastContext;
+  forecast: MetricForecast | null;
+  quality: ForecastEvaluation | null;
+  evaluatedPoints: number;
+  evaluatedThrough: number;
+  baselineMae: Record<string, number>;
+  reason: string;
+}
+/** @java ForecastController.SeriesView */
+export interface ForecastSeriesView {
+  seriesId: string;
+  metricId: string;
+  environment: string;
+  result: ForecastRecord | null;
+}
+/** @java ForecastController.Status */
+export interface ForecastStatus {
+  enabled: boolean;
+  state: string;
+  series: ForecastSeriesView[];
+}

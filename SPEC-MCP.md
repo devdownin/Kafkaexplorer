@@ -889,3 +889,18 @@ La phase 2 est placée **avant** les outils différenciants délibérément : la
 - GCP Managed Service for Apache Kafka MCP : https://docs.cloud.google.com/managed-service-for-apache-kafka/docs/use-managed-service-for-apache-kafka-mcp
 - kanapuli/mcp-kafka · Joel-hanson/kafka-mcp-server · aswinayyolath/kafka-mcp-server · jonyx225/MCP_Kafka
 - Kafka SQL Explorer — README, `docs/FEATURES.md`, `docs/architecture.md` : https://github.com/devdownin/Kafkaexplorer
+
+## TimesFM pilot — implemented read surface
+
+The pilot requires `explorer.forecasting.pilot.enabled=true`, durable history and inference.
+Its five read-only tools are `kex_list_forecastable_metrics`, `kex_metric_history`,
+`kex_forecast_metric`, `kex_get_forecast_quality` and `kex_list_predicted_threshold_breaches`.
+They replace the former snapshot catalogue/get/latest/metadata/limits tools. Existing clients
+must use the new names. Registration still passes through catalogue allow/deny, DLP, rate
+limits and audit interceptors. Environment approval is exact via
+`explorer.mcp.allowed-forecast-environments` (empty denies all); every configured topic and
+group is checked before storage reads. Raw series hashes confer no access. Reads never collect
+metrics or start inference. Breaches retain result key, model revision, input/profile fingerprints,
+threshold direction and visibility; nominal confidence is not empirical calibration.
+Activation remains a confirmed operator REST action and never sends an alert.
+See [the pilot runbook](docs/notes/timesfm-pilot.md) and [acceptance criteria](timesfm.md).
