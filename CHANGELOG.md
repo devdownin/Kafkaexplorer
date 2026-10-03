@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.2.1] — 2026-10-03
+
 ### Added
 
 - Opt-in TimesFM production pilot: PostgreSQL forecasts and activation, global transaction lock
@@ -2472,7 +2476,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.1.4...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.1...HEAD
+[2.2.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.1.4...v2.2.1
 [2.1.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.1.3...v2.1.4
 [2.1.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.1.1...v2.1.3
 [2.1.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.1.0...v2.1.1
