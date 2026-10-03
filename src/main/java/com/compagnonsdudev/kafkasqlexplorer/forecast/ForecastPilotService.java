@@ -255,6 +255,8 @@ public final class ForecastPilotService {
   public record PredictedBreach(
       ForecastThresholdEvaluator.Breach threshold,
       String resultKey,
+      long evaluatedAt,
+      long windowEndAt,
       long generatedAt,
       long historyEndAt,
       String modelId,
@@ -271,6 +273,26 @@ public final class ForecastPilotService {
         || !r.strategy().equals("TIMESFM")
         || !r.state().equals("READY")) return null;
     var p = spec.threshold();
+    long evaluatedAt = System.currentTimeMillis();
+    var window = r.forecast().points().subList(0, p.horizonPoints());
+    var future = window.stream().filter(point -> point.at() > evaluatedAt).toList();
+    if (future.isEmpty()) return null;
+    var original = r.forecast();
+    var current =
+        new MetricForecast(
+            original.requestId(),
+            original.seriesId(),
+            original.definitionVersion(),
+            original.inputFingerprint(),
+            original.profileFingerprint(),
+            original.outputUnit(),
+            original.historyEndAt(),
+            original.modelId(),
+            original.modelRevision(),
+            original.adapterVersion(),
+            original.centralStatistic(),
+            original.durationMillis(),
+            future);
     var effective =
         new ForecastThresholdPolicy(
             p.seriesId(),
@@ -281,10 +303,12 @@ public final class ForecastPilotService {
             .9,
             r.context().status().name(),
             r.visibility());
-    var breach = new ForecastThresholdEvaluator().evaluate(r.forecast(), effective);
+    var breach = new ForecastThresholdEvaluator().evaluate(current, effective);
     return new PredictedBreach(
         breach,
         r.key(),
+        evaluatedAt,
+        window.getLast().at(),
         r.generatedAt(),
         r.context().toExclusive(),
         r.forecast().modelId(),

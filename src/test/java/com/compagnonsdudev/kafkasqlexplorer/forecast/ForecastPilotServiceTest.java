@@ -28,7 +28,9 @@ class ForecastPilotServiceTest {
   private PreparedMetricSeries context(long end) {
     var points = new ArrayList<PreparedMetricSeries.Point>();
     for (int i = 0; i < 512; i++)
-      points.add(new PreparedMetricSeries.Point(end - (511 - i) * 1000, 1d, false, 1));
+      points.add(
+          new PreparedMetricSeries.Point(
+              end - (511 - i) * spec.profile().stepMillis(), 1d, false, 1));
     return new PreparedMetricSeries(
         PreparedMetricSeries.Status.READY,
         "ready",
@@ -36,7 +38,7 @@ class ForecastPilotServiceTest {
         "v1",
         "messages",
         "messages",
-        end - 512000,
+        end - 512 * spec.profile().stepMillis(),
         end,
         spec.profile(),
         "profile",
@@ -225,6 +227,83 @@ class ForecastPilotServiceTest {
     when(store.latest(connection, spec.seriesId())).thenReturn(incompatible);
     assertNull(pilot.get(spec.seriesId()));
     assertNull(pilot.breach(spec.seriesId()));
+    verify(client, never()).forecast(anyList(), anyInt());
+  }
+
+  @Test
+  void breachIgnoresExpiredPointsWithoutExtendingPolicyHorizon() throws Exception {
+    var threshold =
+        new ForecastThresholdPolicy(
+            spec.seriesId(),
+            "v1",
+            .5,
+            ForecastThresholdPolicy.Direction.ABOVE,
+            2,
+            .9,
+            "READY",
+            ForecastThresholdPolicy.Visibility.SHADOW);
+    spec =
+        new ForecastPilotProperties.Series(
+            spec.seriesId(),
+            spec.metricId(),
+            spec.environment(),
+            "v1",
+            "messages",
+            spec.topics(),
+            spec.groups(),
+            new SeriesPreparationProfile(
+                60000, 512, SeriesPreparationProfile.Transformation.GAUGE_LAST),
+            2,
+            1,
+            threshold,
+            .5,
+            .8,
+            2);
+    var props = new ForecastPilotProperties();
+    props.setEnabled(true);
+    props.setSeries(List.of(spec));
+    pilot = new ForecastPilotService(props, store, preparation, client, meters);
+    long end = System.currentTimeMillis() - 90000;
+    var oldContext = context(end);
+    var base = forecast(oldContext, 1);
+    var predicted =
+        new MetricForecast(
+            base.requestId(),
+            base.seriesId(),
+            base.definitionVersion(),
+            base.inputFingerprint(),
+            base.profileFingerprint(),
+            base.outputUnit(),
+            end,
+            base.modelId(),
+            base.modelRevision(),
+            base.adapterVersion(),
+            base.centralStatistic(),
+            1,
+            List.of(
+                new MetricForecast.Point(end + 60000, 2, 1, 2, 3),
+                new MetricForecast.Point(end + 120000, 1, 0, 1, 2)));
+    var old =
+        new ForecastRecord(
+            ForecastPilotService.key(spec, oldContext),
+            now,
+            "READY",
+            "TIMESFM",
+            ForecastThresholdPolicy.Visibility.SHADOW,
+            oldContext,
+            predicted,
+            null,
+            0,
+            0,
+            Map.of(),
+            "ready");
+    when(store.latest(connection, spec.seriesId())).thenReturn(old);
+    var result = pilot.breach(spec.seriesId());
+    assertNotNull(result);
+    assertFalse(result.threshold().breached());
+    assertEquals(1, result.threshold().horizonPoints());
+    assertEquals(end + 120000, result.windowEndAt());
+    assertTrue(result.evaluatedAt() > end + 60000);
     verify(client, never()).forecast(anyList(), anyInt());
   }
 }

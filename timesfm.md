@@ -91,7 +91,7 @@ HTTP ; les tests du service Python couvrent contrat, backpressure et worker. Les
 exercent stockage, concurrence de verrous, expiration et contrôles persistants dans une base réelle
 via Docker en CI ou une URL de base isolée. La suite Maven complète reste nécessaire.
 
-Contrôles ciblés exécutés : 43 tests Java, 34 tests Python, 5 tests UI, build frontend,
+Contrôles ciblés exécutés : 44 tests Java, 34 tests Python, 5 tests UI, build frontend,
 smoke avec le checkpoint réel et vérifications des contrats/configurations/liens.
 
 Dans l’environnement de développement, `./mvnw verify` est bloqué avant compilation par la

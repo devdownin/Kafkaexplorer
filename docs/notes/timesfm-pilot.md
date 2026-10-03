@@ -130,7 +130,9 @@ and groups. Unknown ids are OUT_OF_SCOPE. The catalogue omits inaccessible serie
 
 The former `kex_forecast_catalog`, `kex_forecast_get`, `kex_forecast_latest`,
 `kex_forecast_metadata` and `kex_forecast_limits` names are replaced. Reads never perform SQL
-metric collection or model inference. SHADOW breaches are labelled as such. Q10/Q90 one-sided
+metric collection or model inference. Breaches inspect only future points inside the original
+policy horizon; evaluation time and original window end are returned, and elapsed points cannot
+create a predicted breach or extend the policy window. SHADOW breaches are labelled as such. Q10/Q90 one-sided
 bounds carry nominal 0.9 confidence; this is not guaranteed calibration or a joint horizon
 probability. No notification, alert execution or Kafka mutation is implemented.
 
