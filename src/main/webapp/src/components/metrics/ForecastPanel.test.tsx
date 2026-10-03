@@ -47,4 +47,11 @@ describe('ForecastPanel', () => {
     expect(await screen.findByRole('button',{name:'Activate after quality checks'})).toBeDisabled();
     expect(axios.put).not.toHaveBeenCalled();
   });
+  it('reports a malformed API response without crashing the Metrics page', async () => {
+    vi.mocked(axios.get).mockResolvedValue({data:{}});
+    render(<ForecastPanel />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('unavailable');
+    expect(screen.getByRole('heading',{name:'Metrics Forecast'})).toBeTruthy();
+    expect(axios.put).not.toHaveBeenCalled();
+  });
 });

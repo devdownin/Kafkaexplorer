@@ -91,14 +91,21 @@ HTTP ; les tests du service Python couvrent contrat, backpressure et worker. Les
 exercent stockage, concurrence de verrous, expiration et contrôles persistants dans une base réelle
 via Docker en CI ou une URL de base isolée. La suite Maven complète reste nécessaire.
 
-Contrôles ciblés exécutés : 44 tests Java, 34 tests Python, 5 tests UI, build frontend,
+Contrôles ciblés exécutés : 44 tests Java, 34 tests Python, 6 tests UI, build frontend,
 smoke avec le checkpoint réel et vérifications des contrats/configurations/liens.
 
-Dans l’environnement de développement, `./mvnw verify` est bloqué avant compilation par la
-résolution du parent Spring Boot 4.1.1 et du dépôt Confluent. Une compilation Java ciblée avec JDK
-21 et les dépendances récupérées du build précédent a réussi ; elle ne remplace pas Maven/CI.
-PostgreSQL réel n’a pas encore été exécuté localement : Docker absent et changement d’utilisateur
-refusé pour le serveur embarqué. Ces validations doivent être vertes avant fusion.
+Le premier essai Maven a été bloqué par le proxy réseau et la confiance TLS du JDK téléchargé.
+Après configuration réseau temporaire utilisant le magasin de confiance système, la validation
+Maven complète a réussi : 1 729 tests Java sans erreur (26 sauts liés aux infrastructures absentes)
+et 1 762 tests frontend. Les validations TLS sont conservées ; aucun réglage du dépôt n’a été
+modifié pour contourner les tests. Les benchmarks et 34 tests Python sont également validés.
+
+PostgreSQL réel n’a pas été exécuté localement, faute de Docker. La CI du commit
+`172915a7d31c8cf0c59e14dca55131684185fa80` a exécuté le test PostgreSQL du pilote sans saut,
+et ses 1 729 tests Java n’ont aucune erreur (deux sauts). Cette campagne a ensuite révélé une
+régression des mocks de la page Metrics : la nouvelle route Forecast recevait une réponse vide.
+La PR corrige le mock et refuse proprement les réponses API incomplètes ; la suite frontend
+complète est désormais verte localement. La CI du dernier commit reste exigée avant fusion.
 
 La qualité affichée et le contrôle de dérive utilisent la dernière cohorte réalisée, tandis que
 le compteur de points accumule les cohortes non chevauchantes. Il ne s’agit pas d’une calibration

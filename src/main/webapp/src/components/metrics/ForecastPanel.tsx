@@ -19,6 +19,8 @@ export function ForecastPanel() {
     async function poll() {
       try {
         const { data } = await axios.get<ForecastStatus>('/api/forecasts', { signal: controller.signal, timeout: 10000 });
+        if (!data || typeof data.enabled !== 'boolean' || typeof data.state !== 'string' || !Array.isArray(data.series))
+          throw new Error('Invalid forecast status response');
         if (!disposed) { setStatus(data); setError(''); }
       } catch {
         if (!disposed) setError('Forecast persistence is unavailable. Existing results may be stale.');
