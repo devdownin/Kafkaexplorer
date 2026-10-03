@@ -112,6 +112,7 @@ const suggestions: MetricSuggestions = {
 
 function stubApi(metrics: MetricConfig[], proposals: MetricSuggestion[] = [suggestion]) {
   mockedAxios.get.mockImplementation((url: string) => {
+    if (url === '/api/forecasts') return Promise.resolve({ data: { enabled: false, state: 'DISABLED', series: [] } });
     if (url === '/api/metrics') return Promise.resolve({ data: metrics });
     if (url === '/api/metrics/metadata') return Promise.resolve({ data: {} });
     if (url === '/api/metrics/templates') return Promise.resolve({ data: [] });

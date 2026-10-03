@@ -49,7 +49,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # CLAUDE.md used to carry, and a note added without being checked is exactly the hole this
 # check exists to close. The rest is enumerated — they are the five documents a human reads.
 DOCS = (['CLAUDE.md', 'CONTRIBUTING.md', 'README.md', 'README.fr.md',
-         'docs/DOCKERHUB.md', 'docs/DOCKERHUB-OPERATIONS.md']
+         'docs/DOCKERHUB.md', 'docs/DOCKERHUB-OPERATIONS.md', 'timesfm.md']
         + sorted(str(p.relative_to(ROOT)) for p in (ROOT / 'docs/notes').glob('*.md')))
 
 # Where a path named in prose may be rooted. Ordered widest first for no reason but reading.

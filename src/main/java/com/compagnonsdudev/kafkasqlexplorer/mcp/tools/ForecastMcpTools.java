@@ -1,99 +1,205 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package com.compagnonsdudev.kafkasqlexplorer.mcp.tools;
 
-import com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastSnapshotStore;
-import com.compagnonsdudev.kafkasqlexplorer.forecast.MetricForecast;
-import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.Coverage;
-import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.ToolResult;
-import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.Warning;
-import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
+import com.compagnonsdudev.kafkasqlexplorer.forecast.*;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.*;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.*;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.ToolCategory;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 
-import java.util.List;
-
-/** Read-only forecast views. No MCP method starts inference or changes activation state. */
+/** All sources are authorized from operator provenance BEFORE any forecast/history read. */
 public final class ForecastMcpTools implements ReadOnlyMcpTools {
-    private final ForecastSnapshotStore snapshots;
-    private final ToolGuard guard;
+  private final ForecastPilotService pilot;
+  private final ToolGuard guard;
 
-    public ForecastMcpTools(ForecastSnapshotStore snapshots, ToolGuard guard) {
-        this.snapshots = snapshots;
-        this.guard = guard;
+  public ForecastMcpTools(ForecastPilotService pilot, ToolGuard guard) {
+    this.pilot = pilot;
+    this.guard = guard;
+  }
+
+  @Override
+  public ToolCategory category() {
+    return ToolCategory.DIAGNOSTIC;
+  }
+
+  public record Metric(
+      String seriesId, String metricId, String environment, int horizon, String unit) {}
+
+  private ForecastPilotProperties.Series authorize(String id) {
+    ForecastPilotProperties.Series s;
+    try {
+      s = pilot.resolve(id);
+    } catch (IllegalArgumentException e) {
+      throw new McpToolException(
+          McpErrorCode.OUT_OF_SCOPE, "Series is outside the configured forecast pilot");
     }
+    guard.checkNotQuarantined(id);
+    guard.checkForecastEnvironment(s.environment());
+    guard.checkTopicScope(s.topics());
+    guard.checkGroupScope(s.groups());
+    return s;
+  }
 
-    @Override public ToolCategory category() { return ToolCategory.DIAGNOSTIC; }
+  private List<ForecastPilotProperties.Series> allowed() {
+    return pilot.series().stream()
+        .filter(
+            s -> {
+              try {
+                authorize(s.seriesId());
+                return true;
+              } catch (McpToolException e) {
+                return false;
+              }
+            })
+        .toList();
+  }
 
-    public record ForecastSummary(String seriesId, String modelId, String modelRevision,
-                                  String outputUnit, long historyEndAt, int horizon,
-                                  String centralStatistic, boolean shadowOnly) { }
+  @McpTool(
+      name = "kex_list_forecastable_metrics",
+      description =
+          "List operator-approved metrics visible in this resource scope. Does not run SQL or"
+              + " inference.",
+      annotations =
+          @McpTool.McpAnnotations(
+              readOnlyHint = true,
+              destructiveHint = false,
+              openWorldHint = false))
+  public ToolResult<List<Metric>> catalog() {
+    var rows =
+        allowed().stream()
+            .map(
+                s ->
+                    new Metric(
+                        s.seriesId(),
+                        guard.dlp().scrub(s.metricId()),
+                        guard.dlp().scrub(s.environment()),
+                        s.horizon(),
+                        guard.dlp().scrub(s.unit())))
+            .toList();
+    return result(rows);
+  }
 
-    @McpTool(name = "kex_forecast_catalog", annotations = @McpTool.McpAnnotations(
-            readOnlyHint = true, destructiveHint = false, openWorldHint = false),
-            description = "List forecasts already produced in the bounded shadow read model. This never runs inference.")
-    public ToolResult<List<ForecastSummary>> catalog() {
-        List<ForecastSummary> data = snapshots.all().stream().map(this::summary).toList();
-        return ToolResult.of(data, Coverage.exhausted(data.size(), 0, 0), List.of(
-                Warning.info("SHADOW_ONLY", "forecast snapshots are process-local and observational only")));
+  @McpTool(
+      name = "kex_metric_history",
+      description =
+          "Read at most 512 prepared history points from an existing durable forecast. Missing data"
+              + " is unmeasured. Never reruns collection.",
+      annotations =
+          @McpTool.McpAnnotations(
+              readOnlyHint = true,
+              destructiveHint = false,
+              openWorldHint = false))
+  public ToolResult<Measured<PreparedMetricSeries>> history(
+      @McpToolParam(description = "Approved series id") String seriesId) {
+    authorize(seriesId);
+    var r = read(seriesId);
+    return result(
+        r == null
+            ? Measured.unmeasured("No prepared history has been persisted")
+            : Measured.of(r.context()));
+  }
+
+  @McpTool(
+      name = "kex_forecast_metric",
+      description =
+          "Read an existing durable forecast. Baselines are explicitly marked and have no"
+              + " calibrated confidence interval. Never starts inference.",
+      annotations =
+          @McpTool.McpAnnotations(
+              readOnlyHint = true,
+              destructiveHint = false,
+              openWorldHint = false))
+  public ToolResult<Measured<ForecastRecord>> get(
+      @McpToolParam(description = "Approved series id") String seriesId) {
+    authorize(seriesId);
+    var r = read(seriesId);
+    return result(
+        r == null ? Measured.unmeasured("No forecast has been persisted") : Measured.of(r));
+  }
+
+  public record Quality(
+      ForecastBacktestEvaluator.Evaluation timesfmMetrics,
+      Map<String, Double> baselineMae,
+      int evaluatedPoints,
+      long evaluatedThrough,
+      String currentStrategy,
+      String currentState) {}
+
+  @McpTool(
+      name = "kex_get_forecast_quality",
+      description =
+          "Read realised forecast errors and baseline MAE. Before forecast expiry quality is"
+              + " unmeasured. No evaluation is started.",
+      annotations =
+          @McpTool.McpAnnotations(
+              readOnlyHint = true,
+              destructiveHint = false,
+              openWorldHint = false))
+  public ToolResult<Measured<Quality>> quality(
+      @McpToolParam(description = "Approved series id") String seriesId) {
+    authorize(seriesId);
+    var r = read(seriesId);
+    return result(
+        r == null || r.quality() == null
+            ? Measured.unmeasured("No realised forecast quality yet")
+            : Measured.of(
+                new Quality(
+                    r.quality(),
+                    r.baselineMae(),
+                    r.evaluatedPoints(),
+                    r.evaluatedThrough(),
+                    r.strategy(),
+                    r.state())));
+  }
+
+  @McpTool(
+      name = "kex_list_predicted_threshold_breaches",
+      description =
+          "List explicit threshold breaches for authorized series. Includes nominal quantile"
+              + " confidence and activation status. No alert or inference is triggered.",
+      annotations =
+          @McpTool.McpAnnotations(
+              readOnlyHint = true,
+              destructiveHint = false,
+              openWorldHint = false))
+  public ToolResult<List<ForecastPilotService.PredictedBreach>> breaches() {
+    var rows = new ArrayList<ForecastPilotService.PredictedBreach>();
+    for (var s : allowed()) {
+      try {
+        var b = pilot.breach(s.seriesId());
+        if (b != null && b.threshold().breached()) rows.add(b);
+      } catch (Exception e) {
+        throw unavailable();
+      }
     }
+    return result(List.copyOf(rows));
+  }
 
-    @McpTool(name = "kex_forecast_get", annotations = @McpTool.McpAnnotations(
-            readOnlyHint = true, destructiveHint = false, openWorldHint = false),
-            description = "Read one existing forecast by its authorized series id. No inference is started.")
-    public ToolResult<MetricForecast> get(
-            @McpToolParam(description = "64-character authorized series id") String seriesId) {
-        checkSeriesId(seriesId);
-        MetricForecast forecast = snapshots.get(seriesId);
-        if (forecast == null) return ToolResult.of(null, Coverage.exhausted(0, 0, 0), List.of(
-                Warning.warn("NOT_FOUND", "no forecast snapshot exists for this series")));
-        return ToolResult.of(forecast, Coverage.exhausted(1, 0, 0), List.of(
-                Warning.info("SHADOW_ONLY", "this output is not persisted and does not drive alerts")));
+  private ForecastRecord read(String id) {
+    try {
+      return pilot.get(id);
+    } catch (Exception e) {
+      throw unavailable();
     }
+  }
 
-    @McpTool(name = "kex_forecast_latest", annotations = @McpTool.McpAnnotations(
-            readOnlyHint = true, destructiveHint = false, openWorldHint = false),
-            description = "Read the latest bounded forecast for a series, if one exists.")
-    public ToolResult<MetricForecast> latest(
-            @McpToolParam(description = "64-character authorized series id") String seriesId) {
-        return get(seriesId);
-    }
+  private McpToolException unavailable() {
+    return new McpToolException(
+        McpErrorCode.DEPENDENCY_UNAVAILABLE, "Forecast persistence unavailable");
+  }
 
-    @McpTool(name = "kex_forecast_metadata", annotations = @McpTool.McpAnnotations(
-            readOnlyHint = true, destructiveHint = false, openWorldHint = false),
-            description = "Return model, revision, adapter, provenance and quality metadata for a forecast.")
-    public ToolResult<ForecastMetadata> metadata(
-            @McpToolParam(description = "64-character authorized series id") String seriesId) {
-        checkSeriesId(seriesId);
-        MetricForecast f = snapshots.get(seriesId);
-        if (f == null) return ToolResult.of(null, Coverage.exhausted(0, 0, 0), List.of(Warning.warn("NOT_FOUND", "no forecast snapshot exists")));
-        return ToolResult.complete(new ForecastMetadata(f.seriesId(), f.definitionVersion(), f.inputFingerprint(),
-                f.profileFingerprint(), f.modelId(), f.modelRevision(), f.adapterVersion(), f.centralStatistic(), f.outputUnit(), true),
-                Coverage.exhausted(1, 0, 0));
-    }
-
-    @McpTool(name = "kex_forecast_limits", annotations = @McpTool.McpAnnotations(
-            readOnlyHint = true, destructiveHint = false, openWorldHint = false),
-            description = "Explain the current forecast safety limits and what the MCP surface does not do.")
-    public ToolResult<ForecastLimits> limits() {
-        return ToolResult.complete(new ForecastLimits(4, 60, 256, true,
-                List.of("no scheduling", "no persistence", "no alerts", "no activation mutation")), Coverage.exhausted(1, 0, 0));
-    }
-
-    public record ForecastMetadata(String seriesId, String definitionVersion, String inputFingerprint,
-            String profileFingerprint, String modelId, String modelRevision, String adapterVersion,
-            String centralStatistic, String outputUnit, boolean shadowOnly) { }
-    public record ForecastLimits(int maxSeriesPerCall, int maxHorizonPoints, int maxSnapshots,
-                                 boolean shadowOnly, List<String> excludedCapabilities) { }
-
-    private ForecastSummary summary(MetricForecast f) {
-        return new ForecastSummary(f.seriesId(), f.modelId(), f.modelRevision(), f.outputUnit(),
-                f.historyEndAt(), f.points().size(), f.centralStatistic(), true);
-    }
-
-    private static void checkSeriesId(String seriesId) {
-        if (seriesId == null || !seriesId.matches("[a-f0-9]{64}")) {
-            throw new IllegalArgumentException("seriesId must be a 64-character hexadecimal id");
-        }
-    }
+  private <T> ToolResult<T> result(T data) {
+    return ToolResult.of(
+        data,
+        Coverage.exhausted(0, 0, 0),
+        List.of(
+            Warning.info(
+                "FORECAST_LIMITS",
+                "Reads existing results only; nominal quantiles are not guaranteed confidence; no"
+                    + " alert delivery")));
+  }
 }

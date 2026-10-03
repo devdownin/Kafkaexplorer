@@ -58,6 +58,12 @@ public class ToolGuard {
         checkScope("consumer groups", groups, properties.getAllowedGroupPrefixes());
     }
 
+    /** Forecast environments require exact operator approval; empty is deny-all. */
+    public void checkForecastEnvironment(String environment) {
+        if (!properties.getAllowedForecastEnvironments().contains(environment))
+            throw new McpToolException(McpErrorCode.OUT_OF_SCOPE,"Forecast environment is outside the configured scope");
+    }
+
     private void checkScope(String kind, List<String> names, List<String> allowedPrefixes) {
         if (names == null || names.isEmpty() || McpProperties.unrestricted(allowedPrefixes)) {
             return;

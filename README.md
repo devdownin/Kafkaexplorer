@@ -150,14 +150,14 @@ versioned observations. An internal preparation layer reconstructs regular conte
 gauge imputations, and rejects counter resets or inadmissible history. See **[history configuration
 and limitations](docs/notes/timesfm-history.md)**.
 
-The CPU-only TimesFM service is available through the opt-in `compose/timesfm.yml` overlay. It
-requires `TIMESFM_TOKEN`, reserves 4 CPU / 8 GiB by default, and downloads the pinned checkpoint
-into a persistent cache. Forecast execution remains explicit and defaults to `SHADOW`: it is
-bounded, process-local and does not schedule, persist or alert. When both inference and MCP are
-enabled, five read-only forecast tools expose existing snapshots and limits; MCP never starts
-inference. Operator-owned thresholds carry direction, horizon, confidence, history quality,
-series/version provenance and `SHADOW`/`VISIBLE`/`ACTIVE` visibility. See the TimesFM note for
-the evaluation metrics and rollout boundaries.
+The CPU-only TimesFM service is available through the opt-in `compose/timesfm.yml` overlay.
+The separately enabled production pilot schedules explicitly approved series, persists forecasts
+and operator activation in PostgreSQL, compares realised errors with four baselines, and exposes
+history, quantiles and quality in Metrics Forecast. Default mode is `SHADOW`; activation requires
+operator confirmation and measured quality. Five scoped MCP tools read existing results without
+starting inference or sending alerts. See **[the integration plan and acceptance criteria](timesfm.md)**
+and **[deployment configuration](docs/notes/timesfm-pilot.md)**. Real CPU measurements are recorded
+in the plan; the overlay's 4 CPU / 8 GiB reservation remains conservative.
 
 ## 🏗️ Build and Development
 

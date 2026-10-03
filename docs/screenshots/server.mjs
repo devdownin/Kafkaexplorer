@@ -48,6 +48,7 @@ const API = [
   [m => m.startsWith('/api/topic/') && m.endsWith('/search'), () => F.topicSearch],
   [m => m.startsWith('/api/topic/') && m.endsWith('/consumers'), () => F.topicConsumers],
   [m => m.startsWith('/api/topic/'), () => F.topicDetail],
+  [m => m === '/api/forecasts', () => F.forecastStatus],
   [m => m === '/api/metrics', () => F.metrics],
   [m => m === '/api/metrics/templates', () => F.metricTemplates],
   [m => m === '/api/metrics/metadata', () => ({ demo_orders_1_received: ['id', 'status', 'amount_cents'] })],

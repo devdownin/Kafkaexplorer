@@ -974,3 +974,6 @@ export const lineage = {
   ],
   warnings: [],
 };
+
+/** GET /api/forecasts — ForecastController.Status with the pilot disabled by default. */
+export const forecastStatus = { enabled: false, state: 'DISABLED', series: [] };

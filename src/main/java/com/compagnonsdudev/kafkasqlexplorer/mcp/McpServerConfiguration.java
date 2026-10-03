@@ -35,7 +35,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SqlMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.StreamFlowMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.TopicMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools;
-import com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastSnapshotStore;
+import com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastPilotService;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
 import com.compagnonsdudev.kafkasqlexplorer.service.DataModelService;
@@ -296,9 +296,9 @@ public class McpServerConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean(ForecastSnapshotStore.class)
-    ForecastMcpTools forecastMcpTools(ForecastSnapshotStore snapshots, ToolGuard guard) {
-        return new ForecastMcpTools(snapshots, guard);
+    @ConditionalOnProperty(prefix = "explorer.forecasting.pilot", name = "enabled", havingValue = "true")
+    ForecastMcpTools forecastMcpTools(ForecastPilotService pilot, ToolGuard guard) {
+        return new ForecastMcpTools(pilot, guard);
     }
 
     /**
