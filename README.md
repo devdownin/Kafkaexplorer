@@ -65,7 +65,7 @@ These are generated, not photographed: `docs/screenshots/` drives the compiled S
 - 🤖 **AI-powered process mining** — reconstruct business flows as flowcharts and hunt anomalies with OpenRouter (the default: one key, most hosted vendors), Claude, any local LLM (Ollama…), or a private [SpectraLLM](https://github.com/devdownin/SpectraLLM).
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, visible in the UI and exported to Prometheus.
 - 🔌 **An MCP server for your agent** — expose the analysis layer, not a tenth translation of the `AdminClient`: SQL over vanilla Kafka, schema inference, and answers that say what they did **not** read. Off by default, read-only when on, and read-only is enforced at registration — a mutating tool is not registered at all, so it is neither listed nor invocable.
-- 🎁 **A batteries-included sandbox** — 76 demo topics seeded automatically, from a 6-step order pipeline to a 60-topic supply chain, all keyed and header-stamped: an order to trace across partitions, a header-only correlation to follow, a real time series to window, duplicates and poison records for the audit to find.
+- 🎁 **A batteries-included sandbox** — 79 demo topics seeded automatically, from a 6-step order pipeline to a 60-topic supply chain, all keyed and header-stamped: an order to trace across partitions, a header-only correlation to follow, a real time series to window, duplicates and poison records for the audit to find.
 
 ## 🚀 Quick Start
 
@@ -85,7 +85,7 @@ Then open **http://localhost:8080** and start clicking. That's it.
 - **With the MCP server on** (for an agent): `docker compose -f docker-compose.yml -f compose/mcp.yml up -d` — the endpoint is `http://localhost:8080/mcp`, the console is the app's own **MCP** page, and every guard is an `.env` variable. `/mcp` requires a bearer token (`EXPLORER_MCP_AUTH_TOKEN`): the overlay ships a development default that protects nothing, so export your own (`export EXPLORER_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"`) for anything reachable by more than you. The overlay also turns TLS enforcement off because it is a loopback stack — everywhere else, terminate TLS and leave `explorer.mcp.require-tls` true. The rest of the application still authenticates nobody: keep `BIND_ADDR` on the loopback. Check it answers with `MCP_AUTH_TOKEN=… docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe`.
 - **With a private AI stack beside it** (SpectraLLM, images only — nothing built, no SpectraLLM checkout): `docker compose -f compose/spectra-hub.yml up -d` — Explorer on 8080, SpectraLLM UI on 8088. The first boot downloads ~4.8 GB of model weights in the background and nothing waits for it. Overlays next to it add a GPU (`.gpu.yml`), memory limits (`.limits.yml`), or have SpectraLLM index the topics themselves (`.ingest.yml`). For a laptop, four `.env` lines swap the 7B chat model for a 3B — see `.env.example`.
 - **The same stack, but pulling the published image instead of building it**: `docker compose -f docker-compose.yml -f compose/image.yml up -d`
-- **From source** (JDK 25): start Kafka with `docker compose up -d kafka`, then `./mvnw spring-boot:run`
+- **From source** (JDK 21 or newer): start Kafka with `docker compose up -d kafka`, then `./mvnw spring-boot:run`
 - **Build with nothing installed but Docker** — no JDK, no Maven, no Node:
   ```bash
   docker compose -f compose/build.yml run --rm verify    # the full CI gate

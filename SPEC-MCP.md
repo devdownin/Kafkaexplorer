@@ -1,7 +1,7 @@
 # SPEC-MCP — Serveur MCP `kafka-explorer-mcp`
 
 **Version** 0.2 — spécification complète (analyse comparative, surface MCP, écran de supervision)
-**Cible** Kafka SQL Explorer (`devdownin/Kafkaexplorer`) — Java 25, Spring Boot 4.1, Flink 2.3 embarqué, React 19
+**Cible** Kafka SQL Explorer (`devdownin/Kafkaexplorer`) — cible Java 21, runtime Docker Java 25, Spring Boot 4.1, Flink 2.3 embarqué, React 19
 **Statut** proposition d'architecture, à valider avant implémentation
 
 ---
@@ -11,7 +11,7 @@
 3. [Lecture stratégique](#3-lecture-stratégique)
 4. [Apports de KafkaExplorer transposables](#4-apports-de-kafkaexplorer-transposables-en-outils-mcp)
 5. [Spécification du serveur](#5-spécification-du-serveur)
-6. [Écran « MCP » — catalogue et supervision](#6-écran--mcp--catalogue-et-supervision)
+6. [Écran « MCP » — catalogue et supervision](#6-écran--mcp---catalogue-et-supervision)
 7. [Trajectoire, risques, sources](#7-trajectoire)
 
 ---

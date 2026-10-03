@@ -40,7 +40,7 @@ C4Container
 
     System_Boundary(c1, "Kafka SQL Explorer") {
         Container(web_ui, "Web UI", "React 19, Tailwind CSS, Monaco Editor", "Visualizes topics, query results, and lineage graphs.")
-        Container(spring_app, "Spring Boot Application", "Java 25, Spring Boot 4.1", "Handles business logic, security, and integration.")
+        Container(spring_app, "Spring Boot Application", "Java 21 target / Java 25 Docker runtime, Spring Boot 4.1", "Handles business logic, security, and integration.")
         Container(mcp, "MCP server", "Spring AI 2.0, in-process", "Exposes the analysis layer to agents. Same services, same budgets, same caches.")
         Container(flink_engine, "Embedded Flink Engine", "Apache Flink 2.3", "Executes SQL queries against Kafka topics.")
     }
