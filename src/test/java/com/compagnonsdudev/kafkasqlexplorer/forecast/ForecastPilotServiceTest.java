@@ -187,4 +187,21 @@ class ForecastPilotServiceTest {
     assertEquals(ForecastThresholdPolicy.Visibility.SHADOW, r.visibility());
     assertNull(pilot.breach(spec.seriesId()));
   }
+
+  @Test
+  void qualityMcpReturnsBaselineEvidenceWithoutInference() throws Exception {
+    when(store.latest(connection, spec.seriesId())).thenReturn(record(context, 1, "READY"));
+    var policy = new com.compagnonsdudev.kafkasqlexplorer.mcp.McpProperties();
+    policy.setAllowedForecastEnvironments(List.of("production"));
+    var guard =
+        new com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard(
+            policy, new com.compagnonsdudev.kafkasqlexplorer.mcp.guard.DlpScrubber(policy));
+    var tools = new com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools(pilot, guard);
+    var measured = tools.quality(spec.seriesId()).data();
+    assertTrue(measured.measured());
+    assertEquals(4, measured.value().baselineMae().size());
+    assertEquals(2, measured.value().evaluatedPoints());
+    assertEquals("TIMESFM", measured.value().currentStrategy());
+    verify(client, never()).forecast(anyList(), anyInt());
+  }
 }

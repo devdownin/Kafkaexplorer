@@ -124,7 +124,7 @@ and groups. Unknown ids are OUT_OF_SCOPE. The catalogue omits inaccessible serie
 | `kex_list_forecastable_metrics` | Authorized metric/series/environment catalogue |
 | `kex_metric_history` | Existing prepared context, at most 512 points; unmeasured before first record |
 | `kex_forecast_metric` | Persisted forecast, state, strategy, quality and provenance |
-| `kex_get_forecast_quality` | Realised MAE/MASE/pinball/coverage/width; unmeasured until maturity |
+| `kex_get_forecast_quality` | Realised TimesFM metrics, four baseline MAEs, sample count, watermark and current state/strategy; unmeasured until maturity |
 | `kex_list_predicted_threshold_breaches` | Explicit conservative bound breaches, result key, timestamps, revision and fingerprints |
 
 The former `kex_forecast_catalog`, `kex_forecast_get`, `kex_forecast_latest`,

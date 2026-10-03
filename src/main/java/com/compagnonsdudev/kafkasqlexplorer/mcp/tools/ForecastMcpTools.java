@@ -7,6 +7,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.*;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.ToolCategory;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 
@@ -120,6 +121,14 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
         r == null ? Measured.unmeasured("No forecast has been persisted") : Measured.of(r));
   }
 
+  public record Quality(
+      ForecastBacktestEvaluator.Evaluation timesfmMetrics,
+      Map<String, Double> baselineMae,
+      int evaluatedPoints,
+      long evaluatedThrough,
+      String currentStrategy,
+      String currentState) {}
+
   @McpTool(
       name = "kex_get_forecast_quality",
       description =
@@ -130,14 +139,21 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
               readOnlyHint = true,
               destructiveHint = false,
               openWorldHint = false))
-  public ToolResult<Measured<ForecastBacktestEvaluator.Evaluation>> quality(
+  public ToolResult<Measured<Quality>> quality(
       @McpToolParam(description = "Approved series id") String seriesId) {
     authorize(seriesId);
     var r = read(seriesId);
     return result(
         r == null || r.quality() == null
             ? Measured.unmeasured("No realised forecast quality yet")
-            : Measured.of(r.quality()));
+            : Measured.of(
+                new Quality(
+                    r.quality(),
+                    r.baselineMae(),
+                    r.evaluatedPoints(),
+                    r.evaluatedThrough(),
+                    r.strategy(),
+                    r.state())));
   }
 
   @McpTool(
