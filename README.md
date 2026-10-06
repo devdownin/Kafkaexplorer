@@ -149,6 +149,9 @@ The **Metrics Forecast** panel includes preparation diagnostics, a candidate cat
 configuration assistant, live history progress and a result summary. Run `bin/forecast-stack.sh`
 to start the complete local KafkaExplorer/PostgreSQL/TimesFM stack with persistent storage and
 generated credentials. See the **[guided setup](docs/forecasts.md)** for approval and restart steps.
+The companion agent is **[Kex-anHarness](https://github.com/devdownin/Kex-agent-ai)**
+(formerly Kex Agent AI); its [forecast guide](https://github.com/devdownin/Kex-agent-ai/blob/main/docs/TIMESFM.md)
+covers the agent’s Forecasts page and MCP diagnostics.
 
 Preparing TimesFM: an optional PostgreSQL journal now captures selected metrics as timestamped,
 versioned observations. An internal preparation layer reconstructs regular contexts, marks short
