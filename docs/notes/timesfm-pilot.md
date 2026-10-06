@@ -7,8 +7,15 @@ are omitted and provenance is marked incomplete; clients must not turn a masked 
 resource link. This is an additive field: existing clients can ignore it. Source declarations
 describe scope, not a measured incident or a discovered process association.
 
-The pilot is disabled by default. It uses the existing PostgreSQL history and internal CPU
-service; enable them first using [the history runbook](timesfm-history.md). The operator owns
+The pilot and its five read-only MCP tools are enabled by default. With no approved series,
+the catalogue is empty and scheduling performs no database or model calls. Set
+`explorer.forecasting.pilot.enabled=false` (or `EXPLORER_FORECASTING_PILOT_ENABLED=false`)
+to disable the pilot and withhold its MCP tools.
+
+To calculate forecasts, enable the existing PostgreSQL history and internal CPU service
+using [the history runbook](timesfm-history.md), then configure approved series. A non-empty
+pilot still requires both history and inference; invalid or incomplete deployment configuration
+is rejected at startup. The operator owns
 series identity, metric semantics, source resources, environment, thresholds and quality gates.
 No series is automatically discovered or activated.
 

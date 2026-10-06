@@ -53,8 +53,9 @@ export function ForecastPanel() {
     <h2 className="text-lg font-semibold">Metrics Forecast</h2>
     {error && <p role="alert">{error}</p>}
     {!status && !error && <p>Loading forecast status…</p>}
-    {status && !status.enabled && <p>Forecast pilot disabled. Configure approved series to enable it.</p>}
-    {status?.enabled && <>
+    {status && !status.enabled && <p>Forecast pilot disabled by configuration. Enable explorer.forecasting.pilot.enabled to use it.</p>}
+    {status?.enabled && status.series.length === 0 && <p>Forecast pilot enabled. Configure approved series, PostgreSQL history and TimesFM inference to calculate forecasts.</p>}
+    {status?.enabled && status.series.length > 0 && <>
       <label>Series <select value={series?.seriesId ?? ''} onChange={e => setSelected(e.target.value)}>
         {status.series.map(s => <option key={s.seriesId} value={s.seriesId}>{s.metricId} · {s.environment}</option>)}
       </select></label>

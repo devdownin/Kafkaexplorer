@@ -147,7 +147,9 @@ Plongée dans l'architecture : **[docs/architecture.md](docs/architecture.md)**
 
 Le journal PostgreSQL optionnel capture les métriques sélectionnées et prépare des contextes
 réguliers pour TimesFM. Le service CPU-only utilise l'overlay `compose/timesfm.yml` et un
-checkpoint épinglé. Le pilote, activé séparément, planifie les séries explicitement approuvées,
+checkpoint épinglé. Le pilote et ses cinq outils MCP en lecture seule sont activés par défaut. Sans série approuvée,
+le catalogue est vide et aucun appel à la base ou au modèle ne démarre. Une fois l’historique,
+l’inférence et les séries configurés, le pilote planifie les séries explicitement approuvées,
 persiste les prévisions et l'activation opérateur, puis compare les erreurs réalisées à quatre
 baselines. Metrics Forecast affiche historique, quantiles et qualité. Le mode initial est
 `SHADOW` ; l'activation exige une confirmation et une qualité mesurée. Cinq outils MCP appliquent

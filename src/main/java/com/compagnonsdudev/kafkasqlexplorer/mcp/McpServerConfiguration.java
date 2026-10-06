@@ -296,7 +296,7 @@ public class McpServerConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "explorer.forecasting.pilot", name = "enabled", havingValue = "true")
+    @ConditionalOnProperty(prefix = "explorer.forecasting.pilot", name = "enabled", havingValue = "true", matchIfMissing = true)
     ForecastMcpTools forecastMcpTools(ForecastPilotService pilot, ToolGuard guard) {
         return new ForecastMcpTools(pilot, guard);
     }

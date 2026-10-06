@@ -3,6 +3,7 @@ package com.compagnonsdudev.kafkasqlexplorer.forecast;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -12,11 +13,15 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @ConditionalOnProperty(
     prefix = "explorer.forecasting.pilot",
     name = "enabled",
-    havingValue = "true")
+    havingValue = "true",
+    matchIfMissing = true)
 public class ForecastPilotConfiguration {
   @Bean
   ForecastPilotProperties forecastPilotProperties(ForecastingProperties root) {
-    if (!root.getHistory().isEnabled() || !root.getInference().isEnabled())
+    // Exposing the feature must not require an unused database or model. Approved series,
+    // however, retain the dependency and provenance checks before scheduling can start.
+    if (!root.getPilot().getSeries().isEmpty()
+        && (!root.getHistory().isEnabled() || !root.getInference().isEnabled()))
       throw new IllegalArgumentException("Pilot requires enabled history and inference");
     root.getPilot().validate();
     if (root.getPilot().getSeries().stream()
@@ -34,9 +39,9 @@ public class ForecastPilotConfiguration {
   ForecastPilotService forecastPilotService(
       ForecastPilotProperties p,
       ForecastPilotStore s,
-      MetricSeriesPreparationService preparation,
-      TimesFmClient client,
+      ObjectProvider<MetricSeriesPreparationService> preparation,
+      ObjectProvider<TimesFmClient> client,
       MeterRegistry meters) {
-    return new ForecastPilotService(p, s, preparation, client, meters);
+    return new ForecastPilotService(p, s, preparation.getIfAvailable(), client.getIfAvailable(), meters);
   }
 }

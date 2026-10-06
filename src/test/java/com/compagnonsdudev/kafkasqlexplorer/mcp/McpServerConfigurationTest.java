@@ -77,7 +77,9 @@ class McpServerConfigurationTest {
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withUserConfiguration(Services.class)
             .withConfiguration(AutoConfigurations.of())
-            .withUserConfiguration(McpServerConfiguration.class);
+            .withUserConfiguration(McpServerConfiguration.class,
+                    com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastingProperties.class,
+                    com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastPilotConfiguration.class);
 
     @Test
     void nothing_of_the_module_is_built_when_the_server_is_disabled() {
@@ -103,6 +105,7 @@ class McpServerConfigurationTest {
             // advertised and never applied, and a guard's JSON-RPC code never reaches the agent.
             assertThat(context).hasSingleBean(McpToolInterceptor.class);
             assertThat(context).hasSingleBean(McpToolSpecificationPostProcessor.class);
+            assertThat(context).hasSingleBean(com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools.class);
 
             McpCatalogService catalog = context.getBean(McpCatalogService.class);
             assertThat(catalog.writeSurfaceOpen()).isFalse();
@@ -111,7 +114,9 @@ class McpServerConfigurationTest {
                             "kex_infer_schema", "kex_sql_query", "kex_list_tables",
                             "kex_trace_key", "kex_resume_trace", "kex_compare_traces",
                             "kex_consumer_lag", "kex_deduce_data_model", "kex_build_join",
-                            "kex_run_audit", "kex_get_audit", "kex_suggest_kpis")
+                            "kex_run_audit", "kex_get_audit", "kex_suggest_kpis",
+                            "kex_list_forecastable_metrics", "kex_metric_history", "kex_forecast_metric",
+                            "kex_get_forecast_quality", "kex_list_predicted_threshold_breaches")
                     .doesNotContain("kex_produce_message");
 
             // Withheld, not vanished: the catalogue keeps the row so the console can say why.
@@ -119,6 +124,17 @@ class McpServerConfigurationTest {
                     .singleElement()
                     .satisfies(d -> assertThat(d.visibility().state()).isEqualTo(Visibility.State.HIDDEN));
         });
+    }
+
+    @Test
+    void explicitly_disabling_the_pilot_withholds_forecast_tools() {
+        runner.withPropertyValues("explorer.mcp.enabled=true", "explorer.forecasting.pilot.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).doesNotHaveBean(com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools.class);
+                    assertThat(context.getBean(McpCatalogService.class).exposed()).extracting(ToolDescriptor::name)
+                            .contains("kex_list_topics").doesNotContain("kex_list_forecastable_metrics");
+                });
     }
 
     @Test

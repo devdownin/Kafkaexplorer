@@ -73,10 +73,10 @@ kafka:
   # confluent-secret: YOUR_API_SECRET
 
 explorer:
-  # History, inference and production pilot are separate opt-in switches; no automatic alerts.
+  # The pilot exposes an empty catalogue by default; history and inference require configuration.
   forecasting:
     pilot:
-      enabled: false
+      enabled: true
       interval: 5m
       retention: 7d
       max-series: 20
