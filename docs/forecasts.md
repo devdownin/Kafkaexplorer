@@ -5,6 +5,13 @@ a configuration assistant, history progress and a forecast summary. The pilot an
 tools are enabled by default, with an empty approved catalogue. No forecast runs until sources,
 durable history and TimesFM are explicitly configured.
 
+## Companion agent: Kex-anHarness
+
+[Kex-anHarness](https://github.com/devdownin/Kex-agent-ai), formerly Kex Agent AI, reads
+KafkaExplorer’s forecast tools through MCP. See its [forecast guide](https://github.com/devdownin/Kex-agent-ai/blob/main/docs/TIMESFM.md)
+for the agent’s Forecasts page and MCP diagnostics. The GitHub repository URL and published
+`kex-agent-ai` image names retain their existing identifiers.
+
 ## Start the complete local stack
 
 From a repository checkout with Docker Compose v2 and OpenSSL installed:

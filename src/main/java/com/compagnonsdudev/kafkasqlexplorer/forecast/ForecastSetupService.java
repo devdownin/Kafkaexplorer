@@ -188,7 +188,12 @@ public class ForecastSetupService {
     if (Math.multiplyExact(r.stepMillis(), 513L) > h.getRetention().toMillis())
       throw new IllegalArgumentException("Context exceeds history retention; choose a shorter cadence or increase retention first");
     String version = MetricObservation.collectedVersion(m, kafka.getBootstrapServers(), r.collectorId());
-    String id = MetricObservation.seriesId(r.clusterId(), version, m.id(), "value", Map.of());
+    // This template emits its pinned source identifiers as labels even without labelFields.
+    // Include them so the approved series resolves the observations captured by MetricService.
+    Map<String, String> labels = "CONSUMER_TIME_LAG".equals(m.templateType())
+        ? Map.of("topic", String.valueOf(m.templateParams().get("topic")),
+                 "group", String.valueOf(m.templateParams().get("group"))) : Map.of();
+    String id = MetricObservation.seriesId(r.clusterId(), version, m.id(), "value", labels);
     if (r.threshold() != null && !Set.of("ABOVE", "BELOW").contains(String.valueOf(r.direction())))
       throw new IllegalArgumentException("Threshold direction must be ABOVE or BELOW");
     var threshold = r.threshold() == null ? null : new ForecastThresholdPolicy(id, version, r.threshold(),

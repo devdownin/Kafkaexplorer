@@ -5,7 +5,7 @@
 Usage: docker compose -f docker-compose.yml -f compose/forecasts.yml config --format json | python3 docs/forecast-topology-check.py
 """
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -21,6 +21,12 @@ assert configuration['networks']['timesfm_private']['internal'], 'The model netw
 for service in [worker, prefetch]:
     assert service['build']['context'] == str(ROOT / 'services/timesfm'), 'extends must not rebase the model context to compose/services'
     assert not service.get('ports'), 'No model ports may be published'
+    for cache_key in ['HF_HOME', 'TIMESFM_CACHE_DIR']:
+        cache = PurePosixPath(service['environment'][cache_key])
+        assert cache.is_absolute() and any(
+            cache.is_relative_to(PurePosixPath(volume['target']))
+            for volume in service['volumes'] if not volume.get('read_only', False)
+        ), f'{cache_key} must use writable model storage with a read-only container root'
 assert not postgres.get('ports'), 'PostgreSQL must not publish a host port'
 assert worker['depends_on']['forecast-model-prefetch']['condition'] == 'service_completed_successfully'
 assert explorer['depends_on']['timesfm']['condition'] == 'service_healthy'

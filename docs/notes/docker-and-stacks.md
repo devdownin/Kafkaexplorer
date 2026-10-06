@@ -507,3 +507,8 @@ model on an outbound network; the worker starts only after prefetch completion a
 the internal network. The app waits for PostgreSQL and model health but leaves history capture
 disabled until selected metric IDs are approved in external configuration.
 See the [operator walkthrough](../forecasts.md) for preparation, mounting the export and health checks.
+
+Hugging Face’s auxiliary cache (Xet metadata and logs) also needs writable storage.
+`HF_HOME=/models` keeps it on the named model volume alongside the checkpoint. Passing
+`cache_dir=/models` to `hf_hub_download` alone does not relocate Xet: its default under
+`/app/.cache` fails when the TimesFM container root filesystem is read-only.
