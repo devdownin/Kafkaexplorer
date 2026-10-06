@@ -51,6 +51,20 @@ def wait_for(read, accept, label, seconds=180):
     raise AssertionError(label + ' did not complete within its deadline')
 
 
+def read_observation(series_id):
+    assert re.fullmatch('[a-f0-9]{64}', series_id)
+    psql = ('exec', '-T', 'forecast-postgres', 'psql', '-v', 'ON_ERROR_STOP=1',
+            '-U', 'forecasts', '-d', 'forecasts', '-At', '-c')
+    # The asynchronous journal creates its schema on first append, after liveness is UP.
+    exists = compose(*psql, "SELECT to_regclass('public.kex_metric_observation_v1') IS NOT NULL;").strip()
+    assert exists in ('t', 'f'), 'Invalid PostgreSQL relation check'
+    if exists == 'f':
+        return None
+    query = f"SELECT payload FROM kex_metric_observation_v1 WHERE series_id='{series_id}' ORDER BY observed_at DESC LIMIT 1;"
+    output = compose(*psql, query).strip()
+    return json.loads(output) if output else None
+
+
 def fixture_sql(observation, cutoff):
     """Preserve real collection provenance; fill 512 completed minute buckets explicitly."""
     assert re.fullmatch('[a-f0-9]{64}', observation['seriesId'])
@@ -149,11 +163,7 @@ def main():
     api('/api/metrics/forecast-ci-lag/refresh', {})
     series_id = draft['seriesId']
     assert re.fullmatch('[a-f0-9]{64}', series_id)
-    query = f"SELECT payload FROM kex_metric_observation_v1 WHERE series_id='{series_id}' ORDER BY observed_at DESC LIMIT 1;"
-    def observation():
-        output = compose('exec', '-T', 'forecast-postgres', 'psql', '-U', 'forecasts', '-d', 'forecasts', '-At', '-c', query).strip()
-        return json.loads(output) if output else None
-    real = wait_for(observation, lambda value: value is not None and value['qualityState'] == 'OBSERVED', 'Real collection persisted')
+    real = wait_for(lambda: read_observation(series_id), lambda value: value is not None and value['qualityState'] == 'OBSERVED', 'Real collection persisted')
     assert real['unit'] == 'milliseconds' and real['metricId'] == candidate['metricId']
     sql = fixture_sql(real, int(time.time() * 1000) // 60000 * 60000)
     compose('exec', '-T', 'forecast-postgres', 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'forecasts', '-d', 'forecasts', stdin=sql)

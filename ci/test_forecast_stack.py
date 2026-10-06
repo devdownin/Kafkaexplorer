@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('forecast_stack', Path(__file__).with_name('forecast-stack.py'))
 smoke = importlib.util.module_from_spec(spec)
@@ -12,6 +13,21 @@ spec.loader.exec_module(smoke)
 
 
 class SmokeContract(unittest.TestCase):
+    def test_waits_for_asynchronous_history_schema_before_querying_rows(self):
+        with patch.object(smoke, 'compose', return_value='f\n') as command:
+            self.assertIsNone(smoke.read_observation('a' * 64))
+            self.assertEqual(command.call_count, 1)
+            self.assertIn('to_regclass', command.call_args.args[-1])
+        with patch.object(smoke, 'compose', side_effect=['t\n', '{"qualityState":"OBSERVED"}\n']):
+            self.assertEqual(smoke.read_observation('a' * 64), {'qualityState': 'OBSERVED'})
+        with patch.object(smoke, 'compose', side_effect=['t\n', '']):
+            self.assertIsNone(smoke.read_observation('a' * 64))
+
+    def test_schema_errors_remain_failures_instead_of_being_treated_as_empty_history(self):
+        with patch.object(smoke, 'compose', return_value='invalid'):
+            with self.assertRaises(AssertionError):
+                smoke.read_observation('a' * 64)
+
     def test_fixture_uses_real_identity_and_512_completed_buckets(self):
         real = {'seriesId': 'a' * 64, 'component': 'value', 'qualityState': 'OBSERVED',
                 'metricId': "metric'quote", 'definitionVersion': 'canonical', 'unit': 'milliseconds',
