@@ -98,3 +98,22 @@ source authorization, persistence and failover behavior.
 
 These endpoints use the application's existing operator REST boundary. No setup, enrollment,
 configuration write or inference-on-read MCP tool has been added.
+
+### Starting from a metric card
+
+Select **Prepare a forecast** on the Metrics page. The assistant selects that metric
+from the current candidate catalogue and prepopulates the captured unit and known
+source topics/groups. Eligibility blockers still apply; source attestation and export
+confirmation are required. No runtime configuration is applied by the card action.
+
+### CI stack smoke
+
+The `forecast-stack` CI job builds the verified release JAR and the pinned CPU
+TimesFM image, then starts an isolated `forecast-ci` Compose project with PostgreSQL.
+`ci/forecast-stack.py` creates a real consumer time-lag metric, exports reviewed
+configuration, restarts Explorer and requires a real observation in PostgreSQL.
+It then inserts **512 synthetic historical buckets** to exercise TimesFM immediately,
+and requires a READY/TIMESFM/SHADOW result readable through authenticated MCP.
+This verifies integration, not forecasting accuracy, realised quality or activation.
+The ephemeral project's volumes are removed at the end. Run this driver only against
+an isolated disposable stack, never against an existing deployment.

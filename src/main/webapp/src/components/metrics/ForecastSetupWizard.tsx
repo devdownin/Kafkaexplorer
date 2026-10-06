@@ -6,7 +6,7 @@ import { Button, Checkbox, Field, Input, Select, useConfirm } from '../ui';
 import type { ForecastCandidate, ForecastCandidates, ForecastDraft, ForecastDraftRequest } from '../../api/types';
 
 const split = (text: string) => text.split(',').map(s => s.trim()).filter(Boolean);
-export function ForecastSetupWizard() {
+export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: string }) {
   const [candidates, setCandidates] = useState<ForecastCandidates | null>(null);
   const [selected, setSelected] = useState<ForecastCandidate | null>(null);
   const [step, setStep] = useState(1);
@@ -34,12 +34,19 @@ export function ForecastSetupWizard() {
         if (!controller.signal.aborted) {
           if (!Array.isArray(data?.metrics)) { setError('Candidate catalogue unavailable.'); return; }
           setCandidates(data);
+          if (initialMetricId) {
+            const candidate = data.metrics.find(m => m.metricId === initialMetricId);
+            if (candidate) {
+              setSelected(candidate); setUnit(candidate.unit);
+              setTopics(candidate.topics.join(', ')); setGroups(candidate.groups.join(', '));
+            } else setError('Selected metric is absent from the candidate catalogue. Reload or choose a listed metric.');
+          }
           if (data.clusterId) setClusterId(data.clusterId);
           if (data.collectorId) setCollectorId(data.collectorId);
         }
       }).catch(() => { if (!controller.signal.aborted) setError('Candidate catalogue unavailable.'); });
     return () => controller.abort();
-  }, []);
+  }, [initialMetricId]);
   function choose(metricId: string) {
     const c = candidates?.metrics.find(m => m.metricId === metricId) ?? null;
     setSelected(c); setUnit(c?.unit ?? ''); setTopics(c?.topics.join(', ') ?? '');

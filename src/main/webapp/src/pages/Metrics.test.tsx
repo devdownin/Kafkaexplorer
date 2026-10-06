@@ -113,6 +113,7 @@ const suggestions: MetricSuggestions = {
 function stubApi(metrics: MetricConfig[], proposals: MetricSuggestion[] = [suggestion]) {
   mockedAxios.get.mockImplementation((url: string) => {
     if (url === '/api/forecasts') return Promise.resolve({ data: { enabled: false, state: 'DISABLED', series: [] } });
+    if (url === '/api/forecasts/candidates') return Promise.resolve({ data: { metrics: metrics.map(metric => ({ metricId: metric.id, name: metric.name, definitionVersion: 'canonical', unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received', 'demo.orders.2.validated'], groups: [], eligible: true, enrolled: false, blockers: [] })), total: metrics.length, truncated: false } });
     if (url === '/api/metrics') return Promise.resolve({ data: metrics });
     if (url === '/api/metrics/metadata') return Promise.resolve({ data: {} });
     if (url === '/api/metrics/templates') return Promise.resolve({ data: [] });
@@ -146,6 +147,16 @@ beforeEach(() => {
 });
 
 describe('Metrics page', () => {
+  it('opens the forecast assistant from the matching metric card and aborts it on close', async () => {
+    stubApi([templateMetric]); const user = userEvent.setup(); await renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Prepare a forecast' }));
+    expect(await screen.findByRole('button', { name: 'Continue to sources' })).toBeEnabled();
+    expect(screen.getByLabelText('Candidate metric')).toHaveValue('m-1');
+    expect(screen.getByRole('heading', { name: 'Prepare a forecast' })).toHaveFocus();
+    expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/forecasts/configuration', expect.anything(), expect.anything());
+    await user.click(screen.getByRole('button', { name: 'Close forecast preparation' }));
+    expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
+  });
   it('renders a template metric, whose SQL is null by construction', async () => {
     stubApi([templateMetric]);
     await renderPage();
