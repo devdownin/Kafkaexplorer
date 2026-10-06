@@ -150,6 +150,9 @@ un assistant de configuration avec approbation, le suivi de l’historique et un
 Lancez `bin/forecast-stack.sh` pour démarrer KafkaExplorer, PostgreSQL et TimesFM avec stockage
 persistant et secrets générés. Consultez le **[parcours guidé](docs/forecasts.md)** avant de valider
 la configuration et de redémarrer.
+L’agent compagnon est **[Kex-anHarness](https://github.com/devdownin/Kex-agent-ai)**
+(anciennement Kex Agent AI) ; son [guide des prévisions](https://github.com/devdownin/Kex-agent-ai/blob/main/docs/TIMESFM.md)
+présente la page Prévisions de l’agent et les diagnostics MCP.
 
 Le journal PostgreSQL optionnel capture les métriques sélectionnées et prépare des contextes
 réguliers pour TimesFM. Le service CPU-only utilise l'overlay `compose/timesfm.yml` et un

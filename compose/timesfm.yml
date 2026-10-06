@@ -21,6 +21,9 @@ services:
       # overlay; the application fails closed because the token is validated before readiness.
       TIMESFM_TOKEN: ${TIMESFM_TOKEN:-}
       TIMESFM_CACHE_DIR: /models
+      # Hub/Xet also writes metadata and logs outside the checkpoint cache_dir.
+      # Keep those writes on the model volume when the container root is read-only.
+      HF_HOME: /models
       TIMESFM_THREADS: ${TIMESFM_THREADS:-4}
     cpus: ${TIMESFM_CPUS:-4.0}
     mem_limit: ${TIMESFM_MEM_LIMIT:-8g}
