@@ -58,6 +58,10 @@ public record MetricObservation(
         return digest(semantic);
     }
 
+    public static String collectedVersion(MetricConfig metric, String endpoint, String collector) {
+        return digest(java.util.List.of(definitionVersion(metric), endpoint == null ? "" : endpoint, collector));
+    }
+
     static String digest(Object input) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")

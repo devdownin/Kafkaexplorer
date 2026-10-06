@@ -64,6 +64,15 @@ public final class TimesFmClient implements AutoCloseable {
             .publishPercentiles(0.5, 0.95).register(registry);
     }
 
+    /** Readiness probe only; no model execution, redirects or response body retained. */
+    public boolean isReady() throws Exception {
+        var request = HttpRequest.newBuilder(endpoint.resolve("/health/ready"))
+            .timeout(Duration.ofSeconds(3)).GET().build();
+        var pending = http.sendAsync(request, HttpResponse.BodyHandlers.discarding());
+        try { return pending.get(3, TimeUnit.SECONDS).statusCode() == 200; }
+        finally { pending.cancel(true); }
+    }
+
     public List<MetricForecast> forecast(List<PreparedMetricSeries> contexts, int horizon) {
         var series = List.copyOf(contexts);
         validateInput(series, horizon);

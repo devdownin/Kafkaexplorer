@@ -145,6 +145,11 @@ Operational review tools add `kex_topic_configuration` (effective topic settings
 
 Architecture deep-dive: **[docs/architecture.md](docs/architecture.md)**
 
+The **Metrics Forecast** panel includes preparation diagnostics, a candidate catalogue, a reviewed
+configuration assistant, live history progress and a result summary. Run `bin/forecast-stack.sh`
+to start the complete local KafkaExplorer/PostgreSQL/TimesFM stack with persistent storage and
+generated credentials. See the **[guided setup](docs/forecasts.md)** for approval and restart steps.
+
 Preparing TimesFM: an optional PostgreSQL journal now captures selected metrics as timestamped,
 versioned observations. An internal preparation layer reconstructs regular contexts, marks short
 gauge imputations, and rejects counter resets or inadmissible history. See **[history configuration

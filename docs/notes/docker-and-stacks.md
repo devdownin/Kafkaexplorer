@@ -496,3 +496,14 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
 - **Le JAR publié porte la version du tag**, pas celle du pom : `versions:set -DgenerateBackupPoms=false` réécrit la version dans la copie du runner avant le `verify`, sans commit. Le pom du dépôt reste en `0.0.1-SNAPSHOT` — c'est la version de développement et couper une release ne doit pas demander de la bousculer — mais une Release taguée `v1.1` attachait `kafka-sql-explorer-0.0.1-SNAPSHOT.jar` : le seul fichier que l'utilisateur télécharge n'avait aucun rapport avec la version sur laquelle il venait de cliquer.
 - Secrets/variables attendus (Settings → Secrets and variables → Actions) : secret `DOCKERHUB_USERNAME` (le compte, pas l'organisation), secret `DOCKERHUB_TOKEN` (**PAT scope Read, Write, Delete** — l'API de description refuse un token read-only, et l'échec ressemble à un 401 sur un token pourtant valide : c'est le premier suspect quand la synchro tombe en 401, voir le diagnostic plus haut), variable `DOCKERHUB_REPOSITORY` (optionnelle).
 - Lancement local : `docker run -p 127.0.0.1:8080:8080 -e KAFKA_BOOTSTRAP_SERVERS=localhost:9092 -e ANTHROPIC_API_KEY=sk-ant-... compagnonsdudev/kafkaexplorer:latest`. La variable est `KAFKA_BOOTSTRAP_SERVERS`, pas `SPRING_KAFKA_BOOTSTRAP_SERVERS` : le préfixe de configuration est `kafka.`, pas `spring.kafka.` (le projet utilise `kafka-clients` directement, pas `spring-kafka`), donc l'ancienne forme ne se liait à rien et l'app restait sur `localhost:9092`. Publier sur la loopback : l'app n'a **aucune authentification** et `POST /api/config` repointe le cluster à chaud.
+
+
+## Complete local forecasting stack
+
+`compose/forecasts.yml` extends the existing CPU model service and adds durable PostgreSQL.
+`bin/forecast-stack.sh` generates credentials once with restrictive permissions and preserves
+reviewed configuration on rerun, then explicitly restarts KafkaExplorer to load bind-file changes. A one-shot prefetch service downloads and verifies the pinned
+model on an outbound network; the worker starts only after prefetch completion and has only
+the internal network. The app waits for PostgreSQL and model health but leaves history capture
+disabled until selected metric IDs are approved in external configuration.
+See the [operator walkthrough](../forecasts.md) for preparation, mounting the export and health checks.

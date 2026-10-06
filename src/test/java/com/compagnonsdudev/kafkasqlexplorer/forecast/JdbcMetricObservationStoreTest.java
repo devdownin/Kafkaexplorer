@@ -24,6 +24,16 @@ class JdbcMetricObservationStoreTest {
     }
 
     @Test
+    void connectivityProbeDoesNotCreateHistorySchema() throws Exception {
+        String url = "jdbc:h2:mem:" + java.util.UUID.randomUUID() + ";DB_CLOSE_DELAY=-1;MODE=PostgreSQL";
+        assertTrue(store(url).checkConnection());
+        try (var connection = DriverManager.getConnection(url);
+             var tables = connection.getMetaData().getTables(null, null, "KEX_METRIC_OBSERVATION_V1", null)) {
+            assertFalse(tables.next());
+        }
+    }
+
+    @Test
     void survivesReopeningIsIdempotentAndPreservesUnknownVersusZero() throws Exception {
         String url = "jdbc:h2:file:" + dir.resolve("history") + ";MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE";
         var first = store(url);

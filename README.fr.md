@@ -145,6 +145,12 @@ Les outils de revue opérationnelle `kex_topic_configuration`, `kex_topic_policy
 
 Plongée dans l'architecture : **[docs/architecture.md](docs/architecture.md)**
 
+Le panneau **Metrics Forecast** propose un diagnostic, un catalogue de métriques candidates,
+un assistant de configuration avec approbation, le suivi de l’historique et une synthèse des résultats.
+Lancez `bin/forecast-stack.sh` pour démarrer KafkaExplorer, PostgreSQL et TimesFM avec stockage
+persistant et secrets générés. Consultez le **[parcours guidé](docs/forecasts.md)** avant de valider
+la configuration et de redémarrer.
+
 Le journal PostgreSQL optionnel capture les métriques sélectionnées et prépare des contextes
 réguliers pour TimesFM. Le service CPU-only utilise l'overlay `compose/timesfm.yml` et un
 checkpoint épinglé. Le pilote et ses cinq outils MCP en lecture seule sont activés par défaut. Sans série approuvée,

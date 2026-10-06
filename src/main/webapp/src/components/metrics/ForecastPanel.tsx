@@ -4,6 +4,8 @@ import axios from 'axios';
 import { Area, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Button, useConfirm } from '../ui';
 import type { ForecastStatus } from '../../api/types';
+import { ForecastPreparation } from './ForecastPreparation';
+import { ForecastProgress } from './ForecastProgress';
 
 export function ForecastPanel() {
   const [status, setStatus] = useState<ForecastStatus | null>(null);
@@ -54,11 +56,14 @@ export function ForecastPanel() {
     {error && <p role="alert">{error}</p>}
     {!status && !error && <p>Loading forecast status…</p>}
     {status && !status.enabled && <p>Forecast pilot disabled by configuration. Enable explorer.forecasting.pilot.enabled to use it.</p>}
+    {(status?.enabled || !status && error) && (!status?.series.length ? <ForecastPreparation /> :
+      <details><summary>Preparation and configuration</summary><ForecastPreparation /></details>)}
     {status?.enabled && status.series.length === 0 && <p>Forecast pilot enabled. Configure approved series, PostgreSQL history and TimesFM inference to calculate forecasts.</p>}
     {status?.enabled && status.series.length > 0 && <>
       <label>Series <select value={series?.seriesId ?? ''} onChange={e => setSelected(e.target.value)}>
         {status.series.map(s => <option key={s.seriesId} value={s.seriesId}>{s.metricId} · {s.environment}</option>)}
       </select></label>
+      {series && <ForecastProgress key={series.seriesId} seriesId={series.seriesId} result={result} />}
       {!result ? <p>No persisted forecast yet.</p> : <>
         <p>{result.state} · {result.strategy} · {result.visibility} · {result.context.outputUnit}</p>
         <p>{result.reason}</p>
@@ -73,12 +78,15 @@ export function ForecastPanel() {
           </ComposedChart></ResponsiveContainer>
         </div>}
         <p>Nominal quantiles; no guaranteed confidence. Baseline fallback has no interval. No alerts are sent.</p>
+        <details><summary>Quality comparisons and raw result</summary>
         {!result.quality ? <p>Realised quality: unmeasured.</p> : <>
           <p>Evaluated: {result.evaluatedPoints} points · MAE {result.quality.mae.toPrecision(4)} · MASE {result.quality.mase?.toPrecision(4) ?? 'unmeasured'} · coverage {(100 * result.quality.q10Q90Coverage).toFixed(1)}% · width {result.quality.meanIntervalWidth.toPrecision(4)} · pinball {result.quality.meanPinballLoss.toPrecision(4)}</p>
           <table><thead><tr><th>Baseline</th><th>Realised MAE</th></tr></thead><tbody>
             {Object.entries(result.baselineMae).map(([name, mae]) => <tr key={name}><td>{name}</td><td>{mae.toPrecision(4)}</td></tr>)}
           </tbody></table>
         </>}
+        <pre className="overflow-auto max-h-80 text-xs">{JSON.stringify(result, null, 2)}</pre>
+        </details>
         <Button onClick={() => void activation()} disabled={busy || result.state !== 'READY' && result.visibility !== 'ACTIVE'}>
           {result.visibility === 'ACTIVE' ? 'Return to SHADOW' : 'Activate after quality checks'}
         </Button>

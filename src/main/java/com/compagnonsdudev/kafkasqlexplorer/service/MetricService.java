@@ -720,6 +720,11 @@ public class MetricService {
     }
 
     private MetricConfig normalizeMetric(MetricConfig metric) {
+        return normalizeObservationDefinition(metric);
+    }
+
+    /** Pure collector definition normalization, also used when previewing forecast identities. */
+    public static MetricConfig normalizeObservationDefinition(MetricConfig metric) {
         String normalizedType = metric.type() == null || metric.type().isBlank()
             ? "GAUGE"
             : metric.type().trim().toUpperCase(Locale.ROOT);

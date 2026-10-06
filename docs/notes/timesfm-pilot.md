@@ -19,6 +19,11 @@ is rejected at startup. The operator owns
 series identity, metric semantics, source resources, environment, thresholds and quality gates.
 No series is automatically discovered or activated.
 
+The operator UI now has a [guided setup and complete local stack](../forecasts.md). Its candidate
+catalogue is metadata-only; exported configuration derives identity using the same collector
+function as capture and preserves existing approvals. Fresh progress reads resolve the declared
+series before a bounded history read; dependency probes are explicit, cached and do not infer.
+
 ## Configuration
 
 Merge this fragment into deployment configuration. Replace the series hash and definition version

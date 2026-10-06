@@ -92,6 +92,9 @@ SCALARS = {
 # only resolve because a marked interface of that name exists, and the resolver checks it does.
 DECLARED = {
     'Measured': 'Measured',
+    'ForecastThresholdPolicy.Direction': 'ForecastDirection',
+    'ForecastThresholdEvaluator.Breach': 'ForecastBreach',
+    'ForecastPilotService.PredictedBreach': 'ForecastPredictedBreach',
     # A record nested in another type is written `Outer.Inner` in a component. The console's call
     # feed carries two of them, and the alias each resolves to is named for what it means on the
     # page rather than for its Java nesting.

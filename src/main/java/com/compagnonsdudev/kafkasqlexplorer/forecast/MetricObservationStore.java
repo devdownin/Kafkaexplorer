@@ -13,6 +13,8 @@ public interface MetricObservationStore {
         public ReadLimitExceededException() { super("Observation payload exceeds the bounded read budget"); }
     }
     void append(List<MetricObservation> observations) throws Exception;
+    /** Connectivity only: must not initialise schemas or read observations. */
+    default boolean checkConnection() throws Exception { throw new UnsupportedOperationException(); }
     List<MetricObservation> read(String seriesId, long fromInclusive, long toExclusive, int limit) throws Exception;
     int purgeBefore(long cutoff, int limit) throws Exception;
 }

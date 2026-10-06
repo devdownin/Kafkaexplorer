@@ -590,3 +590,18 @@ Rien de tout cela ne ferme la porte : réinstaller un registre shadcn demande de
 `components.json` et les deux entrées d'alias, ce que la présente section documente. Ce qui est
 acquis, en revanche, c'est le verdict sur React Bits — Pro pour Neural Float, Commons Clause pour
 le libre — et il tient indépendamment du réseau.
+
+
+## Guided forecast preparation
+
+`ForecastPanel` retains its persisted-result poll and activation confirmation. `ForecastPreparation`
+loads metadata diagnostics and offers explicit dependency probes; `ForecastSetupWizard` separates
+candidate selection, source declaration, and attestation/confirmation before server validation.
+Every asynchronous request has cancellation and a timeout, including unmount during confirmation.
+Units come from the collector; all field errors are collected and the first invalid field receives
+focus. Existing cluster/collector identities seed the form. No credentials enter browser drafts.
+
+`ForecastProgress` polls only the selected approved source, keeps failures distinct from missing
+observations, and dates diagnostics. Trend uses the last measured value against the last Q50;
+threshold evaluation must share the persisted result key before it is shown. Preparation progress,
+source details and raw result stay available without promoting SHADOW to ACTIVE.
