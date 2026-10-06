@@ -45,7 +45,8 @@ def wait_for(read, accept, label, seconds=180):
             if accept(value):
                 print(label + ': OK', flush=True)
                 return value
-        except (urllib.error.URLError, json.JSONDecodeError):
+        # Restart can reset the published socket before the new process is listening.
+        except (urllib.error.URLError, ConnectionError, TimeoutError, json.JSONDecodeError):
             pass
         time.sleep(2)
     raise AssertionError(label + ' did not complete within its deadline')

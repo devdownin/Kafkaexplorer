@@ -3,6 +3,7 @@
 """Contract checks for the CI fixture and MCP response parser; no Docker simulation."""
 import importlib.util
 import json
+from io import BytesIO
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -13,6 +14,28 @@ spec.loader.exec_module(smoke)
 
 
 class SmokeContract(unittest.TestCase):
+    def test_health_wait_survives_connection_reset_and_timeout_during_restart(self):
+        for failure in [ConnectionResetError('restart closed the socket'), TimeoutError('startup timeout')]:
+            with self.subTest(failure=type(failure).__name__):
+                with patch.object(smoke.urllib.request, 'urlopen', side_effect=[failure, BytesIO(b'{"status":"UP"}')]) as request:
+                    with patch.object(smoke.time, 'sleep'), patch.object(smoke.time, 'monotonic', side_effect=[0, 0, 1]):
+                        # Follow the reset with a real JSON response through api(), not a fake readiness value.
+                        self.assertEqual(smoke.wait_for(lambda: smoke.api('/actuator/health/liveness'),
+                                                       lambda value: value['status'] == 'UP', 'Restart'), {'status': 'UP'})
+                        self.assertEqual(request.call_count, 2)
+
+    def test_repeated_startup_resets_still_exhaust_the_deadline(self):
+        with patch.object(smoke.urllib.request, 'urlopen', side_effect=ConnectionResetError('restart')):
+            with patch.object(smoke.time, 'sleep'), patch.object(smoke.time, 'monotonic', side_effect=[0, 0, 2]):
+                with self.assertRaisesRegex(AssertionError, 'Restart did not complete within its deadline'):
+                    smoke.wait_for(lambda: smoke.api('/actuator/health/liveness'), lambda value: True, 'Restart', seconds=1)
+
+    def test_health_contract_errors_fail_immediately(self):
+        with patch.object(smoke.time, 'sleep') as sleep:
+            with self.assertRaises(KeyError):
+                smoke.wait_for(lambda: {}, lambda value: value['status'] == 'UP', 'Restart')
+            sleep.assert_not_called()
+
     def test_waits_for_asynchronous_history_schema_before_querying_rows(self):
         with patch.object(smoke, 'compose', return_value='f\n') as command:
             self.assertIsNone(smoke.read_observation('a' * 64))
