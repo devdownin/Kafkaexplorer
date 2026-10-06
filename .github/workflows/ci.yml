@@ -360,6 +360,73 @@ jobs:
   # Dockerfile.release is what a tag actually publishes, and until now nothing built it
   # outside release.yml — so a change to it (the layered extraction, for one) was first
   # exercised by the release itself. It is cheap here: the JAR already exists.
+  forecast-stack:
+    name: Forecast stack — PostgreSQL, TimesFM and MCP
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      TIMESFM_CPUS: "2.0"
+      TIMESFM_THREADS: "2"
+      TIMESFM_MEM_LIMIT: 6g
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: jar
+          path: dist/
+      - name: Stage tested JAR
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          jars=(dist/*.jar)
+          [ ${#jars[@]} -eq 1 ]
+          cp "${jars[0]}" app.jar
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+      - name: Build explorer runtime
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: Dockerfile.release
+          load: true
+          tags: kafka-sql-explorer:ci
+          cache-from: type=gha,scope=release-image
+          cache-to: type=gha,mode=min,scope=release-image
+      - name: Build pinned TimesFM CPU runtime
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: services/timesfm
+          load: true
+          tags: forecast-ci-timesfm:ci
+          cache-from: type=gha,scope=timesfm-cpu
+          cache-to: type=gha,mode=max,scope=timesfm-cpu
+      - name: Check CI fixture and MCP parser contracts
+        run: python3 -m unittest discover -s ci -p 'test_*.py'
+      - name: Start isolated forecast stack
+        run: |
+          set -euo pipefail
+          bin/forecast-stack.sh --prepare-only
+          # Compose's service-derived tag shares the image with the prefetch service.
+          docker tag forecast-ci-timesfm:ci forecast-ci-forecast-model-prefetch
+          docker tag forecast-ci-timesfm:ci forecast-ci-timesfm
+          docker compose -p forecast-ci --env-file .forecast-stack/.env \
+            -f docker-compose.yml -f compose/forecasts.yml -f compose/image.yml -f compose/ci.yml \
+            up -d --no-build --wait --wait-timeout 900 kafka forecast-postgres timesfm explorer
+      - name: Collect, infer and read the persisted result
+        run: python3 ci/forecast-stack.py
+      - name: Capture service logs
+        if: failure()
+        run: |
+          docker compose -p forecast-ci --env-file .forecast-stack/.env \
+            -f docker-compose.yml -f compose/forecasts.yml -f compose/image.yml -f compose/ci.yml \
+            logs --tail 200 explorer timesfm forecast-model-prefetch forecast-postgres
+      - name: Stop disposable stack
+        if: always()
+        run: |
+          docker compose -p forecast-ci --env-file .forecast-stack/.env \
+            -f docker-compose.yml -f compose/forecasts.yml -f compose/image.yml -f compose/ci.yml \
+            down -v --remove-orphans
+
   release-image:
     name: Build and boot the release image
     needs: build

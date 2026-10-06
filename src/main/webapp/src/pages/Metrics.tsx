@@ -24,6 +24,7 @@ import { clearDraft, readDraft, writeDraft } from '../draftStore';
 import type { AuditHistory, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse, TableMetadata } from '../api/types';
 import { hasRunningMetric } from './metricsHealth';
 import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop';
+import { ForecastSetupWizard } from '../components/metrics/ForecastSetupWizard';
 import { ForecastPanel } from '../components/metrics/ForecastPanel';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
@@ -148,6 +149,12 @@ const Metrics: React.FC = () => {
    * Le brouillon est relu au montage et rouvre le modal tel qu'il était.
    */
   const [restoredEditor] = useState(() => readDraft<EditorDraft | null>(EDITOR_DRAFT, null));
+  const [forecastRequest, setForecastRequest] = useState<{ metricId: string; sequence: number } | null>(null);
+  useEffect(() => {
+    if (!forecastRequest) return;
+    const heading = document.getElementById('metric-forecast-preparation');
+    heading?.focus(); heading?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [forecastRequest]);
   const [isModalOpen, setIsModalOpen]   = useState(restoredEditor !== null);
   const [editingMetric, setEditingMetric] = useState<Partial<MetricConfig>>(restoredEditor?.metric ?? EMPTY_METRIC);
   const [selectedTopic, setSelectedTopic] = useState<string>(restoredEditor?.topic ?? '');
@@ -731,6 +738,7 @@ const Metrics: React.FC = () => {
               onDelete={() => handleDelete(metric.id)}
               onRefresh={() => handleRefreshOne(metric.id)}
               refreshing={refreshingId === metric.id}
+              onPrepareForecast={() => setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1 }))}
             />
           )) : (
             <div className="col-span-full text-center py-12 text-on-surface-variant text-sm">
@@ -744,6 +752,11 @@ const Metrics: React.FC = () => {
           Au-dessus des gabarits génériques, parce qu'une proposition qui nomme un topic de ce
           cluster et la mesure dont elle sort vaut mieux qu'un COUNT(*) sur la première table
           trouvée — et en dessous des métriques existantes, qui restent le sujet de la page. */}
+      {forecastRequest && <section aria-labelledby="metric-forecast-preparation" className="space-y-3">
+        <h3 id="metric-forecast-preparation" tabIndex={-1}>Prepare a forecast</h3>
+        <Button variant="ghost" onClick={() => setForecastRequest(null)}>Close forecast preparation</Button>
+        <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId} />
+      </section>}
       <ForecastPanel />
       <SuggestionsPanel
         response={suggestions}

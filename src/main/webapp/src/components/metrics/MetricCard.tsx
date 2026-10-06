@@ -18,7 +18,7 @@
 import React from 'react';
 import { AreaChart, Area, Line, LineChart, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 // Recharts exporte lui aussi un `Tooltip` : le nôtre est aliasé, comme dans la page.
-import { Tooltip as InfoTooltip } from '../ui';
+import { Button, Tooltip as InfoTooltip } from '../ui';
 import { useToast } from '../Toast';
 import { copyText } from '../../clipboard';
 import { describeQueryError } from '../../pages/queryError';
@@ -34,8 +34,9 @@ export const MetricCard: React.FC<{
   onEdit: () => void;
   onDelete: () => void;
   onRefresh: () => void;
+  onPrepareForecast?: () => void;
   refreshing: boolean;
-}> = ({ metric, onEdit, onDelete, onRefresh, refreshing }) => {
+}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast }) => {
   const { toast } = useToast();
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
@@ -356,6 +357,9 @@ export const MetricCard: React.FC<{
         )}
       </div>
 
+      {onPrepareForecast && <div className="px-4 py-2 border-t border-outline-variant/60">
+        <Button variant="ghost" onClick={onPrepareForecast}>Prepare a forecast</Button>
+      </div>}
       {/* Footer */}
       <div className="px-4 py-1.5 flex items-center justify-between border-t border-primary/5">
         <span className="text-[10px] text-outline flex items-center gap-1">

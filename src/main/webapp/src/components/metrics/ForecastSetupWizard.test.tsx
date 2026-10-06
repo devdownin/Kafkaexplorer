@@ -56,6 +56,31 @@ describe('ForecastSetupWizard', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Metric changed');
     expect(screen.queryByRole('button', { name: 'Download forecasts.yml' })).toBeNull();
   });
+  it('prefills the requested metric and known sources without approving an export', async () => {
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+    expect(await screen.findByRole('button', { name: 'Continue to sources' })).toBeEnabled();
+    expect(screen.getByLabelText('Candidate metric')).toHaveValue('lag');
+    await user.click(screen.getByRole('button', { name: 'Continue to sources' }));
+    expect(screen.getByLabelText('All source topics (comma separated)')).toHaveValue('orders');
+    expect(screen.getByLabelText('All consumer groups (comma separated, optional)')).toHaveValue('worker');
+    await user.click(screen.getByRole('button', { name: 'Review configuration' }));
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
+    expect(screen.getByRole('button', { name: 'Validate and export' })).toBeDisabled();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+  it('keeps eligibility blockers for the requested metric', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [{ ...metric, eligible: false, blockers: ['Set a known unit'] }], total: 1 } });
+    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+    expect(await screen.findByText('Set a known unit')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Continue to sources' })).toBeDisabled();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+  it('does not select another metric when the requested one is absent', async () => {
+    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="missing" /></ConfirmProvider>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Selected metric is absent');
+    expect(screen.getByLabelText('Candidate metric')).toHaveValue('');
+    expect(axios.post).not.toHaveBeenCalled();
+  });
   it('aborts catalogue reads on close', () => {
     vi.mocked(axios.get).mockReturnValue(new Promise(() => {})); const view = render(<ForecastSetupWizard />);
     const options = vi.mocked(axios.get).mock.calls[0][1]; view.unmount(); expect(options?.signal?.aborted).toBe(true);
