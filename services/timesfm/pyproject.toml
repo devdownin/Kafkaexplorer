@@ -7,12 +7,12 @@ dependencies = [
   "uvicorn==0.54.0",
   "numpy==2.4.6",
   "timesfm==2.0.2",
-  "torch==2.11.0+cpu",
+  "torch==2.13.0",
   "huggingface-hub==1.11.0",
 ]
 
 [dependency-groups]
-test = ["httpx==0.28.1", "pytest==9.0.2"]
+test = ["httpx==0.28.1", "pytest==9.0.3"]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
