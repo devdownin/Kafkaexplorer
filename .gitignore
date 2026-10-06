@@ -72,3 +72,6 @@ src/main/webapp/tsconfig.tsbuildinfo
 
 # Node toolchain fetched by a local build (frontend-maven-plugin / npx).
 .node/
+
+# Local forecast stack credentials and reviewed operator configuration.
+.forecast-stack/

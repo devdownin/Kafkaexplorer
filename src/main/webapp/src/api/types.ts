@@ -1582,3 +1582,107 @@ export interface ForecastStatus {
   state: string;
   series: ForecastSeriesView[];
 }
+/** @java ForecastSetupService.Check */
+export interface ForecastPreparationCheck {
+  id: string;
+  state: string;
+  detail: string;
+  action: string;
+}
+/** @java ForecastSetupService.Readiness */
+export interface ForecastReadiness {
+  checkedAt: number;
+  probed: boolean;
+  checks: ForecastPreparationCheck[];
+}
+/** @java ForecastSetupService.Candidate */
+export interface ForecastCandidate {
+  metricId: string;
+  name: string;
+  definitionVersion: string;
+  unit: string;
+  transformation: string;
+  topics: string[];
+  groups: string[];
+  eligible: boolean;
+  enrolled: boolean;
+  blockers: string[];
+}
+/** @java ForecastSetupService.Candidates */
+export interface ForecastCandidates {
+  metrics: ForecastCandidate[];
+  total: number;
+  truncated: boolean;
+  clusterId: string;
+  collectorId: string;
+}
+/** @java ForecastSetupService.DraftRequest */
+export interface ForecastDraftRequest {
+  metricId: string;
+  definitionVersion: string;
+  environment: string;
+  unit: string;
+  clusterId: string;
+  collectorId: string;
+  topics: string[];
+  groups: string[];
+  stepMillis: number;
+  horizon: number;
+  threshold: number | null;
+  direction: string;
+  confirmed: boolean;
+}
+/** @java ForecastSetupService.Draft */
+export interface ForecastDraft {
+  configuration: string;
+  seriesId: string;
+  instructions: string[];
+}
+/** @java ForecastThresholdPolicy.Direction */
+export type ForecastDirection = 'ABOVE' | 'BELOW';
+/** @java ForecastThresholdEvaluator.Breach */
+export interface ForecastBreach {
+  seriesId: string;
+  definitionVersion: string;
+  breached: boolean;
+  threshold: number;
+  direction: ForecastDirection;
+  horizonPoints: number;
+  confidence: number;
+  confidenceBound: number;
+  historyQuality: string;
+  visibility: ForecastVisibility;
+  forecastStatus: string;
+  basis: string;
+}
+/** @java ForecastPilotService.PredictedBreach */
+export interface ForecastPredictedBreach {
+  threshold: ForecastBreach;
+  resultKey: string;
+  evaluatedAt: number;
+  windowEndAt: number;
+  generatedAt: number;
+  historyEndAt: number;
+  modelId: string;
+  modelRevision: string;
+  inputFingerprint: string;
+  profileFingerprint: string;
+}
+/** @java ForecastSetupService.Progress */
+export interface ForecastProgress {
+  seriesId: string;
+  state: string;
+  reason: string;
+  observedPoints: number | null;
+  requiredPoints: number;
+  missingPoints: number | null;
+  imputedPoints: number | null;
+  checkedAt: number;
+  nextScheduledAt: number | null;
+  stepMillis: number;
+  horizon: number;
+  topics: string[];
+  groups: string[];
+  breach: ForecastPredictedBreach | null;
+  breachState: string;
+}

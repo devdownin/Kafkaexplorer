@@ -63,8 +63,7 @@ public final class MetricObservationJournal {
                         Map<String, Object> summary, boolean failed, long observedAt) {
         if (!selects(metric.id())) return;
         try {
-            String version = MetricObservation.digest(List.of(MetricObservation.definitionVersion(metric),
-                endpoint == null ? "" : endpoint, properties.getCollectorId()));
+            String version = MetricObservation.collectedVersion(metric, endpoint, properties.getCollectorId());
             String run = UUID.randomUUID().toString();
             Map<String, Object> coverage = new LinkedHashMap<>();
             if (summary != null) for (String key : COVERAGE_KEYS) {

@@ -19,6 +19,11 @@ public final class JdbcMetricObservationStore implements MetricObservationStore 
 
     public JdbcMetricObservationStore(Connections connections) { this.connections = connections; }
 
+    @Override
+    public boolean checkConnection() throws SQLException {
+        try (var c = connections.open()) { return c.isValid(2); }
+    }
+
     private synchronized void initialize(Connection c) throws SQLException {
         if (initialized) return;
         try (var s = c.createStatement()) {

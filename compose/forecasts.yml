@@ -1,0 +1,82 @@
+# Complete local forecast stack: bin/forecast-stack.sh
+# Merge with docker-compose.yml. Model download has outbound access only in the one-shot
+# prefetch service; the inference worker and PostgreSQL have no host ports.
+services:
+  forecast-postgres:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: forecasts
+      POSTGRES_USER: forecasts
+      POSTGRES_PASSWORD: ${FORECAST_POSTGRES_PASSWORD:-}
+    volumes:
+      - forecast_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forecasts -d forecasts"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks:
+      - timesfm_private
+
+  forecast-model-prefetch:
+    extends:
+      file: compose/timesfm.yml
+      service: timesfm
+    # extends rebases inherited paths to compose/; override the build context explicitly.
+    build:
+      context: ./services/timesfm
+    restart: "no"
+    command: ["exec /app/.venv/bin/python -m kex_timesfm.prefetch"]
+    healthcheck:
+      disable: true
+    networks:
+      - default
+
+  timesfm:
+    extends:
+      file: compose/timesfm.yml
+      service: timesfm
+    # extends rebases inherited paths to compose/; override the build context explicitly.
+    build:
+      context: ./services/timesfm
+    # The pinned and SHA-256-verified checkpoint was populated by the one-shot service.
+    command: ["exec /app/.venv/bin/uvicorn kex_timesfm.app:application --factory --host 0.0.0.0 --port 8000"]
+    depends_on:
+      forecast-model-prefetch:
+        condition: service_completed_successfully
+
+  explorer:
+    depends_on:
+      forecast-postgres:
+        condition: service_healthy
+      timesfm:
+        condition: service_healthy
+    environment:
+      EXPLORER_FORECASTING_INFERENCE_ENABLED: "true"
+      EXPLORER_FORECASTING_INFERENCE_SERVICE_URL: http://timesfm:8000
+      EXPLORER_FORECASTING_INFERENCE_TOKEN: ${TIMESFM_TOKEN:-}
+      EXPLORER_FORECASTING_INFERENCE_TIMEOUT: ${TIMESFM_TIMEOUT:-35s}
+      EXPLORER_FORECASTING_HISTORY_JDBC_URL: jdbc:postgresql://forecast-postgres:5432/forecasts
+      EXPLORER_FORECASTING_HISTORY_USERNAME: forecasts
+      EXPLORER_FORECASTING_HISTORY_PASSWORD: ${FORECAST_POSTGRES_PASSWORD:-}
+      # History remains disabled until the reviewed wizard file explicitly enrolls metrics.
+      SPRING_CONFIG_ADDITIONAL_LOCATION: optional:file:/app/forecast-config/forecasts.yml
+      EXPLORER_MCP_ENABLED: "true"
+      EXPLORER_MCP_AUTH_TOKEN: ${EXPLORER_MCP_AUTH_TOKEN:-}
+      EXPLORER_MCP_REQUIRE_TLS: "false"
+      EXPLORER_MCP_READONLY: "true"
+      EXPLORER_MCP_ALLOWED_FORECAST_ENVIRONMENTS: ${FORECAST_ENVIRONMENTS:-local}
+    volumes:
+      - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}:/app/forecast-config:ro
+    networks:
+      - default
+      - timesfm_private
+
+networks:
+  timesfm_private:
+    internal: true
+
+volumes:
+  timesfm_models:
+  forecast_postgres:

@@ -22,6 +22,7 @@ public final class ForecastPilotService {
   private final MeterRegistry meters;
   private final AtomicBoolean running = new AtomicBoolean();
   private int nextSeries;
+  private volatile long nextScheduledAt;
 
   public ForecastPilotService(
       ForecastPilotProperties properties,
@@ -35,7 +36,11 @@ public final class ForecastPilotService {
     this.client = client;
     this.meters = meters;
     properties.validate();
+    nextScheduledAt = System.currentTimeMillis() + properties.getInterval().toMillis();
   }
+
+  /** Fixed-delay estimate; an in-progress cycle has no next timestamp yet. */
+  public Long nextScheduledAt() { return running.get() ? null : nextScheduledAt; }
 
   public List<ForecastPilotProperties.Series> series() {
     return properties.getSeries();
@@ -101,6 +106,7 @@ public final class ForecastPilotService {
         }
       }
     } finally {
+      nextScheduledAt = System.currentTimeMillis() + properties.getInterval().toMillis();
       running.set(false);
     }
   }

@@ -42,6 +42,20 @@ class TimesFmClientTest {
     private final CountDownLatch headersSent = new CountDownLatch(1);
     private final CountDownLatch unblock = new CountDownLatch(1);
 
+    @ParameterizedTest
+    @ValueSource(ints = {200, 503, 302})
+    void readinessUsesOnlyHealthAndNeverFollowsRedirects(int responseStatus) throws Exception {
+        start(Duration.ofSeconds(1));
+        server.createContext("/health/ready", exchange -> {
+            exchange.getResponseHeaders().set("Location", "/v1/forecast");
+            exchange.sendResponseHeaders(responseStatus, -1);
+            exchange.close();
+        });
+        assertEquals(responseStatus == 200, client.isReady());
+        assertEquals(0, calls.get());
+        assertEquals(0, meters.get("explorer_forecasting_requests_total").counter().count());
+    }
+
     @AfterEach void close() {
         unblock.countDown();
         if (client != null) client.close();

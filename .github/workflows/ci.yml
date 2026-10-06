@@ -675,11 +675,13 @@ jobs:
           # NAMED here, so an omission is structural rather than a string search over a list
           # of command lines.
           declare -A OVERLAYS=(
-            [docker-compose.yml]="compose/schema-registry.yml compose/ollama.yml compose/mcp.yml compose/image.yml compose/limits.yml compose/ci.yml compose/timesfm.yml"
+            [docker-compose.yml]="compose/schema-registry.yml compose/ollama.yml compose/mcp.yml compose/image.yml compose/limits.yml compose/ci.yml compose/timesfm.yml compose/forecasts.yml"
             [compose/dev.yml]=""
             [compose/build.yml]=""
             [compose/spectra-hub.yml]="compose/spectra-hub.ingest.yml compose/spectra-hub.gpu.yml compose/spectra-hub.limits.yml"
           )
+
+          docker compose -f docker-compose.yml -f compose/forecasts.yml config --format json | python3 docs/forecast-topology-check.py
 
           named=""
           resolved=0
