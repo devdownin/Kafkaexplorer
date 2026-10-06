@@ -122,7 +122,7 @@ class ForecastSetupServiceTest {
     assertTrue(candidate.eligible()); assertEquals(MetricObservation.definitionVersion(normalized), candidate.definitionVersion());
     var draft = setup.draft(request(true, candidate.definitionVersion(), candidate.unit(), candidate.topics(), candidate.groups(), 60000, 30));
     String version = MetricObservation.collectedVersion(normalized, "kafka:29092", "collector");
-    assertEquals(MetricObservation.seriesId("cluster", version, "lag", "value", Map.of()), draft.seriesId());
+    assertEquals(MetricObservation.seriesId("cluster", version, "lag", "value", Map.of("topic", "orders", "group", "worker")), draft.seriesId());
     verifyNoInteractions(history, client, pilot, preparation);
   }
   @Test void catalogueIsDeterministicallyBounded() {
@@ -139,7 +139,7 @@ class ForecastSetupServiceTest {
     var spec = bound.getPilot().getSeries().getFirst();
     String version = MetricObservation.collectedVersion(metric, "kafka:29092", "collector");
     assertEquals(version, spec.definitionVersion());
-    assertEquals(MetricObservation.seriesId("cluster", version, "lag", "value", Map.of()), spec.seriesId());
+    assertEquals(MetricObservation.seriesId("cluster", version, "lag", "value", Map.of("topic", "orders", "group", "worker")), spec.seriesId());
     assertEquals(draft.seriesId(), spec.seriesId()); assertEquals("milliseconds", spec.unit());
     assertEquals(ForecastThresholdPolicy.Visibility.SHADOW, spec.threshold().visibility());
     assertTrue(bound.getHistory().getMetricIds().contains("lag"));

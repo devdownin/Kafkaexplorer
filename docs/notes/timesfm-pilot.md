@@ -24,6 +24,12 @@ catalogue is metadata-only; exported configuration derives identity using the sa
 function as capture and preserves existing approvals. Fresh progress reads resolve the declared
 series before a bounded history read; dependency probes are explicit, cached and do not infer.
 
+For `CONSUMER_TIME_LAG`, the configured topic and group are also fixed labels on the captured
+value. The assistant includes those labels when deriving the series ID; omitting them yields an
+approved ID that cannot locate the observations. Existing approvals and stored observations are
+preserved. A configuration previously exported with an ID that omitted those labels must be reviewed and
+exported again, then deployed explicitly; the new series still starts in `SHADOW`.
+
 ## Configuration
 
 Merge this fragment into deployment configuration. Replace the series hash and definition version
