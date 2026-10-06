@@ -15,6 +15,13 @@ describe('ForecastPanel', () => {
     expect(await screen.findByText(/Forecast pilot disabled/)).toBeTruthy();
     expect(screen.queryByRole('button')).toBeNull();expect(axios.put).not.toHaveBeenCalled();
   });
+  it('explains the empty default catalogue without showing a series selector', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { enabled: true, state: 'AVAILABLE', series: [] } });
+    render(<ForecastPanel />);
+    expect(await screen.findByText(/Configure approved series, PostgreSQL history and TimesFM inference/)).toBeTruthy();
+    expect(screen.queryByRole('combobox')).toBeNull();
+    expect(axios.put).not.toHaveBeenCalled();
+  });
   it('reports persistence outage rather than empty measurements', async () => {
     vi.mocked(axios.get).mockRejectedValue(new Error('503'));
     render(<ForecastPanel />);

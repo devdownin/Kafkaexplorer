@@ -1,8 +1,9 @@
 # TimesFM integration — observation journal and series preparation
 
 These deliveries implement history, deterministic series preparation, bounded inference, the
-bounded internal orchestration and explicit threshold provenance. The optional production pilot
-now adds scheduling, durable forecasts, scoped MCP views and UI; see [the pilot runbook](timesfm-pilot.md).
+bounded internal orchestration and explicit threshold provenance. The production pilot is enabled
+by default with an empty catalogue. Configuring its dependencies and approved series adds
+scheduling, durable forecasts, scoped MCP views and UI; see [the pilot runbook](timesfm-pilot.md).
 This note describes the underlying history and inference contracts. Empty or unverified history
 is never submitted to TimesFM.
 

@@ -133,6 +133,37 @@ class ForecastPilotContractTest {
   }
 
   @Test
+  void defaultPilotStartsWithoutExternalDependenciesAndReturnsAnEmptyCatalog() {
+    new org.springframework.boot.test.context.runner.ApplicationContextRunner()
+        .withBean(io.micrometer.core.instrument.MeterRegistry.class,
+            io.micrometer.core.instrument.simple.SimpleMeterRegistry::new)
+        .withUserConfiguration(MetricHistoryConfigurationTest.Binding.class,
+            ForecastingProperties.class, ForecastPilotConfiguration.class,
+            MetricHistoryConfiguration.class, TimesFmConfiguration.class)
+        .run(context -> {
+          assertNull(context.getStartupFailure());
+          var pilot = context.getBean(ForecastPilotService.class);
+          assertTrue(context.getBean(ForecastingProperties.class).getPilot().isEnabled());
+          assertTrue(pilot.series().isEmpty());
+          assertDoesNotThrow(() -> pilot.refresh());
+          assertTrue(context.getBeansOfType(MetricObservationStore.class).isEmpty());
+          assertTrue(context.getBeansOfType(TimesFmClient.class).isEmpty());
+          var properties = new McpProperties();
+          var tools = new ForecastMcpTools(pilot, new ToolGuard(properties, new DlpScrubber(properties)));
+          assertTrue(tools.catalog().data().isEmpty());
+          assertTrue(tools.breaches().data().isEmpty());
+        });
+  }
+
+  @Test
+  void approvedSeriesStillRequiresHistoryAndInference() {
+    var root = new ForecastingProperties();
+    root.getPilot().setSeries(List.of(series()));
+    assertThrows(IllegalArgumentException.class,
+        () -> new ForecastPilotConfiguration().forecastPilotProperties(root));
+  }
+
+  @Test
   void rejectsUnknownSemanticsAndGlobalSeriesBudget() {
     var p = new ForecastPilotProperties();
     p.setEnabled(true);

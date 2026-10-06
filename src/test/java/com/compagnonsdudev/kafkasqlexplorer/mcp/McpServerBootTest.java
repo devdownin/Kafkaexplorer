@@ -65,7 +65,9 @@ class McpServerBootTest {
         "kex_topic_configuration", "kex_topic_policy_review", "kex_consumer_lag_trend", "kex_dlq_review",
         "kex_compare_windows",
         "kex_deduce_data_model", "kex_build_join",
-        "kex_run_audit", "kex_get_audit", "kex_suggest_kpis");
+        "kex_run_audit", "kex_get_audit", "kex_suggest_kpis",
+        "kex_list_forecastable_metrics", "kex_metric_history", "kex_forecast_metric",
+        "kex_get_forecast_quality", "kex_list_predicted_threshold_breaches");
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {

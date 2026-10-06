@@ -8,7 +8,7 @@ import java.util.List;
  * Explicit operator attestation of semantics and all resources; no source is inferred from a hash.
  */
 public class ForecastPilotProperties {
-  private boolean enabled;
+  private boolean enabled = true;
   private Duration interval = Duration.ofMinutes(5);
   private Duration retention = Duration.ofDays(7);
   private int maxSeries = 20;
@@ -77,11 +77,10 @@ public class ForecastPilotProperties {
         || retention.compareTo(Duration.ofDays(90)) > 0
         || maxSeries < 1
         || maxSeries > 100
-        || series.isEmpty()
         || series.size() > maxSeries
         || series.stream().map(Series::seriesId).distinct().count() != series.size())
       throw new IllegalArgumentException(
-          "Pilot requires 1..max-series unique approved series and bounded interval/retention");
+          "Pilot requires 0..max-series unique approved series and bounded interval/retention");
   }
 
   public Series resolve(String id) {

@@ -151,7 +151,9 @@ gauge imputations, and rejects counter resets or inadmissible history. See **[hi
 and limitations](docs/notes/timesfm-history.md)**.
 
 The CPU-only TimesFM service is available through the opt-in `compose/timesfm.yml` overlay.
-The separately enabled production pilot schedules explicitly approved series, persists forecasts
+The production pilot and its five read-only MCP tools are enabled by default; without approved
+series the catalogue is empty and no database or model calls run. With history, inference and
+approved series configured, the pilot schedules those series, persists forecasts
 and operator activation in PostgreSQL, compares realised errors with four baselines, and exposes
 history, quantiles and quality in Metrics Forecast. Default mode is `SHADOW`; activation requires
 operator confirmation and measured quality. Five scoped MCP tools read existing results without
