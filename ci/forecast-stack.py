@@ -85,7 +85,8 @@ def fixture_sql(observation, cutoff):
 
 def rpc_json(raw):
     text = raw.decode()
-    if text.startswith('event:') or text.startswith('data:'):
+    # The MCP server can begin an SSE frame with an event id or keepalive comment.
+    if any(line.startswith(('event:', 'data:', 'id:', 'retry:', ':')) for line in text.splitlines()):
         events = [json.loads(line[5:].strip()) for line in text.splitlines() if line.startswith('data:')]
         assert events, 'MCP response contained no data'
         return events[-1]

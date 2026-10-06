@@ -76,6 +76,14 @@ class SmokeContract(unittest.TestCase):
         with self.assertRaises(AssertionError):
             smoke.rpc_json(b'event: message\n\n')
 
+    def test_mcp_sse_accepts_event_id_and_keepalive_before_payload(self):
+        response = {'jsonrpc': '2.0', 'id': 2, 'result': {'tools': []}}
+        raw = json.dumps(response).encode()
+        self.assertEqual(smoke.rpc_json(b'id: session-event\nevent: message\ndata:' + raw + b'\n\n'), response)
+        self.assertEqual(smoke.rpc_json(b': keepalive\r\nid: session-event\r\ndata: ' + raw + b'\r\n\r\n'), response)
+        with self.assertRaisesRegex(AssertionError, 'no data'):
+            smoke.rpc_json(b'id: empty-event\n\n')
+
 
 if __name__ == '__main__':
     unittest.main()
