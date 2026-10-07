@@ -63,7 +63,8 @@ class ForecastPilotPostgresTest {
             0,
             0,
             Map.of(),
-            "baseline");
+            "baseline",
+            null);
     try (var c = a.open();
         var d = b.open()) {
       assertTrue(a.acquire(c, owner));
@@ -94,7 +95,8 @@ class ForecastPilotPostgresTest {
               0,
               0,
               Map.of(),
-              "baseline");
+              "baseline",
+              null);
       assertThrows(IllegalStateException.class, () -> a.save(c, id, second, owner));
       c.rollback();
       assertTrue(b.acquire(d, "new-owner"));
