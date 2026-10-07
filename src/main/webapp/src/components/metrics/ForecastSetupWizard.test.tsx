@@ -35,14 +35,13 @@ describe('ForecastSetupWizard', () => {
     expect(screen.getByLabelText('Forecast horizon (points)')).toHaveAttribute('aria-invalid', 'true');
     expect(axios.post).not.toHaveBeenCalled();
   });
-  it('requires source attestation and confirmation before validating a configuration', async () => {
+  it('requires the source attestation, and only it, before validating a configuration', async () => {
     vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: ['Restart with the file'] } });
     const user = await sources(); await user.click(screen.getByRole('button', { name: 'Review configuration' }));
     expect(screen.getByRole('button', { name: 'Validate and export' })).toBeDisabled();
     await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
-    expect(axios.post).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'Export configuration' }));
     expect(await screen.findByText('Restart with the file')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(axios.post).toHaveBeenCalledWith('/api/forecasts/configuration', expect.objectContaining({ confirmed: true,
       metricId: 'lag', definitionVersion: 'version', unit: 'milliseconds', clusterId: 'existing', collectorId: 'collector',
       topics: ['orders'], groups: ['worker'], horizon: 30, threshold: null }), expect.objectContaining({ timeout: 10000 }));
@@ -52,7 +51,6 @@ describe('ForecastSetupWizard', () => {
     vi.mocked(axios.post).mockRejectedValue({ response: { data: { reason: 'Metric changed; reload candidates and review again' } } });
     const user = await sources(); await user.click(screen.getByRole('button', { name: 'Review configuration' }));
     await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
-    await user.click(screen.getByRole('button', { name: 'Export configuration' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Metric changed');
     expect(screen.queryByRole('button', { name: 'Download forecasts.yml' })).toBeNull();
   });
@@ -84,5 +82,21 @@ describe('ForecastSetupWizard', () => {
   it('aborts catalogue reads on close', () => {
     vi.mocked(axios.get).mockReturnValue(new Promise(() => {})); const view = render(<ForecastSetupWizard />);
     const options = vi.mocked(axios.get).mock.calls[0][1]; view.unmount(); expect(options?.signal?.aborted).toBe(true);
+  });
+  it('offers sampling intervals by name and states the horizon as a duration', async () => {
+    const user = await sources();
+    await user.selectOptions(screen.getByLabelText('Sampling interval'), '300000');
+    expect(screen.getByText('Forecasts 2.5 hours ahead')).toBeTruthy();
+    await user.clear(screen.getByLabelText('Forecast horizon (points)')); await user.type(screen.getByLabelText('Forecast horizon (points)'), '6');
+    expect(screen.getByText('Forecasts 30 minutes ahead')).toBeTruthy();
+  });
+  it('keeps the history identities folded away, and opens them when one is invalid', async () => {
+    const user = await sources();
+    const details = screen.getByText('Advanced: history identities').closest('details');
+    expect(details).not.toHaveAttribute('open');
+    await user.clear(screen.getByLabelText('History collector ID'));
+    await user.click(screen.getByRole('button', { name: 'Review configuration' }));
+    expect(details).toHaveAttribute('open');
+    expect(screen.getByLabelText('History collector ID')).toHaveFocus();
   });
 });

@@ -1,11 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import axios from 'axios';
-import { Button, Checkbox, Field, Input, Select, useConfirm } from '../ui';
+import { Button, Checkbox, Field, Input, Select } from '../ui';
 import type { ForecastCandidate, ForecastCandidates, ForecastDraft, ForecastDraftRequest } from '../../api/types';
 
 const split = (text: string) => text.split(',').map(s => s.trim()).filter(Boolean);
+/** Every option keeps 513 buckets inside the default 30-day history retention the server checks. */
+const CADENCES = [{ value: '30000', label: '30 seconds' }, { value: '60000', label: '1 minute' },
+  { value: '300000', label: '5 minutes' }, { value: '900000', label: '15 minutes' }];
+const ADVANCED = new Set(['clusterId', 'collectorId']);
+function span(millis: number) {
+  if (!Number.isFinite(millis) || millis <= 0) return '';
+  const minutes = millis / 60000;
+  return minutes < 120 ? `${+minutes.toFixed(1)} minutes` : `${+(minutes / 60).toFixed(1)} hours`;
+}
 export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: string }) {
   const [candidates, setCandidates] = useState<ForecastCandidates | null>(null);
   const [selected, setSelected] = useState<ForecastCandidate | null>(null);
@@ -25,8 +35,8 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
   const [error, setError] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
   const abort = useRef<AbortController | null>(null);
-  const confirm = useConfirm();
   useEffect(() => {
     const controller = new AbortController(); abort.current = controller;
     axios.get<ForecastCandidates>('/api/forecasts/candidates', { signal: controller.signal, timeout: 10000 })
@@ -57,18 +67,21 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
     for (const [key, value] of Object.entries({ environment, clusterId, collectorId, unit }))
       if (!value.trim() || value.length > 128 || [...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) next[key] = 'Use 1–128 printable characters.';
     if (!split(topics).length) next.topics = 'List every source topic.';
-    if (!Number.isInteger(Number(cadence)) || Number(cadence) < 1000 || Number(cadence) > 86400000)
-      next.cadence = 'Use a cadence of 1,000–86,400,000 milliseconds.';
     if (!Number.isInteger(Number(horizon)) || Number(horizon) < 1 || Number(horizon) > 60) next.horizon = 'Use 1–60 forecast points.';
     if (threshold.trim() && !Number.isFinite(Number(threshold))) next.threshold = 'Use a finite threshold.';
     setErrors(next);
-    if (Object.keys(next).length) { document.getElementById(`forecast-${Object.keys(next)[0]}`)?.focus(); return; }
+    const first = Object.keys(next)[0];
+    if (first) {
+      // A field inside a closed <details> cannot take focus: open it before focusing.
+      if (ADVANCED.has(first)) flushSync(() => setAdvanced(true));
+      document.getElementById(`forecast-${first}`)?.focus(); return;
+    }
     setError(''); setStep(3); setApproved(false);
   }
   async function generate() {
-    if (!selected || !approved || busy) return;
-    if (!await confirm({ title: 'Export reviewed forecast configuration?', description: 'Confirm the declared topics and groups include every source. The file enrolls history after restart; activation remains subject to realised quality checks.', confirmLabel: 'Export configuration', tone: 'primary' })) return;
-    if (abort.current?.signal.aborted) return;
+    // The attestation checkbox is the confirmation; a dialog asking the same question again added
+    // a click and no information.
+    if (!selected || !approved || busy || abort.current?.signal.aborted) return;
     setBusy(true); setError('');
     const request: ForecastDraftRequest = { metricId: selected.metricId, definitionVersion: selected.definitionVersion,
       environment: environment.trim(), unit, clusterId: clusterId.trim(), collectorId: collectorId.trim(),
@@ -111,11 +124,19 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
       <div className="grid gap-3 sm:grid-cols-2">
         <Field id="forecast-environment" label="Environment" error={errors.environment}>{p => <Input {...p} value={environment} onChange={e => setEnvironment(e.target.value)} />}</Field>
         <Field id="forecast-unit" label="Captured unit" error={errors.unit} description="Change the metric metadata first to change its unit.">{p => <Input {...p} value={unit} readOnly />}</Field>
-        <Field id="forecast-clusterId" label="History cluster ID" error={errors.clusterId}>{p => <Input {...p} value={clusterId} onChange={e => setClusterId(e.target.value)} />}</Field>
-        <Field id="forecast-collectorId" label="History collector ID" error={errors.collectorId}>{p => <Input {...p} value={collectorId} onChange={e => setCollectorId(e.target.value)} />}</Field>
-        <Field id="forecast-cadence" label="Bucket cadence (milliseconds)" error={errors.cadence}>{p => <Input {...p} inputMode="numeric" value={cadence} onChange={e => setCadence(e.target.value)} />}</Field>
-        <Field id="forecast-horizon" label="Forecast horizon (points)" error={errors.horizon}>{p => <Input {...p} inputMode="numeric" value={horizon} onChange={e => setHorizon(e.target.value)} />}</Field>
+        <Field id="forecast-cadence" label="Sampling interval">{p => <Select {...p} value={cadence} onChange={e => setCadence(e.target.value)}>
+          {CADENCES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</Select>}</Field>
+        <Field id="forecast-horizon" label="Forecast horizon (points)" error={errors.horizon}
+          description={span(Number(cadence) * Number(horizon)) && `Forecasts ${span(Number(cadence) * Number(horizon))} ahead`}>{p => <Input {...p} inputMode="numeric" value={horizon} onChange={e => setHorizon(e.target.value)} />}</Field>
       </div>
+      <details open={advanced} onToggle={e => setAdvanced(e.currentTarget.open)}>
+        <summary>Advanced: history identities</summary>
+        <p className="text-sm">Prefilled from the running collector; change them only to match another collector.</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field id="forecast-clusterId" label="History cluster ID" error={errors.clusterId}>{p => <Input {...p} value={clusterId} onChange={e => setClusterId(e.target.value)} />}</Field>
+          <Field id="forecast-collectorId" label="History collector ID" error={errors.collectorId}>{p => <Input {...p} value={collectorId} onChange={e => setCollectorId(e.target.value)} />}</Field>
+        </div>
+      </details>
       <Field id="forecast-topics" label="All source topics (comma separated)" error={errors.topics} description="Verify every SQL dependency; suggestions are not a complete provenance attestation.">{p => <Input {...p} value={topics} onChange={e => setTopics(e.target.value)} />}</Field>
       <Field label="All consumer groups (comma separated, optional)">{p => <Input {...p} value={groups} onChange={e => setGroups(e.target.value)} />}</Field>
       <Field id="forecast-threshold" label="Optional threshold in forecast output units" error={errors.threshold} description={selected?.transformation === 'COUNTER_RATE' ? `${unit} per second` : unit}>{p => <Input {...p} inputMode="decimal" value={threshold} onChange={e => setThreshold(e.target.value)} />}</Field>
@@ -124,7 +145,7 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
     </form>}
     {step === 3 && <>
       <p>{selected?.name || selected?.metricId} · {environment} · {unit} · {selected?.transformation}</p>
-      <p>Topics: {topics}. Groups: {groups || 'none'}. Context: 512 buckets at {Number(cadence) / 1000}s; horizon: {horizon} points ({Number(cadence) * Number(horizon) / 60000} minutes).</p>
+      <p>Topics: {topics}. Groups: {groups || 'none'}. History: 512 samples, one every {CADENCES.find(c => c.value === cadence)?.label ?? `${Number(cadence) / 1000} seconds`}; horizon: {horizon} points ({span(Number(cadence) * Number(horizon))}).</p>
       <p>Threshold: {threshold.trim() ? `${direction} ${threshold}` : 'not configured'}. SHADOW initially; no alerts sent.</p>
       <label className="flex gap-2 items-start"><Checkbox checked={approved} onChange={setApproved} disabled={Boolean(draft)} />I reviewed the semantics and confirm every source topic and consumer group.</label>
       {!draft && <><Button onClick={() => { setStep(2); setApproved(false); }}>Back</Button> <Button disabled={!approved || busy} onClick={() => void generate()}>Validate and export</Button></>}

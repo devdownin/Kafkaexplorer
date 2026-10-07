@@ -4,13 +4,15 @@ import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { Button } from '../ui';
 import type { ForecastReadiness } from '../../api/types';
-import { ForecastSetupWizard } from './ForecastSetupWizard';
 
-export function ForecastPreparation() {
+/**
+ * The assistant itself lives on the Metrics page, the one place the metric cards also open it: two
+ * instances could be open at once, each with its own half-filled form.
+ */
+export function ForecastPreparation({ onConfigure }: { onConfigure?: () => void }) {
   const [readiness, setReadiness] = useState<ForecastReadiness | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [wizard, setWizard] = useState(false);
   const controller = useRef<AbortController | null>(null);
   useEffect(() => {
     const abort = new AbortController(); controller.current = abort;
@@ -45,8 +47,7 @@ export function ForecastPreparation() {
     </>}
     <div className="flex flex-wrap gap-2">
       <Button disabled={busy} onClick={() => void probe()}>{busy ? 'Testing dependencies…' : 'Test PostgreSQL and TimesFM'}</Button>
-      <Button onClick={() => setWizard(v => !v)}>{wizard ? 'Close configuration assistant' : 'Configure a forecast'}</Button>
+      {onConfigure && <Button onClick={onConfigure}>Configure a forecast</Button>}
     </div>
-    {wizard && <ForecastSetupWizard />}
   </div>;
 }
