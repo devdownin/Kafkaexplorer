@@ -148,7 +148,17 @@ export const TemplateParamsEditor: React.FC<{
   const p = (k: string) => paramStr(params, k);
   return (
     <div className="h-full overflow-y-auto p-5 space-y-4">
-      {templateType === 'CONSUMER_TIME_LAG' ? (
+      {templateType === 'KAFKA_CLUSTER_COUNT' ? (
+        <Field label="Measurement" description="Live Kafka metadata. No SQL or Flink table required. Topics are limited to those visible with your Kafka permissions.">
+          {f => (
+            <Select {...f} value={p('measurement') || ''} onChange={e => setParam('measurement', e.target.value)}>
+              <option value="">Choose a measurement</option>
+              <option value="TOPIC_COUNT">Number of topics</option>
+              <option value="BROKER_COUNT">Number of brokers</option>
+            </Select>
+          )}
+        </Field>
+      ) : templateType === 'CONSUMER_TIME_LAG' ? (
         <>
           <ParamTopic label="Topic" value={p('topic')} onChange={v => setParam('topic', v)} placeholder="demo.payments" />
           <Field
@@ -241,7 +251,7 @@ export const TemplateParamsEditor: React.FC<{
         >
           {f => (
             <Select {...f} value={executionMode || 'TEMPLATE_BOUNDED_SCAN'} onChange={e => setExecutionMode(e.target.value)}>
-              {EXECUTION_MODES.map(m => (
+              {EXECUTION_MODES.filter(m => templateType !== 'KAFKA_CLUSTER_COUNT' || m.value === 'TEMPLATE_BOUNDED_SCAN').map(m => (
                 <option key={m.value} value={m.value} className="bg-[#12151a] text-on-surface">{m.label}</option>
               ))}
             </Select>

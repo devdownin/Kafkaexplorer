@@ -332,7 +332,12 @@ export function validateScanParams(templateType: string, params: Record<string, 
 export function validateTemplate(templateType: string, metricType: string,
                           params: Record<string, unknown>): ValidationMsg[] {
   const msgs: ValidationMsg[] = [];
-  if (templateType === 'TOPIC_COUNT_DELTA') {
+  if (templateType === 'KAFKA_CLUSTER_COUNT') {
+    if (!['TOPIC_COUNT', 'BROKER_COUNT'].includes(paramStr(params, 'measurement')))
+      msgs.push({ level: 'error', text: 'Choose the number of topics or brokers.' });
+    if (metricType !== 'GAUGE')
+      msgs.push({ level: 'error', text: 'Kafka Cluster Count supports GAUGE metrics only.' });
+  } else if (templateType === 'TOPIC_COUNT_DELTA') {
     if (!paramStr(params, 'leftSql').trim())  msgs.push({ level: 'error', text: 'Left query (leftSql) is required.' });
     if (!paramStr(params, 'rightSql').trim()) msgs.push({ level: 'error', text: 'Right query (rightSql) is required.' });
     if (metricType !== 'GAUGE')               msgs.push({ level: 'error', text: 'Topic Count Delta supports GAUGE metrics only.' });

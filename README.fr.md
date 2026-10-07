@@ -118,10 +118,18 @@ Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deu
 | Lire un ensemble de topics comme un diagramme entité-relation | **Data Model** — relations déduites, graduées, ouvrables en SQL |
 | Transformer du SQL en métriques Prometheus avec graphiques | **Metrics** |
 | Se voir proposer des KPI tirés de ce que le cluster a montré | **Metrics** — proposés d'après l'audit et les traces |
+
 | Voir ce qui s'accumule dans vos topics DLQ, DLT et de reprise | **Dead Letter** — les arrivées, et la part de la source que ça représente |
 | Vérifier la santé de tout le cluster en un clic | **Audit** |
 | Inspecter brokers, quorum KRaft, groupes clients, feature flags | **Cluster** |
 | Laisser un LLM reconstruire et auditer vos flux métier | **Process Mining** |
+
+Au premier démarrage, si aucune métrique n'est enregistrée et qu'aucune table Flink
+n'est disponible, la page **Metrics** initialise deux jauges : `kafka_topic_count`
+(topics non internes visibles selon les droits Kafka) et `kafka_broker_count`
+(brokers du cluster). Elles utilisent les métadonnées Kafka, sans SQL ni schéma.
+Les métriques existantes sont conservées. Une configuration Kafka illisible ne
+déclenche pas cette initialisation ; une collecte en échec signale une erreur.
 
 La hiérarchie est déduite uniquement des noms : elle ne décrit ni dépendances ni circulation des messages. Les noms avec séparateurs mélangés, niveaux vides ou sans séparateur restent dans la liste du Dashboard. Guide détaillé : [Français](docs/TOPIC-HIERARCHY.fr.md) · [English](docs/TOPIC-HIERARCHY.md).
 
@@ -206,4 +214,3 @@ Lancez **`mvn verify`** avant d'ouvrir une pull request : c'est la porte complè
 [AGPL v3](LICENSE) — libre d'utiliser, d'étudier, de partager et d'améliorer.
 
 ---
-

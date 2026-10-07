@@ -173,6 +173,13 @@ public class MetricService {
 
     private static final List<MetricTemplateDescriptor> TEMPLATE_DESCRIPTORS = List.of(
         new MetricTemplateDescriptor(
+            MetricTemplateType.KAFKA_CLUSTER_COUNT.name(),
+            "Kafka Cluster Count",
+            "Count visible non-internal topics or brokers using Kafka metadata. No SQL or Flink table required.",
+            List.of("GAUGE"),
+            List.of("measurement")
+        ),
+        new MetricTemplateDescriptor(
             MetricTemplateType.TOPIC_COUNT_DELTA.name(),
             "Topic Count Delta",
             "Compare two bounded topic counts and compute a gap, ratio or percentage difference.",
@@ -359,11 +366,10 @@ public class MetricService {
      *
      * <p>That distinction is the whole of this method. "No metric is configured" and "the metric
      * configurations could not be read" are two different answers, and seeding acts on the first:
-     * it mints four metrics with fresh ids and writes them back to {@code internal.metrics.config},
+     * it mints default metrics with fresh ids and writes them back to {@code internal.metrics.config},
      * beside an operator's own metrics that this process simply failed to read. Guarding on
      * {@code metrics.isEmpty()} alone made an unreachable broker at boot look exactly like a first
-     * run. It has been harmless so far only by accident — Flink holds no table at boot, so
-     * {@code seedDefaultMetrics} returns early — and an accident is not a guard.
+     * run. Defaults must therefore only be created after a successful configuration restore.
      */
     @PostConstruct
     public void init() {
@@ -419,13 +425,16 @@ public class MetricService {
     /**
      * One representative metric for each Prometheus type.
      * Uses demo_orders_in if registered, otherwise the first available Flink table,
-     * otherwise skips seeding (no tables means no useful examples yet).
+     * otherwise seeds two Kafka metadata gauges that require no Flink registration.
      */
     private void seedDefaultMetrics() {
         List<String> tables = flinkSqlService.listTables();
         if (tables.isEmpty()) {
-            log.info("No Flink tables registered yet — skipping default metric seeding. " +
-                     "Create tables via the Query Workbench (CREATE TABLE …) then add metrics manually.");
+            log.info("No Flink tables registered yet — seeding Kafka topic and broker counts.");
+            seedClusterCount("kafka_topic_count", "TOPIC_COUNT",
+                "Number of visible non-internal Kafka topics (subject to Kafka permissions).");
+            seedClusterCount("kafka_broker_count", "BROKER_COUNT",
+                "Number of brokers reported by Kafka cluster metadata.");
             return;
         }
 
@@ -456,6 +465,13 @@ public class MetricService {
             "SELECT COUNT(*) AS metric_value\nFROM " + table,
             "Record summary for " + table + " — replace metric_value with a numeric column (e.g. AVG(amount))",
             null, null);
+    }
+
+    private void seedClusterCount(String name, String measurement, String description) {
+        save(new MetricConfig(UUID.randomUUID().toString(), name, "GAUGE", null, description,
+            null, null, null, null, null, List.of(), Map.of(), null,
+            MetricTemplateType.KAFKA_CLUSTER_COUNT.name(), Map.of("measurement", measurement),
+            MetricExecutionMode.TEMPLATE_BOUNDED_SCAN.name(), null, List.of()));
     }
 
     private void addMetric(String name, String type, String sql, String description,
@@ -789,6 +805,18 @@ public class MetricService {
         }
 
         switch (templateType) {
+            case KAFKA_CLUSTER_COUNT -> {
+                String measurement = requireParam(params, "measurement");
+                if (!Set.of("TOPIC_COUNT", "BROKER_COUNT").contains(measurement)) {
+                    throw new IllegalArgumentException("measurement must be TOPIC_COUNT or BROKER_COUNT");
+                }
+                if (!"GAUGE".equals(metric.type())) {
+                    throw new IllegalArgumentException("KAFKA_CLUSTER_COUNT supports GAUGE metrics only");
+                }
+                if (executionMode != MetricExecutionMode.TEMPLATE_BOUNDED_SCAN) {
+                    throw new IllegalArgumentException("KAFKA_CLUSTER_COUNT uses TEMPLATE_BOUNDED_SCAN only");
+                }
+            }
             case RAW_SQL -> {
                 if (metric.sql() == null || metric.sql().isBlank()) {
                     throw new IllegalArgumentException("SQL is required for RAW_SQL metrics");
@@ -933,11 +961,27 @@ public class MetricService {
      */
     private MetricComputationResult computeMetric(MetricConfig config, boolean preview) {
         return switch (MetricTemplateType.fromValue(config.templateType())) {
+            case KAFKA_CLUSTER_COUNT -> computeClusterCount(config);
             case RAW_SQL -> computeRawSqlMetric(config);
             case TOPIC_COUNT_DELTA -> computeCountDeltaMetric(config, preview);
             case TOPIC_TRANSIT_LATENCY -> computeTransitLatencyMetric(config);
             case CONSUMER_TIME_LAG -> computeConsumerTimeLagMetric(config);
         };
+    }
+
+    private MetricComputationResult computeClusterCount(MetricConfig config) {
+        String measurement = requireParam(config.templateParams(), "measurement");
+        try {
+            double value = "TOPIC_COUNT".equals(measurement)
+                ? kafkaAdminService.listTopics().size() : kafkaAdminService.getBrokerCount();
+            return new MetricComputationResult(List.of(Map.of("metric_value", value)), value, null,
+                Map.of("measurement", measurement, "source", "Kafka metadata"));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return MetricComputationResult.error("Kafka metadata read interrupted");
+        } catch (Exception e) {
+            return MetricComputationResult.error("Kafka metadata unavailable: " + e.getMessage());
+        }
     }
 
     /**
