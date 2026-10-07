@@ -5,13 +5,13 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
 
 /** No inference on read paths. All resource approval is deployment-owned. */
 public final class ForecastPilotService {
@@ -78,13 +78,12 @@ public final class ForecastPilotService {
           r.evaluatedPoints(),
           r.evaluatedThrough(),
           r.baselineMae(),
-          stale ? "No current forecast horizon" : r.reason());
+          stale ? "No current forecast horizon" : r.reason(),
+          r.qualityWindow());
     }
   }
 
-  @Scheduled(
-      fixedDelayString = "#{@forecastPilotProperties.getInterval().toMillis()}",
-      initialDelayString = "#{@forecastPilotProperties.getInterval().toMillis()}")
+  /** Driven by {@link ForecastPilotScheduler}, never by the application's shared scheduler. */
   public void refresh() {
     if (!running.compareAndSet(false, true)) return;
     try {
@@ -151,23 +150,27 @@ public final class ForecastPilotService {
               context.toExclusive() - spec.horizon() * spec.profile().stepMillis(),
               evaluatedThrough);
       Map<String, Double> baselineScores = previous == null ? Map.of() : previous.baselineMae();
+      var window = previous == null ? ForecastQualityWindow.EMPTY : previous.qualityWindow();
       boolean degraded = previous != null && previous.state().equals("DEGRADED");
       if (context.status() == PreparedMetricSeries.Status.READY
           && matured != null
           && matured.forecast() != null
           && matured.strategy().equals("TIMESFM")
           && matured.key().equals(key(spec, matured.context()))
-          && context.imputedPoints() == 0
           && matured.context().definitionVersion().equals(context.definitionVersion())
           && matured.context().profileFingerprint().equals(context.profileFingerprint())) {
-        var values = new LinkedHashMap<Long, Double>();
-        context.points().forEach(p -> values.put(p.endAt(), p.value()));
+        // Only the realised horizon must be observed. Requiring the whole 512-point context to be
+        // free of imputation suspended evaluation for 512 steps after a single missed refresh.
+        var observed = new HashMap<Long, Double>();
+        context.points().stream()
+            .filter(p -> !p.imputed() && p.value() != null)
+            .forEach(p -> observed.put(p.endAt(), p.value()));
         var points = matured.forecast().points();
-        if (points.stream().allMatch(p -> values.containsKey(p.at()))) {
-          var actual = points.stream().map(p -> values.get(p.at())).toList();
+        if (points.stream().allMatch(p -> observed.containsKey(p.at()))) {
+          var actual = points.stream().map(p -> observed.get(p.at())).toList();
           var training =
               matured.context().points().stream().map(PreparedMetricSeries.Point::value).toList();
-          quality =
+          var cohortQuality =
               new ForecastBacktestEvaluator()
                   .evaluate(training, actual, points, spec.seasonLength());
           evaluated += actual.size();
@@ -175,15 +178,19 @@ public final class ForecastPilotService {
           var scores = new LinkedHashMap<String, Double>();
           ForecastBaselines.predict(training, actual.size(), spec.seasonLength())
               .forEach((name, p) -> scores.put(name, ForecastBaselines.mae(actual, p)));
-          baselineScores = Map.copyOf(scores);
-          double cohortMae = quality.mae();
-          boolean baselineWins = baselineScores.values().stream().anyMatch(mae -> cohortMae > mae);
-          degraded |=
-              evaluated >= spec.minimumEvaluatedPoints()
-                  && (spec.maxMae() != null && quality.mae() > spec.maxMae()
-                      || quality.q10Q90Coverage() < spec.minimumCoverage()
-                      || baselineWins);
+          double level = actual.stream().mapToDouble(Math::abs).average().orElseThrow();
+          window =
+              window.add(
+                  new ForecastQualityWindow.Cohort(
+                      evaluatedThrough, actual.size(), cohortQuality, scores, level),
+                  spec.minimumCoverage(),
+                  spec.maxMae());
+          degraded |= evaluated >= spec.minimumEvaluatedPoints() && window.drifted();
         }
+      }
+      if (window.quality() != null) {
+        quality = window.quality();
+        baselineScores = window.baselineMae();
       }
       if (degraded) {
         store.disable(c, spec.seriesId());
@@ -223,7 +230,8 @@ public final class ForecastPilotService {
               evaluated,
               evaluatedThrough,
               baselineScores,
-              reason);
+              reason,
+              window);
       store.save(c, spec.seriesId(), record, owner);
       store.purge(c, System.currentTimeMillis() - properties.getRetention().toMillis());
       c.commit();
@@ -231,7 +239,8 @@ public final class ForecastPilotService {
   }
 
   /**
-   * Activation is explicit and blocked until TimesFM beats all baselines on realised measurements.
+   * Activation is explicit and blocked until a judged block shows TimesFM no worse than every
+   * baseline on realised measurements, with no failed block since.
    */
   public void activate(String id, boolean active) throws Exception {
     var spec = resolve(id);
@@ -247,10 +256,9 @@ public final class ForecastPilotService {
               || r.forecast() == null
               || r.forecast().points().getLast().at() < System.currentTimeMillis()
               || r.evaluatedPoints() < spec.minimumEvaluatedPoints()
-              || r.baselineMae().size() != 4
-              || r.baselineMae().values().stream().anyMatch(mae -> r.quality().mae() > mae)
-              || r.quality().q10Q90Coverage() < spec.minimumCoverage()
-              || spec.maxMae() != null && r.quality().mae() > spec.maxMae()))
+              || r.qualityWindow().lastBlock() == null
+              || r.qualityWindow().failedBlocks() > 0
+              || !r.qualityWindow().lastBlock().eligibleForActivation(spec.maxMae())))
         throw new IllegalArgumentException(
             "Activation requires realised quality and all four baseline comparisons");
       store.activate(c, id, active);

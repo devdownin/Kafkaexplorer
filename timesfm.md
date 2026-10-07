@@ -107,8 +107,9 @@ régression des mocks de la page Metrics : la nouvelle route Forecast recevait u
 La PR corrige le mock et refuse proprement les réponses API incomplètes ; la suite frontend
 complète est désormais verte localement. La CI du dernier commit reste exigée avant fusion.
 
-La qualité affichée et le contrôle de dérive utilisent la dernière cohorte réalisée, tandis que
-le compteur de points accumule les cohortes non chevauchantes. Il ne s’agit pas d’une calibration
-statistique, d’une moyenne cumulée ou d’un test de significativité. Q10–Q90 est un intervalle
+La qualité affichée et le contrôle de dérive portent sur des blocs disjoints d’au moins 120 points
+réalisés, jamais sur une cohorte isolée ; deux blocs en échec consécutifs verrouillent DEGRADED
+(voir [le runbook](docs/notes/timesfm-pilot.md) et `TIMESFM-FORECAST-AUDIT.md`, F2). Il s’agit d’un
+seuil statistique simple, pas d’une calibration. Q10–Q90 est un intervalle
 nominal à 80 % ; les bornes unilatérales portent 0,9 nominal. Le pilote ne garantit aucune
 probabilité de franchissement jointe sur l’horizon. Les résultats non mesurés restent explicites.

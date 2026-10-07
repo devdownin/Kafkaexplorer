@@ -523,3 +523,8 @@ evaluated — including when TimesFM is down and every series is on its fallback
 those: DLP applied to the catalogue only (F5), deactivation refused during a refresh (F6), an
 idempotence key built on `Record.toString()` (F7), a hung model shrinking the cycle to two series
 (F8), and `fix_quantile_crossing=False` turning any crossing into a fallback, unmeasured (F9).
+F1–F3 have since been fixed: the pilot runs on a private `forecast-pilot` thread (a published
+`ScheduledExecutorService`, the report's first proposal, would have switched off Spring Boot's own
+scheduler), only the realised horizon must be observed, and quality is judged over disjoint
+120-point blocks with two consecutive failures to latch — the report's sliding window, simulated,
+still latched every run.

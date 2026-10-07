@@ -93,7 +93,11 @@ prepared history, quantiles, definition and model revisions, input/profile finge
 quality, baseline scores and activation visibility. The SHA-256 idempotence key includes the full
 approved specification, input/profile fingerprints, history end, horizon and pinned model revision.
 
-The scheduled loop is serial and rejects local overlap. Each cycle admits work for at most
+The loop runs on its own `forecast-pilot` thread (`ForecastPilotScheduler`), never on Spring's
+shared scheduler: that one has a single thread, and a cycle there delayed metric collection and
+put gaps into the history being forecast. Its executor is private and published as no
+`ScheduledExecutorService` or `TaskScheduler` bean, either of which would switch off Spring Boot's
+own scheduler and move every other `@Scheduled` method onto this thread. The loop is serial and rejects local overlap. Each cycle admits work for at most
 one minute, plus completion of one bounded in-flight call; a rotating cursor avoids starving
 later series. A global PostgreSQL transaction advisory
 lock spans preparation, inference and publication. A lease with a random owner expires after two
@@ -111,25 +115,42 @@ returns 503 and MCP returns `DEPENDENCY_UNAVAILABLE` when persistence cannot be 
 
 ## Quality, fallback and activation
 
-Evaluation waits for a full forecast horizon to be realised. It uses observed, unimputed values
-from the current bounded history and only compatible definition/profile/specification revisions.
-The evaluated-through watermark excludes overlapping horizons from the sample count. Each cohort
-uses identical actual timestamps for TimesFM and LAST_VALUE, MOVING_AVERAGE (last 12 training
-points), SEASONAL_NAIVE and LINEAR_TREND (training OLS). Quality and baseline MAE describe the
-**latest evaluated cohort**, while evaluated-points counts all accepted non-overlapping cohorts;
-these are not cumulative averages or a statistical significance test. MASE uses training seasonal
-naive error, and stays unmeasured for a zero scale. Pinball, coverage and interval width are retained.
+Evaluation waits for a full forecast horizon to be realised. It scores observed values only: an
+imputed point inside the realised horizon withholds that cohort, an imputed point elsewhere in the
+context does not (it used to suspend evaluation for 512 steps). Only compatible
+definition/profile/specification revisions are compared. The evaluated-through watermark excludes
+overlapping horizons from the sample count. Each cohort uses identical actual timestamps for
+TimesFM and LAST_VALUE, MOVING_AVERAGE (last 12 training points), SEASONAL_NAIVE and LINEAR_TREND
+(training OLS). MASE uses training seasonal naive error, and stays unmeasured for a zero scale.
+
+**Quality is judged over blocks, never over one cohort** (`ForecastQualityWindow`). A cohort is one
+horizon — ten points in the example above — and a calibrated 80 % interval covers fewer than eight
+of ten points about one time in three, so a per-cohort verdict that latches is drift by
+construction. Cohorts accumulate until a block holds at least 120 points; the block is judged once
+on its pooled figures and a new one starts. A block fails when its coverage is below
+`minimum-coverage` by more than 2.326 standard errors (the larger of the binomial one and the one
+measured between cohorts, since the points of one horizon share their errors), when its MAE exceeds
+`max-mae`, or when its MAE is more than 10 % above any baseline's. Two consecutive failed blocks,
+once `minimum-evaluated-points` is reached, latch DEGRADED. Displayed quality and baseline MAE are
+the last judged block, or the cohorts realised so far before the first one closes. In a simulation
+of a calibrated model over 30 days, about 1 % of runs latch whatever the correlation inside a
+cohort; with a horizon of 60 a block holds two cohorts and the between-cohort error is estimated
+from two values, so treat drift on long horizons as weak evidence. This is a gate, not a
+calibration proof or a joint horizon probability.
 
 Metrics Forecast polls persisted results every 30 seconds, cancels reads on unmount, and shows
 states, actual history, Q50/Q10–Q90 and baseline MAE. `GET /api/forecasts` reports disabled, available
 or unavailable state. `PUT /api/forecasts/{seriesId}/activation` accepts `active` and `confirmed`;
 activation requires confirmed=true, a current READY TimesFM forecast, minimum evaluated sample
-count, configured coverage/MAE gates and TimesFM MAE no greater than **every** baseline MAE. It
+count, and a last judged block that passed with no failed block since, met the coverage/MAE gates
+and kept TimesFM MAE no greater than **every** baseline MAE (0.1 % of the series level as slack, so
+a constant series does not lose to a zero-error LAST_VALUE by float noise). Activation is stricter
+than drift on purpose: 5 % worse than a baseline is not drift, but it does not earn ACTIVE. It
 uses the same global lock, returning 409 during refresh or when quality is insufficient. Operator
 REST uses the application's existing deployment access boundary; expose it through the same
 operator-only access controls as other management endpoints. MCP offers no mutation.
 
-Poor realised MAE, coverage, or loss against any baseline latches DEGRADED, disables activation and retains forecasts for
+Two consecutive failed blocks latch DEGRADED, disables activation and retains forecasts for
 inspection. Recovery requires an explicit configuration/policy revision, new realised evidence,
 and fresh operator activation. Inference timeout, BUSY, service outage or invalid output uses a
 labelled seasonal-naive point forecast (season > 1), otherwise last value. Baselines carry no

@@ -1568,6 +1568,32 @@ export interface ForecastRecord {
   evaluatedThrough: number;
   baselineMae: Record<string, number>;
   reason: string;
+  qualityWindow: ForecastQualityWindow;
+}
+/** @java ForecastQualityWindow.Cohort */
+export interface ForecastQualityCohort {
+  through: number;
+  points: number;
+  quality: ForecastEvaluation;
+  baselineMae: Record<string, number>;
+  meanAbsActual: number;
+}
+/** @java ForecastQualityWindow.Block */
+export interface ForecastQualityBlock {
+  through: number;
+  cohorts: number;
+  points: number;
+  quality: ForecastEvaluation;
+  baselineMae: Record<string, number>;
+  meanAbsActual: number;
+  coverageBound: number;
+  passed: boolean;
+}
+/** @java ForecastQualityWindow */
+export interface ForecastQualityWindow {
+  open: ForecastQualityCohort[];
+  lastBlock: ForecastQualityBlock | null;
+  failedBlocks: number;
 }
 /** @java ForecastController.SeriesView */
 export interface ForecastSeriesView {

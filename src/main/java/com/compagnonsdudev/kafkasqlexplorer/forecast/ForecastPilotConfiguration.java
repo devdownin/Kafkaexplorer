@@ -6,10 +6,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
 @Configuration(proxyBeanMethods = false)
-@EnableScheduling
 @ConditionalOnProperty(
     prefix = "explorer.forecasting.pilot",
     name = "enabled",
@@ -43,5 +41,10 @@ public class ForecastPilotConfiguration {
       ObjectProvider<TimesFmClient> client,
       MeterRegistry meters) {
     return new ForecastPilotService(p, s, preparation.getIfAvailable(), client.getIfAvailable(), meters);
+  }
+
+  @Bean
+  ForecastPilotScheduler forecastPilotScheduler(ForecastPilotService pilot, ForecastPilotProperties p) {
+    return new ForecastPilotScheduler(pilot, p.getInterval());
   }
 }

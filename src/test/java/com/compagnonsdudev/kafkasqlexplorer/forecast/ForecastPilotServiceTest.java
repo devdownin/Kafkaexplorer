@@ -81,8 +81,35 @@ class ForecastPilotServiceTest {
         new ForecastBacktestEvaluator.Evaluation(0, null, 0, 1, 3),
         2,
         0,
-        Map.of("LAST_VALUE", 0d, "MOVING_AVERAGE", 0d, "SEASONAL_NAIVE", 0d, "LINEAR_TREND", 0d),
-        "ready");
+        BASELINES_AT_ZERO,
+        "ready",
+        new ForecastQualityWindow(List.of(), passedBlock(), 0));
+  }
+
+  private static final Map<String, Double> BASELINES_AT_ZERO =
+      Map.of("LAST_VALUE", 0d, "MOVING_AVERAGE", 0d, "SEASONAL_NAIVE", 0d, "LINEAR_TREND", 0d);
+
+  private ForecastQualityWindow.Block passedBlock() {
+    return new ForecastQualityWindow.Block(
+        now, 60, 120, new ForecastBacktestEvaluator.Evaluation(0, null, 0, 1, 3),
+        BASELINES_AT_ZERO, 1, .7, true);
+  }
+
+  private ForecastRecord withWindow(ForecastRecord r, ForecastQualityWindow window) {
+    return new ForecastRecord(
+        r.key(), r.generatedAt(), r.state(), r.strategy(), r.visibility(), r.context(),
+        r.forecast(), r.quality(), r.evaluatedPoints(), r.evaluatedThrough(), r.baselineMae(),
+        r.reason(), window);
+  }
+
+  private PreparedMetricSeries withImputedPoint(PreparedMetricSeries c, int index) {
+    var points = new ArrayList<>(c.points());
+    var p = points.get(index);
+    points.set(index, new PreparedMetricSeries.Point(p.endAt(), p.value(), true, 0));
+    return new PreparedMetricSeries(
+        c.status(), c.reason(), c.seriesId(), c.definitionVersion(), c.sourceUnit(),
+        c.outputUnit(), c.fromInclusive(), c.toExclusive(), c.profile(), c.profileFingerprint(),
+        c.inputFingerprint(), c.observedPoints() - 1, c.missingPoints() + 1, 1, points);
   }
 
   @BeforeEach
@@ -152,8 +179,31 @@ class ForecastPilotServiceTest {
   }
 
   @Test
-  void realisedErrorDisablesActivationAndRetainsRecord() throws Exception {
-    var old = record(context(now - 2000), 2, "READY");
+  void oneBadCohortNeitherDegradesNorDisables() throws Exception {
+    var old = withWindow(record(context(now - 2000), 2, "READY"), ForecastQualityWindow.EMPTY);
+    when(store.latest(connection, spec.seriesId())).thenReturn(old);
+    when(store.matured(eq(connection), eq(spec.seriesId()), anyLong(), anyLong())).thenReturn(old);
+    pilot.refresh(spec, now);
+    verify(store, never()).disable(any(), anyString());
+    var capture = ArgumentCaptor.forClass(ForecastRecord.class);
+    verify(store).save(eq(connection), eq(spec.seriesId()), capture.capture(), anyString());
+    var r = capture.getValue();
+    assertEquals("READY", r.state());
+    assertEquals(1, r.quality().mae());
+    assertEquals(1, r.qualityWindow().open().size());
+    assertNull(r.qualityWindow().lastBlock());
+  }
+
+  @Test
+  void secondConsecutiveFailedBlockDisablesActivationAndRetainsRecord() throws Exception {
+    var filling =
+        new ForecastQualityWindow.Cohort(
+            now - 4000, 118, new ForecastBacktestEvaluator.Evaluation(1, null, 1, 0, 3),
+            BASELINES_AT_ZERO, 1);
+    var old =
+        withWindow(
+            record(context(now - 2000), 2, "READY"),
+            new ForecastQualityWindow(List.of(filling), null, 1));
     when(store.latest(connection, spec.seriesId())).thenReturn(old);
     when(store.matured(eq(connection), eq(spec.seriesId()), anyLong(), anyLong())).thenReturn(old);
     when(store.active(connection, spec.seriesId())).thenReturn(true);
@@ -167,13 +217,53 @@ class ForecastPilotServiceTest {
     assertEquals(4, r.evaluatedPoints());
     assertEquals(now, r.evaluatedThrough());
     assertEquals(4, r.baselineMae().size());
+    assertEquals(2, r.qualityWindow().failedBlocks());
+    assertEquals(120, r.qualityWindow().lastBlock().points());
     assertEquals(ForecastThresholdPolicy.Visibility.SHADOW, r.visibility());
+  }
+
+  @Test
+  void imputedPointOutsideTheRealisedHorizonStillEvaluates() throws Exception {
+    context = withImputedPoint(context, 0);
+    when(preparation.prepare(
+            eq(spec.seriesId()), eq("v1"), eq("messages"), anyLong(), eq(spec.profile())))
+        .thenReturn(context);
+    when(client.forecast(anyList(), eq(2))).thenReturn(List.of(forecast(context, 1)));
+    var old = withWindow(record(context(now - 2000), 1, "READY"), ForecastQualityWindow.EMPTY);
+    when(store.latest(connection, spec.seriesId())).thenReturn(old);
+    when(store.matured(eq(connection), eq(spec.seriesId()), anyLong(), anyLong())).thenReturn(old);
+    pilot.refresh(spec, now);
+    var capture = ArgumentCaptor.forClass(ForecastRecord.class);
+    verify(store).save(eq(connection), eq(spec.seriesId()), capture.capture(), anyString());
+    assertEquals(4, capture.getValue().evaluatedPoints());
+    assertEquals(now, capture.getValue().evaluatedThrough());
+  }
+
+  @Test
+  void imputedPointInsideTheRealisedHorizonIsNeverScored() throws Exception {
+    context = withImputedPoint(context, 511);
+    when(preparation.prepare(
+            eq(spec.seriesId()), eq("v1"), eq("messages"), anyLong(), eq(spec.profile())))
+        .thenReturn(context);
+    when(client.forecast(anyList(), eq(2))).thenReturn(List.of(forecast(context, 1)));
+    var old = withWindow(record(context(now - 2000), 1, "READY"), ForecastQualityWindow.EMPTY);
+    when(store.latest(connection, spec.seriesId())).thenReturn(old);
+    when(store.matured(eq(connection), eq(spec.seriesId()), anyLong(), anyLong())).thenReturn(old);
+    pilot.refresh(spec, now);
+    var capture = ArgumentCaptor.forClass(ForecastRecord.class);
+    verify(store).save(eq(connection), eq(spec.seriesId()), capture.capture(), anyString());
+    assertEquals(2, capture.getValue().evaluatedPoints());
+    assertTrue(capture.getValue().qualityWindow().open().isEmpty());
   }
 
   @Test
   void activationRequiresEvidenceAndPersistsOnlyAfterExplicitCall() throws Exception {
     assertThrows(IllegalArgumentException.class, () -> pilot.activate(spec.seriesId(), true));
     verify(store, never()).activate(any(), anyString(), anyBoolean());
+    var unjudged =
+        withWindow(record(context, 1, "READY"), ForecastQualityWindow.EMPTY);
+    when(store.latest(connection, spec.seriesId())).thenReturn(unjudged);
+    assertThrows(IllegalArgumentException.class, () -> pilot.activate(spec.seriesId(), true));
     when(store.latest(connection, spec.seriesId())).thenReturn(record(context, 1, "READY"));
     pilot.activate(spec.seriesId(), true);
     verify(store).activate(connection, spec.seriesId(), true);
@@ -223,7 +313,8 @@ class ForecastPilotServiceTest {
             old.evaluatedPoints(),
             old.evaluatedThrough(),
             old.baselineMae(),
-            old.reason());
+            old.reason(),
+            old.qualityWindow());
     when(store.latest(connection, spec.seriesId())).thenReturn(incompatible);
     assertNull(pilot.get(spec.seriesId()));
     assertNull(pilot.breach(spec.seriesId()));
@@ -296,7 +387,8 @@ class ForecastPilotServiceTest {
             0,
             0,
             Map.of(),
-            "ready");
+            "ready",
+            null);
     when(store.latest(connection, spec.seriesId())).thenReturn(old);
     var result = pilot.breach(spec.seriesId());
     assertNotNull(result);

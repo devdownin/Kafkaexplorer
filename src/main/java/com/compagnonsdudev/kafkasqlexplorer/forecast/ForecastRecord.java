@@ -16,9 +16,12 @@ public record ForecastRecord(
     int evaluatedPoints,
     long evaluatedThrough,
     Map<String, Double> baselineMae,
-    String reason) {
+    String reason,
+    ForecastQualityWindow qualityWindow) {
   public ForecastRecord {
     baselineMae = Map.copyOf(baselineMae);
+    // Payloads written before the window existed read back as an empty one.
+    qualityWindow = qualityWindow == null ? ForecastQualityWindow.EMPTY : qualityWindow;
   }
 
   public boolean hasRealisedQuality() {

@@ -14,8 +14,9 @@ MCP », au commit `ee6a70b` :
 - `services/timesfm/` (service FastAPI, worker, contrat) ;
 - `timesfm.md`, `docs/notes/timesfm-pilot.md`, `docs/notes/timesfm-history.md`.
 
-**Rien n'est corrigé dans ce document** : chaque constat est une preuve (fichier:ligne), un
-effet observable et un correctif proposé. Les chiffres marqués *calculé* sont des probabilités
+Chaque constat est une preuve (fichier:ligne, au commit audité), un effet observable et un
+correctif proposé. **F1, F2 et F3 sont corrigés** (statut en tête de chacun) ; les autres restent
+ouverts. Les chiffres marqués *calculé* sont des probabilités
 binomiales sous l'hypothèse la plus favorable au modèle (parfaitement calibré, erreurs
 indépendantes) ; rien n'a été mesuré sur une série réelle, faute de cluster et de poids TimesFM
 dans l'environnement de l'audit.
@@ -36,9 +37,9 @@ rendue comme une absence de franchissement (F4).
 
 | # | Sévérité | Constat |
 |---|---|---|
-| F1 | Critique | Le pilote partage l'unique thread `@Scheduled` avec la collecte des métriques |
-| F2 | Haute | La dérive est jugée sur une cohorte unique puis verrouillée : `DEGRADED` est quasi certain |
-| F3 | Haute | Un seul point imputé dans le contexte suspend l'évaluation pendant 512 pas |
+| F1 | Critique, *corrigé* | Le pilote partage l'unique thread `@Scheduled` avec la collecte des métriques |
+| F2 | Haute, *corrigé* | La dérive est jugée sur une cohorte unique puis verrouillée : `DEGRADED` est quasi certain |
+| F3 | Haute, *corrigé* | Un seul point imputé dans le contexte suspend l'évaluation pendant 512 pas |
 | F4 | Haute | `kex_list_predicted_threshold_breaches` confond « non évalué » et « aucun franchissement » |
 | F5 | Moyenne | DLP appliqué au catalogue, pas aux quatre autres outils |
 | F6 | Moyenne | Le retour à `SHADOW` est refusé (409) pendant un rafraîchissement |
@@ -51,6 +52,13 @@ rendue comme une absence de franchissement (F4).
 | F13 | Basse | Purge doublée par série, budget occupé par des séries retirées |
 
 ## F1 — Critique : le pilote bloque la collecte qu'il consomme
+
+**Corrigé** : `ForecastPilotScheduler` (`SmartLifecycle`, thread `forecast-pilot`), tests dans
+`ForecastPilotSchedulerTest`. Le correctif proposé ci-dessous était **faux** et ne doit pas être
+repris : publier un bean `ScheduledExecutorService` satisfait le `@ConditionalOnMissingBean` de
+l'auto-configuration du planificateur de Spring Boot, qui ne crée alors plus le sien — et
+`MetricService.refreshMetrics` serait passé sur le thread du pilote. L'exécuteur est donc privé, et
+un test vérifie qu'aucun bean `ScheduledExecutorService` ni `TaskScheduler` n'est publié.
 
 **Preuve.** `ForecastPilotService.refresh()` (`ForecastPilotService.java:85`) et
 `MetricService.refreshMetrics()` (`MetricService.java:1901`) sont deux `@Scheduled`. Aucun
@@ -108,6 +116,19 @@ void pilotCycleRunsOffTheSharedSchedulingThread() throws Exception {
 `nextScheduledAt()` reste juste : il est mis à jour par `refresh()` lui-même.
 
 ## F2 — Haute : un détecteur de dérive qui se déclenche sur un modèle parfait
+
+**Corrigé** autrement que proposé ci-dessous : `ForecastQualityWindow`, tests dans
+`ForecastQualityWindowTest` et `ForecastPilotServiceTest`. La fenêtre glissante proposée ici ne
+suffisait pas — simulée, jugée à chaque cohorte et verrouillée, elle se déclenche encore dans
+100 % des cas en 30 jours sur un modèle calibré, parce que des fenêtres qui se chevauchent
+répètent le même test des milliers de fois. Ce qui est livré : blocs **disjoints** d'au moins
+120 points jugés une fois, borne de couverture à 2,326 erreurs-types (la plus grande de l'erreur
+binomiale et de celle mesurée entre cohortes), tolérance de 10 % contre les baselines pour la
+dérive, aucune pour l'activation, marge de 0,1 % du niveau de la série, et `DEGRADED` après deux
+blocs en échec consécutifs. Simulé sur 30 jours : environ 1 % de verrouillages à tort, quelle que
+soit la corrélation intra-cohorte ; une couverture réelle de 0,6 est détectée en deux blocs quand
+les cohortes sont indépendantes, plus lentement sinon. Le refus d'enrôler une série constante n'a
+pas été fait : la marge de niveau suffit à ce qu'elle ne passe plus en `DEGRADED`.
 
 **Preuve.** `ForecastPilotService.java:176-185` : à chaque cohorte mûre, `quality` est recalculée
 sur **cette seule cohorte** (`horizon` points, 10 dans l'exemple du runbook), puis
@@ -178,6 +199,10 @@ même objet. Le `1e-9` absolu évite le cas MAE 0, mais une série constante n'a
 à prévoir : `ForecastSetupService` doit la refuser avec la raison.
 
 ## F3 — Haute : un trou isolé suspend l'évaluation pendant huit heures
+
+**Corrigé** comme proposé : seules les valeurs observées de l'horizon réalisé comptent ; tests
+`imputedPointOutsideTheRealisedHorizonStillEvaluates` et
+`imputedPointInsideTheRealisedHorizonIsNeverScored`.
 
 **Preuve.** `ForecastPilotService.java:160` exige `context.imputedPoints() == 0` sur les **512**
 points du contexte courant. Le préparateur admet jusqu'à 5 % de points imputés (25) et des trous
