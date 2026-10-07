@@ -506,6 +506,7 @@ const Metrics: React.FC = () => {
         type: nextType,
         name: nameIsAuto ? buildAutoName(nextType, selectedTopic) : m.name,
         executionMode: tt === RAW_SQL ? 'SQL'
+          : tt === 'KAFKA_CLUSTER_COUNT' ? 'TEMPLATE_BOUNDED_SCAN'
           : (m.executionMode && m.executionMode !== 'SQL' ? m.executionMode : 'TEMPLATE_BOUNDED_SCAN'),
         templateParams: tt === RAW_SQL ? {} : (m.templateParams ?? {}),
       };

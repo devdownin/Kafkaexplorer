@@ -4,6 +4,8 @@ package com.compagnonsdudev.kafkasqlexplorer.domain;
 
 public enum MetricTemplateType {
     RAW_SQL,
+    /** Cluster metadata counts, available without a Flink table or a topic schema. */
+    KAFKA_CLUSTER_COUNT,
     TOPIC_COUNT_DELTA,
     TOPIC_TRANSIT_LATENCY,
     /**

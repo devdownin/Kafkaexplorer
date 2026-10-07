@@ -280,6 +280,12 @@ public class KafkaAdminService {
         }
     }
 
+    /** A failed metadata read must remain an error, rather than a zero broker count. */
+    public int getBrokerCount() throws ExecutionException, InterruptedException, TimeoutException {
+        return adminClient.describeCluster(new DescribeClusterOptions().timeoutMs(5000))
+            .nodes().get(5, TimeUnit.SECONDS).size();
+    }
+
     /**
      * Cached (30s TTL): each call costs a describeTopics and two listOffsets over every partition
      * of every topic, and the dashboard polls it for the whole cluster. It no longer costs a

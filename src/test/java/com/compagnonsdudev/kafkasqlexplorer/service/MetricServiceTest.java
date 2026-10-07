@@ -200,6 +200,49 @@ class MetricServiceTest {
     }
 
     @Test
+    void firstRunWithoutFlinkTablesSeedsTwoUsableKafkaMetrics() throws Exception {
+        Mockito.when(flinkSqlService.listTables()).thenReturn(List.of());
+        Mockito.when(kafkaAdminService.listTopics()).thenReturn(List.of("orders", "payments"));
+        Mockito.when(kafkaAdminService.getBrokerCount()).thenReturn(3);
+
+        service.init();
+        List<MetricConfig> metrics = service.getAllMetrics();
+        assertEquals(2, metrics.size());
+        MetricConfig topics = metrics.stream().filter(m -> "kafka_topic_count".equals(m.name()))
+            .findFirst().orElseThrow();
+        MetricConfig brokers = metrics.stream().filter(m -> "kafka_broker_count".equals(m.name()))
+            .findFirst().orElseThrow();
+        assertEquals(2.0, service.previewMetric(topics).value());
+        assertEquals(3.0, service.previewMetric(brokers).value());
+        service.init();
+        assertEquals(2, service.getAllMetrics().size(), "a second initialization must not duplicate defaults");
+        Mockito.verify(flinkSqlService, Mockito.never()).executeSql(Mockito.any(QueryRequest.class));
+    }
+
+    @Test
+    void kafkaDefaultsReportMetadataFailureInsteadOfZero() throws Exception {
+        Mockito.when(flinkSqlService.listTables()).thenReturn(List.of());
+        service.init();
+        MetricConfig topics = service.getAllMetrics().stream()
+            .filter(m -> "kafka_topic_count".equals(m.name())).findFirst().orElseThrow();
+        Mockito.when(kafkaAdminService.listTopics()).thenThrow(new java.util.concurrent.TimeoutException("offline"));
+
+        var result = service.previewMetric(topics);
+        assertNull(result.value());
+        assertTrue(result.error().contains("offline"));
+    }
+
+    @Test
+    void existingMetricsArePreservedWithoutAddingDefaults() {
+        Mockito.when(flinkSqlService.listTables()).thenReturn(List.of());
+        service.save(new MetricConfig("custom", "custom_metric", "GAUGE", "SELECT 1 AS metric_value",
+            "User metric", null, null, null, null, null));
+        service.init();
+        assertEquals(1, service.getAllMetrics().size());
+        assertTrue(service.getById("custom").isPresent());
+    }
+
+    @Test
     void testSaveAndDeleteMetric() {
         service.init();
         int initialSize = service.getAllMetrics().size();

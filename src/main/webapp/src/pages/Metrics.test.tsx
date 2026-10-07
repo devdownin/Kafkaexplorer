@@ -21,6 +21,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
+import { TemplateParamsEditor } from '../components/metrics/TemplateParamsEditor';
 import type { MetricConfig, MetricSuggestion, MetricSuggestions } from '../api/types';
 // La logique pure a quitté la page pour `metricsEditor.ts` ; les cas ci-dessous sont inchangés.
 import { defaultReadMode, isSingleTableRead, sameStatement, validateScanParams, validateTemplate } from './metricsEditor';
@@ -38,6 +39,29 @@ vi.mock('../monaco-setup', () => ({}));
 vi.mock('../catalogStore', () => ({
   useCatalog: () => ({ topics: ['demo.orders.1.received'], tables: [] }),
 }));
+
+describe('Kafka defaults without Flink tables', () => {
+  it('accepts metadata gauges without SQL and rejects missing or invalid measurements', () => {
+    for (const measurement of ['TOPIC_COUNT', 'BROKER_COUNT']) {
+      expect(validateTemplate('KAFKA_CLUSTER_COUNT', 'GAUGE', { measurement })).toEqual([]);
+    }
+    expect(validateTemplate('KAFKA_CLUSTER_COUNT', 'GAUGE', {})).toEqual([
+      expect.objectContaining({ level: 'error' }),
+    ]);
+    expect(validateTemplate('KAFKA_CLUSTER_COUNT', 'COUNTER', { measurement: 'TOPIC_COUNT' }))
+      .toEqual([expect.objectContaining({ level: 'error' })]);
+  });
+
+  it('edits Kafka counts without showing SQL fields or a Flink managed execution mode', () => {
+    render(<TemplateParamsEditor templateType="KAFKA_CLUSTER_COUNT"
+      params={{ measurement: 'TOPIC_COUNT' }} executionMode="TEMPLATE_BOUNDED_SCAN"
+      table="" setParam={vi.fn()} setExecutionMode={vi.fn()} />);
+    expect(screen.getByRole('option', { name: 'Number of topics' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Number of brokers' })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Execution Mode').querySelectorAll('option')).toHaveLength(1);
+  });
+});
 
 const templateMetric: MetricConfig = {
   id: 'm-1',

@@ -1836,6 +1836,7 @@ public class MetricSuggestionService {
             // delay, so the proposal is marked as covered rather than offered again.
             case CONSUMER_TIME_LAG -> sameParams(existingParams, proposedParams, "topic", "group");
             case RAW_SQL -> false;
+            case KAFKA_CLUSTER_COUNT -> sameParams(existingParams, proposedParams, "measurement");
         };
     }
 
