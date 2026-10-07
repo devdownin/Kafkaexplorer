@@ -534,4 +534,5 @@ idempotence key with the legacy one still read so the upgrade itself re-keys not
 `fix_quantile_crossing` and `infer_is_positive` turned on behind adapter `v2` once the upstream
 code showed the fix keeps the median and the order (F9), a bounded connection pool that rolls back
 before reuse (F10), the quarantine call on a series id removed (F11), forecast tools registered only
-when a series is approved (F12), one purge per refresh and a budget counting approved series (F13).
+when a series is approved (F12), one purge per refresh and a budget counting approved series (F13). F6 closed the report: returning a series to SHADOW takes no lock, since every read
+recomputes visibility from the control row.

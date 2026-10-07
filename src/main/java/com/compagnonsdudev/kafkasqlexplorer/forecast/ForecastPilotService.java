@@ -282,12 +282,20 @@ public final class ForecastPilotService {
    */
   public void activate(String id, boolean active) throws Exception {
     var spec = resolve(id);
+    if (!active) {
+      // Returning to SHADOW never waits on the refresh lock: it was refused with a 409 for as
+      // long as a cycle held it, up to a minute plus one inference, on the one control meant to
+      // be immediate. It needs no judgement and cannot race into a wrong answer, because a read
+      // recomputes visibility from the control row: a record a running cycle publishes as ACTIVE
+      // a moment later reads SHADOW.
+      store.activate(id, false);
+      return;
+    }
     try (var c = store.open()) {
       if (!store.acquire(c, UUID.randomUUID().toString()))
         throw new IllegalArgumentException("Pilot is refreshing; retry activation");
       var r = store.latest(c, id);
-      if (active
-          && (r == null
+      if ((r == null
               || !compatible(spec, r)
               || !r.hasRealisedQuality()
               || !r.state().equals("READY")
@@ -299,7 +307,7 @@ public final class ForecastPilotService {
               || !r.qualityWindow().lastBlock().eligibleForActivation(spec.maxMae())))
         throw new IllegalArgumentException(
             "Activation requires realised quality and all four baseline comparisons");
-      store.activate(c, id, active);
+      store.activate(c, id, true);
       c.commit();
     }
   }

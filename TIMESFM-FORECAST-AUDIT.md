@@ -15,7 +15,7 @@ MCP », au commit `ee6a70b` :
 - `timesfm.md`, `docs/notes/timesfm-pilot.md`, `docs/notes/timesfm-history.md`.
 
 Chaque constat est une preuve (fichier:ligne, au commit audité), un effet observable et un
-correctif proposé. **Tous sont corrigés sauf F6** (statut en tête de chacun). Les chiffres marqués *calculé* sont des probabilités
+correctif proposé. **Tous sont corrigés** (statut en tête de chacun). Les chiffres marqués *calculé* sont des probabilités
 binomiales sous l'hypothèse la plus favorable au modèle (parfaitement calibré, erreurs
 indépendantes) ; rien n'a été mesuré sur une série réelle, faute de cluster et de poids TimesFM
 dans l'environnement de l'audit.
@@ -41,7 +41,7 @@ rendue comme une absence de franchissement (F4).
 | F3 | Haute, *corrigé* | Un seul point imputé dans le contexte suspend l'évaluation pendant 512 pas |
 | F4 | Haute, *corrigé* | `kex_list_predicted_threshold_breaches` confond « non évalué » et « aucun franchissement » |
 | F5 | Moyenne, *corrigé* | DLP appliqué au catalogue, pas aux quatre autres outils |
-| F6 | Moyenne | Le retour à `SHADOW` est refusé (409) pendant un rafraîchissement |
+| F6 | Moyenne, *corrigé* | Le retour à `SHADOW` est refusé (409) pendant un rafraîchissement |
 | F7 | Moyenne, *corrigé* | Clé d'idempotence construite sur `Record.toString()` |
 | F8 | Moyenne, *corrigé* | Un TimesFM qui ne répond plus réduit le cycle à deux séries |
 | F9 | Moyenne, *corrigé* | `fix_quantile_crossing=False` transforme toute inversion de quantiles en fallback |
@@ -299,6 +299,10 @@ appliquant `scrub` aux mêmes champs que le catalogue ; un test qui configure un
 correspondant à `definitionVersion` et l'assert absent des cinq réponses.
 
 ## F6 — Moyenne : le retour à SHADOW attend la fin du rafraîchissement
+
+**Corrigé** comme proposé : `activate(id, false)` écrit la ligne de contrôle sans prendre le
+verrou ; tests `returningToShadowNeverWaitsOnTheRefreshLock` et
+`aRecordPublishedActiveAfterTheReturnReadsShadow`.
 
 **Preuve.** `activate(id, false)` prend le même verrou consultatif que le rafraîchissement et
 lève `IllegalArgumentException` → 409 s'il est tenu (`ForecastPilotService.java:239-240`).

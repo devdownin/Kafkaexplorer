@@ -161,7 +161,10 @@ count, and a last judged block that passed with no failed block since, met the c
 and kept TimesFM MAE no greater than **every** baseline MAE (0.1 % of the series level as slack, so
 a constant series does not lose to a zero-error LAST_VALUE by float noise). Activation is stricter
 than drift on purpose: 5 % worse than a baseline is not drift, but it does not earn ACTIVE. It
-uses the same global lock, returning 409 during refresh or when quality is insufficient. Operator
+uses the same global lock, returning 409 during refresh or when quality is insufficient. **Returning
+to SHADOW (`active=false`) takes no lock** and is never refused for a running cycle: visibility is
+recomputed from the control row on every read, so a record a cycle publishes as ACTIVE a moment
+later still reads SHADOW. Operator
 REST uses the application's existing deployment access boundary; expose it through the same
 operator-only access controls as other management endpoints. MCP offers no mutation.
 

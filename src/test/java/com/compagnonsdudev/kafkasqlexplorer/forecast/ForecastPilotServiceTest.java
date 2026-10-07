@@ -573,4 +573,27 @@ class ForecastPilotServiceTest {
     verify(store, times(1)).purge(eq(connection), anyLong());
     verify(store).checkSeriesBudget(connection, spec.seriesId(), 20, List.of(spec.seriesId()));
   }
+
+  @Test
+  void returningToShadowNeverWaitsOnTheRefreshLock() throws Exception {
+    when(store.acquire(eq(connection), anyString())).thenReturn(false);
+    pilot.activate(spec.seriesId(), false);
+    verify(store).activate(spec.seriesId(), false);
+    verify(store, never()).acquire(any(), anyString());
+    assertThrows(IllegalArgumentException.class, () -> pilot.activate(spec.seriesId(), true));
+  }
+
+  @Test
+  void aRecordPublishedActiveAfterTheReturnReadsShadow() throws Exception {
+    var r = record(context, 1, "READY");
+    var publishedActive =
+        new ForecastRecord(
+            r.key(), r.generatedAt(), r.state(), r.strategy(),
+            ForecastThresholdPolicy.Visibility.ACTIVE, r.context(), r.forecast(), r.quality(),
+            r.evaluatedPoints(), r.evaluatedThrough(), r.baselineMae(), r.reason(),
+            r.qualityWindow());
+    when(store.latest(connection, spec.seriesId())).thenReturn(publishedActive);
+    when(store.active(connection, spec.seriesId())).thenReturn(false);
+    assertEquals(ForecastThresholdPolicy.Visibility.SHADOW, pilot.get(spec.seriesId()).visibility());
+  }
 }
