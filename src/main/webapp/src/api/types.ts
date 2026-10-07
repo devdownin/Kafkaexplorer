@@ -1601,6 +1601,21 @@ export interface ForecastSeriesView {
   metricId: string;
   environment: string;
   result: ForecastRecord | null;
+  activation: ForecastActivationReadiness;
+}
+/** @java ForecastPilotService.ActivationReadiness */
+export interface ForecastActivationReadiness {
+  eligible: boolean;
+  reason: string | null;
+  blockPoints: number;
+  blockPointsRequired: number;
+  lastBlockPassed: boolean | null;
+  failedBlocks: number;
+  failedBlocksToDegrade: number;
+}
+/** @java ForecastController.Refusal */
+export interface ForecastActivationRefusal {
+  reason: string;
 }
 /** @java ForecastController.Status */
 export interface ForecastStatus {

@@ -87,4 +87,17 @@ class ForecastQualityWindowTest {
     var json = new ObjectMapper();
     assertEquals(window, json.readValue(json.writeValueAsString(window), ForecastQualityWindow.class));
   }
+
+  @Test
+  void theActivationBlockerNamesTheBaselineThatDoesBetter() {
+    var baselines = Map.of("LAST_VALUE", 1d, "MOVING_AVERAGE", .5, "SEASONAL_NAIVE", 1d, "LINEAR_TREND", 1d);
+    var window = ForecastQualityWindow.EMPTY;
+    for (int i = 0; i < 12; i++) window = window.add(cohort(.52, .8, baselines, 5), .8, null);
+    assertEquals(
+        "MAE 0.5200 is worse than the MOVING_AVERAGE baseline (0.5000)",
+        window.lastBlock().activationBlocker(null).orElseThrow());
+    assertEquals(
+        "MAE 0.5200 is above the configured maximum 0.5000",
+        window.lastBlock().activationBlocker(.5).orElseThrow());
+  }
 }

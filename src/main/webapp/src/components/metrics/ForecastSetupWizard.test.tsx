@@ -27,22 +27,22 @@ describe('ForecastSetupWizard', () => {
     const user = await sources();
     expect(screen.getByLabelText('History cluster ID')).toHaveValue('existing');
     await user.clear(screen.getByLabelText('Environment'));
-    await user.clear(screen.getByLabelText('All source topics (comma separated)'));
+    await user.click(screen.getByRole('button', { name: 'Remove orders' }));
     await user.clear(screen.getByLabelText('Forecast horizon (points)')); await user.type(screen.getByLabelText('Forecast horizon (points)'), '61');
     await user.click(screen.getByRole('button', { name: 'Review configuration' }));
     expect(screen.getByLabelText('Environment')).toHaveFocus();
     expect(screen.getByLabelText('Environment')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Add every source topic.')).toBeTruthy();
     expect(screen.getByLabelText('Forecast horizon (points)')).toHaveAttribute('aria-invalid', 'true');
     expect(axios.post).not.toHaveBeenCalled();
   });
-  it('requires source attestation and confirmation before validating a configuration', async () => {
+  it('requires the source attestation, and only it, before validating a configuration', async () => {
     vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: ['Restart with the file'] } });
     const user = await sources(); await user.click(screen.getByRole('button', { name: 'Review configuration' }));
     expect(screen.getByRole('button', { name: 'Validate and export' })).toBeDisabled();
     await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
-    expect(axios.post).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'Export configuration' }));
     expect(await screen.findByText('Restart with the file')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(axios.post).toHaveBeenCalledWith('/api/forecasts/configuration', expect.objectContaining({ confirmed: true,
       metricId: 'lag', definitionVersion: 'version', unit: 'milliseconds', clusterId: 'existing', collectorId: 'collector',
       topics: ['orders'], groups: ['worker'], horizon: 30, threshold: null }), expect.objectContaining({ timeout: 10000 }));
@@ -52,7 +52,6 @@ describe('ForecastSetupWizard', () => {
     vi.mocked(axios.post).mockRejectedValue({ response: { data: { reason: 'Metric changed; reload candidates and review again' } } });
     const user = await sources(); await user.click(screen.getByRole('button', { name: 'Review configuration' }));
     await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
-    await user.click(screen.getByRole('button', { name: 'Export configuration' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Metric changed');
     expect(screen.queryByRole('button', { name: 'Download forecasts.yml' })).toBeNull();
   });
@@ -61,8 +60,8 @@ describe('ForecastSetupWizard', () => {
     expect(await screen.findByRole('button', { name: 'Continue to sources' })).toBeEnabled();
     expect(screen.getByLabelText('Candidate metric')).toHaveValue('lag');
     await user.click(screen.getByRole('button', { name: 'Continue to sources' }));
-    expect(screen.getByLabelText('All source topics (comma separated)')).toHaveValue('orders');
-    expect(screen.getByLabelText('All consumer groups (comma separated, optional)')).toHaveValue('worker');
+    expect(screen.getByRole('list', { name: 'All source topics: selected' })).toHaveTextContent('orders');
+    expect(screen.getByRole('list', { name: 'All consumer groups (optional): selected' })).toHaveTextContent('worker');
     await user.click(screen.getByRole('button', { name: 'Review configuration' }));
     expect(screen.getByRole('checkbox')).not.toBeChecked();
     expect(screen.getByRole('button', { name: 'Validate and export' })).toBeDisabled();
@@ -84,5 +83,47 @@ describe('ForecastSetupWizard', () => {
   it('aborts catalogue reads on close', () => {
     vi.mocked(axios.get).mockReturnValue(new Promise(() => {})); const view = render(<ForecastSetupWizard />);
     const options = vi.mocked(axios.get).mock.calls[0][1]; view.unmount(); expect(options?.signal?.aborted).toBe(true);
+  });
+  it('offers sampling intervals by name and states the horizon as a duration', async () => {
+    const user = await sources();
+    await user.selectOptions(screen.getByLabelText('Sampling interval'), '300000');
+    expect(screen.getByText('Forecasts 2.5 hours ahead')).toBeTruthy();
+    await user.clear(screen.getByLabelText('Forecast horizon (points)')); await user.type(screen.getByLabelText('Forecast horizon (points)'), '6');
+    expect(screen.getByText('Forecasts 30 minutes ahead')).toBeTruthy();
+  });
+  it('keeps the history identities folded away, and opens them when one is invalid', async () => {
+    const user = await sources();
+    const details = screen.getByText('Advanced: history identities').closest('details');
+    expect(details).not.toHaveAttribute('open');
+    await user.clear(screen.getByLabelText('History collector ID'));
+    await user.click(screen.getByRole('button', { name: 'Review configuration' }));
+    expect(details).toHaveAttribute('open');
+    expect(screen.getByLabelText('History collector ID')).toHaveFocus();
+  });
+  it('edits sources as chips: add with Enter, ignore duplicates, remove one', async () => {
+    vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: [] } });
+    const user = await sources();
+    await user.type(screen.getByLabelText('All source topics'), 'payments{Enter}');
+    await user.type(screen.getByLabelText('All source topics'), 'orders{Enter}');
+    await user.type(screen.getByLabelText('All consumer groups (optional)'), 'billing{Enter}');
+    await user.click(screen.getByRole('button', { name: 'Remove worker' }));
+    expect(screen.getByRole('list', { name: 'All source topics: selected' }).querySelectorAll('li')).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: 'Review configuration' }));
+    await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
+    await screen.findByRole('button', { name: 'Copy configuration' });
+    expect(axios.post).toHaveBeenCalledWith('/api/forecasts/configuration',
+      expect.objectContaining({ topics: ['orders', 'payments'], groups: ['billing'] }), expect.anything());
+  });
+  it('numbers the steps after export and offers a copy beside the download', async () => {
+    vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: ['Merge the file', 'Restart'] } });
+    const user = await sources(); await user.click(screen.getByRole('button', { name: 'Review configuration' }));
+    await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
+    const steps = (await screen.findByText('Next steps')).nextElementSibling;
+    expect(steps?.tagName).toBe('OL');
+    expect([...steps!.querySelectorAll('li')].map(li => li.textContent)).toEqual([
+      'Download or copy the configuration below.', 'Merge the file', 'Restart',
+      'Come back to Metrics Forecast: history progress appears here once the restarted pilot collects.']);
+    expect(screen.getByRole('button', { name: 'Copy configuration' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Download forecasts.yml' })).toBeTruthy();
   });
 });

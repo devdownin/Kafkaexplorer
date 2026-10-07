@@ -18,7 +18,11 @@ public class ForecastController {
   }
 
   public record SeriesView(
-      String seriesId, String metricId, String environment, ForecastRecord result) {}
+      String seriesId,
+      String metricId,
+      String environment,
+      ForecastRecord result,
+      ForecastPilotService.ActivationReadiness activation) {}
 
   public record Status(boolean enabled, String state, List<SeriesView> series) {}
 
@@ -28,8 +32,12 @@ public class ForecastController {
     if (p == null) return ResponseEntity.ok(new Status(false, "DISABLED", List.of()));
     try {
       var rows = new java.util.ArrayList<SeriesView>();
-      for (var s : p.series())
-        rows.add(new SeriesView(s.seriesId(), s.metricId(), s.environment(), p.get(s.seriesId())));
+      for (var s : p.series()) {
+        var result = p.get(s.seriesId());
+        rows.add(
+            new SeriesView(
+                s.seriesId(), s.metricId(), s.environment(), result, p.readiness(s.seriesId(), result)));
+      }
       return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows)));
     } catch (Exception e) {
       return ResponseEntity.status(503).body(new Status(true, "UNAVAILABLE", List.of()));
@@ -38,8 +46,11 @@ public class ForecastController {
 
   public record Activation(boolean active, boolean confirmed) {}
 
+  /** Why activation was refused: the same sentence the page shows beside the button. */
+  public record Refusal(String reason) {}
+
   @PutMapping("/{seriesId}/activation")
-  public ResponseEntity<Void> activate(
+  public ResponseEntity<Refusal> activate(
       @PathVariable String seriesId, @RequestBody Activation activation) {
     var p = services.getIfAvailable();
     if (p == null) return ResponseEntity.notFound().build();
@@ -49,7 +60,7 @@ public class ForecastController {
       p.activate(seriesId, activation.active());
       return ResponseEntity.noContent().build();
     } catch (IllegalArgumentException e) {
-      return ResponseEntity.status(409).build();
+      return ResponseEntity.status(409).body(new Refusal(e.getMessage()));
     } catch (Exception e) {
       return ResponseEntity.status(503).build();
     }

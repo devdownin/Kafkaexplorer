@@ -53,21 +53,26 @@ model readiness alone do not make a metric forecastable.
    tables or run inference. Disabled dependencies are reported as configuration requirements.
    MCP tool availability comes from the server's actual published catalogue; agent connectivity
    must be verified from the agent itself.
-2. Choose **Configure a forecast**. The candidate catalogue shows metadata eligibility and history
+2. Choose **Configure a forecast**, or **Prepare a forecast** on a metric card: both open the same
+   assistant on the Metrics page. The candidate catalogue shows metadata eligibility and history
    enrollment separately. Unknown units, raw SQL scope, labelled values, non-scalar types, managed
    jobs and collection errors block the assistant. Correct the metric before proceeding. SQL,
    DDL and credentials are not returned by this catalogue. The first 100 metrics are listed in
    deterministic ID order; truncation is explicit.
-3. Declare environment, existing history cluster/collector identities, cadence, horizon, and **all**
-   source topics/groups. Structured suggestions are not a SQL dependency analysis. Unit and series
+3. Declare environment, sampling interval (30 s to 15 min), horizon — shown as a duration — and
+   **all** source topics/groups, edited as removable chips (topics are suggested from the cluster
+   catalogue; a name outside it is still accepted). The history cluster/collector identities are prefilled from the
+   running collector and folded under **Advanced**; they open by themselves when one is invalid. Structured suggestions are not a SQL dependency analysis. Unit and series
    identity must match the actual collector; units are read-only and stale metric definitions are
    rejected. Counters use rates per second; optional thresholds use forecast output units.
-4. Review and attest the sources, then confirm **Validate and export**. Server validation enforces
+4. Review and tick the source attestation, then choose **Validate and export**; the attestation is
+   the confirmation, with no second dialog. Server validation enforces
    source completeness for known template resources, bounded horizons/cadences, history retention,
    configured series budgets and existing collection identities. The YAML preserves existing
    runtime-approved series, enrollment, interval, retention and series budget. It includes no
    database credentials or inference token. Export changes no running configuration.
-5. Save the downloaded file as `.forecast-stack/config/forecasts.yml`, review its merge with your
+5. The export lists the next steps in order and offers **Copy configuration** beside the download.
+   Save the file as `.forecast-stack/config/forecasts.yml`, review its merge with your
    deployment, then rerun `bin/forecast-stack.sh`. For an existing non-Docker deployment, merge the
    file into the application's external Spring configuration and restart. Configure PostgreSQL
    credentials and inference separately using the [history runbook](notes/timesfm-history.md).
@@ -75,8 +80,8 @@ model readiness alone do not make a metric forecastable.
 
 ## Wait for a usable result
 
-The selected approved series shows observed buckets against the required 512, missing/imputed
-buckets, preparation state and rejection reason. With a 60-second cadence the context spans
+The selected approved series shows observed points against the required 512, missing/imputed
+points, preparation state and rejection reason. With a 60-second cadence the context spans
 512 minutes; irregular, stale, scope-changed, invalid or reset data can keep it inadmissible.
 Database failure shows unknown progress rather than a zero-valued measurement. The next cycle is
 a scheduler estimate, not a promised first-result date: a rotating bounded queue and shared lease
@@ -85,11 +90,14 @@ can defer a series. Progress reads are restricted to declared series and never r
 The summary leads with trend, horizon, predicted threshold breach and realised quality. Trend is
 last predicted Q50 minus the last measured value. Breaches use an explicit operator threshold and
 a conservative Q10/Q90 bound; unavailable, unconfigured and unevaluated policies are distinct.
-A breach from another result is not presented for the displayed forecast. Sources, history window,
-baseline comparisons and raw persisted JSON remain available in expandable details.
+A breach from another result is not presented for the displayed forecast. Sources, history window
+and baseline comparisons remain available in expandable details; the raw persisted result is a
+**Copy raw result (JSON)** button rather than a page of JSON.
 
-New predictions start in SHADOW. Activation still requires separate operator confirmation,
-measured realised quality and all baseline comparisons. Forecasts send no alerts. Nominal quantiles
+New predictions start in SHADOW, labelled **Observing** on the page (**Approved** for ACTIVE; the
+pilot's term is the badge's tooltip). Approval still requires separate operator confirmation,
+measured realised quality and all baseline comparisons, and the page states what still blocks it
+before the button is pressed. Forecasts send no alerts. Nominal quantiles
 are not guaranteed confidence. See the [pilot runbook](notes/timesfm-pilot.md) for quality gates,
 source authorization, persistence and failover behavior.
 

@@ -149,7 +149,7 @@ const Metrics: React.FC = () => {
    * Le brouillon est relu au montage et rouvre le modal tel qu'il était.
    */
   const [restoredEditor] = useState(() => readDraft<EditorDraft | null>(EDITOR_DRAFT, null));
-  const [forecastRequest, setForecastRequest] = useState<{ metricId: string; sequence: number } | null>(null);
+  const [forecastRequest, setForecastRequest] = useState<{ metricId?: string; sequence: number } | null>(null);
   useEffect(() => {
     if (!forecastRequest) return;
     const heading = document.getElementById('metric-forecast-preparation');
@@ -758,7 +758,7 @@ const Metrics: React.FC = () => {
         <Button variant="ghost" onClick={() => setForecastRequest(null)}>Close forecast preparation</Button>
         <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId} />
       </section>}
-      <ForecastPanel />
+      <ForecastPanel onConfigure={() => setForecastRequest(previous => ({ sequence: (previous?.sequence ?? 0) + 1 }))} />
       <SuggestionsPanel
         response={suggestions}
         loading={suggestionsLoading}

@@ -605,3 +605,30 @@ focus. Existing cluster/collector identities seed the form. No credentials enter
 observations, and dates diagnostics. Trend uses the last measured value against the last Q50;
 threshold evaluation must share the persisted result key before it is shown. Preparation progress,
 source details and raw result stay available without promoting SHADOW to ACTIVE.
+
+**The panel says why activation is not yet possible, before anyone clicks.** The button used to be
+enabled whenever the state read READY, and a refusal — a 409 with no body — came back as
+"Activation refused or unavailable", while the blocker (a first quality block still filling, a
+failed block, a baseline doing better) existed only inside `ForecastPilotService.activate`. Each
+series now carries `activation` (`ForecastPilotService.readiness`, the same function `activate`
+asks), so the button is disabled with that sentence as its accessible description, a 409 shows the
+server's `reason`, and one line states where the quality block stands against the two consecutive
+failures that mean drift. State, strategy, visibility and unit are badges beside the series
+selector, and nowhere else: they were printed twice, and the realised MAE three times.
+
+**The panel polls once.** It used to run two loops on the same 30-second clock — the catalogue in
+`ForecastPanel`, the selected series' history in `ForecastProgress` — each with its own loading
+state and error; the panel now reads both in one pass and hands `ForecastProgress` the result, so
+the latter is presentational. A raw persisted record is a copy button (through `copyText`, the
+secure-context-safe wrapper the lint rule requires), not a `<pre>` of JSON. The page says
+**Observing** / **Approved** and "80 % interval" rather than SHADOW / ACTIVE and Q10–Q90; the
+pilot's terms stay in the badge tooltip, the API and MCP. **There is one configuration assistant,
+on the Metrics page**: `ForecastPreparation` used to mount a second one, so a card's
+"Prepare a forecast" and the panel's "Configure a forecast" could hold two half-filled forms at
+once. The assistant names its sampling intervals, states the horizon as a duration, folds the
+prefilled history identities under **Advanced** (opened by `flushSync` before focusing one that is
+invalid — a field inside a closed `<details>` cannot take focus), and takes the attestation
+checkbox as the confirmation instead of asking again in a dialog. Sources are chips (`NameListField`) rather than a
+comma-separated string prefilled from the catalogue, where a stray comma or a typo became a
+declared source nobody reads; and the export ends with numbered next steps and a copy button
+beside the download, since the file is usually pasted into a deployment's configuration.
