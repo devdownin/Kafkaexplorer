@@ -15,8 +15,7 @@ MCP », au commit `ee6a70b` :
 - `timesfm.md`, `docs/notes/timesfm-pilot.md`, `docs/notes/timesfm-history.md`.
 
 Chaque constat est une preuve (fichier:ligne, au commit audité), un effet observable et un
-correctif proposé. **F1, F2, F3, F4 et F8 sont corrigés** (statut en tête de chacun) ; les autres restent
-ouverts. Les chiffres marqués *calculé* sont des probabilités
+correctif proposé. **Tous sont corrigés sauf F6** (statut en tête de chacun). Les chiffres marqués *calculé* sont des probabilités
 binomiales sous l'hypothèse la plus favorable au modèle (parfaitement calibré, erreurs
 indépendantes) ; rien n'a été mesuré sur une série réelle, faute de cluster et de poids TimesFM
 dans l'environnement de l'audit.
@@ -41,11 +40,11 @@ rendue comme une absence de franchissement (F4).
 | F2 | Haute, *corrigé* | La dérive est jugée sur une cohorte unique puis verrouillée : `DEGRADED` est quasi certain |
 | F3 | Haute, *corrigé* | Un seul point imputé dans le contexte suspend l'évaluation pendant 512 pas |
 | F4 | Haute, *corrigé* | `kex_list_predicted_threshold_breaches` confond « non évalué » et « aucun franchissement » |
-| F5 | Moyenne | DLP appliqué au catalogue, pas aux quatre autres outils |
+| F5 | Moyenne, *corrigé* | DLP appliqué au catalogue, pas aux quatre autres outils |
 | F6 | Moyenne | Le retour à `SHADOW` est refusé (409) pendant un rafraîchissement |
-| F7 | Moyenne | Clé d'idempotence construite sur `Record.toString()` |
+| F7 | Moyenne, *corrigé* | Clé d'idempotence construite sur `Record.toString()` |
 | F8 | Moyenne, *corrigé* | Un TimesFM qui ne répond plus réduit le cycle à deux séries |
-| F9 | Moyenne, à mesurer | `fix_quantile_crossing=False` transforme toute inversion de quantiles en fallback |
+| F9 | Moyenne, *corrigé* | `fix_quantile_crossing=False` transforme toute inversion de quantiles en fallback |
 | F10 | Basse | Une connexion PostgreSQL neuve par lecture MCP |
 | F11 | Basse | `checkNotQuarantined(seriesId)` ne contrôle rien |
 | F12 | Basse | Cinq outils annoncés même sans aucune série approuvée |
@@ -280,6 +279,10 @@ retour MCP : `McpServerBootTest` le verra, et la note `docs/notes/mcp-server.md`
 
 ## F5 — Moyenne : DLP sur le catalogue seulement
 
+**Corrigé** : les quatre autres outils passent les mêmes chaînes d'identité (version de
+définition, unités, raisons) dans `scrub`, enregistrement imbriqué compris ; test
+`everyForecastExitScrubsWhatTheCatalogueScrubs`.
+
 **Preuve.** `catalog()` passe `metricId`, `environment`, `unit` et `definitionVersion` dans
 `guard.dlp().scrub` et marque `complete = false` quand un identifiant est masqué
 (`ForecastMcpTools.java:36-45`). `history()`, `get()`, `quality()` et `breaches()` renvoient
@@ -322,6 +325,12 @@ public void activate(String id, boolean active) throws Exception {
 
 ## F7 — Moyenne : une clé d'idempotence qui dépend de `toString()`
 
+**Corrigé** : `ForecastPilotService.canonical` encode la spécification champ par champ, longueurs
+préfixées et doubles par leur motif binaire. L'ancienne clé reste acceptée en lecture
+(`legacyKey`), sans quoi la mise à jour aurait elle-même produit l'effet décrit ici : séries
+`ACTIVE` coupées et cohortes en cours perdues ; elle peut disparaître après une période de
+rétention. `absenceReason` distingue « jamais écrit » de « retenu, spécification antérieure ».
+
 **Preuve.** `ForecastPilotService.key()` concatène `s.toString()` du record `Series`
 (`ForecastPilotService.java:333`), records imbriqués et `Double` compris. La Javadoc de
 `Record.toString()` dit du format : « unspecified and subject to change ».
@@ -359,6 +368,15 @@ sans appeler le client, et le dire dans la raison (« TimesFM TIMEOUT plus tôt 
 
 ## F9 — Moyenne, à mesurer : quantiles croisés = fallback
 
+**Corrigé** sans mesure préalable, parce que le code amont rend la mesure inutile :
+`fix_quantile_crossing` de TimesFM 2.0.2 corrige les quantiles de proche en proche *depuis la
+médiane*, qu'il ne touche pas, puis la dénormalisation et l'écrêtage à zéro sont monotones — les
+quantiles reviennent ordonnés et `central == q50` tient toujours. Le contrat continue de vérifier
+les deux. `infer_is_positive` (le défaut amont) n'écrête qu'une série dont le contexte est
+entièrement positif. `ADAPTER_VERSION` passe à `kex-timesfm-2.5-v2` des deux côtés. Les benchmarks
+de `timesfm.md` ont été mesurés avant ce changement ; les deux opérations ajoutées sont des
+`torch.where` sur un tenseur de 60 × 10 par série.
+
 **Preuve.** Le service compile le modèle avec `fix_quantile_crossing=False`
 (`services/timesfm/kex_timesfm/model.py:35`) et refuse ensuite toute inversion sur les neuf
 quantiles et tout l'horizon (`contract.py:64-65`) ; le client Java refait le contrôle.
@@ -374,6 +392,12 @@ négligeable, activer `fix_quantile_crossing` et changer `ADAPTER_VERSION` (la c
 d'idempotence et la provenance le portent déjà) plutôt que d'assouplir le contrôle.
 
 ## F10 à F13 — Basses
+
+**Corrigés** : F10 par `ForecastConnectionPool` (quatre connexions inactives au plus, rollback
+avant réutilisation pour libérer le verrou consultatif), F11 en retirant l'appel, F12 par
+`ApprovedForecastSeriesCondition` et une ligne masquée avec sa raison dans le catalogue de la
+console (le schéma des outils reste vérifié par `McpForecastToolsBootTest`, qui approuve une
+série), F13 en retirant la seconde purge et en ne comptant que les séries approuvées.
 
 - **F10.** `ForecastPilotStore.open()` crée une connexion par `DriverManager` à chaque appel
   (`ForecastPilotStore.java:30`) : chaque lecture MCP ouvre et ferme une connexion PostgreSQL,

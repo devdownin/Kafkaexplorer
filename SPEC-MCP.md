@@ -892,7 +892,8 @@ La phase 2 est placée **avant** les outils différenciants délibérément : la
 
 ## TimesFM pilot — implemented read surface
 
-The pilot requires `explorer.forecasting.pilot.enabled=true`, durable history and inference.
+The pilot requires `explorer.forecasting.pilot.enabled=true`, durable history and inference;
+its tools are registered only once at least one series is approved.
 Its five read-only tools are `kex_list_forecastable_metrics`, `kex_metric_history`,
 `kex_forecast_metric`, `kex_get_forecast_quality` and `kex_list_predicted_threshold_breaches`.
 They replace the former snapshot catalogue/get/latest/metadata/limits tools. Existing clients

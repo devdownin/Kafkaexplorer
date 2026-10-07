@@ -4,6 +4,7 @@ package com.compagnonsdudev.kafkasqlexplorer.forecast;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.util.List;
 import java.util.Properties;
 
 /**
@@ -15,19 +16,18 @@ public final class ForecastPilotStore {
   private final MetricHistoryProperties properties;
   private boolean initialized;
 
+  /** Enough for one refresh plus a few concurrent reads; more are opened and closed on demand. */
+  private static final int MAX_IDLE_CONNECTIONS = 4;
+
+  private final ForecastConnectionPool pool;
+
   public ForecastPilotStore(MetricHistoryProperties properties) {
     this.properties = properties;
+    this.pool = new ForecastConnectionPool(this::connect, MAX_IDLE_CONNECTIONS);
   }
 
   public Connection open() throws Exception {
-    Properties p = new Properties();
-    p.setProperty("user", properties.getUsername());
-    p.setProperty("password", properties.getPassword());
-    String url =
-        properties.getJdbcUrl()
-            + (properties.getJdbcUrl().contains("?") ? "&" : "?")
-            + "connectTimeout=5&socketTimeout=10";
-    Connection c = DriverManager.getConnection(url, p);
+    Connection c = pool.borrow();
     try {
       initialize(c);
       return c;
@@ -35,6 +35,17 @@ public final class ForecastPilotStore {
       c.close();
       throw e;
     }
+  }
+
+  private Connection connect() throws Exception {
+    Properties p = new Properties();
+    p.setProperty("user", properties.getUsername());
+    p.setProperty("password", properties.getPassword());
+    String url =
+        properties.getJdbcUrl()
+            + (properties.getJdbcUrl().contains("?") ? "&" : "?")
+            + "connectTimeout=5&socketTimeout=10";
+    return DriverManager.getConnection(url, p);
   }
 
   private synchronized void initialize(Connection c) throws Exception {
@@ -84,13 +95,22 @@ public final class ForecastPilotStore {
     return true;
   }
 
-  /** Called under the global lock: all instances share the retained-series quota. */
-  public void checkSeriesBudget(Connection c, String id, int limit) throws Exception {
+  /**
+   * Called under the global lock: all instances share the retained-series quota.
+   *
+   * <p>Only currently approved series count. A series removed from the configuration kept its
+   * rows, and so its share of the budget, until retention expired them — up to 90 days in which
+   * it could refuse a series that had replaced it.
+   */
+  public void checkSeriesBudget(Connection c, String id, int limit, List<String> approved)
+      throws Exception {
     try (var s =
         c.prepareStatement(
-            "SELECT count(DISTINCT series_id),bool_or(series_id=?) FROM kex_forecast_result_v2")) {
+            "SELECT count(DISTINCT series_id),bool_or(series_id=?) FROM kex_forecast_result_v2"
+                + " WHERE series_id = ANY(?)")) {
       s.setQueryTimeout(5);
       s.setString(1, id);
+      s.setArray(2, c.createArrayOf("varchar", approved.toArray()));
       try (var rows = s.executeQuery()) {
         rows.next();
         if (!rows.getBoolean(2) && rows.getLong(1) >= limit)

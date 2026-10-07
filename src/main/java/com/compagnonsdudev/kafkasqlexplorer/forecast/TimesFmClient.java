@@ -32,7 +32,7 @@ import static com.compagnonsdudev.kafkasqlexplorer.forecast.TimesFmInferenceExce
 public final class TimesFmClient implements AutoCloseable {
     public static final String MODEL_ID = "google/timesfm-2.5-200m-pytorch";
     public static final String MODEL_REVISION = "1d952420fba87f3c6dee4f240de0f1a0fbc790e3";
-    public static final String ADAPTER_VERSION = "kex-timesfm-2.5-v1";
+    public static final String ADAPTER_VERSION = "kex-timesfm-2.5-v2";
     private static final int MAX_REQUEST_BYTES = 128 * 1024, MAX_RESPONSE_BYTES = 256 * 1024;
     private static final ObjectMapper JSON = new ObjectMapper();
     private final URI endpoint;

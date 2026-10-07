@@ -35,6 +35,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SqlMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.StreamFlowMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.TopicMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.forecast.ApprovedForecastSeriesCondition;
 import com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastPilotService;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.service.AuditService;
@@ -56,11 +57,14 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -297,6 +301,7 @@ public class McpServerConfiguration {
 
     @Bean
     @ConditionalOnProperty(prefix = "explorer.forecasting.pilot", name = "enabled", havingValue = "true", matchIfMissing = true)
+    @Conditional(ApprovedForecastSeriesCondition.class)
     ForecastMcpTools forecastMcpTools(ForecastPilotService pilot, ToolGuard guard) {
         return new ForecastMcpTools(pilot, guard);
     }
@@ -312,7 +317,9 @@ public class McpServerConfiguration {
                                             McpCatalogService catalog,
                                             McpToolFilter filter,
                                             ObjectProvider<ReadOnlyMcpTools> readTools,
-                                            ObjectProvider<MutatingMcpTools> writeTools) {
+                                            ObjectProvider<MutatingMcpTools> writeTools,
+                                            ObjectProvider<ForecastMcpTools> forecastTools,
+                                            Environment environment) {
         List<McpToolset> all = new ArrayList<>(readTools.stream().toList());
         List<McpToolset> exposed = new ArrayList<>(all);
 
@@ -322,7 +329,17 @@ public class McpServerConfiguration {
             exposed.addAll(mutating);
         }
 
-        catalog.publish(all, exposed);
+        // A pilot that is on but approves nothing registers no forecast tool; the catalogue keeps
+        // the rows so the console answers "why does my agent not see it" with the setting to change.
+        Map<McpToolset, String> withheld = new java.util.IdentityHashMap<>();
+        if (forecastTools.getIfAvailable() == null
+                && environment.getProperty("explorer.forecasting.pilot.enabled", Boolean.class, true)) {
+            McpToolset placeholder = new ForecastMcpTools(null, null);
+            all.add(placeholder);
+            withheld.put(placeholder, "no approved forecast series (explorer.forecasting.pilot.series is empty)");
+        }
+
+        catalog.publish(all, exposed, withheld);
 
         log.info("MCP server enabled: {} tool(s) exposed, {} withheld, readonly={}, "
                         + "allowed-topic-prefixes={}",

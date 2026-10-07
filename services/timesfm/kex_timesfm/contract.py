@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, model
 MODEL_ID = "google/timesfm-2.5-200m-pytorch"
 MODEL_REVISION = "1d952420fba87f3c6dee4f240de0f1a0fbc790e3"
 WEIGHTS_SHA256 = "2f776efe6245e42b24bc4153ffdf61810140210e4bd3b01fb21f7aa779ab6ce8"
-ADAPTER_VERSION = "kex-timesfm-2.5-v1"
+ADAPTER_VERSION = "kex-timesfm-2.5-v2"
 MAX_BODY_BYTES = 128 * 1024
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_BATCH = 4

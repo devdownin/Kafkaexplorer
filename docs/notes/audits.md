@@ -529,4 +529,9 @@ scheduler), only the realised horizon must be observed, and quality is judged ov
 120-point blocks with two consecutive failures to latch — the report's sliding window, simulated,
 still latched every run. F4 and F8 followed: the breach tool answers one typed row per series and
 a partial coverage naming the series it could not evaluate, and a timeout or an unreachable model
-sends the rest of the cycle to the fallback instead of paying the timeout once per series.
+sends the rest of the cycle to the fallback instead of paying the timeout once per series. Everything else but F6 followed in turn: DLP on every forecast tool's output (F5), a canonical
+idempotence key with the legacy one still read so the upgrade itself re-keys nothing (F7),
+`fix_quantile_crossing` and `infer_is_positive` turned on behind adapter `v2` once the upstream
+code showed the fix keeps the median and the order (F9), a bounded connection pool that rolls back
+before reuse (F10), the quarantine call on a series id removed (F11), forecast tools registered only
+when a series is approved (F12), one purge per refresh and a budget counting approved series (F13).

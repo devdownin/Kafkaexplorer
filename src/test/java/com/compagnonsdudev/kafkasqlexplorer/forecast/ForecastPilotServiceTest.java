@@ -501,4 +501,76 @@ class ForecastPilotServiceTest {
     assertEquals(0, result.coverage().topicsRequested());
     verify(store, never()).open();
   }
+
+  private ForecastRecord withReason(ForecastRecord r, String reason) {
+    var c = r.context();
+    var context =
+        new PreparedMetricSeries(
+            c.status(), reason, c.seriesId(), c.definitionVersion(), c.sourceUnit(),
+            c.outputUnit(), c.fromInclusive(), c.toExclusive(), c.profile(),
+            c.profileFingerprint(), c.inputFingerprint(), c.observedPoints(), c.missingPoints(),
+            c.imputedPoints(), c.points());
+    return new ForecastRecord(
+        r.key(), r.generatedAt(), r.state(), r.strategy(), r.visibility(), context, r.forecast(),
+        r.quality(), r.evaluatedPoints(), r.evaluatedThrough(), r.baselineMae(), reason,
+        r.qualityWindow());
+  }
+
+  @Test
+  void everyForecastExitScrubsWhatTheCatalogueScrubs() throws Exception {
+    spec = withThreshold(5);
+    String secret = "owner person@example.com";
+    var record = withReason(withStrategy(record(context, 1, "READY"), "LAST_VALUE"), secret);
+    when(store.latest(connection, spec.seriesId())).thenReturn(record);
+    var tools = tools(pilotOf(spec));
+    assertFalse(tools.get(spec.seriesId()).data().value().reason().contains("@example.com"));
+    assertFalse(tools.get(spec.seriesId()).data().value().context().reason().contains("@example.com"));
+    assertFalse(tools.history(spec.seriesId()).data().value().reason().contains("@example.com"));
+    assertFalse(tools.breaches().data().getFirst().reason().contains("@example.com"));
+  }
+
+  @Test
+  void theKeyNoLongerDependsOnRecordToString() throws Exception {
+    assertNotEquals(ForecastPilotService.legacyKey(spec, context), ForecastPilotService.key(spec, context));
+    assertFalse(ForecastPilotService.canonical(spec).contains("Series["));
+    assertNotEquals(
+        ForecastPilotService.canonical(withThreshold(5)), ForecastPilotService.canonical(withThreshold(6)));
+  }
+
+  @Test
+  void aRecordWrittenUnderTheLegacyKeyStaysReadableAndActive() throws Exception {
+    var legacy = record(context, 1, "READY");
+    legacy =
+        new ForecastRecord(
+            ForecastPilotService.legacyKey(spec, context), legacy.generatedAt(), legacy.state(),
+            legacy.strategy(), legacy.visibility(), legacy.context(), legacy.forecast(),
+            legacy.quality(), legacy.evaluatedPoints(), legacy.evaluatedThrough(),
+            legacy.baselineMae(), legacy.reason(), legacy.qualityWindow());
+    when(store.latest(connection, spec.seriesId())).thenReturn(legacy);
+    when(store.active(connection, spec.seriesId())).thenReturn(true);
+    var r = pilot.get(spec.seriesId());
+    assertNotNull(r);
+    assertEquals(ForecastThresholdPolicy.Visibility.ACTIVE, r.visibility());
+  }
+
+  @Test
+  void anAbsentForecastSaysWhetherItWasNeverWrittenOrWithheld() throws Exception {
+    assertEquals("No forecast has been persisted", pilot.absenceReason(spec.seriesId()));
+    var old = record(context, 1, "READY");
+    when(store.latest(connection, spec.seriesId()))
+        .thenReturn(
+            new ForecastRecord(
+                "b".repeat(64), old.generatedAt(), old.state(), old.strategy(), old.visibility(),
+                old.context(), old.forecast(), old.quality(), old.evaluatedPoints(),
+                old.evaluatedThrough(), old.baselineMae(), old.reason(), old.qualityWindow()));
+    assertNull(pilot.get(spec.seriesId()));
+    assertTrue(pilot.absenceReason(spec.seriesId()).contains("earlier specification"));
+  }
+
+  @Test
+  void aRefreshPurgesOnceAndBudgetsOnlyApprovedSeries() throws Exception {
+    pilot.refresh(spec, now);
+    verify(store, times(1)).purge(eq(connection), anyLong());
+    verify(store).checkSeriesBudget(connection, spec.seriesId(), 20, List.of(spec.seriesId()));
+  }
 }

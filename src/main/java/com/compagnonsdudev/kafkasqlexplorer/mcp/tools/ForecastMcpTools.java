@@ -11,7 +11,15 @@ import java.util.Map;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 
-/** All sources are authorized from operator provenance BEFORE any forecast/history read. */
+/**
+ * All sources are authorized from operator provenance BEFORE any forecast/history read.
+ *
+ * <p>Every exit scrubs the same identity strings the catalogue does. The catalogue alone used to:
+ * a value masked in {@code kex_list_forecastable_metrics} came back in clear from
+ * {@code kex_forecast_metric} on the same series, since the interceptor scrubs parameters only.
+ * The caller's quarantine is the interceptor's, keyed on the authenticated identity; a series id
+ * passed to {@code checkNotQuarantined} matched nothing that is ever quarantined.
+ */
 public final class ForecastMcpTools implements ReadOnlyMcpTools {
   private final ForecastPilotService pilot;
   private final ToolGuard guard;
@@ -52,7 +60,6 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
       throw new McpToolException(
           McpErrorCode.OUT_OF_SCOPE, "Series is outside the configured forecast pilot");
     }
-    guard.checkNotQuarantined(id);
     guard.checkForecastEnvironment(s.environment());
     guard.checkTopicScope(s.topics());
     guard.checkGroupScope(s.groups());
@@ -115,8 +122,8 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
     var r = read(seriesId);
     return result(
         r == null
-            ? Measured.unmeasured("No prepared history has been persisted")
-            : Measured.of(r.context()));
+            ? Measured.unmeasured(absence(seriesId))
+            : Measured.of(scrub(r.context())));
   }
 
   @McpTool(
@@ -134,7 +141,7 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
     authorize(seriesId);
     var r = read(seriesId);
     return result(
-        r == null ? Measured.unmeasured("No forecast has been persisted") : Measured.of(r));
+        r == null ? Measured.unmeasured(absence(seriesId)) : Measured.of(scrub(r)));
   }
 
   public record Quality(
@@ -170,6 +177,7 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
                     r.evaluatedThrough(),
                     r.strategy(),
                     r.state())));
+
   }
 
   @McpTool(
@@ -190,7 +198,7 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
     var rows = new ArrayList<ForecastPilotService.BreachEvaluation>();
     for (var s : allowed()) {
       try {
-        rows.add(pilot.evaluateBreach(s.seriesId()));
+        rows.add(scrub(pilot.evaluateBreach(s.seriesId())));
       } catch (Exception e) {
         throw unavailable();
       }
@@ -226,6 +234,63 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
                   + " is unknown, not negative"));
     }
     return ToolResult.of(List.copyOf(rows), coverage, List.copyOf(warnings));
+  }
+
+  private String scrub(String text) {
+    return guard.dlp().scrub(text);
+  }
+
+  private PreparedMetricSeries scrub(PreparedMetricSeries c) {
+    return new PreparedMetricSeries(
+        c.status(), scrub(c.reason()), c.seriesId(), scrub(c.definitionVersion()),
+        scrub(c.sourceUnit()), scrub(c.outputUnit()), c.fromInclusive(), c.toExclusive(),
+        c.profile(), c.profileFingerprint(), c.inputFingerprint(), c.observedPoints(),
+        c.missingPoints(), c.imputedPoints(), c.points());
+  }
+
+  private MetricForecast scrub(MetricForecast f) {
+    return f == null
+        ? null
+        : new MetricForecast(
+            f.requestId(), f.seriesId(), scrub(f.definitionVersion()), f.inputFingerprint(),
+            f.profileFingerprint(), scrub(f.outputUnit()), f.historyEndAt(), f.modelId(),
+            f.modelRevision(), f.adapterVersion(), f.centralStatistic(), f.durationMillis(),
+            f.points());
+  }
+
+  private ForecastRecord scrub(ForecastRecord r) {
+    return new ForecastRecord(
+        r.key(), r.generatedAt(), r.state(), r.strategy(), r.visibility(), scrub(r.context()),
+        scrub(r.forecast()), r.quality(), r.evaluatedPoints(), r.evaluatedThrough(),
+        r.baselineMae(), scrub(r.reason()), r.qualityWindow());
+  }
+
+  private ForecastPilotService.BreachEvaluation scrub(ForecastPilotService.BreachEvaluation e) {
+    var p = e.breach();
+    var scrubbed =
+        p == null
+            ? null
+            : new ForecastPilotService.PredictedBreach(
+                scrub(p.threshold()), p.resultKey(), p.evaluatedAt(), p.windowEndAt(),
+                p.generatedAt(), p.historyEndAt(), p.modelId(), p.modelRevision(),
+                p.inputFingerprint(), p.profileFingerprint());
+    return new ForecastPilotService.BreachEvaluation(
+        e.seriesId(), e.outcome(), scrub(e.reason()), scrubbed);
+  }
+
+  private ForecastThresholdEvaluator.Breach scrub(ForecastThresholdEvaluator.Breach b) {
+    return new ForecastThresholdEvaluator.Breach(
+        b.seriesId(), scrub(b.definitionVersion()), b.breached(), b.threshold(), b.direction(),
+        b.horizonPoints(), b.confidence(), b.confidenceBound(), scrub(b.historyQuality()),
+        b.visibility(), b.forecastStatus(), b.basis());
+  }
+
+  private String absence(String id) {
+    try {
+      return pilot.absenceReason(id);
+    } catch (Exception e) {
+      throw unavailable();
+    }
   }
 
   private ForecastRecord read(String id) {

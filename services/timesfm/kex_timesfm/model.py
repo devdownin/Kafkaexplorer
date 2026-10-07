@@ -32,7 +32,12 @@ class TimesFmModel:
         self.model.compile(timesfm.ForecastConfig(
             max_context=CONTEXT_POINTS, max_horizon=MAX_HORIZON, per_core_batch_size=MAX_BATCH,
             normalize_inputs=True, use_continuous_quantile_head=True,
-            force_flip_invariance=True, infer_is_positive=False, fix_quantile_crossing=False,
+            # Upstream fixes crossings outward from the median, which it leaves untouched, so the
+            # quantiles come back ordered and central == q50 still holds; the contract keeps
+            # checking both. A crossing used to fail the whole call into a point fallback with
+            # no interval and no breach. infer_is_positive clips at zero only a series whose
+            # context is non-negative (lag, counts), so its Q10 is no longer below zero.
+            force_flip_invariance=True, infer_is_positive=True, fix_quantile_crossing=True,
             return_backcast=False,
         ))
 
