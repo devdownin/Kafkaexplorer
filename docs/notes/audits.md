@@ -507,3 +507,19 @@ quarantine, the rate limit and the audit key are keyed on the MCP session id, wh
 changes, while only `McpTraceStore` reads the authenticated fingerprint), the audit-write counter
 that misses the asynchronous append failure (P1-6), and an approval token bound to a tool but not
 to a caller (P3-10).
+
+`TIMESFM-FORECAST-AUDIT.md` (2026-10) reviews the forecasting chain end to end — observation
+journal, `ForecastPilotService`, the PostgreSQL store, `TimesFmClient`, `services/timesfm/` and the
+five `ForecastMcpTools`. It implemented nothing. The architecture holds (no inference on a read
+path, scope checked before storage I/O, fenced publication, labelled fallback), but four findings
+compound so that no series stays `ACTIVE`: the pilot's `@Scheduled` cycle shares Spring's single
+scheduling thread with `MetricService.refreshMetrics`, so a slow model starves the very collection
+it forecasts from (F1, critical); one imputed point anywhere in the 512-point context suspends
+evaluation for 512 steps (F3); drift is judged on a single horizon-sized cohort against the best of
+four baselines and then latched, which a perfectly calibrated model trips 32 % of the time per
+cohort at the coverage gate the guided setup hard-codes (F2); and
+`kex_list_predicted_threshold_breaches` answers an empty `EXHAUSTED` list when nothing was
+evaluated — including when TimesFM is down and every series is on its fallback (F4). Open below
+those: DLP applied to the catalogue only (F5), deactivation refused during a refresh (F6), an
+idempotence key built on `Record.toString()` (F7), a hung model shrinking the cycle to two series
+(F8), and `fix_quantile_crossing=False` turning any crossing into a fallback, unmeasured (F9).
