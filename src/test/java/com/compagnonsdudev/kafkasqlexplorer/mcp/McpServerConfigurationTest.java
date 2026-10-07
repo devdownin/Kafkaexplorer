@@ -36,6 +36,8 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
@@ -105,8 +107,6 @@ class McpServerConfigurationTest {
             // advertised and never applied, and a guard's JSON-RPC code never reaches the agent.
             assertThat(context).hasSingleBean(McpToolInterceptor.class);
             assertThat(context).hasSingleBean(McpToolSpecificationPostProcessor.class);
-            assertThat(context).hasSingleBean(com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools.class);
-
             McpCatalogService catalog = context.getBean(McpCatalogService.class);
             assertThat(catalog.writeSurfaceOpen()).isFalse();
             assertThat(catalog.exposed()).extracting(ToolDescriptor::name)
@@ -114,9 +114,7 @@ class McpServerConfigurationTest {
                             "kex_infer_schema", "kex_sql_query", "kex_list_tables",
                             "kex_trace_key", "kex_resume_trace", "kex_compare_traces",
                             "kex_consumer_lag", "kex_deduce_data_model", "kex_build_join",
-                            "kex_run_audit", "kex_get_audit", "kex_suggest_kpis",
-                            "kex_list_forecastable_metrics", "kex_metric_history", "kex_forecast_metric",
-                            "kex_get_forecast_quality", "kex_list_predicted_threshold_breaches")
+                            "kex_run_audit", "kex_get_audit", "kex_suggest_kpis")
                     .doesNotContain("kex_produce_message");
 
             // Withheld, not vanished: the catalogue keeps the row so the console can say why.
@@ -124,6 +122,48 @@ class McpServerConfigurationTest {
                     .singleElement()
                     .satisfies(d -> assertThat(d.visibility().state()).isEqualTo(Visibility.State.HIDDEN));
         });
+    }
+
+    private static final List<String> FORECAST_TOOLS = List.of(
+            "kex_list_forecastable_metrics", "kex_metric_history", "kex_forecast_metric",
+            "kex_get_forecast_quality", "kex_list_predicted_threshold_breaches");
+
+    @Test
+    void a_pilot_with_no_approved_series_registers_no_forecast_tool_and_says_why() {
+        runner.withPropertyValues("explorer.mcp.enabled=true").run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).doesNotHaveBean(com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools.class);
+            McpCatalogService catalog = context.getBean(McpCatalogService.class);
+            assertThat(catalog.exposed()).extracting(ToolDescriptor::name).doesNotContainAnyElementsOf(FORECAST_TOOLS);
+            assertThat(catalog.catalog()).filteredOn(d -> FORECAST_TOOLS.contains(d.name()))
+                    .hasSize(FORECAST_TOOLS.size())
+                    .allSatisfy(d -> {
+                        assertThat(d.visibility().state()).isEqualTo(Visibility.State.HIDDEN);
+                        assertThat(d.visibility().reason()).contains("explorer.forecasting.pilot.series");
+                    });
+        });
+    }
+
+    @Test
+    void an_approved_series_registers_the_forecast_tools() {
+        String series = "explorer.forecasting.pilot.series[0].";
+        runner.withPropertyValues("explorer.mcp.enabled=true",
+                        "explorer.forecasting.history.enabled=true",
+                        "explorer.forecasting.history.metric-ids[0]=metric",
+                        "explorer.forecasting.inference.enabled=true",
+                        series + "series-id=" + "a".repeat(64), series + "metric-id=metric",
+                        series + "environment=production", series + "definition-version=v1",
+                        series + "unit=messages", series + "topics[0]=orders",
+                        series + "profile.step-millis=60000", series + "profile.context-points=512",
+                        series + "profile.transformation=GAUGE_LAST", series + "horizon=10",
+                        series + "season-length=1", series + "minimum-coverage=0.8",
+                        series + "minimum-evaluated-points=100")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools.class);
+                    assertThat(context.getBean(McpCatalogService.class).exposed()).extracting(ToolDescriptor::name)
+                            .containsAll(FORECAST_TOOLS);
+                });
     }
 
     @Test

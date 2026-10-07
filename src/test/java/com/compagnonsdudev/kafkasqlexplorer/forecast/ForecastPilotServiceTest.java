@@ -398,4 +398,179 @@ class ForecastPilotServiceTest {
     assertTrue(result.evaluatedAt() > end + 60000);
     verify(client, never()).forecast(anyList(), anyInt());
   }
+
+  private ForecastPilotService pilotOf(ForecastPilotProperties.Series... series) {
+    var props = new ForecastPilotProperties();
+    props.setEnabled(true);
+    props.setSeries(List.of(series));
+    return new ForecastPilotService(props, store, preparation, client, meters);
+  }
+
+  private ForecastPilotProperties.Series withId(ForecastPilotProperties.Series s, String id) {
+    return new ForecastPilotProperties.Series(
+        id, s.metricId(), s.environment(), s.definitionVersion(), s.unit(), s.topics(),
+        s.groups(), s.profile(), s.horizon(), s.seasonLength(), null, s.maxMae(),
+        s.minimumCoverage(), s.minimumEvaluatedPoints());
+  }
+
+  private ForecastPilotProperties.Series withThreshold(double threshold) {
+    var policy =
+        new ForecastThresholdPolicy(
+            spec.seriesId(), "v1", threshold, ForecastThresholdPolicy.Direction.ABOVE, 2, .9,
+            "READY", ForecastThresholdPolicy.Visibility.SHADOW);
+    return new ForecastPilotProperties.Series(
+        spec.seriesId(), spec.metricId(), spec.environment(), "v1", "messages", spec.topics(),
+        spec.groups(), spec.profile(), 2, 1, policy, spec.maxMae(), spec.minimumCoverage(),
+        spec.minimumEvaluatedPoints());
+  }
+
+  private ForecastRecord withStrategy(ForecastRecord r, String strategy) {
+    return new ForecastRecord(
+        r.key(), r.generatedAt(), r.state(), strategy, r.visibility(), r.context(), r.forecast(),
+        r.quality(), r.evaluatedPoints(), r.evaluatedThrough(), r.baselineMae(), r.reason(),
+        r.qualityWindow());
+  }
+
+  private com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools tools(
+      ForecastPilotService service) {
+    var policy = new com.compagnonsdudev.kafkasqlexplorer.mcp.McpProperties();
+    policy.setAllowedForecastEnvironments(List.of("production"));
+    return new com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools(
+        service,
+        new com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard(
+            policy, new com.compagnonsdudev.kafkasqlexplorer.mcp.guard.DlpScrubber(policy)));
+  }
+
+  @Test
+  void aTimeoutSendsTheRestOfTheCycleToTheFallbackAndTheNextCycleRetries() throws Exception {
+    when(preparation.prepare(anyString(), eq("v1"), eq("messages"), anyLong(), eq(spec.profile())))
+        .thenReturn(context);
+    when(client.forecast(anyList(), eq(2)))
+        .thenThrow(new TimesFmInferenceException(TimesFmInferenceException.State.TIMEOUT));
+    var cycle = pilotOf(spec, withId(spec, "b".repeat(64)));
+    cycle.refresh();
+    verify(client, times(1)).forecast(anyList(), eq(2));
+    var capture = ArgumentCaptor.forClass(ForecastRecord.class);
+    verify(store, times(2)).save(eq(connection), anyString(), capture.capture(), anyString());
+    assertEquals("LAST_VALUE", capture.getAllValues().get(1).strategy());
+    assertTrue(capture.getAllValues().get(1).reason().contains("TIMEOUT earlier in this cycle"));
+    cycle.refresh();
+    verify(client, times(2)).forecast(anyList(), eq(2));
+  }
+
+  @Test
+  void aBusyModelIsNotTakenForAnOutage() throws Exception {
+    when(preparation.prepare(anyString(), eq("v1"), eq("messages"), anyLong(), eq(spec.profile())))
+        .thenReturn(context);
+    when(client.forecast(anyList(), eq(2)))
+        .thenThrow(new TimesFmInferenceException(TimesFmInferenceException.State.BUSY));
+    pilotOf(spec, withId(spec, "b".repeat(64))).refresh();
+    verify(client, times(2)).forecast(anyList(), eq(2));
+  }
+
+  @Test
+  void anEvaluatedForecastBelowThresholdIsACompleteNegative() throws Exception {
+    spec = withThreshold(5);
+    when(store.latest(connection, spec.seriesId())).thenReturn(record(context, 1, "READY"));
+    var result = tools(pilotOf(spec)).breaches();
+    assertEquals(ForecastPilotService.BreachOutcome.NO_BREACH, result.data().getFirst().outcome());
+    assertNotNull(result.data().getFirst().breach());
+    assertTrue(result.coverage().complete());
+    assertEquals(1, result.coverage().topicsRequested());
+  }
+
+  @Test
+  void aFallbackForecastIsNotEvaluatedAndNamedInCoverage() throws Exception {
+    spec = withThreshold(5);
+    when(store.latest(connection, spec.seriesId()))
+        .thenReturn(withStrategy(record(context, 1, "READY"), "LAST_VALUE"));
+    var result = tools(pilotOf(spec)).breaches();
+    var row = result.data().getFirst();
+    assertEquals(ForecastPilotService.BreachOutcome.NOT_EVALUATED, row.outcome());
+    assertTrue(row.reason().contains("LAST_VALUE fallback"));
+    assertFalse(result.coverage().complete());
+    assertEquals(List.of(spec.seriesId()), result.coverage().topicsNotReached());
+    assertTrue(result.warnings().stream().anyMatch(w -> w.code().equals("FORECAST_NOT_EVALUATED")));
+  }
+
+  @Test
+  void aSeriesWithoutPolicyIsReportedButNotCountedAsUnreached() throws Exception {
+    var result = tools(pilotOf(spec)).breaches();
+    assertEquals(ForecastPilotService.BreachOutcome.NO_POLICY, result.data().getFirst().outcome());
+    assertTrue(result.coverage().complete());
+    assertEquals(0, result.coverage().topicsRequested());
+    verify(store, never()).open();
+  }
+
+  private ForecastRecord withReason(ForecastRecord r, String reason) {
+    var c = r.context();
+    var context =
+        new PreparedMetricSeries(
+            c.status(), reason, c.seriesId(), c.definitionVersion(), c.sourceUnit(),
+            c.outputUnit(), c.fromInclusive(), c.toExclusive(), c.profile(),
+            c.profileFingerprint(), c.inputFingerprint(), c.observedPoints(), c.missingPoints(),
+            c.imputedPoints(), c.points());
+    return new ForecastRecord(
+        r.key(), r.generatedAt(), r.state(), r.strategy(), r.visibility(), context, r.forecast(),
+        r.quality(), r.evaluatedPoints(), r.evaluatedThrough(), r.baselineMae(), reason,
+        r.qualityWindow());
+  }
+
+  @Test
+  void everyForecastExitScrubsWhatTheCatalogueScrubs() throws Exception {
+    spec = withThreshold(5);
+    String secret = "owner person@example.com";
+    var record = withReason(withStrategy(record(context, 1, "READY"), "LAST_VALUE"), secret);
+    when(store.latest(connection, spec.seriesId())).thenReturn(record);
+    var tools = tools(pilotOf(spec));
+    assertFalse(tools.get(spec.seriesId()).data().value().reason().contains("@example.com"));
+    assertFalse(tools.get(spec.seriesId()).data().value().context().reason().contains("@example.com"));
+    assertFalse(tools.history(spec.seriesId()).data().value().reason().contains("@example.com"));
+    assertFalse(tools.breaches().data().getFirst().reason().contains("@example.com"));
+  }
+
+  @Test
+  void theKeyNoLongerDependsOnRecordToString() throws Exception {
+    assertNotEquals(ForecastPilotService.legacyKey(spec, context), ForecastPilotService.key(spec, context));
+    assertFalse(ForecastPilotService.canonical(spec).contains("Series["));
+    assertNotEquals(
+        ForecastPilotService.canonical(withThreshold(5)), ForecastPilotService.canonical(withThreshold(6)));
+  }
+
+  @Test
+  void aRecordWrittenUnderTheLegacyKeyStaysReadableAndActive() throws Exception {
+    var legacy = record(context, 1, "READY");
+    legacy =
+        new ForecastRecord(
+            ForecastPilotService.legacyKey(spec, context), legacy.generatedAt(), legacy.state(),
+            legacy.strategy(), legacy.visibility(), legacy.context(), legacy.forecast(),
+            legacy.quality(), legacy.evaluatedPoints(), legacy.evaluatedThrough(),
+            legacy.baselineMae(), legacy.reason(), legacy.qualityWindow());
+    when(store.latest(connection, spec.seriesId())).thenReturn(legacy);
+    when(store.active(connection, spec.seriesId())).thenReturn(true);
+    var r = pilot.get(spec.seriesId());
+    assertNotNull(r);
+    assertEquals(ForecastThresholdPolicy.Visibility.ACTIVE, r.visibility());
+  }
+
+  @Test
+  void anAbsentForecastSaysWhetherItWasNeverWrittenOrWithheld() throws Exception {
+    assertEquals("No forecast has been persisted", pilot.absenceReason(spec.seriesId()));
+    var old = record(context, 1, "READY");
+    when(store.latest(connection, spec.seriesId()))
+        .thenReturn(
+            new ForecastRecord(
+                "b".repeat(64), old.generatedAt(), old.state(), old.strategy(), old.visibility(),
+                old.context(), old.forecast(), old.quality(), old.evaluatedPoints(),
+                old.evaluatedThrough(), old.baselineMae(), old.reason(), old.qualityWindow()));
+    assertNull(pilot.get(spec.seriesId()));
+    assertTrue(pilot.absenceReason(spec.seriesId()).contains("earlier specification"));
+  }
+
+  @Test
+  void aRefreshPurgesOnceAndBudgetsOnlyApprovedSeries() throws Exception {
+    pilot.refresh(spec, now);
+    verify(store, times(1)).purge(eq(connection), anyLong());
+    verify(store).checkSeriesBudget(connection, spec.seriesId(), 20, List.of(spec.seriesId()));
+  }
 }

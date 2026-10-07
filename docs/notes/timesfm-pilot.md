@@ -7,10 +7,14 @@ are omitted and provenance is marked incomplete; clients must not turn a masked 
 resource link. This is an additive field: existing clients can ignore it. Source declarations
 describe scope, not a measured incident or a discovered process association.
 
-The pilot and its five read-only MCP tools are enabled by default. With no approved series,
-the catalogue is empty and scheduling performs no database or model calls. Set
-`explorer.forecasting.pilot.enabled=false` (or `EXPLORER_FORECASTING_PILOT_ENABLED=false`)
-to disable the pilot and withhold its MCP tools.
+The pilot is enabled by default. With no approved series, scheduling performs no database or
+model calls and **its five read-only MCP tools are not registered**: they used to be listed by
+`tools/list`, chosen by a model and answered with an empty list or `OUT_OF_SCOPE`. The MCP console
+keeps their rows, hidden with the reason "no approved forecast series", so an operator can see what
+to set (`ApprovedForecastSeriesCondition`; YAML and `EXPLORER_FORECASTING_PILOT_SERIES_0_SERIESID`
+both count). A series is approved at startup, so adding the first one needs the restart that
+deploying configuration already implies. Set `explorer.forecasting.pilot.enabled=false` (or
+`EXPLORER_FORECASTING_PILOT_ENABLED=false`) to disable the pilot altogether.
 
 To calculate forecasts, enable the existing PostgreSQL history and internal CPU service
 using [the history runbook](timesfm-history.md), then configure approved series. A non-empty
@@ -103,12 +107,23 @@ later series. A global PostgreSQL transaction advisory
 lock spans preparation, inference and publication. A lease with a random owner expires after two
 minutes according to database time; publication requires the same unexpired owner. Rollback or
 connection close releases the lock, and expiry refuses publication. No inference is launched
-without the lock. PostgreSQL connections use bounded connect/socket/query timeouts. The global
-retained-series quota is checked under that lock; retention purge deletes at most 1000 rows per
+without the lock. PostgreSQL connections use bounded connect/socket/query timeouts and come from
+a small pool (`ForecastConnectionPool`, four idle at most, no limit or queue on those in use): every
+read used to open a connection, TLS included, and the breach tool one per series. A returned
+connection is rolled back before reuse, so a borrower that failed mid-transaction releases the
+advisory lock exactly as a physical close did. The global retained-series quota is checked under
+that lock and counts **approved** series only — a series removed from the configuration used to
+hold its share until retention expired its rows; retention purge deletes at most 1000 rows per
 pass. Keep the database dedicated to one pilot deployment; different replica configurations are
 not a supported way to enlarge the quota. Infrastructure must eventually close dead sessions.
 
-A repeated input/specification skips inference. Changing semantics or policy resets evaluated
+The idempotence key encodes the approved specification field by field (`ForecastPilotService.canonical`),
+doubles as their bit patterns; it was `Record.toString()`, whose format the JDK leaves unspecified,
+so a runtime upgrade could re-key every record at once. Records written under the former key are
+still read as compatible (`legacyKey`), so the upgrade neither disables an ACTIVE series nor drops a
+cohort in flight; that branch can go once every deployment has run for one retention period. When a
+read finds a record of an earlier specification, MCP says so instead of "No forecast has been
+persisted". A repeated input/specification skips inference. Changing semantics or policy resets evaluated
 quality and disables activation. Old records remain until retention expiry. Database failure
 never substitutes an in-memory result for durable evidence. Refresh failures are counted; REST
 returns 503 and MCP returns `DEPENDENCY_UNAVAILABLE` when persistence cannot be read.
@@ -158,13 +173,22 @@ confidence interval, never become ACTIVE and never create predicted threshold br
 history produces no forecast. Expired horizons read as STALE/SHADOW. A specification mismatch withholds the old record entirely
 until a compatible result exists, so changed source approvals cannot expose old contexts or quality.
 The same input is not retried until input/specification changes, including after a fallback.
+A TIMEOUT or UNAVAILABLE answer takes the model out **for the rest of the cycle**: the remaining
+series get the labelled point fallback at once, with the reason "TimesFM TIMEOUT earlier in this
+cycle", and `explorer_forecast_pilot_skipped_total{state="MODEL_OUT_THIS_CYCLE"}` counts them. A
+hung service otherwise cost the whole timeout per series, so a 60 s cycle reached two series and
+the others went stale. The next cycle calls the model again. BUSY and INVALID_OUTPUT do not take
+it out: they say nothing about the next call.
 
 ## MCP contract
 
-Registration requires both enabled MCP and enabled pilot. Existing allow/deny, read-only,
-rate-limit, DLP and append-only audit interceptors remain in force. Before any storage access,
-tools resolve the configured series, check quarantine, exact environment and **all** source topics
-and groups. Unknown ids are OUT_OF_SCOPE. The catalogue omits inaccessible series.
+Registration requires enabled MCP, enabled pilot and at least one approved series. Existing
+allow/deny, read-only, rate-limit, DLP and append-only audit interceptors remain in force; the
+caller's quarantine is the interceptor's, keyed on the authenticated identity. Every tool scrubs
+the identity strings it returns (definition version, units, reasons) exactly as the catalogue
+does — the interceptor scrubs parameters only, so the four other tools returned in clear what the
+catalogue masked. Before any storage access, tools resolve the configured series, check the exact
+environment and **all** source topics and groups. Unknown ids are OUT_OF_SCOPE. The catalogue omits inaccessible series.
 
 | Tool | Read result |
 |---|---|
@@ -172,7 +196,7 @@ and groups. Unknown ids are OUT_OF_SCOPE. The catalogue omits inaccessible serie
 | `kex_metric_history` | Existing prepared context, at most 512 points; unmeasured before first record |
 | `kex_forecast_metric` | Persisted forecast, state, strategy, quality and provenance |
 | `kex_get_forecast_quality` | Realised TimesFM metrics, four baseline MAEs, sample count, watermark and current state/strategy; unmeasured until maturity |
-| `kex_list_predicted_threshold_breaches` | Explicit conservative bound breaches, result key, timestamps, revision and fingerprints |
+| `kex_list_predicted_threshold_breaches` | One row per authorized series: `BREACH`, `NO_BREACH`, `NO_POLICY` or `NOT_EVALUATED`, its reason, and for an evaluated forecast the conservative bound, result key, timestamps, revision and fingerprints |
 
 The former `kex_forecast_catalog`, `kex_forecast_get`, `kex_forecast_latest`,
 `kex_forecast_metadata` and `kex_forecast_limits` names are replaced. Reads never perform SQL
@@ -181,6 +205,14 @@ policy horizon; evaluation time and original window end are returned, and elapse
 create a predicted breach or extend the policy window. SHADOW breaches are labelled as such. Q10/Q90 one-sided
 bounds carry nominal 0.9 confidence; this is not guaranteed calibration or a joint horizon
 probability. No notification, alert execution or Kafka mutation is implemented.
+
+**No breach is only said of a forecast that was evaluated.** A series with a policy whose latest
+result is missing, a fallback, not READY or past its policy horizon is `NOT_EVALUATED`, and the
+coverage is then `PARTIAL_FAILURE` with those series ids in `topicsNotReached` (the field is named
+for topics; here it carries series) plus a `FORECAST_NOT_EVALUATED` warning. The tool used to drop
+such series and answer an empty `EXHAUSTED` list, which read as "nothing predicted" precisely while
+TimesFM was down and every series was on its fallback. Series without a policy are listed as
+`NO_POLICY` and are not counted as requested.
 
 ## Metrics and operational checks
 

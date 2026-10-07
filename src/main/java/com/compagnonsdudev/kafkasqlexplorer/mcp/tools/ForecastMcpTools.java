@@ -11,7 +11,15 @@ import java.util.Map;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 
-/** All sources are authorized from operator provenance BEFORE any forecast/history read. */
+/**
+ * All sources are authorized from operator provenance BEFORE any forecast/history read.
+ *
+ * <p>Every exit scrubs the same identity strings the catalogue does. The catalogue alone used to:
+ * a value masked in {@code kex_list_forecastable_metrics} came back in clear from
+ * {@code kex_forecast_metric} on the same series, since the interceptor scrubs parameters only.
+ * The caller's quarantine is the interceptor's, keyed on the authenticated identity; a series id
+ * passed to {@code checkNotQuarantined} matched nothing that is ever quarantined.
+ */
 public final class ForecastMcpTools implements ReadOnlyMcpTools {
   private final ForecastPilotService pilot;
   private final ToolGuard guard;
@@ -52,7 +60,6 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
       throw new McpToolException(
           McpErrorCode.OUT_OF_SCOPE, "Series is outside the configured forecast pilot");
     }
-    guard.checkNotQuarantined(id);
     guard.checkForecastEnvironment(s.environment());
     guard.checkTopicScope(s.topics());
     guard.checkGroupScope(s.groups());
@@ -115,8 +122,8 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
     var r = read(seriesId);
     return result(
         r == null
-            ? Measured.unmeasured("No prepared history has been persisted")
-            : Measured.of(r.context()));
+            ? Measured.unmeasured(absence(seriesId))
+            : Measured.of(scrub(r.context())));
   }
 
   @McpTool(
@@ -134,7 +141,7 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
     authorize(seriesId);
     var r = read(seriesId);
     return result(
-        r == null ? Measured.unmeasured("No forecast has been persisted") : Measured.of(r));
+        r == null ? Measured.unmeasured(absence(seriesId)) : Measured.of(scrub(r)));
   }
 
   public record Quality(
@@ -170,29 +177,120 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
                     r.evaluatedThrough(),
                     r.strategy(),
                     r.state())));
+
   }
 
   @McpTool(
       name = "kex_list_predicted_threshold_breaches",
       description =
-          "List explicit threshold breaches for authorized series. Includes nominal quantile"
-              + " confidence and activation status. No alert or inference is triggered.",
+          "Evaluate the explicit threshold policy of every authorized series: one row per series"
+              + " with outcome BREACH, NO_BREACH, NO_POLICY or NOT_EVALUATED and the reason. An"
+              + " empty breach set is only complete when coverage is EXHAUSTED; NOT_EVALUATED"
+              + " series (fallback, stale or missing forecast) are named in topicsNotReached."
+              + " Includes nominal quantile confidence and activation status. No alert or"
+              + " inference is triggered.",
       annotations =
           @McpTool.McpAnnotations(
               readOnlyHint = true,
               destructiveHint = false,
               openWorldHint = false))
-  public ToolResult<List<ForecastPilotService.PredictedBreach>> breaches() {
-    var rows = new ArrayList<ForecastPilotService.PredictedBreach>();
+  public ToolResult<List<ForecastPilotService.BreachEvaluation>> breaches() {
+    var rows = new ArrayList<ForecastPilotService.BreachEvaluation>();
     for (var s : allowed()) {
       try {
-        var b = pilot.breach(s.seriesId());
-        if (b != null && b.threshold().breached()) rows.add(b);
+        rows.add(scrub(pilot.evaluateBreach(s.seriesId())));
       } catch (Exception e) {
         throw unavailable();
       }
     }
-    return result(List.copyOf(rows));
+    // A series without a policy was never asked about; one with a policy and no evaluable
+    // forecast was, and its absence from the breaches must not read as "nothing predicted".
+    var withPolicy =
+        rows.stream().filter(r -> r.outcome() != ForecastPilotService.BreachOutcome.NO_POLICY).toList();
+    var notReached =
+        withPolicy.stream()
+            .filter(r -> r.outcome() == ForecastPilotService.BreachOutcome.NOT_EVALUATED)
+            .map(ForecastPilotService.BreachEvaluation::seriesId)
+            .toList();
+    var warnings = new ArrayList<>(List.of(LIMITS));
+    Coverage coverage;
+    if (notReached.isEmpty()) {
+      coverage = Coverage.exhausted(withPolicy.size(), 0, 0);
+    } else {
+      coverage =
+          Coverage.partial(
+              withPolicy.size(),
+              withPolicy.size() - notReached.size(),
+              notReached,
+              0,
+              0,
+              StopReason.PARTIAL_FAILURE,
+              null);
+      warnings.add(
+          Warning.warn(
+              "FORECAST_NOT_EVALUATED",
+              notReached.size()
+                  + " series with a threshold policy could not be evaluated; their breach status"
+                  + " is unknown, not negative"));
+    }
+    return ToolResult.of(List.copyOf(rows), coverage, List.copyOf(warnings));
+  }
+
+  private String scrub(String text) {
+    return guard.dlp().scrub(text);
+  }
+
+  private PreparedMetricSeries scrub(PreparedMetricSeries c) {
+    return new PreparedMetricSeries(
+        c.status(), scrub(c.reason()), c.seriesId(), scrub(c.definitionVersion()),
+        scrub(c.sourceUnit()), scrub(c.outputUnit()), c.fromInclusive(), c.toExclusive(),
+        c.profile(), c.profileFingerprint(), c.inputFingerprint(), c.observedPoints(),
+        c.missingPoints(), c.imputedPoints(), c.points());
+  }
+
+  private MetricForecast scrub(MetricForecast f) {
+    return f == null
+        ? null
+        : new MetricForecast(
+            f.requestId(), f.seriesId(), scrub(f.definitionVersion()), f.inputFingerprint(),
+            f.profileFingerprint(), scrub(f.outputUnit()), f.historyEndAt(), f.modelId(),
+            f.modelRevision(), f.adapterVersion(), f.centralStatistic(), f.durationMillis(),
+            f.points());
+  }
+
+  private ForecastRecord scrub(ForecastRecord r) {
+    return new ForecastRecord(
+        r.key(), r.generatedAt(), r.state(), r.strategy(), r.visibility(), scrub(r.context()),
+        scrub(r.forecast()), r.quality(), r.evaluatedPoints(), r.evaluatedThrough(),
+        r.baselineMae(), scrub(r.reason()), r.qualityWindow());
+  }
+
+  private ForecastPilotService.BreachEvaluation scrub(ForecastPilotService.BreachEvaluation e) {
+    var p = e.breach();
+    var scrubbed =
+        p == null
+            ? null
+            : new ForecastPilotService.PredictedBreach(
+                scrub(p.threshold()), p.resultKey(), p.evaluatedAt(), p.windowEndAt(),
+                p.generatedAt(), p.historyEndAt(), p.modelId(), p.modelRevision(),
+                p.inputFingerprint(), p.profileFingerprint());
+    return new ForecastPilotService.BreachEvaluation(
+        e.seriesId(), e.outcome(), scrub(e.reason()), scrubbed);
+  }
+
+  private ForecastThresholdEvaluator.Breach scrub(ForecastThresholdEvaluator.Breach b) {
+    return new ForecastThresholdEvaluator.Breach(
+        b.seriesId(), scrub(b.definitionVersion()), b.breached(), b.threshold(), b.direction(),
+        b.horizonPoints(), b.confidence(), b.confidenceBound(), scrub(b.historyQuality()),
+        b.visibility(), b.forecastStatus(), b.basis());
+  }
+
+  private String absence(String id) {
+    try {
+      return pilot.absenceReason(id);
+    } catch (Exception e) {
+      throw unavailable();
+    }
   }
 
   private ForecastRecord read(String id) {
@@ -208,14 +306,13 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
         McpErrorCode.DEPENDENCY_UNAVAILABLE, "Forecast persistence unavailable");
   }
 
+  private static final Warning LIMITS =
+      Warning.info(
+          "FORECAST_LIMITS",
+          "Reads existing results only; nominal quantiles are not guaranteed confidence; no"
+              + " alert delivery");
+
   private <T> ToolResult<T> result(T data) {
-    return ToolResult.of(
-        data,
-        Coverage.exhausted(0, 0, 0),
-        List.of(
-            Warning.info(
-                "FORECAST_LIMITS",
-                "Reads existing results only; nominal quantiles are not guaranteed confidence; no"
-                    + " alert delivery")));
+    return ToolResult.of(data, Coverage.exhausted(0, 0, 0), List.of(LIMITS));
   }
 }

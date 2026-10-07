@@ -23,6 +23,11 @@ public final class ForecastPilotService {
   private final AtomicBoolean running = new AtomicBoolean();
   private int nextSeries;
   private volatile long nextScheduledAt;
+  /**
+   * Set when TimesFM timed out or was unreachable earlier in the running cycle. A hung service cost
+   * the whole timeout once per series, so a 60 s cycle reached two series and the rest went stale.
+   */
+  private volatile TimesFmInferenceException.State modelOutThisCycle;
 
   public ForecastPilotService(
       ForecastPilotProperties properties,
@@ -54,7 +59,7 @@ public final class ForecastPilotService {
     var spec = resolve(id);
     try (var c = store.open()) {
       var r = store.latest(c, id);
-      if (r == null || !r.key().equals(key(spec, r.context()))) return null;
+      if (r == null || !compatible(spec, r)) return null;
       boolean stale =
           r.forecast() != null
               && (r.forecast().points().isEmpty()
@@ -83,9 +88,21 @@ public final class ForecastPilotService {
     }
   }
 
+  /** Why {@link #get} answered nothing: never written, or written under another specification. */
+  public String absenceReason(String id) throws Exception {
+    resolve(id);
+    try (var c = store.open()) {
+      return store.latest(c, id) == null
+          ? "No forecast has been persisted"
+          : "The persisted forecast belongs to an earlier specification of this series; it is"
+              + " withheld until a compatible result exists";
+    }
+  }
+
   /** Driven by {@link ForecastPilotScheduler}, never by the application's shared scheduler. */
   public void refresh() {
     if (!running.compareAndSet(false, true)) return;
+    modelOutThisCycle = null;
     try {
       var approved = series();
       long deadline =
@@ -105,6 +122,7 @@ public final class ForecastPilotService {
         }
       }
     } finally {
+      modelOutThisCycle = null;
       nextScheduledAt = System.currentTimeMillis() + properties.getInterval().toMillis();
       running.set(false);
     }
@@ -119,7 +137,11 @@ public final class ForecastPilotService {
         return;
       }
       store.purge(c, System.currentTimeMillis() - properties.getRetention().toMillis());
-      store.checkSeriesBudget(c, spec.seriesId(), properties.getMaxSeries());
+      store.checkSeriesBudget(
+          c,
+          spec.seriesId(),
+          properties.getMaxSeries(),
+          series().stream().map(ForecastPilotProperties.Series::seriesId).toList());
       var context =
           preparation.prepare(
               spec.seriesId(), spec.definitionVersion(), spec.unit(), cutoff, spec.profile());
@@ -134,7 +156,7 @@ public final class ForecastPilotService {
         return;
       }
       if (previous != null
-          && (!previous.key().equals(key(spec, previous.context()))
+          && (!compatible(spec, previous)
               || !previous.context().definitionVersion().equals(context.definitionVersion())
               || !previous.context().profileFingerprint().equals(context.profileFingerprint()))) {
         previous = null;
@@ -156,7 +178,7 @@ public final class ForecastPilotService {
           && matured != null
           && matured.forecast() != null
           && matured.strategy().equals("TIMESFM")
-          && matured.key().equals(key(spec, matured.context()))
+          && compatible(spec, matured)
           && matured.context().definitionVersion().equals(context.definitionVersion())
           && matured.context().profileFingerprint().equals(context.profileFingerprint())) {
         // Only the realised horizon must be observed. Requiring the whole 512-point context to be
@@ -202,13 +224,30 @@ public final class ForecastPilotService {
       String reason = context.reason();
       String state = degraded ? "DEGRADED" : context.status().name();
       if (context.status() == PreparedMetricSeries.Status.READY) {
-        try {
-          forecast = client.forecast(List.of(context), spec.horizon()).getFirst();
-          strategy = "TIMESFM";
-        } catch (TimesFmInferenceException e) {
+        var outage = modelOutThisCycle;
+        if (outage != null) {
           forecast = fallback(context, spec);
-          strategy = spec.seasonLength() > 1 ? "SEASONAL_NAIVE" : "LAST_VALUE";
-          reason = "TimesFM " + e.state() + "; point baseline has no calibrated interval";
+          strategy = fallbackStrategy(spec);
+          reason =
+              "TimesFM "
+                  + outage
+                  + " earlier in this cycle, not called again until the next one; point baseline"
+                  + " has no calibrated interval";
+          counter("explorer_forecast_pilot_skipped_total", "MODEL_OUT_THIS_CYCLE").increment();
+        } else {
+          try {
+            forecast = client.forecast(List.of(context), spec.horizon()).getFirst();
+            strategy = "TIMESFM";
+          } catch (TimesFmInferenceException e) {
+            // BUSY and INVALID_OUTPUT say nothing about the next series; a timeout or an
+            // unreachable service does.
+            if (e.state() == TimesFmInferenceException.State.TIMEOUT
+                || e.state() == TimesFmInferenceException.State.UNAVAILABLE)
+              modelOutThisCycle = e.state();
+            forecast = fallback(context, spec);
+            strategy = fallbackStrategy(spec);
+            reason = "TimesFM " + e.state() + "; point baseline has no calibrated interval";
+          }
         }
         state = degraded ? "DEGRADED" : "READY";
       }
@@ -233,7 +272,6 @@ public final class ForecastPilotService {
               reason,
               window);
       store.save(c, spec.seriesId(), record, owner);
-      store.purge(c, System.currentTimeMillis() - properties.getRetention().toMillis());
       c.commit();
     }
   }
@@ -250,7 +288,7 @@ public final class ForecastPilotService {
       var r = store.latest(c, id);
       if (active
           && (r == null
-              || !r.key().equals(key(spec, r.context()))
+              || !compatible(spec, r)
               || !r.hasRealisedQuality()
               || !r.state().equals("READY")
               || r.forecast() == null
@@ -278,19 +316,44 @@ public final class ForecastPilotService {
       String inputFingerprint,
       String profileFingerprint) {}
 
+  public enum BreachOutcome { BREACH, NO_BREACH, NO_POLICY, NOT_EVALUATED }
+
+  /**
+   * Why a series has or has not a predicted breach. "No breach" is only said of a forecast that was
+   * actually evaluated: a fallback, a stale horizon or a missing record is {@code NOT_EVALUATED},
+   * because reporting it as a silent absence answered "nothing predicted" exactly while TimesFM
+   * was down.
+   */
+  public record BreachEvaluation(
+      String seriesId, BreachOutcome outcome, String reason, PredictedBreach breach) {
+    static BreachEvaluation notEvaluated(String id, String reason) {
+      return new BreachEvaluation(id, BreachOutcome.NOT_EVALUATED, reason, null);
+    }
+  }
+
   public PredictedBreach breach(String id) throws Exception {
+    return evaluateBreach(id).breach();
+  }
+
+  public BreachEvaluation evaluateBreach(String id) throws Exception {
     var spec = resolve(id);
+    if (spec.threshold() == null)
+      return new BreachEvaluation(id, BreachOutcome.NO_POLICY, "No threshold policy is configured", null);
     var r = get(id);
-    if (spec.threshold() == null
-        || r == null
-        || r.forecast() == null
-        || !r.strategy().equals("TIMESFM")
-        || !r.state().equals("READY")) return null;
+    if (r == null) return BreachEvaluation.notEvaluated(id, "No forecast compatible with the current specification");
+    if (r.forecast() == null)
+      return BreachEvaluation.notEvaluated(id, "Latest result has no forecast (" + r.state() + "): " + r.reason());
+    if (!r.strategy().equals("TIMESFM"))
+      return BreachEvaluation.notEvaluated(
+          id, "Latest forecast is a " + r.strategy() + " fallback without an interval: " + r.reason());
+    if (!r.state().equals("READY"))
+      return BreachEvaluation.notEvaluated(id, "Forecast is " + r.state() + ": " + r.reason());
     var p = spec.threshold();
     long evaluatedAt = System.currentTimeMillis();
     var window = r.forecast().points().subList(0, p.horizonPoints());
     var future = window.stream().filter(point -> point.at() > evaluatedAt).toList();
-    if (future.isEmpty()) return null;
+    if (future.isEmpty())
+      return BreachEvaluation.notEvaluated(id, "Every point of the policy horizon has elapsed");
     var original = r.forecast();
     var current =
         new MetricForecast(
@@ -318,7 +381,7 @@ public final class ForecastPilotService {
             r.context().status().name(),
             r.visibility());
     var breach = new ForecastThresholdEvaluator().evaluate(current, effective);
-    return new PredictedBreach(
+    var predicted = new PredictedBreach(
         breach,
         r.key(),
         evaluatedAt,
@@ -329,38 +392,119 @@ public final class ForecastPilotService {
         r.forecast().modelRevision(),
         r.forecast().inputFingerprint(),
         r.forecast().profileFingerprint());
+    return new BreachEvaluation(
+        id,
+        breach.breached() ? BreachOutcome.BREACH : BreachOutcome.NO_BREACH,
+        breach.breached() ? "Conservative bound crosses the threshold" : "Conservative bound stays within the threshold",
+        predicted);
   }
 
   private Counter counter(String name, String state) {
     return Counter.builder(name).tag("state", state).register(meters);
   }
 
+  /**
+   * The idempotence key: the approved specification, the input and the model revision.
+   *
+   * <p>The specification is encoded field by field, by name, with doubles as their bit patterns.
+   * It used to be {@code Series.toString()}, whose format the JDK calls "unspecified and subject
+   * to change": a runtime that changed it would have re-keyed every record at once, disabling every
+   * ACTIVE series and hiding every forecast behind a specification mismatch nobody made.
+   */
   public static String key(ForecastPilotProperties.Series s, PreparedMetricSeries c)
       throws Exception {
-    String raw =
-        s.toString()
-            + "|"
-            + s.definitionVersion()
-            + "|"
-            + c.inputFingerprint()
-            + "|"
-            + c.profileFingerprint()
-            + "|"
-            + c.toExclusive()
-            + "|"
-            + s.horizon()
-            + "|"
-            + TimesFmClient.MODEL_REVISION;
+    return sha256("v2|" + canonical(s) + inputPart(s, c));
+  }
+
+  /**
+   * The key records were written under before {@link #key}: accepted on read so that upgrading
+   * neither disables an ACTIVE series nor discards a cohort in flight. Records are purged after
+   * {@code retention} (90 days at most), so this can go once every deployment has run that long.
+   */
+  static String legacyKey(ForecastPilotProperties.Series s, PreparedMetricSeries c)
+      throws Exception {
+    return sha256(s.toString() + "|" + s.definitionVersion() + inputPart(s, c));
+  }
+
+  static boolean compatible(ForecastPilotProperties.Series s, ForecastRecord r) throws Exception {
+    return r.key().equals(key(s, r.context())) || r.key().equals(legacyKey(s, r.context()));
+  }
+
+  private static String inputPart(ForecastPilotProperties.Series s, PreparedMetricSeries c) {
+    return "|"
+        + c.inputFingerprint()
+        + "|"
+        + c.profileFingerprint()
+        + "|"
+        + c.toExclusive()
+        + "|"
+        + s.horizon()
+        + "|"
+        + TimesFmClient.MODEL_REVISION;
+  }
+
+  static String canonical(ForecastPilotProperties.Series s) {
+    var out = new StringBuilder();
+    field(out, "seriesId", s.seriesId());
+    field(out, "metricId", s.metricId());
+    field(out, "environment", s.environment());
+    field(out, "definitionVersion", s.definitionVersion());
+    field(out, "unit", s.unit());
+    list(out, "topics", s.topics());
+    list(out, "groups", s.groups());
+    field(out, "stepMillis", s.profile().stepMillis());
+    field(out, "contextPoints", s.profile().contextPoints());
+    field(out, "transformation", s.profile().transformation().name());
+    field(out, "horizon", s.horizon());
+    field(out, "seasonLength", s.seasonLength());
+    var t = s.threshold();
+    field(out, "threshold", t == null ? "none" : "set");
+    if (t != null) {
+      field(out, "threshold.seriesId", t.seriesId());
+      field(out, "threshold.definitionVersion", t.definitionVersion());
+      field(out, "threshold.value", bits(t.threshold()));
+      field(out, "threshold.direction", t.direction().name());
+      field(out, "threshold.horizonPoints", t.horizonPoints());
+      field(out, "threshold.confidence", bits(t.confidence()));
+      field(out, "threshold.historyQuality", t.historyQuality());
+      field(out, "threshold.visibility", t.visibility().name());
+    }
+    field(out, "maxMae", s.maxMae() == null ? "none" : bits(s.maxMae()));
+    field(out, "minimumCoverage", bits(s.minimumCoverage()));
+    field(out, "minimumEvaluatedPoints", s.minimumEvaluatedPoints());
+    return out.toString();
+  }
+
+  /** Length-prefixed, so no value can forge the boundary of the next one. */
+  private static void field(StringBuilder out, String name, Object value) {
+    String v = String.valueOf(value);
+    out.append(name).append('=').append(v.length()).append(':').append(v).append(';');
+  }
+
+  private static void list(StringBuilder out, String name, List<String> values) {
+    field(out, name + ".size", values.size());
+    for (int i = 0; i < values.size(); i++) field(out, name + "[" + i + "]", values.get(i));
+  }
+
+  private static String bits(double value) {
+    return Long.toHexString(Double.doubleToLongBits(value));
+  }
+
+  private static String sha256(String raw) throws Exception {
     return java.util.HexFormat.of()
         .formatHex(
             MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private static String fallbackStrategy(ForecastPilotProperties.Series s) {
+    return s.seasonLength() > 1 ? "SEASONAL_NAIVE" : "LAST_VALUE";
   }
 
   private static MetricForecast fallback(PreparedMetricSeries c, ForecastPilotProperties.Series s) {
     var train = c.points().stream().map(PreparedMetricSeries.Point::value).toList();
     var values =
         ForecastBaselines.predict(train, s.horizon(), s.seasonLength())
-            .get(s.seasonLength() > 1 ? "SEASONAL_NAIVE" : "LAST_VALUE");
+            .get(fallbackStrategy(s));
     var points = new java.util.ArrayList<MetricForecast.Point>();
     for (int i = 0; i < values.size(); i++) {
       double v = values.get(i);

@@ -27,6 +27,7 @@ public class McpCatalogService {
 
     /** Written once at startup, read on every console request; volatile is the whole synchronisation. */
     private volatile List<ToolDescriptor> descriptors = List.of();
+    private java.util.Map<McpToolset, String> withheldBecause = java.util.Map.of();
 
     public McpCatalogService(McpProperties properties, McpToolFilter filter) {
         this.properties = properties;
@@ -41,6 +42,13 @@ public class McpCatalogService {
      * that survived.
      */
     public void publish(List<? extends McpToolset> allToolsets, List<? extends McpToolset> exposedToolsets) {
+        publish(allToolsets, exposedToolsets, java.util.Map.of());
+    }
+
+    /** {@code withheldBecause} names why a toolset that is not a bean was left out. */
+    public void publish(List<? extends McpToolset> allToolsets, List<? extends McpToolset> exposedToolsets,
+                        java.util.Map<McpToolset, String> withheldBecause) {
+        this.withheldBecause = new java.util.IdentityHashMap<>(withheldBecause);
         Set<McpToolset> exposed = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         exposed.addAll(exposedToolsets);
 
@@ -69,6 +77,10 @@ public class McpCatalogService {
             return Visibility.hiddenBy(excluded);
         }
         if (!exposed.contains(toolset)) {
+            String reason = withheldBecause.get(toolset);
+            if (reason != null) {
+                return Visibility.hiddenBy(reason);
+            }
             return toolset instanceof MutatingMcpTools && properties.isReadonly()
                     ? Visibility.hiddenBy("read-only mode (explorer.mcp.readonly=true)")
                     : Visibility.hiddenBy("this toolset was not registered");

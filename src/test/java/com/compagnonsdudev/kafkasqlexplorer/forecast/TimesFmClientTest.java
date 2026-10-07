@@ -77,7 +77,7 @@ class TimesFmClientTest {
             root.put("schemaVersion", 1).put("requestId", request.path("requestId").textValue())
                 .put("modelId", "google/timesfm-2.5-200m-pytorch")
                 .put("modelRevision", "1d952420fba87f3c6dee4f240de0f1a0fbc790e3")
-                .put("adapterVersion", "kex-timesfm-2.5-v1").put("centralStatistic", "MEDIAN")
+                .put("adapterVersion", "kex-timesfm-2.5-v2").put("centralStatistic", "MEDIAN")
                 .put("durationMillis", 17);
             var rows = root.putArray("series");
             for (var input : request.path("series")) {
