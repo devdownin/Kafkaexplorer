@@ -573,4 +573,36 @@ class ForecastPilotServiceTest {
     verify(store, times(1)).purge(eq(connection), anyLong());
     verify(store).checkSeriesBudget(connection, spec.seriesId(), 20, List.of(spec.seriesId()));
   }
+
+  @Test
+  void readinessNamesTheOneThingThatBlocksActivation() throws Exception {
+    assertEquals(
+        "No forecast compatible with the current configuration has been persisted",
+        pilot.readiness(spec.seriesId(), null).reason());
+    var filling =
+        withWindow(
+            record(context, 1, "READY"),
+            new ForecastQualityWindow(
+                List.of(
+                    new ForecastQualityWindow.Cohort(
+                        now, 40, new ForecastBacktestEvaluator.Evaluation(0, null, 0, 1, 3),
+                        BASELINES_AT_ZERO, 1)),
+                null,
+                0));
+    var readiness = pilot.readiness(spec.seriesId(), filling);
+    assertFalse(readiness.eligible());
+    assertEquals("The first quality block holds 40 of 120 realised points", readiness.reason());
+    assertEquals(40, readiness.blockPoints());
+    assertNull(readiness.lastBlockPassed());
+    assertTrue(pilot.readiness(spec.seriesId(), record(context, 1, "READY")).eligible());
+  }
+
+  @Test
+  void aRefusedActivationCarriesTheSameReasonThePageShows() throws Exception {
+    when(store.latest(connection, spec.seriesId()))
+        .thenReturn(withWindow(record(context, 1, "READY"), ForecastQualityWindow.EMPTY));
+    var refusal =
+        assertThrows(IllegalArgumentException.class, () -> pilot.activate(spec.seriesId(), true));
+    assertEquals("The first quality block holds 0 of 120 realised points", refusal.getMessage());
+  }
 }

@@ -605,3 +605,13 @@ focus. Existing cluster/collector identities seed the form. No credentials enter
 observations, and dates diagnostics. Trend uses the last measured value against the last Q50;
 threshold evaluation must share the persisted result key before it is shown. Preparation progress,
 source details and raw result stay available without promoting SHADOW to ACTIVE.
+
+**The panel says why activation is not yet possible, before anyone clicks.** The button used to be
+enabled whenever the state read READY, and a refusal — a 409 with no body — came back as
+"Activation refused or unavailable", while the blocker (a first quality block still filling, a
+failed block, a baseline doing better) existed only inside `ForecastPilotService.activate`. Each
+series now carries `activation` (`ForecastPilotService.readiness`, the same function `activate`
+asks), so the button is disabled with that sentence as its accessible description, a 409 shows the
+server's `reason`, and one line states where the quality block stands against the two consecutive
+failures that mean drift. State, strategy, visibility and unit are badges beside the series
+selector, and nowhere else: they were printed twice, and the realised MAE three times.

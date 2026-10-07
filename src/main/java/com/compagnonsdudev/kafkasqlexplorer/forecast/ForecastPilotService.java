@@ -4,6 +4,7 @@ package com.compagnonsdudev.kafkasqlexplorer.forecast;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
 import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -58,34 +59,95 @@ public final class ForecastPilotService {
   public ForecastRecord get(String id) throws Exception {
     var spec = resolve(id);
     try (var c = store.open()) {
-      var r = store.latest(c, id);
-      if (r == null || !compatible(spec, r)) return null;
-      boolean stale =
-          r.forecast() != null
-              && (r.forecast().points().isEmpty()
-                  || r.forecast().points().getLast().at() < System.currentTimeMillis());
-      var visibility =
-          !stale
-                  && r.state().equals("READY")
-                  && r.strategy().equals("TIMESFM")
-                  && store.active(c, id)
-              ? ForecastThresholdPolicy.Visibility.ACTIVE
-              : ForecastThresholdPolicy.Visibility.SHADOW;
-      return new ForecastRecord(
-          r.key(),
-          r.generatedAt(),
-          stale ? "STALE" : r.state(),
-          r.strategy(),
-          visibility,
-          r.context(),
-          r.forecast(),
-          r.quality(),
-          r.evaluatedPoints(),
-          r.evaluatedThrough(),
-          r.baselineMae(),
-          stale ? "No current forecast horizon" : r.reason(),
-          r.qualityWindow());
+      return view(c, spec, id);
     }
+  }
+
+  /** The latest compatible record as a reader sees it: STALE past its horizon, visibility live. */
+  private ForecastRecord view(Connection c, ForecastPilotProperties.Series spec, String id)
+      throws Exception {
+    var r = store.latest(c, id);
+    if (r == null || !compatible(spec, r)) return null;
+    boolean stale =
+        r.forecast() != null
+            && (r.forecast().points().isEmpty()
+                || r.forecast().points().getLast().at() < System.currentTimeMillis());
+    var visibility =
+        !stale
+                && r.state().equals("READY")
+                && r.strategy().equals("TIMESFM")
+                && store.active(c, id)
+            ? ForecastThresholdPolicy.Visibility.ACTIVE
+            : ForecastThresholdPolicy.Visibility.SHADOW;
+    return new ForecastRecord(
+        r.key(),
+        r.generatedAt(),
+        stale ? "STALE" : r.state(),
+        r.strategy(),
+        visibility,
+        r.context(),
+        r.forecast(),
+        r.quality(),
+        r.evaluatedPoints(),
+        r.evaluatedThrough(),
+        r.baselineMae(),
+        stale ? "No current forecast horizon" : r.reason(),
+        r.qualityWindow());
+  }
+
+  /**
+   * Whether activation would be accepted, and if not the one reason that blocks it.
+   *
+   * <p>The page offered the button whenever the state read READY and, refused, said only
+   * "Activation refused or unavailable": the blocker — a first quality block still filling, a
+   * failed one, a baseline doing better — existed only inside {@link #activate}. Both now ask this.
+   */
+  public record ActivationReadiness(
+      boolean eligible,
+      String reason,
+      int blockPoints,
+      int blockPointsRequired,
+      Boolean lastBlockPassed,
+      int failedBlocks,
+      int failedBlocksToDegrade) {}
+
+  public ActivationReadiness readiness(String id, ForecastRecord r) {
+    var spec = resolve(id);
+    var w = r == null ? ForecastQualityWindow.EMPTY : r.qualityWindow();
+    String blocker = blocker(spec, r, w);
+    return new ActivationReadiness(
+        blocker == null,
+        blocker,
+        w.openPoints(),
+        ForecastQualityWindow.BLOCK_POINTS,
+        w.lastBlock() == null ? null : w.lastBlock().passed(),
+        w.failedBlocks(),
+        ForecastQualityWindow.FAILED_BLOCKS_TO_DEGRADE);
+  }
+
+  private static String blocker(
+      ForecastPilotProperties.Series spec, ForecastRecord r, ForecastQualityWindow w) {
+    if (r == null) return "No forecast compatible with the current configuration has been persisted";
+    if (r.state().equals("DEGRADED"))
+      return "Drift was detected on consecutive quality blocks; revise the series configuration to"
+          + " start a new evaluation";
+    if (r.state().equals("STALE")) return "The latest forecast horizon has elapsed; wait for the next cycle";
+    if (!r.state().equals("READY")) return "Forecast is " + r.state() + ": " + r.reason();
+    if (!r.strategy().equals("TIMESFM") || r.forecast() == null)
+      return "The latest forecast is a " + r.strategy() + " fallback: " + r.reason();
+    if (r.evaluatedPoints() < spec.minimumEvaluatedPoints())
+      return r.evaluatedPoints()
+          + " of the "
+          + spec.minimumEvaluatedPoints()
+          + " realised points required have been evaluated";
+    if (w.lastBlock() == null)
+      return "The first quality block holds "
+          + w.openPoints()
+          + " of "
+          + ForecastQualityWindow.BLOCK_POINTS
+          + " realised points";
+    if (w.failedBlocks() > 0) return "The last quality block failed; a passing block is required";
+    return w.lastBlock().activationBlocker(spec.maxMae()).orElse(null);
   }
 
   /** Why {@link #get} answered nothing: never written, or written under another specification. */
@@ -285,20 +347,10 @@ public final class ForecastPilotService {
     try (var c = store.open()) {
       if (!store.acquire(c, UUID.randomUUID().toString()))
         throw new IllegalArgumentException("Pilot is refreshing; retry activation");
-      var r = store.latest(c, id);
-      if (active
-          && (r == null
-              || !compatible(spec, r)
-              || !r.hasRealisedQuality()
-              || !r.state().equals("READY")
-              || r.forecast() == null
-              || r.forecast().points().getLast().at() < System.currentTimeMillis()
-              || r.evaluatedPoints() < spec.minimumEvaluatedPoints()
-              || r.qualityWindow().lastBlock() == null
-              || r.qualityWindow().failedBlocks() > 0
-              || !r.qualityWindow().lastBlock().eligibleForActivation(spec.maxMae())))
-        throw new IllegalArgumentException(
-            "Activation requires realised quality and all four baseline comparisons");
+      if (active) {
+        var readiness = readiness(id, view(c, spec, id));
+        if (!readiness.eligible()) throw new IllegalArgumentException(readiness.reason());
+      }
       store.activate(c, id, active);
       c.commit();
     }

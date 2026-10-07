@@ -5,7 +5,13 @@ import axios from 'axios';
 import userEvent from '@testing-library/user-event';
 import { ConfirmProvider } from '../ui';
 import { ForecastPanel } from './ForecastPanel';
-vi.mock('axios', () => ({ default: { get: vi.fn(), put: vi.fn() } }));
+import type { ForecastActivationReadiness } from '../../api/types';
+vi.mock('axios', () => ({ default: { get: vi.fn(), put: vi.fn(), isAxiosError: (e: unknown) => Boolean((e as { isAxiosError?: boolean })?.isAxiosError) } }));
+const ready: ForecastActivationReadiness = { eligible: true, reason: null, blockPoints: 0, blockPointsRequired: 120, lastBlockPassed: true, failedBlocks: 0, failedBlocksToDegrade: 2 };
+const blocked = { ...ready, eligible: false, reason: 'The first quality block holds 40 of 120 realised points', blockPoints: 40, lastBlockPassed: null };
+const seriesWith = (activation: ForecastActivationReadiness, state = 'READY') => ({ enabled: true, state: 'AVAILABLE', series: [{ seriesId: 'a'.repeat(64), metricId: 'metric', environment: 'production',
+  result: { state, strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'ready', context: { points: [], outputUnit: 'messages' },
+    forecast: null, quality: null, baselineMae: {}, evaluatedPoints: 0 }, activation }] });
 describe('ForecastPanel', () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(cleanup);
@@ -35,10 +41,7 @@ describe('ForecastPanel', () => {
     expect(config?.signal?.aborted).toBe(true);
   });
   it('requires confirmation before sending activation', async () => {
-    const data={ enabled:true, state:'AVAILABLE', series:[{ seriesId:'a'.repeat(64),metricId:'metric',environment:'production',
-      result:{state:'READY',strategy:'TIMESFM',visibility:'SHADOW',reason:'ready',context:{points:[],outputUnit:'messages'},
-        forecast:null,quality:null,baselineMae:{},evaluatedPoints:0} }] };
-    vi.mocked(axios.get).mockResolvedValue({ data });vi.mocked(axios.put).mockResolvedValue({});
+    vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(ready) });vi.mocked(axios.put).mockResolvedValue({});
     const user=userEvent.setup();render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
     await user.click(await screen.findByRole('button',{name:'Activate after quality checks'}));
     expect(axios.put).not.toHaveBeenCalled();
@@ -46,13 +49,36 @@ describe('ForecastPanel', () => {
     expect(axios.put).toHaveBeenCalledWith(`/api/forecasts/${'a'.repeat(64)}/activation`,
       {active:true,confirmed:true},{timeout:10000});
   });
+  it('says why activation is not yet possible before anyone clicks', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(blocked) });
+    render(<ForecastPanel />);
+    const button = await screen.findByRole('button',{name:'Activate after quality checks'});
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription('Not yet: The first quality block holds 40 of 120 realised points');
+    expect(screen.getByText(/current block 40 \/ 120 realised points · 0 of 2 consecutive failed blocks before drift/)).toBeTruthy();
+    expect(axios.put).not.toHaveBeenCalled();
+  });
   it('prevents activation of a degraded forecast', async () => {
-    vi.mocked(axios.get).mockResolvedValue({data:{enabled:true,state:'AVAILABLE',series:[{seriesId:'a'.repeat(64),
-      metricId:'metric',environment:'production',result:{state:'DEGRADED',strategy:'TIMESFM',visibility:'SHADOW',
-      reason:'poor coverage',context:{points:[],outputUnit:'messages'},forecast:null,quality:null,baselineMae:{}}}]}});
+    vi.mocked(axios.get).mockResolvedValue({ data: seriesWith({ ...blocked, reason: 'Drift was detected', failedBlocks: 2, lastBlockPassed: false }, 'DEGRADED') });
     render(<ForecastPanel />);
     expect(await screen.findByRole('button',{name:'Activate after quality checks'})).toBeDisabled();
+    expect(screen.getByText(/last block failed/)).toBeTruthy();
     expect(axios.put).not.toHaveBeenCalled();
+  });
+  it('shows the server reason when activation is refused', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(ready) });
+    vi.mocked(axios.put).mockRejectedValue({ isAxiosError: true, response: { status: 409, data: { reason: 'The last quality block failed' } } });
+    const user=userEvent.setup();render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    await user.click(await screen.findByRole('button',{name:'Activate after quality checks'}));
+    await user.click(screen.getByRole('button',{name:'Activate'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Activation refused: The last quality block failed');
+  });
+  it('shows state, strategy and visibility once, as badges', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(ready) });
+    render(<ForecastPanel />);
+    const badges = await screen.findByLabelText('Forecast status');
+    expect(badges).toHaveTextContent('READYTIMESFMSHADOWmessages');
+    expect(screen.queryByText('READY · TIMESFM · SHADOW · messages')).toBeNull();
   });
   it('reports a malformed API response without crashing the Metrics page', async () => {
     vi.mocked(axios.get).mockResolvedValue({data:{}});

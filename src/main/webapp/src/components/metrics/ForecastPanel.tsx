@@ -2,10 +2,20 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Area, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Button, useConfirm } from '../ui';
-import type { ForecastStatus } from '../../api/types';
+import { Badge, Button, useConfirm } from '../ui';
+import type { BadgeTone } from '../ui';
+import type { ForecastActivationReadiness, ForecastActivationRefusal, ForecastStatus } from '../../api/types';
 import { ForecastPreparation } from './ForecastPreparation';
 import { ForecastProgress } from './ForecastProgress';
+
+const STATE_TONE: Record<string, BadgeTone> = { READY: 'success', DEGRADED: 'error' };
+
+/** Where realised quality stands against the block verdict that decides drift and activation. */
+function qualityProgress(a: ForecastActivationReadiness) {
+  const last = a.lastBlockPassed === null ? 'no block judged yet' : a.lastBlockPassed ? 'last block passed' : 'last block failed';
+  return `Quality: ${last} · current block ${a.blockPoints} / ${a.blockPointsRequired} realised points · `
+    + `${a.failedBlocks} of ${a.failedBlocksToDegrade} consecutive failed blocks before drift`;
+}
 
 export function ForecastPanel() {
   const [status, setStatus] = useState<ForecastStatus | null>(null);
@@ -47,8 +57,9 @@ export function ForecastPanel() {
     try {
       await axios.put(`/api/forecasts/${encodeURIComponent(series.seriesId)}/activation`, { active, confirmed: active }, { timeout: 10000 });
       setRevision(v => v + 1);
-    } catch {
-      setError('Activation refused or unavailable. Check realised quality and retry after refresh.');
+    } catch (e) {
+      const refusal = axios.isAxiosError<ForecastActivationRefusal>(e) ? e.response?.data?.reason : undefined;
+      setError(typeof refusal === 'string' ? `Activation refused: ${refusal}` : 'Activation unavailable. Retry after the next refresh.');
     } finally { setBusy(false); }
   }
   return <section className="card p-5 space-y-4" aria-label="Metrics Forecast">
@@ -60,13 +71,21 @@ export function ForecastPanel() {
       <details><summary>Preparation and configuration</summary><ForecastPreparation /></details>)}
     {status?.enabled && status.series.length === 0 && <p>Forecast pilot enabled. Configure approved series, PostgreSQL history and TimesFM inference to calculate forecasts.</p>}
     {status?.enabled && status.series.length > 0 && <>
-      <label>Series <select value={series?.seriesId ?? ''} onChange={e => setSelected(e.target.value)}>
-        {status.series.map(s => <option key={s.seriesId} value={s.seriesId}>{s.metricId} · {s.environment}</option>)}
-      </select></label>
+      <div className="flex flex-wrap items-center gap-2">
+        <label>Series <select value={series?.seriesId ?? ''} onChange={e => setSelected(e.target.value)}>
+          {status.series.map(s => <option key={s.seriesId} value={s.seriesId}>{s.metricId} · {s.environment}</option>)}
+        </select></label>
+        {result && <span className="flex flex-wrap gap-1" aria-label="Forecast status">
+          <Badge tone={STATE_TONE[result.state] ?? 'warning'}>{result.state}</Badge>
+          <Badge tone={result.strategy === 'TIMESFM' ? 'neutral' : 'warning'}>{result.strategy}</Badge>
+          <Badge tone={result.visibility === 'ACTIVE' ? 'primary' : 'neutral'}>{result.visibility}</Badge>
+          <Badge>{result.context.outputUnit}</Badge>
+        </span>}
+      </div>
       {series && <ForecastProgress key={series.seriesId} seriesId={series.seriesId} result={result} />}
       {!result ? <p>No persisted forecast yet.</p> : <>
-        <p>{result.state} · {result.strategy} · {result.visibility} · {result.context.outputUnit}</p>
         <p>{result.reason}</p>
+        {series?.activation && <p>{qualityProgress(series.activation)}</p>}
         {result.forecast && <div style={{ height: 260 }} aria-label="Measured history and forecast">
           <ResponsiveContainer><ComposedChart data={chart}>
             <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={v => new Date(v).toLocaleTimeString()} />
@@ -80,16 +99,20 @@ export function ForecastPanel() {
         <p>Nominal quantiles; no guaranteed confidence. Baseline fallback has no interval. No alerts are sent.</p>
         <details><summary>Quality comparisons and raw result</summary>
         {!result.quality ? <p>Realised quality: unmeasured.</p> : <>
-          <p>Evaluated: {result.evaluatedPoints} points · MAE {result.quality.mae.toPrecision(4)} · MASE {result.quality.mase?.toPrecision(4) ?? 'unmeasured'} · coverage {(100 * result.quality.q10Q90Coverage).toFixed(1)}% · width {result.quality.meanIntervalWidth.toPrecision(4)} · pinball {result.quality.meanPinballLoss.toPrecision(4)}</p>
+          <p>MASE {result.quality.mase?.toPrecision(4) ?? 'unmeasured'} · coverage {(100 * result.quality.q10Q90Coverage).toFixed(1)}% · width {result.quality.meanIntervalWidth.toPrecision(4)} · pinball {result.quality.meanPinballLoss.toPrecision(4)}</p>
           <table><thead><tr><th>Baseline</th><th>Realised MAE</th></tr></thead><tbody>
             {Object.entries(result.baselineMae).map(([name, mae]) => <tr key={name}><td>{name}</td><td>{mae.toPrecision(4)}</td></tr>)}
           </tbody></table>
         </>}
         <pre className="overflow-auto max-h-80 text-xs">{JSON.stringify(result, null, 2)}</pre>
         </details>
-        <Button onClick={() => void activation()} disabled={busy || result.state !== 'READY' && result.visibility !== 'ACTIVE'}>
-          {result.visibility === 'ACTIVE' ? 'Return to SHADOW' : 'Activate after quality checks'}
-        </Button>
+        {result.visibility === 'ACTIVE'
+          ? <Button onClick={() => void activation()} disabled={busy}>Return to SHADOW</Button>
+          : <div className="space-y-1">
+            <Button onClick={() => void activation()} disabled={busy || !series?.activation?.eligible}
+              aria-describedby={series?.activation?.reason ? 'forecast-activation-blocker' : undefined}>Activate after quality checks</Button>
+            {series?.activation?.reason && <p id="forecast-activation-blocker" className="text-sm">Not yet: {series.activation.reason}</p>}
+          </div>}
       </>}
     </>}
   </section>;

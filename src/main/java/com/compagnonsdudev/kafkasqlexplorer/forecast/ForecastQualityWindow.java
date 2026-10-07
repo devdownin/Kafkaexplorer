@@ -65,13 +65,34 @@ public record ForecastQualityWindow(List<Cohort> open, Block lastBlock, int fail
 
     /** Activation is stricter than drift: no worse than any baseline, with level slack only. */
     public boolean eligibleForActivation(Double maxMae) {
-      return passed
-          && baselineMae.size() == 4
-          && quality.q10Q90Coverage() >= coverageBound
-          && (maxMae == null || quality.mae() <= maxMae)
-          && baselineMae.values().stream()
-              .noneMatch(mae -> quality.mae() > mae + LEVEL_EPSILON * meanAbsActual);
+      return activationBlocker(maxMae).isEmpty();
     }
+
+    /** What keeps this block from earning ACTIVE, in the operator's words; empty when nothing. */
+    public java.util.Optional<String> activationBlocker(Double maxMae) {
+      if (!passed) return java.util.Optional.of("The last quality block failed");
+      if (baselineMae.size() != 4)
+        return java.util.Optional.of("The last quality block lacks one of the four baseline comparisons");
+      if (quality.q10Q90Coverage() < coverageBound)
+        return java.util.Optional.of(
+            "Interval coverage %.1f%% is below the %.1f%% bound"
+                .formatted(100 * quality.q10Q90Coverage(), 100 * coverageBound));
+      if (maxMae != null && quality.mae() > maxMae)
+        return java.util.Optional.of(
+            "MAE %.4g is above the configured maximum %.4g".formatted(quality.mae(), maxMae));
+      return baselineMae.entrySet().stream()
+          .filter(b -> quality.mae() > b.getValue() + LEVEL_EPSILON * meanAbsActual)
+          .sorted(Map.Entry.comparingByValue())
+          .findFirst()
+          .map(
+              b ->
+                  "MAE %.4g is worse than the %s baseline (%.4g)"
+                      .formatted(quality.mae(), b.getKey(), b.getValue()));
+    }
+  }
+
+  public int openPoints() {
+    return open.stream().mapToInt(Cohort::points).sum();
   }
 
   public ForecastQualityWindow {

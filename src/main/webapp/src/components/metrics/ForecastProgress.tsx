@@ -43,7 +43,7 @@ export function ForecastProgress({ seriesId, result }: { seriesId: string; resul
       <div><h3 className="font-semibold">Horizon</h3><p>{result.forecast ? `${result.forecast.points.length} points · to ${new Date(future[future.length - 1]?.at ?? 0).toLocaleString()}` : 'No forecast yet'}</p></div>
       <div><h3 className="font-semibold">Predicted threshold breach</h3><p>{breach ? `${breach.breached ? 'Predicted' : 'No conservative breach'} · ${breach.direction} ${breach.threshold} ${result.context.outputUnit}`
         : progress?.breachState === 'NOT_CONFIGURED' ? 'No threshold configured' : progress?.breachState === 'UNAVAILABLE' ? 'Evaluation unavailable' : 'Not evaluated for this result'}</p><p className="text-xs">Explicit policy, conservative Q10/Q90 bound; no alert sent</p></div>
-      <div><h3 className="font-semibold">Realised quality</h3><p>{result.quality ? `MAE ${result.quality.mae.toPrecision(4)} · ${result.evaluatedPoints} points` : 'Unmeasured'}</p><p>{result.state} · {result.visibility}</p></div>
+      <div><h3 className="font-semibold">Realised quality</h3><p>{result.quality ? `MAE ${result.quality.mae.toPrecision(4)} · ${result.evaluatedPoints} points` : 'Unmeasured'}</p></div>
     </div>}
     {progress && <details><summary>Sources and history window</summary>
       <p>Topics: {progress.topics.join(', ')} · Groups: {progress.groups.join(', ') || 'none'}</p>

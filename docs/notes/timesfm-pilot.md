@@ -161,7 +161,9 @@ count, and a last judged block that passed with no failed block since, met the c
 and kept TimesFM MAE no greater than **every** baseline MAE (0.1 % of the series level as slack, so
 a constant series does not lose to a zero-error LAST_VALUE by float noise). Activation is stricter
 than drift on purpose: 5 % worse than a baseline is not drift, but it does not earn ACTIVE. It
-uses the same global lock, returning 409 during refresh or when quality is insufficient. Operator
+uses the same global lock, returning 409 during refresh or when quality is insufficient, with
+the blocking sentence as `reason`; `GET /api/forecasts` carries the same verdict per series as
+`activation`, so the page can say it before the click. Operator
 REST uses the application's existing deployment access boundary; expose it through the same
 operator-only access controls as other management endpoints. MCP offers no mutation.
 
