@@ -158,6 +158,12 @@ confidence interval, never become ACTIVE and never create predicted threshold br
 history produces no forecast. Expired horizons read as STALE/SHADOW. A specification mismatch withholds the old record entirely
 until a compatible result exists, so changed source approvals cannot expose old contexts or quality.
 The same input is not retried until input/specification changes, including after a fallback.
+A TIMEOUT or UNAVAILABLE answer takes the model out **for the rest of the cycle**: the remaining
+series get the labelled point fallback at once, with the reason "TimesFM TIMEOUT earlier in this
+cycle", and `explorer_forecast_pilot_skipped_total{state="MODEL_OUT_THIS_CYCLE"}` counts them. A
+hung service otherwise cost the whole timeout per series, so a 60 s cycle reached two series and
+the others went stale. The next cycle calls the model again. BUSY and INVALID_OUTPUT do not take
+it out: they say nothing about the next call.
 
 ## MCP contract
 
@@ -172,7 +178,7 @@ and groups. Unknown ids are OUT_OF_SCOPE. The catalogue omits inaccessible serie
 | `kex_metric_history` | Existing prepared context, at most 512 points; unmeasured before first record |
 | `kex_forecast_metric` | Persisted forecast, state, strategy, quality and provenance |
 | `kex_get_forecast_quality` | Realised TimesFM metrics, four baseline MAEs, sample count, watermark and current state/strategy; unmeasured until maturity |
-| `kex_list_predicted_threshold_breaches` | Explicit conservative bound breaches, result key, timestamps, revision and fingerprints |
+| `kex_list_predicted_threshold_breaches` | One row per authorized series: `BREACH`, `NO_BREACH`, `NO_POLICY` or `NOT_EVALUATED`, its reason, and for an evaluated forecast the conservative bound, result key, timestamps, revision and fingerprints |
 
 The former `kex_forecast_catalog`, `kex_forecast_get`, `kex_forecast_latest`,
 `kex_forecast_metadata` and `kex_forecast_limits` names are replaced. Reads never perform SQL
@@ -181,6 +187,14 @@ policy horizon; evaluation time and original window end are returned, and elapse
 create a predicted breach or extend the policy window. SHADOW breaches are labelled as such. Q10/Q90 one-sided
 bounds carry nominal 0.9 confidence; this is not guaranteed calibration or a joint horizon
 probability. No notification, alert execution or Kafka mutation is implemented.
+
+**No breach is only said of a forecast that was evaluated.** A series with a policy whose latest
+result is missing, a fallback, not READY or past its policy horizon is `NOT_EVALUATED`, and the
+coverage is then `PARTIAL_FAILURE` with those series ids in `topicsNotReached` (the field is named
+for topics; here it carries series) plus a `FORECAST_NOT_EVALUATED` warning. The tool used to drop
+such series and answer an empty `EXHAUSTED` list, which read as "nothing predicted" precisely while
+TimesFM was down and every series was on its fallback. Series without a policy are listed as
+`NO_POLICY` and are not counted as requested.
 
 ## Metrics and operational checks
 

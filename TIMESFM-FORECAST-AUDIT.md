@@ -15,7 +15,7 @@ MCP », au commit `ee6a70b` :
 - `timesfm.md`, `docs/notes/timesfm-pilot.md`, `docs/notes/timesfm-history.md`.
 
 Chaque constat est une preuve (fichier:ligne, au commit audité), un effet observable et un
-correctif proposé. **F1, F2 et F3 sont corrigés** (statut en tête de chacun) ; les autres restent
+correctif proposé. **F1, F2, F3, F4 et F8 sont corrigés** (statut en tête de chacun) ; les autres restent
 ouverts. Les chiffres marqués *calculé* sont des probabilités
 binomiales sous l'hypothèse la plus favorable au modèle (parfaitement calibré, erreurs
 indépendantes) ; rien n'a été mesuré sur une série réelle, faute de cluster et de poids TimesFM
@@ -40,11 +40,11 @@ rendue comme une absence de franchissement (F4).
 | F1 | Critique, *corrigé* | Le pilote partage l'unique thread `@Scheduled` avec la collecte des métriques |
 | F2 | Haute, *corrigé* | La dérive est jugée sur une cohorte unique puis verrouillée : `DEGRADED` est quasi certain |
 | F3 | Haute, *corrigé* | Un seul point imputé dans le contexte suspend l'évaluation pendant 512 pas |
-| F4 | Haute | `kex_list_predicted_threshold_breaches` confond « non évalué » et « aucun franchissement » |
+| F4 | Haute, *corrigé* | `kex_list_predicted_threshold_breaches` confond « non évalué » et « aucun franchissement » |
 | F5 | Moyenne | DLP appliqué au catalogue, pas aux quatre autres outils |
 | F6 | Moyenne | Le retour à `SHADOW` est refusé (409) pendant un rafraîchissement |
 | F7 | Moyenne | Clé d'idempotence construite sur `Record.toString()` |
-| F8 | Moyenne | Un TimesFM qui ne répond plus réduit le cycle à deux séries |
+| F8 | Moyenne, *corrigé* | Un TimesFM qui ne répond plus réduit le cycle à deux séries |
 | F9 | Moyenne, à mesurer | `fix_quantile_crossing=False` transforme toute inversion de quantiles en fallback |
 | F10 | Basse | Une connexion PostgreSQL neuve par lecture MCP |
 | F11 | Basse | `checkNotQuarantined(seriesId)` ne contrôle rien |
@@ -234,6 +234,12 @@ le modèle a réellement vu, il est juste de l'évaluer dessus.
 
 ## F4 — Haute : l'outil de franchissements répond « zéro » quand il n'a rien évalué
 
+**Corrigé** : `ForecastPilotService.evaluateBreach` renvoie une issue typée (`BREACH`,
+`NO_BREACH`, `NO_POLICY`, `NOT_EVALUATED`) et sa raison ; l'outil rend une ligne par série
+autorisée et une couverture `PARTIAL_FAILURE` qui nomme les séries non évaluées. Une série sans
+politique de seuil est listée mais ne compte pas comme demandée. Tests dans
+`ForecastPilotServiceTest`.
+
 **Preuve.** `ForecastMcpTools.breaches()` (`ForecastMcpTools.java:186-195`) n'ajoute une ligne
 que si `pilot.breach()` renvoie un franchissement. `breach()` renvoie `null` sans distinction
 (`ForecastPilotService.java:275-285`) : pas de seuil configuré, pas de prévision, prévision
@@ -332,6 +338,11 @@ nommée champ par champ) ; et une raison distincte quand l'enregistrement est re
 incompatibilité de spécification.
 
 ## F8 — Moyenne : un modèle muet affame le cycle
+
+**Corrigé** comme proposé : après un `TIMEOUT` ou un `UNAVAILABLE`, les séries restantes du
+cycle passent directement en fallback, raison et compteur à l'appui ; `BUSY` et
+`INVALID_OUTPUT` ne coupent pas le modèle. La transaction reste ouverte pendant le seul appel
+qui attend.
 
 **Preuve.** Le délai TimesFM par défaut est 35 s, le budget de cycle 60 s, les séries sont
 traitées une par une et chaque `TIMEOUT` déclenche un fallback série par série

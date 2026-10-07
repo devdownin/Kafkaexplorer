@@ -175,24 +175,57 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
   @McpTool(
       name = "kex_list_predicted_threshold_breaches",
       description =
-          "List explicit threshold breaches for authorized series. Includes nominal quantile"
-              + " confidence and activation status. No alert or inference is triggered.",
+          "Evaluate the explicit threshold policy of every authorized series: one row per series"
+              + " with outcome BREACH, NO_BREACH, NO_POLICY or NOT_EVALUATED and the reason. An"
+              + " empty breach set is only complete when coverage is EXHAUSTED; NOT_EVALUATED"
+              + " series (fallback, stale or missing forecast) are named in topicsNotReached."
+              + " Includes nominal quantile confidence and activation status. No alert or"
+              + " inference is triggered.",
       annotations =
           @McpTool.McpAnnotations(
               readOnlyHint = true,
               destructiveHint = false,
               openWorldHint = false))
-  public ToolResult<List<ForecastPilotService.PredictedBreach>> breaches() {
-    var rows = new ArrayList<ForecastPilotService.PredictedBreach>();
+  public ToolResult<List<ForecastPilotService.BreachEvaluation>> breaches() {
+    var rows = new ArrayList<ForecastPilotService.BreachEvaluation>();
     for (var s : allowed()) {
       try {
-        var b = pilot.breach(s.seriesId());
-        if (b != null && b.threshold().breached()) rows.add(b);
+        rows.add(pilot.evaluateBreach(s.seriesId()));
       } catch (Exception e) {
         throw unavailable();
       }
     }
-    return result(List.copyOf(rows));
+    // A series without a policy was never asked about; one with a policy and no evaluable
+    // forecast was, and its absence from the breaches must not read as "nothing predicted".
+    var withPolicy =
+        rows.stream().filter(r -> r.outcome() != ForecastPilotService.BreachOutcome.NO_POLICY).toList();
+    var notReached =
+        withPolicy.stream()
+            .filter(r -> r.outcome() == ForecastPilotService.BreachOutcome.NOT_EVALUATED)
+            .map(ForecastPilotService.BreachEvaluation::seriesId)
+            .toList();
+    var warnings = new ArrayList<>(List.of(LIMITS));
+    Coverage coverage;
+    if (notReached.isEmpty()) {
+      coverage = Coverage.exhausted(withPolicy.size(), 0, 0);
+    } else {
+      coverage =
+          Coverage.partial(
+              withPolicy.size(),
+              withPolicy.size() - notReached.size(),
+              notReached,
+              0,
+              0,
+              StopReason.PARTIAL_FAILURE,
+              null);
+      warnings.add(
+          Warning.warn(
+              "FORECAST_NOT_EVALUATED",
+              notReached.size()
+                  + " series with a threshold policy could not be evaluated; their breach status"
+                  + " is unknown, not negative"));
+    }
+    return ToolResult.of(List.copyOf(rows), coverage, List.copyOf(warnings));
   }
 
   private ForecastRecord read(String id) {
@@ -208,14 +241,13 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
         McpErrorCode.DEPENDENCY_UNAVAILABLE, "Forecast persistence unavailable");
   }
 
+  private static final Warning LIMITS =
+      Warning.info(
+          "FORECAST_LIMITS",
+          "Reads existing results only; nominal quantiles are not guaranteed confidence; no"
+              + " alert delivery");
+
   private <T> ToolResult<T> result(T data) {
-    return ToolResult.of(
-        data,
-        Coverage.exhausted(0, 0, 0),
-        List.of(
-            Warning.info(
-                "FORECAST_LIMITS",
-                "Reads existing results only; nominal quantiles are not guaranteed confidence; no"
-                    + " alert delivery")));
+    return ToolResult.of(data, Coverage.exhausted(0, 0, 0), List.of(LIMITS));
   }
 }
