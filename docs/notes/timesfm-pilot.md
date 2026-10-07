@@ -163,7 +163,9 @@ a constant series does not lose to a zero-error LAST_VALUE by float noise). Acti
 than drift on purpose: 5 % worse than a baseline is not drift, but it does not earn ACTIVE. It
 uses the same global lock, returning 409 during refresh or when quality is insufficient, with
 the blocking sentence as `reason`; `GET /api/forecasts` carries the same verdict per series as
-`activation`, so the page can say it before the click. Operator
+`activation`, so the page can say it before the click. **Returning to SHADOW (`active=false`) takes
+no lock** and is never refused for a running cycle: visibility is recomputed from the control row
+on every read, so a record a cycle publishes as ACTIVE a moment later still reads SHADOW. Operator
 REST uses the application's existing deployment access boundary; expose it through the same
 operator-only access controls as other management endpoints. MCP offers no mutation.
 
