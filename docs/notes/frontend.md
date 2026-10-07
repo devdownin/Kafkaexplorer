@@ -628,4 +628,7 @@ on the Metrics page**: `ForecastPreparation` used to mount a second one, so a ca
 once. The assistant names its sampling intervals, states the horizon as a duration, folds the
 prefilled history identities under **Advanced** (opened by `flushSync` before focusing one that is
 invalid — a field inside a closed `<details>` cannot take focus), and takes the attestation
-checkbox as the confirmation instead of asking again in a dialog.
+checkbox as the confirmation instead of asking again in a dialog. Sources are chips (`NameListField`) rather than a
+comma-separated string prefilled from the catalogue, where a stray comma or a typo became a
+declared source nobody reads; and the export ends with numbered next steps and a copy button
+beside the download, since the file is usually pasted into a deployment's configuration.

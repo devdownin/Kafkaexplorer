@@ -5,8 +5,9 @@ import { flushSync } from 'react-dom';
 import axios from 'axios';
 import { Button, Checkbox, Field, Input, Select } from '../ui';
 import type { ForecastCandidate, ForecastCandidates, ForecastDraft, ForecastDraftRequest } from '../../api/types';
+import { copyText } from '../../clipboard';
+import { NameListField } from './NameListField';
 
-const split = (text: string) => text.split(',').map(s => s.trim()).filter(Boolean);
 /** Every option keeps 513 buckets inside the default 30-day history retention the server checks. */
 const CADENCES = [{ value: '30000', label: '30 seconds' }, { value: '60000', label: '1 minute' },
   { value: '300000', label: '5 minutes' }, { value: '900000', label: '15 minutes' }];
@@ -24,8 +25,9 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
   const [clusterId, setClusterId] = useState('local');
   const [collectorId, setCollectorId] = useState('kafkaexplorer');
   const [unit, setUnit] = useState('');
-  const [topics, setTopics] = useState('');
-  const [groups, setGroups] = useState('');
+  const [topics, setTopics] = useState<string[]>([]);
+  const [groups, setGroups] = useState<string[]>([]);
+  const [copied, setCopied] = useState(false);
   const [cadence, setCadence] = useState('60000');
   const [horizon, setHorizon] = useState('30');
   const [threshold, setThreshold] = useState('');
@@ -48,7 +50,7 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
             const candidate = data.metrics.find(m => m.metricId === initialMetricId);
             if (candidate) {
               setSelected(candidate); setUnit(candidate.unit);
-              setTopics(candidate.topics.join(', ')); setGroups(candidate.groups.join(', '));
+              setTopics(candidate.topics); setGroups(candidate.groups);
             } else setError('Selected metric is absent from the candidate catalogue. Reload or choose a listed metric.');
           }
           if (data.clusterId) setClusterId(data.clusterId);
@@ -59,14 +61,14 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
   }, [initialMetricId]);
   function choose(metricId: string) {
     const c = candidates?.metrics.find(m => m.metricId === metricId) ?? null;
-    setSelected(c); setUnit(c?.unit ?? ''); setTopics(c?.topics.join(', ') ?? '');
-    setGroups(c?.groups.join(', ') ?? ''); setDraft(null); setApproved(false);
+    setSelected(c); setUnit(c?.unit ?? ''); setTopics(c?.topics ?? []);
+    setGroups(c?.groups ?? []); setDraft(null); setApproved(false); setCopied(false);
   }
   function review() {
     const next: Record<string, string> = {};
     for (const [key, value] of Object.entries({ environment, clusterId, collectorId, unit }))
       if (!value.trim() || value.length > 128 || [...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) next[key] = 'Use 1–128 printable characters.';
-    if (!split(topics).length) next.topics = 'List every source topic.';
+    if (!topics.length) next.topics = 'Add every source topic.';
     if (!Number.isInteger(Number(horizon)) || Number(horizon) < 1 || Number(horizon) > 60) next.horizon = 'Use 1–60 forecast points.';
     if (threshold.trim() && !Number.isFinite(Number(threshold))) next.threshold = 'Use a finite threshold.';
     setErrors(next);
@@ -85,7 +87,7 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
     setBusy(true); setError('');
     const request: ForecastDraftRequest = { metricId: selected.metricId, definitionVersion: selected.definitionVersion,
       environment: environment.trim(), unit, clusterId: clusterId.trim(), collectorId: collectorId.trim(),
-      topics: split(topics), groups: split(groups), stepMillis: Number(cadence), horizon: Number(horizon),
+      topics, groups, stepMillis: Number(cadence), horizon: Number(horizon),
       threshold: threshold.trim() ? Number(threshold) : null, direction, confirmed: true };
     try {
       const { data } = await axios.post<ForecastDraft>('/api/forecasts/configuration', request,
@@ -96,6 +98,11 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
       if (!abort.current?.signal.aborted) setError(axios.isAxiosError(e) && typeof e.response?.data?.reason === 'string'
         ? e.response.data.reason : 'Configuration validation failed. Reload the catalogue if the metric changed.');
     } finally { if (!abort.current?.signal.aborted) setBusy(false); }
+  }
+  async function copyConfiguration() {
+    if (!draft) return;
+    if (await copyText(draft.configuration)) setCopied(true);
+    else setError('Copy unavailable in this browser; download the file instead.');
   }
   function download() {
     if (!draft) return;
@@ -137,22 +144,31 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
           <Field id="forecast-collectorId" label="History collector ID" error={errors.collectorId}>{p => <Input {...p} value={collectorId} onChange={e => setCollectorId(e.target.value)} />}</Field>
         </div>
       </details>
-      <Field id="forecast-topics" label="All source topics (comma separated)" error={errors.topics} description="Verify every SQL dependency; suggestions are not a complete provenance attestation.">{p => <Input {...p} value={topics} onChange={e => setTopics(e.target.value)} />}</Field>
-      <Field label="All consumer groups (comma separated, optional)">{p => <Input {...p} value={groups} onChange={e => setGroups(e.target.value)} />}</Field>
+      <NameListField id="forecast-topics" label="All source topics" names={topics} onChange={setTopics} topics error={errors.topics}
+        description="Verify every SQL dependency; suggestions are not a complete provenance attestation." />
+      <NameListField id="forecast-groups" label="All consumer groups (optional)" names={groups} onChange={setGroups} />
       <Field id="forecast-threshold" label="Optional threshold in forecast output units" error={errors.threshold} description={selected?.transformation === 'COUNTER_RATE' ? `${unit} per second` : unit}>{p => <Input {...p} inputMode="decimal" value={threshold} onChange={e => setThreshold(e.target.value)} />}</Field>
       <Field label="Threshold direction">{p => <Select {...p} value={direction} onChange={e => setDirection(e.target.value)}><option value="ABOVE">Above</option><option value="BELOW">Below</option></Select>}</Field>
       <Button onClick={() => setStep(1)}>Back</Button> <Button type="submit">Review configuration</Button>
     </form>}
     {step === 3 && <>
       <p>{selected?.name || selected?.metricId} · {environment} · {unit} · {selected?.transformation}</p>
-      <p>Topics: {topics}. Groups: {groups || 'none'}. History: 512 samples, one every {CADENCES.find(c => c.value === cadence)?.label ?? `${Number(cadence) / 1000} seconds`}; horizon: {horizon} points ({span(Number(cadence) * Number(horizon))}).</p>
+      <p>Topics: {topics.join(', ')}. Groups: {groups.join(', ') || 'none'}. History: 512 samples, one every {CADENCES.find(c => c.value === cadence)?.label ?? `${Number(cadence) / 1000} seconds`}; horizon: {horizon} points ({span(Number(cadence) * Number(horizon))}).</p>
       <p>Threshold: {threshold.trim() ? `${direction} ${threshold}` : 'not configured'}. SHADOW initially; no alerts sent.</p>
       <label className="flex gap-2 items-start"><Checkbox checked={approved} onChange={setApproved} disabled={Boolean(draft)} />I reviewed the semantics and confirm every source topic and consumer group.</label>
       {!draft && <><Button onClick={() => { setStep(2); setApproved(false); }}>Back</Button> <Button disabled={!approved || busy} onClick={() => void generate()}>Validate and export</Button></>}
       {draft && <>
-        <ul>{draft.instructions.map(i => <li key={i}>{i}</li>)}</ul>
+        <h5 className="font-semibold">Next steps</h5>
+        <ol className="list-decimal pl-5 space-y-1">
+          <li>Download or copy the configuration below.</li>
+          {draft.instructions.map(i => <li key={i}>{i}</li>)}
+          <li>Come back to Metrics Forecast: history progress appears here once the restarted pilot collects.</li>
+        </ol>
         <pre className="overflow-auto max-h-80 text-xs">{draft.configuration}</pre>
-        <Button onClick={download}>Download forecasts.yml</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={download}>Download forecasts.yml</Button>
+          <Button variant="ghost" onClick={() => void copyConfiguration()}>{copied ? 'Configuration copied' : 'Copy configuration'}</Button>
+        </div>
       </>}
     </>}
   </div>;

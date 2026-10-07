@@ -60,7 +60,8 @@ model readiness alone do not make a metric forecastable.
    DDL and credentials are not returned by this catalogue. The first 100 metrics are listed in
    deterministic ID order; truncation is explicit.
 3. Declare environment, sampling interval (30 s to 15 min), horizon — shown as a duration — and
-   **all** source topics/groups. The history cluster/collector identities are prefilled from the
+   **all** source topics/groups, edited as removable chips (topics are suggested from the cluster
+   catalogue; a name outside it is still accepted). The history cluster/collector identities are prefilled from the
    running collector and folded under **Advanced**; they open by themselves when one is invalid. Structured suggestions are not a SQL dependency analysis. Unit and series
    identity must match the actual collector; units are read-only and stale metric definitions are
    rejected. Counters use rates per second; optional thresholds use forecast output units.
@@ -70,7 +71,8 @@ model readiness alone do not make a metric forecastable.
    configured series budgets and existing collection identities. The YAML preserves existing
    runtime-approved series, enrollment, interval, retention and series budget. It includes no
    database credentials or inference token. Export changes no running configuration.
-5. Save the downloaded file as `.forecast-stack/config/forecasts.yml`, review its merge with your
+5. The export lists the next steps in order and offers **Copy configuration** beside the download.
+   Save the file as `.forecast-stack/config/forecasts.yml`, review its merge with your
    deployment, then rerun `bin/forecast-stack.sh`. For an existing non-Docker deployment, merge the
    file into the application's external Spring configuration and restart. Configure PostgreSQL
    credentials and inference separately using the [history runbook](notes/timesfm-history.md).
