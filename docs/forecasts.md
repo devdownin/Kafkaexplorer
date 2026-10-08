@@ -102,9 +102,10 @@ interval and are worded as estimates.
 
 A first forecast needs 128 points, or one whole cycle when the chosen cycle is longer; the context
 then grows to 512 as history accumulates, and the forecast uses what exists rather than waiting
-for all of it. Activation is unaffected: it still waits for a judged quality block. The selected
-series in the panel shows observed points against 512, missing/imputed points, preparation state
-and rejection reason; irregular, stale, scope-changed, invalid or reset data can keep it
+for all of it. Activation is unaffected: it still waits for a judged quality block. The panel shows
+the selected series as one timeline — history, forecast, quality, approval — with the step in
+progress marked, what it waits for and an estimate; **History window and sources** keeps observed
+points against 512, missing/imputed points, preparation state and rejection reason; irregular, stale, scope-changed, invalid or reset data can keep it
 inadmissible.
 Database failure shows unknown progress rather than a zero-valued measurement. The next cycle is
 a scheduler estimate, not a promised first-result date: a rotating bounded queue and shared lease

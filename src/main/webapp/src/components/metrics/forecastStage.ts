@@ -51,3 +51,67 @@ export function forecastStage(series: ForecastSeriesView): ForecastStageSummary 
       : `Observing · ${a.reason ?? filling}`;
   return { stage: 'OBSERVING', label: 'Observing', tone: 'neutral', detail };
 }
+
+export type StepState = 'done' | 'current' | 'pending' | 'failed';
+
+export interface TimelineStep {
+  key: 'history' | 'forecast' | 'quality' | 'approval';
+  label: string;
+  state: StepState;
+  detail: string;
+}
+
+/**
+ * The four steps every series goes through, each with what it has reached and what it waits for.
+ *
+ * The panel used to say the same things in three places that did not read together: history
+ * against 512 in the progress block, the quality block in a sentence of its own, and the approval
+ * blocker under the button. A reader had to know the order to know which one mattered now.
+ */
+export function forecastTimeline(series: ForecastSeriesView): TimelineStep[] {
+  const r = series.result;
+  const a = series.activation;
+  const step = series.stepMillis;
+  const need = series.minimumContextPoints;
+  const collected = r?.context?.observedPoints ?? 0;
+  const forecasting = Boolean(r?.forecast);
+
+  const history: TimelineStep = !r
+    ? { key: 'history', label: 'History', state: 'current', detail: 'Waiting for the first forecast cycle' }
+    : forecasting || r.context?.status === 'READY'
+      ? { key: 'history', label: 'History', state: 'done',
+        detail: collected >= 512 ? 'Full 512-point context' : `${collected} points; the context grows to 512` }
+      : r.context?.status === 'WARMING_UP'
+        ? { key: 'history', label: 'History', state: 'current',
+          detail: `${Math.min(collected, need)} / ${need} points · first forecast in ${about(need - collected, step)}` }
+        : { key: 'history', label: 'History', state: 'failed', detail: r.reason };
+
+  const forecast: TimelineStep = forecasting && r?.strategy === 'TIMESFM'
+    ? { key: 'forecast', label: 'Forecast', state: 'done', detail: `TimesFM · ${r.forecast!.points.length} points ahead` }
+    : forecasting
+      ? { key: 'forecast', label: 'Forecast', state: 'failed', detail: `Baseline fallback, no interval: ${r!.reason}` }
+      : history.state === 'done'
+        ? { key: 'forecast', label: 'Forecast', state: 'current', detail: 'Due at the next cycle' }
+        : { key: 'forecast', label: 'Forecast', state: 'pending', detail: `Needs ${need} points of history` };
+
+  const block = `${a.blockPoints} / ${a.blockPointsRequired} realised points`;
+  const quality: TimelineStep = r?.state === 'DEGRADED'
+    ? { key: 'quality', label: 'Quality', state: 'failed', detail: 'Drift on consecutive blocks; revise the series to restart its evaluation' }
+    : !forecasting
+      ? { key: 'quality', label: 'Quality', state: 'pending', detail: `Judged over ${a.blockPointsRequired} realised points` }
+      : a.lastBlockPassed === true && a.failedBlocks === 0
+        ? { key: 'quality', label: 'Quality', state: 'done', detail: `Last block passed · next ${block}` }
+        : a.lastBlockPassed === false
+          ? { key: 'quality', label: 'Quality', state: 'current',
+            detail: `Last block failed (${a.failedBlocks} of ${a.failedBlocksToDegrade} before drift) · next ${block}` }
+          : { key: 'quality', label: 'Quality', state: 'current',
+            detail: `${block} · judged in ${about(a.blockPointsRequired - a.blockPoints, step)}` };
+
+  const approval: TimelineStep = r?.visibility === 'ACTIVE'
+    ? { key: 'approval', label: 'Approval', state: 'done', detail: 'Approved' }
+    : a.eligible
+      ? { key: 'approval', label: 'Approval', state: 'current', detail: 'Ready: approve it below' }
+      : { key: 'approval', label: 'Approval', state: 'pending', detail: `Not yet: ${a.reason ?? 'quality checks pending'}` };
+
+  return [history, forecast, quality, approval];
+}

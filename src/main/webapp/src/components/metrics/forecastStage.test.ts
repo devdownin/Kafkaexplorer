@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { describe, expect, it } from 'vitest';
 import type { ForecastActivationReadiness, ForecastRecord, ForecastSeriesView } from '../../api/types';
-import { about, forecastStage } from './forecastStage';
+import { about, forecastStage, forecastTimeline } from './forecastStage';
 
 const filling: ForecastActivationReadiness = { eligible: false, reason: 'The first quality block holds 40 of 180 realised points',
   blockPoints: 40, blockPointsRequired: 180, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 };
@@ -44,5 +44,32 @@ describe('forecastStage', () => {
     expect(about(25, 60000)).toBe('~25 min');
     expect(about(180, 60000)).toBe('~3 h');
     expect(about(500, 900000)).toBe('~5 d');
+  });
+});
+
+describe('forecastTimeline', () => {
+  const states = (s: ForecastSeriesView) => forecastTimeline(s).map(step => `${step.key}:${step.state}`);
+  it('starts on history and names what each later step waits for', () => {
+    const steps = forecastTimeline(series({ forecast: null, context: { status: 'WARMING_UP', observedPoints: 68 } as ForecastRecord['context'] }));
+    expect(steps.map(s => s.state)).toEqual(['current', 'pending', 'pending', 'pending']);
+    expect(steps[0].detail).toBe('68 / 128 points · first forecast in ~60 min');
+    expect(steps[1].detail).toBe('Needs 128 points of history');
+    expect(steps[3].detail).toBe('Not yet: The first quality block holds 40 of 180 realised points');
+  });
+  it('moves to quality once TimesFM has forecast from a partial context', () => {
+    const steps = forecastTimeline(series({ forecast: { points: [{}, {}] } as ForecastRecord['forecast'],
+      context: { status: 'READY', observedPoints: 200 } as ForecastRecord['context'] }));
+    expect(steps.map(s => s.state)).toEqual(['done', 'done', 'current', 'pending']);
+    expect(steps[0].detail).toBe('200 points; the context grows to 512');
+    expect(steps[1].detail).toBe('TimesFM · 2 points ahead');
+    expect(steps[2].detail).toBe('40 / 180 realised points · judged in ~2 h');
+  });
+  it('marks a baseline fallback and a degraded series as blocked, not as progress', () => {
+    expect(states(series({ strategy: 'LAST_VALUE', reason: 'TimesFM TIMEOUT' }))).toContain('forecast:failed');
+    expect(states(series({ state: 'DEGRADED' }))).toContain('quality:failed');
+  });
+  it('ends on approval: offered when eligible, done when approved', () => {
+    expect(states(series({}, { eligible: true, lastBlockPassed: true }))).toEqual(['history:done', 'forecast:done', 'quality:done', 'approval:current']);
+    expect(states(series({ visibility: 'ACTIVE' }, { lastBlockPassed: true }))).toContain('approval:done');
   });
 });

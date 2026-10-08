@@ -650,3 +650,13 @@ blocked — with an estimate from the sampling interval worded as one. The card 
 place of **Prepare a forecast**. The page takes the status from the panel's own poll through
 `onStatus` rather than polling again, and bumps `refresh` after an approval so the panel and the
 card do not wait for the next tick.
+
+**The panel reads as one timeline: history → forecast → quality → approval.** It used to say the
+same things in three places that did not read together — history against 512 in the progress
+block, a sentence on the quality block, and "Not yet: …" under the approve button — so a reader
+had to know the order to know which one mattered now. `forecastTimeline` (beside `forecastStage`
+in `forecastStage.ts`) gives each step a state (done, in progress, not started, blocked) and one
+detail with its estimate; `ForecastTimeline` renders them as an ordered list with `aria-current`
+on the step in progress, and the approve button's accessible description is the approval step's
+detail. The full 512-point context, missing and imputed counts moved into **History window and
+sources**, where they are detail rather than the headline.

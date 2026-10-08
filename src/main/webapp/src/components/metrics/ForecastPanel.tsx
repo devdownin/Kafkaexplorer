@@ -6,22 +6,16 @@ import { Badge, Button, useConfirm } from '../ui';
 import { copyText } from '../../clipboard';
 import type { BadgeTone } from '../ui';
 import type {
-  ForecastActivationReadiness, ForecastActivationRefusal, ForecastProgress as Progress, ForecastStatus,
+  ForecastActivationRefusal, ForecastProgress as Progress, ForecastStatus,
 } from '../../api/types';
 import { ForecastPreparation } from './ForecastPreparation';
 import { ForecastProgress } from './ForecastProgress';
+import { ForecastTimeline } from './ForecastTimeline';
 
 const STATE_TONE: Record<string, BadgeTone> = { READY: 'success', DEGRADED: 'error' };
 /** Plain words on the page; the pilot's own term stays in the tooltip and in the API. */
 const VISIBILITY_LABEL: Record<string, string> = { ACTIVE: 'Approved', SHADOW: 'Observing' };
 const POLL_MS = 30000;
-
-/** Where realised quality stands against the block verdict that decides drift and activation. */
-function qualityProgress(a: ForecastActivationReadiness) {
-  const last = a.lastBlockPassed === null ? 'no block judged yet' : a.lastBlockPassed ? 'last block passed' : 'last block failed';
-  return `Quality: ${last} · current block ${a.blockPoints} / ${a.blockPointsRequired} realised points · `
-    + `${a.failedBlocks} of ${a.failedBlocksToDegrade} consecutive failed blocks before drift`;
-}
 
 function isProgress(data: Progress | undefined, seriesId: string): data is Progress {
   return data?.seriesId === seriesId && (data.state === 'UNAVAILABLE' || Number.isFinite(data.observedPoints))
@@ -135,11 +129,11 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
           <Badge>{result.context.outputUnit}</Badge>
         </span>}
       </div>
+      {series && <ForecastTimeline series={series} />}
       {series && <ForecastProgress progress={seriesProgress} error={progressError} result={result} />}
       {series?.withdrawable && <Button variant="ghost" onClick={() => void withdraw()} disabled={busy}>Stop forecasting this series</Button>}
       {!result ? <p>No persisted forecast yet.</p> : <>
         <p>{result.reason}</p>
-        {series?.activation && <p>{qualityProgress(series.activation)}</p>}
         {result.forecast && <div style={{ height: 260 }} aria-label="Measured history and forecast">
           <ResponsiveContainer><ComposedChart data={chart}>
             <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={v => new Date(v).toLocaleTimeString()} />
@@ -163,9 +157,9 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
         {result.visibility === 'ACTIVE'
           ? <Button onClick={() => void activation()} disabled={busy}>Return to observing</Button>
           : <div className="space-y-1">
+            {/* The timeline's approval step says what still blocks it; the button points at it. */}
             <Button onClick={() => void activation()} disabled={busy || !series?.activation?.eligible}
-              aria-describedby={series?.activation?.reason ? 'forecast-activation-blocker' : undefined}>Approve after quality checks</Button>
-            {series?.activation?.reason && <p id="forecast-activation-blocker" className="text-sm">Not yet: {series.activation.reason}</p>}
+              aria-describedby={series?.activation?.eligible ? undefined : 'forecast-step-approval'}>Approve after quality checks</Button>
           </div>}
       </>}
     </>}
