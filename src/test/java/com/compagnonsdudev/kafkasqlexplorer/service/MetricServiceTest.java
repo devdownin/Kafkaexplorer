@@ -839,7 +839,7 @@ class MetricServiceTest {
         var candidate = setup.candidates().metrics().stream().filter(c -> c.metricId().equals(metric.id())).findFirst().orElseThrow();
         var draft = setup.draft(new com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastSetupService.DraftRequest(
             metric.id(), candidate.definitionVersion(), "local", candidate.unit(), "cluster", "collector",
-            candidate.topics(), candidate.groups(), 60000, 10, null, "ABOVE", true));
+            candidate.topics(), candidate.groups(), 60000, 10, null, "ABOVE", true, "NONE"));
         var observation = com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservation.create(
             "cluster", metric.id(), com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservation.collectedVersion(
                 capturedMetric.getValue(), "kafka:29092", "collector"), "value", sample.labels(), "milliseconds",

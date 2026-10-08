@@ -150,13 +150,17 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
       int evaluatedPoints,
       long evaluatedThrough,
       String currentStrategy,
-      String currentState) {}
+      String currentState,
+      ForecastPilotService.ActivationReadiness activation) {}
 
   @McpTool(
       name = "kex_get_forecast_quality",
       description =
-          "Read realised forecast errors and baseline MAE. Before forecast expiry quality is"
-              + " unmeasured. No evaluation is started.",
+          "Read realised forecast errors, baseline MAE and whether the series can be approved:"
+              + " activation.eligible, the one reason that blocks it, and where the quality block"
+              + " stands (points of the block, last block passed, consecutive failures before"
+              + " drift). Before the first realised horizon quality is unmeasured and the reason"
+              + " says what activation waits for. No evaluation is started.",
       annotations =
           @McpTool.McpAnnotations(
               readOnlyHint = true,
@@ -166,9 +170,12 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
       @McpToolParam(description = "Approved series id") String seriesId) {
     authorize(seriesId);
     var r = read(seriesId);
+    // The page states why a series cannot be approved yet; an agent asking the same question
+    // used to get errors and baseline scores, and no verdict.
+    var activation = scrub(pilot.readiness(seriesId, r));
     return result(
         r == null || r.quality() == null
-            ? Measured.unmeasured("No realised forecast quality yet")
+            ? Measured.unmeasured("No realised forecast quality yet; activation waits for: " + activation.reason())
             : Measured.of(
                 new Quality(
                     r.quality(),
@@ -176,7 +183,8 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
                     r.evaluatedPoints(),
                     r.evaluatedThrough(),
                     r.strategy(),
-                    r.state())));
+                    r.state(),
+                    activation)));
 
   }
 
@@ -238,6 +246,12 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
 
   private String scrub(String text) {
     return guard.dlp().scrub(text);
+  }
+
+  private ForecastPilotService.ActivationReadiness scrub(ForecastPilotService.ActivationReadiness a) {
+    return new ForecastPilotService.ActivationReadiness(
+        a.eligible(), scrub(a.reason()), a.blockPoints(), a.blockPointsRequired(), a.lastBlockPassed(),
+        a.failedBlocks(), a.failedBlocksToDegrade());
   }
 
   private PreparedMetricSeries scrub(PreparedMetricSeries c) {

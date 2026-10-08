@@ -199,7 +199,7 @@ environment and **all** source topics and groups. Unknown ids are OUT_OF_SCOPE. 
 | `kex_list_forecastable_metrics` | Authorized metric/series/environment catalogue |
 | `kex_metric_history` | Existing prepared context, at most 512 points; unmeasured before first record |
 | `kex_forecast_metric` | Persisted forecast, state, strategy, quality and provenance |
-| `kex_get_forecast_quality` | Realised TimesFM metrics, four baseline MAEs, sample count, watermark and current state/strategy; unmeasured until maturity |
+| `kex_get_forecast_quality` | Realised TimesFM metrics, four baseline MAEs, sample count, watermark, current state/strategy and `activation` — the same eligibility verdict and reason the page shows, with the quality block's progress; unmeasured until maturity, the reason then naming what activation waits for |
 | `kex_list_predicted_threshold_breaches` | One row per authorized series: `BREACH`, `NO_BREACH`, `NO_POLICY` or `NOT_EVALUATED`, its reason, and for an evaluated forecast the conservative bound, result key, timestamps, revision and fingerprints |
 
 The former `kex_forecast_catalog`, `kex_forecast_get`, `kex_forecast_latest`,

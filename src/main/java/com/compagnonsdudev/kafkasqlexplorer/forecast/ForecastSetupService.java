@@ -52,12 +52,34 @@ public class ForecastSetupService {
   public record Candidates(List<Candidate> metrics, int total, boolean truncated, String clusterId, String collectorId) {}
   public record DraftRequest(String metricId, String definitionVersion, String environment, String unit,
       String clusterId, String collectorId, List<String> topics, List<String> groups, long stepMillis,
-      int horizon, Double threshold, String direction, boolean confirmed) {}
+      int horizon, Double threshold, String direction, boolean confirmed, String seasonality) {}
   public record Draft(String configuration, String seriesId, List<String> instructions) {}
   public record Progress(String seriesId, String state, String reason, Integer observedPoints,
       int requiredPoints, Integer missingPoints, Integer imputedPoints, long checkedAt, Long nextScheduledAt,
       long stepMillis, int horizon, List<String> topics, List<String> groups,
       ForecastPilotService.PredictedBreach breach, String breachState) {}
+
+  /**
+   * Samples per cycle at this sampling interval; 1 means no seasonality.
+   *
+   * <p>The assistant used to write 1 for every series, which made {@code SEASONAL_NAIVE} the same
+   * estimator as {@code LAST_VALUE} — four baselines compared, three distinct — and left the
+   * fallback a flat line for metrics that follow the hour or the day. A cycle must be a whole
+   * number of samples, at least two and no more than the 512-point context.
+   */
+  static int seasonLength(String seasonality, long stepMillis) {
+    long period = switch (seasonality == null ? "NONE" : seasonality) {
+      case "NONE" -> 0L;
+      case "HOURLY" -> 3_600_000L;
+      case "DAILY" -> 86_400_000L;
+      default -> throw new IllegalArgumentException("Seasonality must be NONE, HOURLY or DAILY");
+    };
+    if (period == 0) return 1;
+    if (stepMillis <= 0 || period % stepMillis != 0 || period / stepMillis < 2 || period / stepMillis > 512)
+      throw new IllegalArgumentException(
+          "A " + seasonality.toLowerCase(java.util.Locale.ROOT) + " cycle is not 2 to 512 whole samples at this sampling interval");
+    return (int) (period / stepMillis);
+  }
 
   public Readiness readiness() {
     var checks = new ArrayList<Check>();
@@ -199,7 +221,10 @@ public class ForecastSetupService {
     var threshold = r.threshold() == null ? null : new ForecastThresholdPolicy(id, version, r.threshold(),
         ForecastThresholdPolicy.Direction.valueOf(r.direction()), r.horizon(), .9, "READY", ForecastThresholdPolicy.Visibility.SHADOW);
     var spec = new ForecastPilotProperties.Series(id, m.id(), r.environment(), version, r.unit(),
-        r.topics(), r.groups(), profile, r.horizon(), 1, threshold, null, .8, 30);
+        r.topics(), r.groups(), profile, r.horizon(), seasonLength(r.seasonality(), r.stepMillis()), threshold,
+        // No verdict exists before a full quality block, so a smaller minimum read as a promise the
+        // gate could not keep.
+        null, .8, ForecastQualityWindow.BLOCK_POINTS);
     var approved = new ArrayList<>(root.getPilot().getSeries());
     if (approved.stream().anyMatch(existing -> existing.seriesId().equals(id)))
       throw new IllegalArgumentException("This series is already approved; edit its deployment configuration explicitly");

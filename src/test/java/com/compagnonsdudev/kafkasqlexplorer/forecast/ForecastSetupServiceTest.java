@@ -55,7 +55,7 @@ class ForecastSetupServiceTest {
   private ForecastSetupService.DraftRequest request(boolean confirmed, String definition, String unit,
       List<String> topics, List<String> groups, long cadence, int horizon) {
     return new ForecastSetupService.DraftRequest("lag", definition, "local", unit, "cluster", "collector",
-        topics, groups, cadence, horizon, 100d, "ABOVE", confirmed);
+        topics, groups, cadence, horizon, 100d, "ABOVE", confirmed, "NONE");
   }
   private ForecastSetupService.DraftRequest valid() {
     return request(true, MetricObservation.definitionVersion(metric), "milliseconds", List.of("orders"), List.of("worker"), 60000, 30);
@@ -142,6 +142,8 @@ class ForecastSetupServiceTest {
     assertEquals(MetricObservation.seriesId("cluster", version, "lag", "value", Map.of("topic", "orders", "group", "worker")), spec.seriesId());
     assertEquals(draft.seriesId(), spec.seriesId()); assertEquals("milliseconds", spec.unit());
     assertEquals(ForecastThresholdPolicy.Visibility.SHADOW, spec.threshold().visibility());
+    assertEquals(1, spec.seasonLength());
+    assertEquals(ForecastQualityWindow.BLOCK_POINTS, spec.minimumEvaluatedPoints());
     assertTrue(bound.getHistory().getMetricIds().contains("lag"));
     assertFalse(draft.configuration().contains("credential")); verifyNoInteractions(history, client, pilot, preparation);
   }
@@ -195,5 +197,29 @@ class ForecastSetupServiceTest {
     when(preparation.prepare(anyString(), anyString(), anyString(), anyLong(), any())).thenThrow(new Exception("private detail"));
     var result = setup.progress(spec.seriesId()); assertEquals("UNAVAILABLE", result.state());
     assertFalse(result.reason().contains("private detail")); verifyNoInteractions(client);
+  }
+
+  @Test
+  void seasonalityIsCountedInSamplesAndRefusedWhenItCannotBe() {
+    assertEquals(1, ForecastSetupService.seasonLength("NONE", 60000));
+    assertEquals(1, ForecastSetupService.seasonLength(null, 60000));
+    assertEquals(60, ForecastSetupService.seasonLength("HOURLY", 60000));
+    assertEquals(288, ForecastSetupService.seasonLength("DAILY", 300000));
+    assertThrows(IllegalArgumentException.class, () -> ForecastSetupService.seasonLength("DAILY", 60000));
+    assertThrows(IllegalArgumentException.class, () -> ForecastSetupService.seasonLength("HOURLY", 7000));
+    assertThrows(IllegalArgumentException.class, () -> ForecastSetupService.seasonLength("WEEKLY", 60000));
+  }
+
+  @Test
+  void anHourlyCycleReachesTheExportedSeries() throws Exception {
+    var hourly = valid();
+    hourly = new ForecastSetupService.DraftRequest(hourly.metricId(), hourly.definitionVersion(), hourly.environment(),
+        hourly.unit(), hourly.clusterId(), hourly.collectorId(), hourly.topics(), hourly.groups(), hourly.stepMillis(),
+        hourly.horizon(), hourly.threshold(), hourly.direction(), true, "HOURLY");
+    var yaml = new YamlPropertiesFactoryBean();
+    yaml.setResources(new ByteArrayResource(setup.draft(hourly).configuration().getBytes(StandardCharsets.UTF_8)));
+    var bound = new Binder(ConfigurationPropertySources.from(new PropertiesPropertySource("draft", yaml.getObject())))
+        .bind("explorer.forecasting", Bindable.of(ForecastingProperties.class)).get();
+    assertEquals(60, bound.getPilot().getSeries().getFirst().seasonLength());
   }
 }

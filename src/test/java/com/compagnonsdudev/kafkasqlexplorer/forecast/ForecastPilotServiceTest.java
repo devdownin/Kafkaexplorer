@@ -294,7 +294,26 @@ class ForecastPilotServiceTest {
     assertEquals(4, measured.value().baselineMae().size());
     assertEquals(2, measured.value().evaluatedPoints());
     assertEquals("TIMESFM", measured.value().currentStrategy());
+    assertTrue(measured.value().activation().eligible());
+    assertEquals(120, measured.value().activation().blockPointsRequired());
     verify(client, never()).forecast(anyList(), anyInt());
+  }
+
+  @Test
+  void anUnmeasuredQualitySaysWhatActivationWaitsFor() throws Exception {
+    var policy = new com.compagnonsdudev.kafkasqlexplorer.mcp.McpProperties();
+    policy.setAllowedForecastEnvironments(List.of("production"));
+    var tools =
+        new com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools(
+            pilot,
+            new com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard(
+                policy, new com.compagnonsdudev.kafkasqlexplorer.mcp.guard.DlpScrubber(policy)));
+    var measured = tools.quality(spec.seriesId()).data();
+    assertFalse(measured.measured());
+    assertEquals(
+        "No realised forecast quality yet; activation waits for: No forecast compatible with the"
+            + " current configuration has been persisted",
+        measured.reason());
   }
 
   @Test

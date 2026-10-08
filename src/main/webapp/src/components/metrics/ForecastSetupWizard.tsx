@@ -12,6 +12,11 @@ import { NameListField } from './NameListField';
 const CADENCES = [{ value: '30000', label: '30 seconds' }, { value: '60000', label: '1 minute' },
   { value: '300000', label: '5 minutes' }, { value: '900000', label: '15 minutes' }];
 const ADVANCED = new Set(['clusterId', 'collectorId']);
+/** The server computes the season from the same rule: a whole number of samples, 2 to 512. */
+const SEASONALITIES = [{ value: 'NONE', label: 'None', period: 0 }, { value: 'HOURLY', label: 'Hourly', period: 3600000 },
+  { value: 'DAILY', label: 'Daily', period: 86400000 }];
+const seasonFits = (period: number, cadence: number) =>
+  period === 0 || (period % cadence === 0 && period / cadence >= 2 && period / cadence <= 512);
 function span(millis: number) {
   if (!Number.isFinite(millis) || millis <= 0) return '';
   const minutes = millis / 60000;
@@ -30,6 +35,7 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
   const [copied, setCopied] = useState(false);
   const [cadence, setCadence] = useState('60000');
   const [horizon, setHorizon] = useState('30');
+  const [seasonality, setSeasonality] = useState('NONE');
   const [threshold, setThreshold] = useState('');
   const [direction, setDirection] = useState('ABOVE');
   const [approved, setApproved] = useState(false);
@@ -88,7 +94,7 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
     const request: ForecastDraftRequest = { metricId: selected.metricId, definitionVersion: selected.definitionVersion,
       environment: environment.trim(), unit, clusterId: clusterId.trim(), collectorId: collectorId.trim(),
       topics, groups, stepMillis: Number(cadence), horizon: Number(horizon),
-      threshold: threshold.trim() ? Number(threshold) : null, direction, confirmed: true };
+      threshold: threshold.trim() ? Number(threshold) : null, direction, confirmed: true, seasonality };
     try {
       const { data } = await axios.post<ForecastDraft>('/api/forecasts/configuration', request,
         { signal: abort.current?.signal, timeout: 10000 });
@@ -131,8 +137,15 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
       <div className="grid gap-3 sm:grid-cols-2">
         <Field id="forecast-environment" label="Environment" error={errors.environment}>{p => <Input {...p} value={environment} onChange={e => setEnvironment(e.target.value)} />}</Field>
         <Field id="forecast-unit" label="Captured unit" error={errors.unit} description="Change the metric metadata first to change its unit.">{p => <Input {...p} value={unit} readOnly />}</Field>
-        <Field id="forecast-cadence" label="Sampling interval">{p => <Select {...p} value={cadence} onChange={e => setCadence(e.target.value)}>
+        <Field id="forecast-cadence" label="Sampling interval">{p => <Select {...p} value={cadence} onChange={e => {
+          setCadence(e.target.value);
+          const period = SEASONALITIES.find(o => o.value === seasonality)?.period ?? 0;
+          if (!seasonFits(period, Number(e.target.value))) setSeasonality('NONE');
+        }}>
           {CADENCES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</Select>}</Field>
+        <Field id="forecast-seasonality" label="Repeating cycle"
+          description="A daily or hourly pattern gives the forecast a seasonal baseline to beat and a seasonal fallback.">{p => <Select {...p} value={seasonality} onChange={e => setSeasonality(e.target.value)}>
+          {SEASONALITIES.filter(o => seasonFits(o.period, Number(cadence))).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</Select>}</Field>
         <Field id="forecast-horizon" label="Forecast horizon (points)" error={errors.horizon}
           description={span(Number(cadence) * Number(horizon)) && `Forecasts ${span(Number(cadence) * Number(horizon))} ahead`}>{p => <Input {...p} inputMode="numeric" value={horizon} onChange={e => setHorizon(e.target.value)} />}</Field>
       </div>
@@ -153,7 +166,7 @@ export function ForecastSetupWizard({ initialMetricId }: { initialMetricId?: str
     </form>}
     {step === 3 && <>
       <p>{selected?.name || selected?.metricId} · {environment} · {unit} · {selected?.transformation}</p>
-      <p>Topics: {topics.join(', ')}. Groups: {groups.join(', ') || 'none'}. History: 512 samples, one every {CADENCES.find(c => c.value === cadence)?.label ?? `${Number(cadence) / 1000} seconds`}; horizon: {horizon} points ({span(Number(cadence) * Number(horizon))}).</p>
+      <p>Topics: {topics.join(', ')}. Groups: {groups.join(', ') || 'none'}. History: 512 samples, one every {CADENCES.find(c => c.value === cadence)?.label ?? `${Number(cadence) / 1000} seconds`}; horizon: {horizon} points ({span(Number(cadence) * Number(horizon))}); cycle: {SEASONALITIES.find(o => o.value === seasonality)?.label.toLowerCase()}.</p>
       <p>Threshold: {threshold.trim() ? `${direction} ${threshold}` : 'not configured'}. SHADOW initially; no alerts sent.</p>
       <label className="flex gap-2 items-start"><Checkbox checked={approved} onChange={setApproved} disabled={Boolean(draft)} />I reviewed the semantics and confirm every source topic and consumer group.</label>
       {!draft && <><Button onClick={() => { setStep(2); setApproved(false); }}>Back</Button> <Button disabled={!approved || busy} onClick={() => void generate()}>Validate and export</Button></>}
