@@ -6,6 +6,8 @@ import java.time.Duration;
 import java.util.Set;
 
 public class MetricHistoryProperties {
+    /** Metrics recorded at once, explicit and eligible together. */
+    public static final int MAX_METRICS = 100;
     private boolean enabled;
     private String clusterId = "";
     private String collectorId = "";
@@ -13,6 +15,15 @@ public class MetricHistoryProperties {
     private String username = "";
     private String password = "";
     private Set<String> metricIds = Set.of();
+    /**
+     * Record every metric the forecast assistant would accept, besides {@link #metricIds}.
+     *
+     * <p>Enrollment used to happen only through the exported file, so the 512 buckets a context
+     * needs started counting at the restart that followed the decision to forecast — eight and a
+     * half hours at one minute, five days at fifteen. Collecting eligible metrics as soon as history
+     * is on means the history exists by the time someone asks for a forecast.
+     */
+    private boolean enrollEligible = true;
     private int queueCapacity = 128;
     private int maxSeriesPerRefresh = 100;
     private Duration retention = Duration.ofDays(30);
@@ -21,8 +32,10 @@ public class MetricHistoryProperties {
         if (!enabled) return;
         if (clusterId.isBlank() || collectorId.isBlank() || !jdbcUrl.startsWith("jdbc:postgresql:"))
             throw new IllegalArgumentException("History requires cluster-id, collector-id and a PostgreSQL JDBC URL");
-        if (metricIds.isEmpty() || metricIds.size() > 100 || metricIds.stream().anyMatch(String::isBlank))
-            throw new IllegalArgumentException("History requires 1..100 explicitly selected metric ids");
+        if (!enrollEligible && metricIds.isEmpty() || metricIds.size() > MAX_METRICS
+            || metricIds.stream().anyMatch(String::isBlank))
+            throw new IllegalArgumentException(
+                "History requires 1..100 explicitly selected metric ids, or enroll-eligible");
         if (queueCapacity < 1 || queueCapacity > 1024 || maxSeriesPerRefresh < 1 || maxSeriesPerRefresh > 1000)
             throw new IllegalArgumentException("History queue/series limits are out of bounds");
         if (retention == null || retention.compareTo(Duration.ofDays(1)) < 0
@@ -44,6 +57,10 @@ public class MetricHistoryProperties {
     public void setPassword(String v) { password = v; }
     public Set<String> getMetricIds() { return metricIds; }
     public void setMetricIds(Set<String> v) { metricIds = Set.copyOf(v); }
+    public boolean isEnrollEligible() { return enrollEligible; }
+    public void setEnrollEligible(boolean v) { enrollEligible = v; }
+    /** Whether a series of this metric can find history, before its definition is known. */
+    public boolean mayEnroll(String metricId) { return enrollEligible || metricIds.contains(metricId); }
     public int getQueueCapacity() { return queueCapacity; }
     public void setQueueCapacity(int v) { queueCapacity = v; }
     public int getMaxSeriesPerRefresh() { return maxSeriesPerRefresh; }

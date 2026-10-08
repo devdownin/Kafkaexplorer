@@ -60,7 +60,16 @@ services:
       EXPLORER_FORECASTING_HISTORY_JDBC_URL: jdbc:postgresql://forecast-postgres:5432/forecasts
       EXPLORER_FORECASTING_HISTORY_USERNAME: forecasts
       EXPLORER_FORECASTING_HISTORY_PASSWORD: ${FORECAST_POSTGRES_PASSWORD:-}
-      # History remains disabled until the reviewed wizard file explicitly enrolls metrics.
+      # History records every metric the forecast assistant accepts from the first start, so a
+      # forecast decided later already has its context. The identities name this collector in
+      # every series id: keep them stable, and set them here rather than in forecasts.yml, which
+      # these variables override.
+      EXPLORER_FORECASTING_HISTORY_ENABLED: "true"
+      EXPLORER_FORECASTING_HISTORY_CLUSTER_ID: ${FORECAST_CLUSTER_ID:-local}
+      EXPLORER_FORECASTING_HISTORY_COLLECTOR_ID: ${FORECAST_COLLECTOR_ID:-kafkaexplorer}
+      # A local stack starts a forecast from the assistant, with no file and no restart. Set it to
+      # false to keep every approval in the reviewed forecasts.yml below.
+      EXPLORER_FORECASTING_PILOT_RUNTIME_APPROVAL: ${FORECAST_RUNTIME_APPROVAL:-true}
       SPRING_CONFIG_ADDITIONAL_LOCATION: optional:file:/app/forecast-config/forecasts.yml
       EXPLORER_MCP_ENABLED: "true"
       EXPLORER_MCP_AUTH_TOKEN: ${EXPLORER_MCP_AUTH_TOKEN:-}

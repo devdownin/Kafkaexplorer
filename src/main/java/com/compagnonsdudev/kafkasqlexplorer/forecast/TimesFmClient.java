@@ -32,7 +32,7 @@ import static com.compagnonsdudev.kafkasqlexplorer.forecast.TimesFmInferenceExce
 public final class TimesFmClient implements AutoCloseable {
     public static final String MODEL_ID = "google/timesfm-2.5-200m-pytorch";
     public static final String MODEL_REVISION = "1d952420fba87f3c6dee4f240de0f1a0fbc790e3";
-    public static final String ADAPTER_VERSION = "kex-timesfm-2.5-v2";
+    public static final String ADAPTER_VERSION = "kex-timesfm-2.5-v3";
     private static final int MAX_REQUEST_BYTES = 128 * 1024, MAX_RESPONSE_BYTES = 256 * 1024;
     private static final ObjectMapper JSON = new ObjectMapper();
     private final URI endpoint;
@@ -150,13 +150,14 @@ public final class TimesFmClient implements AutoCloseable {
         for (var s : contexts) {
             if (s.status() != PreparedMetricSeries.Status.READY || s.seriesId() == null
                 || !s.seriesId().matches("[a-f0-9]{64}") || !seen.add(s.seriesId())
-                || s.profile() == null || s.profile().contextPoints() != 512 || s.points().size() != 512
+                || s.profile() == null || s.profile().contextPoints() != 512
+                || s.points().size() < SeriesPreparationProfile.MIN_CONTEXT_POINTS || s.points().size() > 512
                 || s.definitionVersion() == null || s.inputFingerprint() == null || s.profileFingerprint() == null
                 || s.outputUnit() == null || s.outputUnit().isBlank() || "UNKNOWN".equals(s.outputUnit())
-                || s.toExclusive() - s.fromInclusive() != 512 * s.profile().stepMillis()) {
-                throw new IllegalArgumentException("TimesFM requires an admissible 512-point context");
+                || s.toExclusive() - s.fromInclusive() != s.points().size() * s.profile().stepMillis()) {
+                throw new IllegalArgumentException("TimesFM requires an admissible context of 128 to 512 points");
             }
-            for (int i = 0; i < 512; i++) {
+            for (int i = 0; i < s.points().size(); i++) {
                 var p = s.points().get(i);
                 long expected = Math.addExact(s.fromInclusive(), Math.multiplyExact(i + 1L, s.profile().stepMillis()));
                 if (p.endAt() != expected || p.value() == null || !Double.isFinite(p.value()) || Math.abs(p.value()) > 1e30) {

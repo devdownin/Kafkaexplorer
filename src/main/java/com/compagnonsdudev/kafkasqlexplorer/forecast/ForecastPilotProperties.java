@@ -13,6 +13,14 @@ public class ForecastPilotProperties {
   private Duration retention = Duration.ofDays(7);
   private int maxSeries = 20;
   private List<Series> series = List.of();
+  /**
+   * Lets the assistant approve and withdraw series at runtime, kept in PostgreSQL beside the
+   * results. Off by default: the export-and-restart path leaves every approval in the deployment's
+   * own reviewed configuration, which is the posture for a shared cluster; a local stack turns
+   * this on so a forecast starts without editing a file.
+   */
+  private boolean runtimeApproval;
+  private volatile List<Series> runtime = List.of();
 
   public record Series(
       String seriesId,
@@ -77,14 +85,36 @@ public class ForecastPilotProperties {
         || retention.compareTo(Duration.ofDays(90)) > 0
         || maxSeries < 1
         || maxSeries > 100
-        || series.size() > maxSeries
+        || approved().size() > maxSeries
         || series.stream().map(Series::seriesId).distinct().count() != series.size())
       throw new IllegalArgumentException(
           "Pilot requires 0..max-series unique approved series and bounded interval/retention");
   }
 
+  /** The configured series, then the runtime ones; a configured series wins over its runtime copy. */
+  public List<Series> approved() {
+    var configured = series.stream().map(Series::seriesId).collect(java.util.stream.Collectors.toSet());
+    return java.util.stream.Stream.concat(
+            series.stream(), runtime.stream().filter(s -> !configured.contains(s.seriesId())))
+        .toList();
+  }
+
+  /** Approved at runtime, so withdrawable at runtime; a configured series is not. */
+  public boolean isRuntime(String id) {
+    return series.stream().noneMatch(s -> s.seriesId().equals(id))
+        && runtime.stream().anyMatch(s -> s.seriesId().equals(id));
+  }
+
+  public List<Series> runtime() {
+    return runtime;
+  }
+
+  public void replaceRuntime(List<Series> v) {
+    runtime = List.copyOf(v);
+  }
+
   public Series resolve(String id) {
-    return series.stream()
+    return approved().stream()
         .filter(s -> s.seriesId().equals(id))
         .findFirst()
         .orElseThrow(() -> new IllegalArgumentException("Series is not configured for this pilot"));
@@ -120,6 +150,14 @@ public class ForecastPilotProperties {
 
   public void setMaxSeries(int v) {
     maxSeries = v;
+  }
+
+  public boolean isRuntimeApproval() {
+    return runtimeApproval;
+  }
+
+  public void setRuntimeApproval(boolean v) {
+    runtimeApproval = v;
   }
 
   public List<Series> getSeries() {

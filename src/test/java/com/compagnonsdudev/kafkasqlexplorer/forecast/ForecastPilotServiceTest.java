@@ -670,4 +670,91 @@ class ForecastPilotServiceTest {
     assertEquals(1, tools.quality(spec.seriesId()).coverage().recordsScanned());
     assertEquals(1, tools.catalog().coverage().topicsScanned());
   }
+
+  private ForecastPilotProperties.Series like(String id, int seasonLength) {
+    return new ForecastPilotProperties.Series(
+        id.repeat(64), "metric-" + id, "production", "v1", "messages", List.of("orders"), List.of(),
+        spec.profile(), 2, seasonLength, null, .5, .8, 2);
+  }
+
+  private ForecastPilotService runtimePilot(int maxSeries) {
+    var props = new ForecastPilotProperties();
+    props.setRuntimeApproval(true);
+    props.setMaxSeries(maxSeries);
+    props.setSeries(List.of(spec));
+    return new ForecastPilotService(props, store, preparation, client, meters);
+  }
+
+  @Test
+  void aRuntimeApprovalIsKeptUnderTheLockAndScheduledWithoutARestart() throws Exception {
+    var runtime = runtimePilot(2);
+    var other = like("b", 1);
+    when(store.runtimeSeries(connection)).thenReturn(List.of());
+    runtime.approve(other);
+    verify(store).approve(connection, other);
+    verify(connection).commit();
+    assertEquals(List.of(spec, other), runtime.series());
+    assertTrue(runtime.isWithdrawable(other.seriesId()));
+    assertFalse(runtime.isWithdrawable(spec.seriesId()), "A configured series is the deployment's");
+
+    var third = like("c", 1);
+    when(store.runtimeSeries(connection)).thenReturn(List.of(other));
+    var refused = assertThrows(IllegalArgumentException.class, () -> runtime.approve(third));
+    assertTrue(refused.getMessage().startsWith("All 2 forecast series are in use"), refused.getMessage());
+    verify(store, never()).approve(connection, third);
+
+    runtime.withdraw(other.seriesId());
+    verify(store).withdraw(connection, other.seriesId());
+    verify(store).disable(connection, other.seriesId());
+    assertEquals(List.of(spec), runtime.series());
+    assertThrows(IllegalArgumentException.class, () -> runtime.withdraw(spec.seriesId()));
+  }
+
+  @Test
+  void withRuntimeApprovalOffNothingIsWritten() throws Exception {
+    assertThrows(IllegalArgumentException.class, () -> pilot.approve(like("b", 1)));
+    verify(store, never()).approve(any(), any());
+  }
+
+  @Test
+  void anApprovalMadeThroughAnotherInstanceIsScheduledAtTheNextCycle() throws Exception {
+    var runtime = runtimePilot(5);
+    var other = like("b", 1);
+    when(store.runtimeSeries(connection)).thenReturn(List.of(other));
+    runtime.refresh();
+    assertEquals(List.of(spec, other), runtime.series());
+    verify(preparation).prepare(eq(other.seriesId()), eq("v1"), eq("messages"), anyLong(), eq(other.profile()));
+  }
+
+  @Test
+  void aConfiguredSeriesWinsOverItsRuntimeCopy() {
+    var props = new ForecastPilotProperties();
+    props.setSeries(List.of(spec));
+    props.replaceRuntime(List.of(spec, like("b", 1)));
+    assertEquals(2, props.approved().size());
+    assertFalse(props.isRuntime(spec.seriesId()));
+  }
+
+  @Test
+  void aPartialContextShorterThanTheCycleWaitsForOneWholeCycle() throws Exception {
+    var seasonal = like("d", 200);
+    var props = new ForecastPilotProperties();
+    props.setSeries(List.of(seasonal));
+    var service = new ForecastPilotService(props, store, preparation, client, meters);
+    var full = context(now);
+    var partial = new PreparedMetricSeries(full.status(), "partial", seasonal.seriesId(), "v1", "messages",
+        "messages", now - 150 * spec.profile().stepMillis(), now, spec.profile(), "profile", "input",
+        150, 0, 0, full.points().subList(512 - 150, 512));
+    when(preparation.prepare(eq(seasonal.seriesId()), eq("v1"), eq("messages"), anyLong(), eq(seasonal.profile())))
+        .thenReturn(partial);
+    service.refresh(seasonal, now);
+    var capture = ArgumentCaptor.forClass(ForecastRecord.class);
+    verify(store).save(eq(connection), eq(seasonal.seriesId()), capture.capture(), anyString());
+    assertEquals("WARMING_UP", capture.getValue().state());
+    assertEquals("Collecting history: 150 of the 200 points a first forecast needs at this cycle",
+        capture.getValue().reason());
+    verifyNoInteractions(client);
+    assertEquals(200, service.minimumContextPoints(seasonal));
+    assertEquals(SeriesPreparationProfile.MIN_CONTEXT_POINTS, service.minimumContextPoints(spec));
+  }
 }

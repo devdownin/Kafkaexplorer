@@ -152,8 +152,17 @@ class ForecastSetupServiceTest {
     assertEquals(1, spec.seasonLength());
     // Horizon 30: six cohorts are 180 points, more than the 120-point floor.
     assertEquals(180, spec.minimumEvaluatedPoints());
-    assertTrue(bound.getHistory().getMetricIds().contains("lag"));
+    // Eligible metrics are recorded without being listed, so the export does not list this one.
+    assertTrue(bound.getHistory().isEnrollEligible()); assertFalse(bound.getHistory().getMetricIds().contains("lag"));
     assertFalse(draft.configuration().contains("credential")); verifyNoInteractions(history, client, pilot, preparation);
+  }
+  @Test void withEligibleEnrollmentOffTheExportListsTheMetric() {
+    root.getHistory().setEnrollEligible(false);
+    var yaml = new YamlPropertiesFactoryBean();
+    yaml.setResources(new ByteArrayResource(setup.draft(valid()).configuration().getBytes(StandardCharsets.UTF_8)));
+    var bound = new Binder(ConfigurationPropertySources.from(new PropertiesPropertySource("draft", yaml.getObject())))
+        .bind("explorer.forecasting", Bindable.of(ForecastingProperties.class)).get();
+    assertFalse(bound.getHistory().isEnrollEligible()); assertEquals(java.util.Set.of("lag"), bound.getHistory().getMetricIds());
   }
   @Test void refusalCoversApprovalStaleDefinitionsUnitScopeAndBounds() {
     assertThrows(IllegalArgumentException.class, () -> setup.draft(request(false, MetricObservation.definitionVersion(metric), "milliseconds", List.of("orders"), List.of("worker"), 60000, 30)));
@@ -229,5 +238,35 @@ class ForecastSetupServiceTest {
     var bound = new Binder(ConfigurationPropertySources.from(new PropertiesPropertySource("draft", yaml.getObject())))
         .bind("explorer.forecasting", Bindable.of(ForecastingProperties.class)).get();
     assertEquals(60, bound.getPilot().getSeries().getFirst().seasonLength());
+  }
+  @Test void theSuggestedIntervalHoldsTwoCollectionsOfTheMetric() {
+    when(metrics.collectionIntervalMs(any())).thenReturn(30_000L);
+    assertEquals(60_000L, setup.candidates().metrics().getFirst().suggestedStepMillis());
+    when(metrics.collectionIntervalMs(any())).thenReturn(300_000L);
+    assertEquals(900_000L, setup.candidates().metrics().getFirst().suggestedStepMillis());
+    when(metrics.collectionIntervalMs(any())).thenReturn(3_600_000L);
+    assertEquals(900_000L, setup.candidates().metrics().getFirst().suggestedStepMillis(), "Never beyond the largest offered");
+  }
+  @Test void runtimeApprovalSaysWhyItIsUnavailableAndWritesNothing() throws Exception {
+    assertTrue(setup.candidates().applyUnavailable().startsWith("Runtime approval is off"));
+    assertThrows(IllegalStateException.class, () -> setup.apply(valid()));
+    root.getPilot().setRuntimeApproval(true);
+    assertEquals("Runtime approval needs durable history and TimesFM inference enabled", setup.applyUnavailable());
+    verifyNoInteractions(pilot);
+  }
+  @Test void runtimeApprovalValidatesLikeTheExportThenApproves() throws Exception {
+    root.getPilot().setRuntimeApproval(true);
+    root.getHistory().setEnabled(true); root.getHistory().setClusterId("cluster"); root.getHistory().setCollectorId("collector");
+    root.getInference().setEnabled(true);
+    assertNull(setup.applyUnavailable());
+    assertThrows(IllegalArgumentException.class, () -> setup.apply(request(true, "stale", "milliseconds", List.of("orders"), List.of("worker"), 60000, 30)));
+    verify(pilot, never()).approve(any());
+    var applied = setup.apply(valid());
+    var approved = org.mockito.ArgumentCaptor.forClass(ForecastPilotProperties.Series.class);
+    verify(pilot).approve(approved.capture());
+    assertEquals(applied.seriesId(), approved.getValue().seriesId());
+    assertEquals(setup.draft(valid()).seriesId(), applied.seriesId(), "Approving and exporting name the same series");
+    root.getHistory().setEnrollEligible(false);
+    assertThrows(IllegalArgumentException.class, () -> setup.apply(valid()), "A metric nobody records cannot be forecast");
   }
 }

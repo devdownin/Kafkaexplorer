@@ -12,9 +12,24 @@ model calls and **its five read-only MCP tools are not registered**: they used t
 `tools/list`, chosen by a model and answered with an empty list or `OUT_OF_SCOPE`. The MCP console
 keeps their rows, hidden with the reason "no approved forecast series", so an operator can see what
 to set (`ApprovedForecastSeriesCondition`; YAML and `EXPLORER_FORECASTING_PILOT_SERIES_0_SERIESID`
-both count). A series is approved at startup, so adding the first one needs the restart that
-deploying configuration already implies. Set `explorer.forecasting.pilot.enabled=false` (or
-`EXPLORER_FORECASTING_PILOT_ENABLED=false`) to disable the pilot altogether.
+both count). A configured series is approved at startup, so adding the first one that way needs
+the restart that deploying configuration already implies. `explorer.forecasting.pilot.runtime-approval`
+counts as well, since the series it admits arrive after registration. Set
+`explorer.forecasting.pilot.enabled=false` (or `EXPLORER_FORECASTING_PILOT_ENABLED=false`) to disable
+the pilot altogether.
+
+## Runtime approval
+
+`explorer.forecasting.pilot.runtime-approval` (**false**; `compose/forecasts.yml` turns it on) lets
+the assistant approve a series directly: `POST /api/forecasts/series` runs the export's validation,
+then writes the specification to `kex_forecast_series_v1` under the pilot's lock, counted against
+`max-series` as the database holds it, so two instances cannot both spend the last slot.
+`DELETE /api/forecasts/series/{id}` withdraws one and deactivates it; its results stay until
+retention. Every cycle re-reads the table, so an approval made through one replica is scheduled by
+the others at their next cycle. A configured series always wins over a runtime row with the same id,
+and only a runtime series can be withdrawn at runtime. Off is the posture for a shared deployment,
+where every approval should live in reviewed configuration; on is what makes a local stack start a
+forecast without a file and a restart. Neither changes the MCP scope policies.
 
 To calculate forecasts, enable the existing PostgreSQL history and internal CPU service
 using [the history runbook](timesfm-history.md), then configure approved series. A non-empty
@@ -83,15 +98,17 @@ explorer:
 
 These thresholds are illustrative, not recommended universally. The threshold confidence must be
 0.9, matching the supported one-sided Q10/Q90 bounds; other confidence levels are rejected. `threshold` and `max-mae` may
-be omitted; all other series fields are explicit. The metric must already be included in history's
-`metric-ids`. Context is exactly 512 points; horizon is 1–60; season is 1–512. Interval is 1 minute
+be omitted; all other series fields are explicit. The metric must be recorded by history: listed in
+`metric-ids`, or eligible while `enroll-eligible` is on. The specification's context is 512 points;
+a series is forecast from a partial one once it holds 128 points, or one whole season when that is
+longer (`MIN_CONTEXT_POINTS`), and the activation gate is unchanged. Horizon is 1–60; season is 1–512. Interval is 1 minute
 through 1 day, retention 1–90 days, and max-series 1–100 (20 by default). Empty environment approval
 denies every forecast MCP read, even when topic/group scope is unrestricted.
 
 ## Persistence and scheduling
 
-The store creates additive `kex_forecast_result_v2`, `kex_forecast_pilot_control_v2` and
-`kex_forecast_pilot_lease_v2` tables and a history-order index in the same PostgreSQL database.
+The store creates additive `kex_forecast_result_v2`, `kex_forecast_pilot_control_v2`,
+`kex_forecast_series_v1` and `kex_forecast_pilot_lease_v2` tables and a history-order index in the same PostgreSQL database.
 Grant the dedicated history user the required DDL/DML privileges. Forecast records preserve
 prepared history, quantiles, definition and model revisions, input/profile fingerprints, realised
 quality, baseline scores and activation visibility. The SHA-256 idempotence key includes the full

@@ -215,4 +215,37 @@ class MetricSeriesPreparationTest {
         }
         assertEquals(HISTORY_LIMIT, prepare(rows, 20 * STEP, 20, GAUGE_MEAN).status());
     }
+
+    private List<MetricObservation> gaugesFrom(int first, int last) {
+        var result = new ArrayList<MetricObservation>();
+        for (int i = first; i <= last; i++) result.add(point("run" + i, i * STEP + 1000, i, "GAUGE"));
+        return result;
+    }
+
+    @Test
+    void aContextStillFillingStartsAtItsFirstValueOnceItHoldsTheFloor() {
+        var actual = prepare(gaugesFrom(312, 511), 512 * STEP, 512, GAUGE_MEAN);
+        assertEquals(READY, actual.status());
+        assertEquals(200, actual.points().size());
+        assertEquals(312 * STEP, actual.fromInclusive());
+        assertEquals(512 * STEP, actual.toExclusive());
+        assertEquals(200, actual.observedPoints());
+        assertEquals(0, actual.missingPoints(), "The prefix not yet collected is not a gap");
+        assertTrue(actual.reason().startsWith("Partial context: 200 of 512 points"), actual.reason());
+    }
+
+    @Test
+    void belowTheFloorAContextWaitsAndSaysHowFarItHasGot() {
+        var actual = prepare(gaugesFrom(450, 511), 512 * STEP, 512, GAUGE_MEAN);
+        assertEquals(WARMING_UP, actual.status());
+        assertEquals("Collecting history: 62 of the 128 points a first forecast needs", actual.reason());
+    }
+
+    @Test
+    void aFullContextIsPreparedExactlyAsBefore() {
+        var full = prepare(gauges(512), 512 * STEP, 512, GAUGE_MEAN);
+        assertEquals(READY, full.status());
+        assertEquals(512, full.points().size());
+        assertEquals("Complete regular context", full.reason());
+    }
 }

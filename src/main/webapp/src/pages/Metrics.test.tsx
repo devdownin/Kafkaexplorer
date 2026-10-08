@@ -134,9 +134,11 @@ const suggestions: MetricSuggestions = {
   notes: [],
 };
 
-function stubApi(metrics: MetricConfig[], proposals: MetricSuggestion[] = [suggestion]) {
+const DISABLED_FORECASTS = { enabled: false, state: 'DISABLED', series: [] };
+
+function stubApi(metrics: MetricConfig[], proposals: MetricSuggestion[] = [suggestion], forecasts: unknown = DISABLED_FORECASTS) {
   mockedAxios.get.mockImplementation((url: string) => {
-    if (url === '/api/forecasts') return Promise.resolve({ data: { enabled: false, state: 'DISABLED', series: [] } });
+    if (url === '/api/forecasts') return Promise.resolve({ data: forecasts });
     if (url === '/api/forecasts/candidates') return Promise.resolve({ data: { metrics: metrics.map(metric => ({ metricId: metric.id, name: metric.name, definitionVersion: 'canonical', unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received', 'demo.orders.2.validated'], groups: [], eligible: true, enrolled: false, blockers: [] })), total: metrics.length, truncated: false } });
     if (url === '/api/metrics') return Promise.resolve({ data: metrics });
     if (url === '/api/metrics/metadata') return Promise.resolve({ data: {} });
@@ -180,6 +182,18 @@ describe('Metrics page', () => {
     expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/forecasts/configuration', expect.anything(), expect.anything());
     await user.click(screen.getByRole('button', { name: 'Close forecast preparation' }));
     expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
+  });
+  it('shows where a forecast stands on its card instead of offering to prepare another', async () => {
+    stubApi([templateMetric], [suggestion], { enabled: true, state: 'AVAILABLE', series: [{ seriesId: 'a'.repeat(64), metricId: templateMetric.id,
+      environment: 'local', stepMillis: 60000, minimumContextPoints: 128, withdrawable: true,
+      activation: { eligible: false, reason: 'No forecast', blockPoints: 0, blockPointsRequired: 180, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: { state: 'WARMING_UP', strategy: 'UNAVAILABLE', visibility: 'SHADOW', reason: 'Collecting history', forecast: null, quality: null,
+        baselineMae: {}, evaluatedPoints: 0, context: { status: 'WARMING_UP', observedPoints: 68, points: [], outputUnit: 'milliseconds' } } }] });
+    await renderPage();
+    const status = await screen.findByLabelText(`Forecast status of ${templateMetric.name}`);
+    expect(status).toHaveTextContent('Collecting');
+    expect(status).toHaveTextContent('History 68 / 128 points · first forecast in ~60 min');
+    expect(screen.queryByRole('button', { name: 'Prepare a forecast' })).toBeNull();
   });
   it('renders a template metric, whose SQL is null by construction', async () => {
     stubApi([templateMetric]);

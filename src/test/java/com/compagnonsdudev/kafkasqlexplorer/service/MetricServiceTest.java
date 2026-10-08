@@ -43,7 +43,7 @@ class MetricServiceTest {
     @Test
     void observationCaptureUsesEveryLabelSeriesAndDoesNotRescanKafka() {
         var journal = Mockito.mock(com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal.class);
-        Mockito.when(journal.selects(Mockito.anyString())).thenReturn(true);
+        Mockito.when(journal.selects(Mockito.any(MetricConfig.class))).thenReturn(true);
         service.setObservationJournal(journal);
         Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(new QueryResult(
             List.of("metric_value", "region", "metric_name"), List.of(
@@ -811,7 +811,7 @@ class MetricServiceTest {
     @Test
     void wizardEnrollmentMatchesTheSeriesActuallyCapturedForConsumerTimeLag() {
         var journal = Mockito.mock(com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal.class);
-        Mockito.when(journal.selects(Mockito.anyString())).thenReturn(true);
+        Mockito.when(journal.selects(Mockito.any(MetricConfig.class))).thenReturn(true);
         service.setObservationJournal(journal);
         Mockito.when(kafkaConfig.getBootstrapServers()).thenReturn("kafka:29092");
         Mockito.when(kafkaAdminService.getConsumerTimeLag("demo.orders", "orders-api"))

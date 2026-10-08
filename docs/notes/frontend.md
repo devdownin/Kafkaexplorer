@@ -632,3 +632,21 @@ checkbox as the confirmation instead of asking again in a dialog. Sources are ch
 comma-separated string prefilled from the catalogue, where a stray comma or a typo became a
 declared source nobody reads; and the export ends with numbered next steps and a copy button
 beside the download, since the file is usually pasted into a deployment's configuration.
+
+**The assistant is two steps, and the second asks only what has no sound default.** Choosing a
+metric, then: the environment, the sources and the attestation. The sampling interval (suggested
+by the server as the smallest offered that holds two collections of the metric), the cycle, the
+horizon, the threshold and the history identities sit under **Advanced**, which opens by itself
+when one of them is invalid. Where the deployment allows runtime approval
+(`Candidates.applyUnavailable` is `null`), the primary action is **Start forecasting** — the same
+validation as the export, then `POST /api/forecasts/series` — and the export remains beside it; a
+series started that way has **Stop forecasting this series** in the panel, a configured one does
+not.
+
+**A metric card says where its forecast stands.** `forecastStage.ts` turns a series of the
+panel's status into one line — collecting history against the points a first forecast needs,
+observing against the quality block, ready to approve, approved, degraded, or the reason it is
+blocked — with an estimate from the sampling interval worded as one. The card shows that line in
+place of **Prepare a forecast**. The page takes the status from the panel's own poll through
+`onStatus` rather than polling again, and bumps `refresh` after an approval so the panel and the
+card do not wait for the next tick.

@@ -9,11 +9,13 @@ from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictInt, model
 MODEL_ID = "google/timesfm-2.5-200m-pytorch"
 MODEL_REVISION = "1d952420fba87f3c6dee4f240de0f1a0fbc790e3"
 WEIGHTS_SHA256 = "2f776efe6245e42b24bc4153ffdf61810140210e4bd3b01fb21f7aa779ab6ce8"
-ADAPTER_VERSION = "kex-timesfm-2.5-v2"
+ADAPTER_VERSION = "kex-timesfm-2.5-v3"
 MAX_BODY_BYTES = 128 * 1024
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_BATCH = 4
 CONTEXT_POINTS = 512
+# A series is forecast from its partial context while the full one fills; the model pads the rest.
+MIN_CONTEXT_POINTS = 128
 MAX_HORIZON = 60
 
 
@@ -24,7 +26,7 @@ class ClosedModel(BaseModel):
 class SeriesInput(ClosedModel):
     # Opaque identifiers, never names/labels. Echoed in exactly the supplied order.
     seriesId: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
-    values: Annotated[list[StrictFloat | StrictInt], Field(min_length=CONTEXT_POINTS, max_length=CONTEXT_POINTS)]
+    values: Annotated[list[StrictFloat | StrictInt], Field(min_length=MIN_CONTEXT_POINTS, max_length=CONTEXT_POINTS)]
 
     @model_validator(mode="after")
     def finite_values(self):

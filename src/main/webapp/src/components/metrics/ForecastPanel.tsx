@@ -28,7 +28,13 @@ function isProgress(data: Progress | undefined, seriesId: string): data is Progr
     && data.requiredPoints === 512 && Array.isArray(data.topics) && Array.isArray(data.groups);
 }
 
-export function ForecastPanel({ onConfigure }: { onConfigure?: () => void }) {
+export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
+  onConfigure?: () => void;
+  /** Receives every status the panel polls, so the page can show it on the cards without a second poll. */
+  onStatus?: (status: ForecastStatus | null) => void;
+  /** Bumped by the page after an approval, to poll at once rather than at the next tick. */
+  refresh?: number;
+}) {
   const [status, setStatus] = useState<ForecastStatus | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [progressError, setProgressError] = useState('');
@@ -50,7 +56,7 @@ export function ForecastPanel({ onConfigure }: { onConfigure?: () => void }) {
         if (!data || typeof data.enabled !== 'boolean' || typeof data.state !== 'string' || !Array.isArray(data.series))
           throw new Error('Invalid forecast status response');
         if (disposed) return;
-        setStatus(data); setError('');
+        setStatus(data); setError(''); onStatus?.(data);
         const seriesId = data.series.some(s => s.seriesId === selected) ? selected : data.series[0]?.seriesId;
         if (!seriesId) { setProgress(null); return; }
         try {
@@ -69,7 +75,8 @@ export function ForecastPanel({ onConfigure }: { onConfigure?: () => void }) {
     }
     void poll();
     return () => { disposed = true; controller.abort(); clearTimeout(timer); };
-  }, [revision, selected]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onStatus is the page's state setter, stable
+  }, [revision, selected, refresh]);
   const series = status?.series.find(s => s.seriesId === selected) ?? status?.series[0];
   const result = series?.result;
   const seriesProgress = progress?.seriesId === series?.seriesId ? progress : null;
@@ -88,6 +95,18 @@ export function ForecastPanel({ onConfigure }: { onConfigure?: () => void }) {
     } catch (e) {
       const refusal = axios.isAxiosError<ForecastActivationRefusal>(e) ? e.response?.data?.reason : undefined;
       setError(typeof refusal === 'string' ? `Approval refused: ${refusal}` : 'Approval unavailable. Retry after the next refresh.');
+    } finally { setBusy(false); }
+  }
+  async function withdraw() {
+    if (!series || busy) return;
+    if (!await confirm({ title: 'Stop this forecast?', description: 'Withdraws the approval made from the assistant. Collected history and past results are kept until retention removes them.', confirmLabel: 'Stop forecasting', tone: 'danger' })) return;
+    setBusy(true);
+    try {
+      await axios.delete(`/api/forecasts/series/${encodeURIComponent(series.seriesId)}`, { timeout: 10000 });
+      setSelected(''); setRevision(v => v + 1);
+    } catch (e) {
+      const refusal = axios.isAxiosError<ForecastActivationRefusal>(e) ? e.response?.data?.reason : undefined;
+      setError(typeof refusal === 'string' ? `Stop refused: ${refusal}` : 'Stop unavailable. Retry after the next refresh.');
     } finally { setBusy(false); }
   }
   async function copyResult() {
@@ -117,6 +136,7 @@ export function ForecastPanel({ onConfigure }: { onConfigure?: () => void }) {
         </span>}
       </div>
       {series && <ForecastProgress progress={seriesProgress} error={progressError} result={result} />}
+      {series?.withdrawable && <Button variant="ghost" onClick={() => void withdraw()} disabled={busy}>Stop forecasting this series</Button>}
       {!result ? <p>No persisted forecast yet.</p> : <>
         <p>{result.reason}</p>
         {series?.activation && <p>{qualityProgress(series.activation)}</p>}

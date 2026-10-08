@@ -84,4 +84,38 @@ class MetricObservationJournalTest {
         assertThrows(IllegalArgumentException.class, p::validateEnabled);
         var valid = config(); assertDoesNotThrow(valid::validateEnabled);
     }
+
+    private static MetricConfig lag(String id) {
+        return new MetricConfig(id, "Lag " + id, "GAUGE", null, null, null, null, null, null, null, List.of(),
+            Map.of(), null, "CONSUMER_TIME_LAG", Map.of("topic", "orders", "group", id), "TEMPLATE_BOUNDED_SCAN",
+            null, List.of());
+    }
+
+    @Test
+    void anEligibleMetricIsRecordedWithoutBeingListedAndRawSqlIsNot() {
+        var journal = new MetricObservationJournal(config(), new Store(), new SimpleMeterRegistry());
+        var raw = new MetricConfig("raw", "Raw", "GAUGE", "SELECT 1 AS metric_value", null, null, null, null,
+            null, null, List.of(), Map.of(), null, "RAW_SQL", Map.of(), "SQL", null, List.of());
+        assertTrue(journal.selects(lag("unlisted")));
+        assertFalse(journal.selects(raw));
+        var listedOnly = config(); listedOnly.setEnrollEligible(false);
+        assertFalse(new MetricObservationJournal(listedOnly, new Store(), new SimpleMeterRegistry()).selects(lag("unlisted")));
+    }
+
+    @Test
+    void eligibleEnrollmentStopsAtTheBoundItSharesWithListedMetrics() {
+        var journal = new MetricObservationJournal(config(), new Store(), new SimpleMeterRegistry());
+        for (int i = 0; i < MetricHistoryProperties.MAX_METRICS - 1; i++) assertTrue(journal.selects(lag("e" + i)));
+        assertFalse(journal.selects(lag("one-too-many")));
+        assertTrue(journal.selects(lag("e0")), "An enrolled metric stays enrolled");
+        assertTrue(journal.selects(metric()), "A listed metric is never crowded out");
+    }
+
+    @Test
+    void historyNeedsNoListedMetricWhenEligibleOnesAreRecorded() {
+        var p = config(); p.setMetricIds(Set.of());
+        assertDoesNotThrow(p::validateEnabled);
+        p.setEnrollEligible(false);
+        assertThrows(IllegalArgumentException.class, p::validateEnabled);
+    }
 }

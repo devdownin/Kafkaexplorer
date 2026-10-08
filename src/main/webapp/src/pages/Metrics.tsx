@@ -21,11 +21,12 @@ import { describeQueryError } from './queryError';
 import { clearDraft, readDraft, writeDraft } from '../draftStore';
 // La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
-import type { AuditHistory, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse, TableMetadata } from '../api/types';
+import type { AuditHistory, ForecastStatus, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse, TableMetadata } from '../api/types';
 import { hasRunningMetric } from './metricsHealth';
 import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop';
 import { ForecastSetupWizard } from '../components/metrics/ForecastSetupWizard';
 import { ForecastPanel } from '../components/metrics/ForecastPanel';
+import { forecastStage } from '../components/metrics/forecastStage';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
 import { TemplateParamsEditor } from '../components/metrics/TemplateParamsEditor';
@@ -150,6 +151,15 @@ const Metrics: React.FC = () => {
    */
   const [restoredEditor] = useState(() => readDraft<EditorDraft | null>(EDITOR_DRAFT, null));
   const [forecastRequest, setForecastRequest] = useState<{ metricId?: string; sequence: number } | null>(null);
+  // The panel's own poll feeds the cards: one request for both, not one per card.
+  const [forecastStatus, setForecastStatus] = useState<ForecastStatus | null>(null);
+  const [forecastRevision, setForecastRevision] = useState(0);
+  const forecastStages = useMemo(() => {
+    const stages = new Map<string, ReturnType<typeof forecastStage>>();
+    // A metric forecast in two environments shows the first, as the panel's selector does.
+    for (const s of forecastStatus?.series ?? []) if (!stages.has(s.metricId)) stages.set(s.metricId, forecastStage(s));
+    return stages;
+  }, [forecastStatus]);
   useEffect(() => {
     if (!forecastRequest) return;
     const heading = document.getElementById('metric-forecast-preparation');
@@ -740,6 +750,7 @@ const Metrics: React.FC = () => {
               onRefresh={() => handleRefreshOne(metric.id)}
               refreshing={refreshingId === metric.id}
               onPrepareForecast={() => setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1 }))}
+              forecast={forecastStages.get(metric.id)}
             />
           )) : (
             <div className="col-span-full text-center py-12 text-on-surface-variant text-sm">
@@ -756,9 +767,11 @@ const Metrics: React.FC = () => {
       {forecastRequest && <section aria-labelledby="metric-forecast-preparation" className="space-y-3">
         <h3 id="metric-forecast-preparation" tabIndex={-1}>Prepare a forecast</h3>
         <Button variant="ghost" onClick={() => setForecastRequest(null)}>Close forecast preparation</Button>
-        <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId} />
+        <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId}
+          onApplied={() => setForecastRevision(v => v + 1)} />
       </section>}
-      <ForecastPanel onConfigure={() => setForecastRequest(previous => ({ sequence: (previous?.sequence ?? 0) + 1 }))} />
+      <ForecastPanel refresh={forecastRevision} onStatus={setForecastStatus}
+        onConfigure={() => setForecastRequest(previous => ({ sequence: (previous?.sequence ?? 0) + 1 }))} />
       <SuggestionsPanel
         response={suggestions}
         loading={suggestionsLoading}

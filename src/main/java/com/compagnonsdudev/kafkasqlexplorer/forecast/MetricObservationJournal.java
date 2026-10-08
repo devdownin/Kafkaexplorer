@@ -38,6 +38,8 @@ public final class MetricObservationJournal {
     private final Counter persisted, dropped, rejected, failures;
     private final Thread writer;
     private volatile boolean running;
+    private final java.util.Set<String> autoEnrolled = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.atomic.AtomicBoolean boundReported = new java.util.concurrent.atomic.AtomicBoolean();
 
     public MetricObservationJournal(MetricHistoryProperties properties, MetricObservationStore store,
                                     MeterRegistry registry) {
@@ -54,14 +56,28 @@ public final class MetricObservationJournal {
         writer.setDaemon(true);
     }
 
-    public boolean selects(String metricId) { return properties.getMetricIds().contains(metricId); }
+    /** Explicit ids first; then eligible metrics, first come first enrolled, within the shared bound. */
+    public boolean selects(MetricConfig metric) {
+        if (properties.getMetricIds().contains(metric.id()) || autoEnrolled.contains(metric.id())) return true;
+        if (!properties.isEnrollEligible() || !ForecastEligibility.blockers(metric).isEmpty()) return false;
+        synchronized (autoEnrolled) {
+            if (autoEnrolled.size() + properties.getMetricIds().size() < MetricHistoryProperties.MAX_METRICS) {
+                autoEnrolled.add(metric.id());
+                return true;
+            }
+        }
+        if (boundReported.compareAndSet(false, true))
+            log.warn("History enrollment bound of {} metrics reached; further eligible metrics are not recorded",
+                MetricHistoryProperties.MAX_METRICS);
+        return false;
+    }
 
     public void rejectFrame() { rejected.increment(); }
 
     /** Samples already follow the same per-label reduction as Micrometer, not the card's first row. */
     public void capture(MetricConfig metric, String endpoint, List<Sample> samples,
                         Map<String, Object> summary, boolean failed, long observedAt) {
-        if (!selects(metric.id())) return;
+        if (!selects(metric)) return;
         try {
             String version = MetricObservation.collectedVersion(metric, endpoint, properties.getCollectorId());
             String run = UUID.randomUUID().toString();

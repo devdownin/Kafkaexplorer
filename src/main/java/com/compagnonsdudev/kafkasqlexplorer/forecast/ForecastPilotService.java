@@ -24,6 +24,7 @@ public final class ForecastPilotService {
   private final AtomicBoolean running = new AtomicBoolean();
   private int nextSeries;
   private volatile long nextScheduledAt;
+  private volatile boolean runtimeLoaded;
   /**
    * Set when TimesFM timed out or was unreachable earlier in the running cycle. A hung service cost
    * the whole timeout once per series, so a 60 s cycle reached two series and the rest went stale.
@@ -49,7 +50,88 @@ public final class ForecastPilotService {
   public Long nextScheduledAt() { return running.get() ? null : nextScheduledAt; }
 
   public List<ForecastPilotProperties.Series> series() {
-    return properties.getSeries();
+    if (properties.isRuntimeApproval() && !runtimeLoaded) reloadRuntime();
+    return properties.approved();
+  }
+
+  /**
+   * Re-reads the series approved at runtime, so an approval made through another instance is
+   * scheduled here at the next cycle. A database that cannot answer leaves the last list in place:
+   * the cycle that follows reports the outage on its own terms.
+   */
+  void reloadRuntime() {
+    try (var c = store.open()) {
+      properties.replaceRuntime(store.runtimeSeries(c));
+      runtimeLoaded = true;
+    } catch (Exception e) {
+      LoggerFactory.getLogger(getClass()).warn("Runtime forecast approvals unavailable");
+    }
+  }
+
+  /**
+   * Approves a validated series without a restart. Taken under the pilot's lock and counted
+   * against what the database holds, so two instances cannot both spend the last slot.
+   */
+  public void approve(ForecastPilotProperties.Series spec) throws Exception {
+    if (!properties.isRuntimeApproval())
+      throw new IllegalArgumentException("Runtime approval is disabled; export the configuration instead");
+    try (var c = store.open()) {
+      if (!store.acquire(c, UUID.randomUUID().toString()))
+        throw new IllegalArgumentException("Pilot is refreshing; retry the approval");
+      var runtime = new java.util.ArrayList<>(store.runtimeSeries(c));
+      properties.replaceRuntime(runtime);
+      if (properties.approved().stream().anyMatch(s -> s.seriesId().equals(spec.seriesId())))
+        throw new IllegalArgumentException("This series is already approved");
+      if (properties.approved().size() >= properties.getMaxSeries())
+        throw new IllegalArgumentException(
+            "All " + properties.getMaxSeries() + " forecast series are in use; withdraw one first");
+      store.approve(c, spec);
+      c.commit();
+      runtime.add(spec);
+      properties.replaceRuntime(runtime);
+      runtimeLoaded = true;
+    }
+  }
+
+  /** Points a first forecast needs: the partial-context floor, or one whole cycle when longer. */
+  public int minimumContextPoints(ForecastPilotProperties.Series spec) {
+    return Math.max(SeriesPreparationProfile.MIN_CONTEXT_POINTS, spec.seasonLength());
+  }
+
+  public boolean isWithdrawable(String id) {
+    return properties.isRuntime(id);
+  }
+
+  /**
+   * A partial context shorter than the series' cycle waits: the seasonal baseline repeats the last
+   * cycle, so without one there is nothing to compare the forecast with, and the fallback has
+   * nothing to repeat.
+   */
+  private PreparedMetricSeries coversOneSeason(PreparedMetricSeries c, ForecastPilotProperties.Series spec) {
+    if (c.status() != PreparedMetricSeries.Status.READY || c.points().size() >= minimumContextPoints(spec))
+      return c;
+    return new PreparedMetricSeries(PreparedMetricSeries.Status.WARMING_UP,
+        "Collecting history: " + c.points().size() + " of the " + minimumContextPoints(spec)
+            + " points a first forecast needs at this cycle",
+        c.seriesId(), c.definitionVersion(), c.sourceUnit(), c.outputUnit(), c.fromInclusive(),
+        c.toExclusive(), c.profile(), c.profileFingerprint(), c.inputFingerprint(), c.observedPoints(),
+        c.missingPoints(), c.imputedPoints(), c.points());
+  }
+
+  /** Withdraws a runtime approval; its results stay readable until retention removes them. */
+  public void withdraw(String id) throws Exception {
+    if (!properties.isRuntime(id))
+      throw new IllegalArgumentException(
+          "Only a series approved from the assistant can be withdrawn here; this one comes from the"
+              + " deployment configuration");
+    try (var c = store.open()) {
+      c.setAutoCommit(false);
+      store.withdraw(c, id);
+      store.disable(c, id);
+      c.commit();
+    }
+    properties.replaceRuntime(
+        properties.runtime().stream().filter(s -> !s.seriesId().equals(id)).toList());
   }
 
   public ForecastPilotProperties.Series resolve(String id) {
@@ -166,6 +248,7 @@ public final class ForecastPilotService {
     if (!running.compareAndSet(false, true)) return;
     modelOutThisCycle = null;
     try {
+      if (properties.isRuntimeApproval()) reloadRuntime();
       var approved = series();
       long deadline =
           System.nanoTime() + Math.min(properties.getInterval().toMillis(), 60000) * 1000000;
@@ -205,8 +288,10 @@ public final class ForecastPilotService {
           properties.getMaxSeries(),
           series().stream().map(ForecastPilotProperties.Series::seriesId).toList());
       var context =
-          preparation.prepare(
-              spec.seriesId(), spec.definitionVersion(), spec.unit(), cutoff, spec.profile());
+          coversOneSeason(
+              preparation.prepare(
+                  spec.seriesId(), spec.definitionVersion(), spec.unit(), cutoff, spec.profile()),
+              spec);
       String key = key(spec, context);
       // Commit, not roll back: the purge above is this cycle's only retention pass for an
       // unchanged series, and a rollback discarded it, so rows outlived retention while inputs
