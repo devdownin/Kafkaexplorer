@@ -78,10 +78,7 @@ public final class MetricObservationJournal {
                 || Boolean.TRUE.equals(summary.get("truncated")) || Boolean.TRUE.equals(summary.get("partial"))
                 || summary.get("warnings") instanceof List<?> w && !w.isEmpty())) quality = "LIMITED_SCOPE";
             if (!failed && metric.labelFields() != null && !metric.labelFields().isEmpty()) quality = "UNVERIFIED_LABELS";
-            String unit = metric.templateParams() != null && metric.templateParams().get("unit") instanceof String u
-                ? u : "UNKNOWN";
-            if ("CONSUMER_TIME_LAG".equals(metric.templateType())
-                || "TOPIC_TRANSIT_LATENCY".equals(metric.templateType())) unit = "milliseconds";
+            String unit = MetricObservation.unit(metric);
             List<MetricObservation> batch = new ArrayList<>();
             if (failed) {
                 batch.add(point(metric, version, "collection", Map.of(), "UNKNOWN", run, observedAt,

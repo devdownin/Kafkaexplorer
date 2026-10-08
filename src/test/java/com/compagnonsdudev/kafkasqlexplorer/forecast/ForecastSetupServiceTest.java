@@ -114,6 +114,13 @@ class ForecastSetupServiceTest {
     c = setup.candidates().metrics().getFirst(); assertFalse(c.eligible()); assertEquals(3, c.blockers().size());
     verifyNoInteractions(history, client, pilot, preparation);
   }
+  @Test void aCountTemplateIsEligibleWithoutAUnitParameterNobodyCanSet() {
+    metric = metric("TOPIC_COUNT_DELTA", Map.of("leftTopic", "orders", "rightTopic", "orders.dlq",
+        "countMode", "OFFSETS", "operation", "PERCENT_GAP"), List.of());
+    var c = setup.candidates().metrics().getFirst();
+    assertTrue(c.eligible(), c.blockers()::toString); assertEquals("percent", c.unit());
+    assertEquals(List.of("orders", "orders.dlq"), c.topics());
+  }
   @Test void restoredLegacyMetricUsesTheSameNormalizedDefinitionAsCollection() {
     metric = new MetricConfig("lag", "Legacy lag", "gauge", "sql", "description", null, null, 4d, 1L, null,
         null, null, null, "consumer_time_lag", Map.of("topic", "orders", "group", "worker"), null, null, null);

@@ -44,6 +44,30 @@ public record MetricObservation(
     }
 
     /** Only semantics participate: names, descriptions, thresholds and runtime values do not. */
+    /**
+     * The unit an observation of this metric carries, inferred from its template where the template
+     * fixes it. It was read from {@code templateParams.unit} alone, which no editor writes, so every
+     * count metric was captured as {@code UNKNOWN} and refused by the forecast assistant with a
+     * blocker its operator had no field to resolve. An explicit unit still wins where the template
+     * leaves the choice open; latency templates are milliseconds whatever the parameters say.
+     */
+    public static String unit(MetricConfig m) {
+        String template = String.valueOf(m.templateType());
+        if (template.equals("CONSUMER_TIME_LAG") || template.equals("TOPIC_TRANSIT_LATENCY")) return "milliseconds";
+        Map<String, Object> p = m.templateParams() == null ? Map.of() : m.templateParams();
+        if (p.get("unit") instanceof String u && !u.isBlank()) return u;
+        return switch (template) {
+            case "KAFKA_CLUSTER_COUNT" -> "BROKER_COUNT".equals(p.get("measurement")) ? "brokers" : "topics";
+            case "TOPIC_COUNT_DELTA" -> switch (String.valueOf(p.getOrDefault("operation", "LEFT_MINUS_RIGHT"))
+                    .toUpperCase(java.util.Locale.ROOT)) {
+                case "RATIO" -> "ratio";
+                case "PERCENT_GAP" -> "percent";
+                default -> "records";
+            };
+            default -> "UNKNOWN";
+        };
+    }
+
     public static String definitionVersion(MetricConfig m) {
         Map<String, Object> semantic = new LinkedHashMap<>();
         semantic.put("format", 1);
