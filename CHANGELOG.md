@@ -25,6 +25,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   slot, loopback port `AGENT_EVAL_LLM_PORT`) instead of being refused, and
   `AGENT_EVAL_JUDGE_PROVIDER` lets a hosted model judge it.
 
+## [2.2.5] — 2026-10-08
+
+Released from `main` with no entry recorded here; see [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.2.5).
+
 ## [2.2.4] — 2026-10-08
 
 Released from `main` with no entry recorded here; see [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.2.4).
@@ -2491,7 +2495,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.4...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.5...HEAD
+[2.2.5]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.4...v2.2.5
 [2.2.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.3...v2.2.4
 [2.2.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.2...v2.2.3
 [2.2.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.1...v2.2.2
