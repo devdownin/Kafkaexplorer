@@ -39,8 +39,8 @@ if [[ ${1:-} == --prepare-only ]]; then
 fi
 command -v docker >/dev/null || { echo 'Docker with Compose v2 is required. Files are prepared; install Docker and rerun.' >&2; exit 1; }
 echo 'Starting local forecasts: first run downloads the pinned model; TimesFM defaults to 4 CPUs / 8 GiB.'
-echo 'Open http://localhost:8080, Metrics Forecast, and export the reviewed configuration to .forecast-stack/config/forecasts.yml.'
+echo 'Open http://localhost:8080, Metrics, and choose Prepare a forecast on a metric card; it starts without a restart.'
 echo 'MCP URL: http://localhost:8080/mcp. The bearer credential is in .forecast-stack/.env.'
 docker compose --env-file "$state_dir/.env" -f docker-compose.yml -f compose/forecasts.yml up -d --build
-# Bind-file contents do not change Compose service hashes; Spring reads approvals at startup.
+# Bind-file contents do not change Compose service hashes; Spring reads an exported forecasts.yml at startup.
 exec docker compose --env-file "$state_dir/.env" -f docker-compose.yml -f compose/forecasts.yml restart explorer

@@ -77,7 +77,7 @@ class TimesFmClientTest {
             root.put("schemaVersion", 1).put("requestId", request.path("requestId").textValue())
                 .put("modelId", "google/timesfm-2.5-200m-pytorch")
                 .put("modelRevision", "1d952420fba87f3c6dee4f240de0f1a0fbc790e3")
-                .put("adapterVersion", "kex-timesfm-2.5-v2").put("centralStatistic", "MEDIAN")
+                .put("adapterVersion", TimesFmClient.ADAPTER_VERSION).put("centralStatistic", "MEDIAN")
                 .put("durationMillis", 17);
             var rows = root.putArray("series");
             for (var input : request.path("series")) {
@@ -211,6 +211,24 @@ class TimesFmClientTest {
         rawResponse = "{".getBytes(StandardCharsets.UTF_8);
         assertEquals(INVALID_OUTPUT, assertThrows(TimesFmInferenceException.class,
             () -> client.forecast(List.of(context("a", PreparedMetricSeries.Status.READY)), 2)).state());
+    }
+
+    /** The last {@code n} points of a full context, as the preparer cuts one still filling. */
+    static PreparedMetricSeries partial(String id, int n) {
+        var full = context(id, PreparedMetricSeries.Status.READY);
+        long from = (512 - n) * 60_000L;
+        return new PreparedMetricSeries(full.status(), "", full.seriesId(), "definition", "messages", "messages", from,
+            full.toExclusive(), full.profile(), "policy", "input", n, 0, 0, full.points().subList(512 - n, 512));
+    }
+
+    @Test void aPartialContextOfAtLeastTheFloorIsSentWhole() throws Exception {
+        start(Duration.ofSeconds(2));
+        var forecast = client.forecast(List.of(partial("a", SeriesPreparationProfile.MIN_CONTEXT_POINTS)), 2).getFirst();
+        assertEquals(SeriesPreparationProfile.MIN_CONTEXT_POINTS, captured.get().path("series").get(0).path("values").size());
+        assertEquals(513 * 60_000L, forecast.points().getFirst().at());
+        assertThrows(IllegalArgumentException.class,
+            () -> client.forecast(List.of(partial("a", SeriesPreparationProfile.MIN_CONTEXT_POINTS - 1)), 2));
+        assertEquals(1, calls.get());
     }
 
     @Test void refusesInadmissibleHistoryBeforeAnyHttpCall() throws Exception {

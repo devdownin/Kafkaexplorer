@@ -67,6 +67,9 @@ public final class ForecastPilotStore {
           "CREATE TABLE IF NOT EXISTS kex_forecast_pilot_control_v2 (series_id VARCHAR(64) PRIMARY"
               + " KEY, active BOOLEAN NOT NULL DEFAULT FALSE)");
       s.execute(
+          "CREATE TABLE IF NOT EXISTS kex_forecast_series_v1 (series_id VARCHAR(64) PRIMARY KEY,"
+              + " approved_at BIGINT NOT NULL, spec TEXT NOT NULL)");
+      s.execute(
           "CREATE TABLE IF NOT EXISTS kex_forecast_pilot_lease_v2 (lease_name VARCHAR(64) PRIMARY"
               + " KEY, owner VARCHAR(64) NOT NULL, expires_at TIMESTAMPTZ NOT NULL)");
     }
@@ -220,6 +223,50 @@ public final class ForecastPilotStore {
       s.setString(8, owner);
       if (s.executeUpdate() != 1)
         throw new IllegalStateException("Forecast publication fenced or duplicate");
+    }
+  }
+
+  /**
+   * Series approved at runtime, oldest first. A row that no longer decodes into a valid
+   * specification is skipped and named in the log rather than taking every other series down.
+   */
+  public List<ForecastPilotProperties.Series> runtimeSeries(Connection c) throws Exception {
+    var approved = new java.util.ArrayList<ForecastPilotProperties.Series>();
+    try (var s =
+        c.prepareStatement(
+            "SELECT series_id,spec FROM kex_forecast_series_v1 ORDER BY approved_at,series_id LIMIT 100")) {
+      s.setQueryTimeout(5);
+      try (var rows = s.executeQuery()) {
+        while (rows.next()) {
+          try {
+            approved.add(JSON.readValue(rows.getString(2), ForecastPilotProperties.Series.class));
+          } catch (Exception e) {
+            org.slf4j.LoggerFactory.getLogger(getClass())
+                .warn("Runtime forecast series {} is invalid and ignored", rows.getString(1));
+          }
+        }
+      }
+    }
+    return List.copyOf(approved);
+  }
+
+  public void approve(Connection c, ForecastPilotProperties.Series spec) throws Exception {
+    try (var s =
+        c.prepareStatement(
+            "INSERT INTO kex_forecast_series_v1 VALUES (?,?,?) ON CONFLICT(series_id) DO NOTHING")) {
+      s.setQueryTimeout(5);
+      s.setString(1, spec.seriesId());
+      s.setLong(2, System.currentTimeMillis());
+      s.setString(3, JSON.writeValueAsString(spec));
+      if (s.executeUpdate() != 1) throw new IllegalArgumentException("This series is already approved");
+    }
+  }
+
+  public boolean withdraw(Connection c, String id) throws Exception {
+    try (var s = c.prepareStatement("DELETE FROM kex_forecast_series_v1 WHERE series_id=?")) {
+      s.setQueryTimeout(5);
+      s.setString(1, id);
+      return s.executeUpdate() == 1;
     }
   }
 

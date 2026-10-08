@@ -22,7 +22,10 @@ public class ForecastController {
       String metricId,
       String environment,
       ForecastRecord result,
-      ForecastPilotService.ActivationReadiness activation) {}
+      ForecastPilotService.ActivationReadiness activation,
+      long stepMillis,
+      int minimumContextPoints,
+      boolean withdrawable) {}
 
   public record Status(boolean enabled, String state, List<SeriesView> series) {}
 
@@ -36,7 +39,8 @@ public class ForecastController {
         var result = p.get(s.seriesId());
         rows.add(
             new SeriesView(
-                s.seriesId(), s.metricId(), s.environment(), result, p.readiness(s.seriesId(), result)));
+                s.seriesId(), s.metricId(), s.environment(), result, p.readiness(s.seriesId(), result),
+                s.profile().stepMillis(), p.minimumContextPoints(s), p.isWithdrawable(s.seriesId())));
       }
       return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows)));
     } catch (Exception e) {

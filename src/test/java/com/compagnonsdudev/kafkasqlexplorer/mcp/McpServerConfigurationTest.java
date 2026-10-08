@@ -167,6 +167,15 @@ class McpServerConfigurationTest {
     }
 
     @Test
+    void runtime_approval_registers_the_forecast_tools_before_any_series_exists() {
+        runner.withPropertyValues("explorer.mcp.enabled=true", "explorer.forecasting.pilot.runtime-approval=true")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools.class);
+                });
+    }
+
+    @Test
     void explicitly_disabling_the_pilot_withholds_forecast_tools() {
         runner.withPropertyValues("explorer.mcp.enabled=true", "explorer.forecasting.pilot.enabled=false")
                 .run(context -> {

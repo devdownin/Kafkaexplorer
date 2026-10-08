@@ -43,8 +43,10 @@ docker compose --env-file .forecast-stack/.env -f docker-compose.yml -f compose/
 
 The tracked `.env.example` documents overlay settings. The bootstrap script uses the generated
 private environment file rather than overwriting an existing repository environment file.
-History stays disabled until the operator approves and exports metric enrollment. Database and
-model readiness alone do not make a metric forecastable.
+The stack enables history from the first start and records every metric eligible for a forecast,
+so the context of a forecast decided later is already filling. It also enables runtime approval:
+the assistant starts a forecast without a file or a restart (`FORECAST_RUNTIME_APPROVAL=false`
+keeps the export-only path). Database and model readiness alone do not make a metric forecastable.
 
 ## Configure and approve
 
@@ -62,32 +64,49 @@ model readiness alone do not make a metric forecastable.
    parameter fills it only where the template leaves it open. SQL,
    DDL and credentials are not returned by this catalogue. The first 100 metrics are listed in
    deterministic ID order; truncation is explicit.
-3. Declare environment, sampling interval (30 s to 15 min), repeating cycle (none, hourly, or
-   daily where the interval fits it in 2 to 512 samples), horizon — shown as a duration — and
-   **all** source topics/groups, edited as removable chips (topics are suggested from the cluster
-   catalogue; a name outside it is still accepted). The history cluster/collector identities are prefilled from the
-   running collector and folded under **Advanced**; they open by themselves when one is invalid. Structured suggestions are not a SQL dependency analysis. Unit and series
-   identity must match the actual collector; units are read-only and stale metric definitions are
-   rejected. Counters use rates per second; optional thresholds use forecast output units.
-4. Review and tick the source attestation, then choose **Validate and export**; the attestation is
-   the confirmation, with no second dialog. The exported series requires one full quality block (120 realised points and six horizons, whichever is more) before approval, and its
-   season comes from the chosen cycle, so `SEASONAL_NAIVE` is a distinct baseline. Server validation enforces
-   source completeness for known template resources, bounded horizons/cadences, history retention,
-   configured series budgets and existing collection identities. The YAML preserves existing
-   runtime-approved series, enrollment, interval, retention and series budget. It includes no
-   database credentials or inference token. Export changes no running configuration.
-5. The export lists the next steps in order and offers **Copy configuration** beside the download.
-   Save the file as `.forecast-stack/config/forecasts.yml`, review its merge with your
-   deployment, then rerun `bin/forecast-stack.sh`. For an existing non-Docker deployment, merge the
-   file into the application's external Spring configuration and restart. Configure PostgreSQL
-   credentials and inference separately using the [history runbook](notes/timesfm-history.md).
-   Review MCP environment, topic and group scope policies; the export does not broaden them.
+3. The second step asks for the environment and **all** source topics/groups, edited as removable
+   chips (topics are suggested from the cluster catalogue; a name outside it is still accepted).
+   Structured suggestions are not a SQL dependency analysis. Everything with a sound default is
+   folded under **Advanced**, which opens by itself when one of its fields is invalid: the sampling
+   interval (30 s to 15 min, suggested as the smallest that holds two collections of the metric),
+   the repeating cycle (none, hourly, or daily where the interval fits it in 2 to 512 samples), the
+   horizon — shown as a duration — the optional threshold, and the history cluster/collector
+   identities prefilled from the running collector. Unit and series identity must match the actual
+   collector; units are read-only and stale metric definitions are rejected. Counters use rates per
+   second; optional thresholds use forecast output units.
+4. Tick the source attestation, then choose **Start forecasting** — or **Validate and export** where
+   runtime approval is off; the attestation is the confirmation, with no second dialog. Both run
+   the same server validation: source completeness for known template resources, bounded
+   horizons/cadences, history retention, configured series budgets and existing collection
+   identities. The series requires one full quality block (120 realised points and six horizons,
+   whichever is more) before approval, and its season comes from the chosen cycle, so
+   `SEASONAL_NAIVE` is a distinct baseline. A started series is kept in PostgreSQL and scheduled at
+   the next cycle; **Stop forecasting this series** in the panel withdraws it.
+5. **Export YAML instead** (or the only path, when runtime approval is off) lists the next steps in
+   order and offers **Copy configuration** beside the download. Save the file as
+   `.forecast-stack/config/forecasts.yml`, review its merge with your deployment, then rerun
+   `bin/forecast-stack.sh`. For an existing non-Docker deployment, merge the file into the
+   application's external Spring configuration and restart. The YAML preserves existing approvals,
+   enrollment, interval, retention and series budget, and includes no database credentials or
+   inference token; export changes no running configuration. Configure PostgreSQL credentials and
+   inference separately using the [history runbook](notes/timesfm-history.md). Review MCP
+   environment, topic and group scope policies; neither path broadens them.
 
 ## Wait for a usable result
 
-The selected approved series shows observed points against the required 512, missing/imputed
-points, preparation state and rejection reason. With a 60-second cadence the context spans
-512 minutes; irregular, stale, scope-changed, invalid or reset data can keep it inadmissible.
+Each metric card with a forecast says where it stands instead of offering to prepare another:
+collecting history (with the points counted and an estimate of the first forecast), observing
+(quality points realised against the block, and when approval could follow if that block passes),
+ready to approve, approved, degraded, or what blocks it. The estimates come from the sampling
+interval and are worded as estimates.
+
+A first forecast needs 128 points, or one whole cycle when the chosen cycle is longer; the context
+then grows to 512 as history accumulates, and the forecast uses what exists rather than waiting
+for all of it. Activation is unaffected: it still waits for a judged quality block. The panel shows
+the selected series as one timeline — history, forecast, quality, approval — with the step in
+progress marked, what it waits for and an estimate; **History window and sources** keeps observed
+points against 512, missing/imputed points, preparation state and rejection reason; irregular, stale, scope-changed, invalid or reset data can keep it
+inadmissible.
 Database failure shows unknown progress rather than a zero-valued measurement. The next cycle is
 a scheduler estimate, not a promised first-result date: a rotating bounded queue and shared lease
 can defer a series. Progress reads are restricted to declared series and never request inference.
@@ -114,24 +133,28 @@ source authorization, persistence and failover behavior.
 | `POST /api/forecasts/preparation/probe` | Cached bounded PostgreSQL connection and TimesFM health probes |
 | `GET /api/forecasts/candidates` | Bounded metadata catalogue without SQL/DDL/secrets |
 | `POST /api/forecasts/configuration` | Validate confirmed declaration and export YAML; no runtime mutation |
+| `POST /api/forecasts/series` | Same validation, then approve at runtime (`runtime-approval` on; 409 names why not) |
+| `DELETE /api/forecasts/series/{seriesId}` | Withdraw a series approved at runtime; configured series refuse with 409 |
 | `GET /api/forecasts/{seriesId}/progress` | Fresh bounded history preparation for an approved source |
 
 These endpoints use the application's existing operator REST boundary. No setup, enrollment,
-configuration write or inference-on-read MCP tool has been added.
+configuration write or inference-on-read MCP tool has been added; runtime approval is a REST
+gesture of the operator, off unless the deployment turns it on.
 
 ### Starting from a metric card
 
 Select **Prepare a forecast** on the Metrics page. The assistant selects that metric
 from the current candidate catalogue and prepopulates the captured unit and known
-source topics/groups. Eligibility blockers still apply; source attestation and export
-confirmation are required. No runtime configuration is applied by the card action.
+source topics/groups. Eligibility blockers still apply; source attestation is required. The card
+action itself applies nothing.
 
 ### CI stack smoke
 
 The `forecast-stack` CI job builds the verified release JAR and the pinned CPU
 TimesFM image, then starts an isolated `forecast-ci` Compose project with PostgreSQL.
-`ci/forecast-stack.py` creates a real consumer time-lag metric, exports reviewed
-configuration, restarts Explorer and requires a real observation in PostgreSQL.
+`ci/forecast-stack.py` creates a real consumer time-lag metric, checks that it is recorded before
+any approval, restarts Explorer once on a one-minute cycle, approves the series at runtime through
+`POST /api/forecasts/series` and requires a real observation in PostgreSQL.
 It then inserts **512 synthetic historical buckets** to exercise TimesFM immediately,
 and requires a READY/TIMESFM/SHADOW result readable through authenticated MCP.
 This verifies integration, not forecasting accuracy, realised quality or activation.

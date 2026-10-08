@@ -5,7 +5,7 @@
 Prévoir les métriques explicitement sélectionnées à partir de leur historique PostgreSQL, puis
 rendre les résultats consultables dans Metrics Forecast et le serveur MCP. Le pilote utilise
 TimesFM 2.5 200M CPU, checkpoint `1d952420fba87f3c6dee4f240de0f1a0fbc790e3`, contexte de
-512 points et horizon maximal de 60 points. Les collecteurs de métriques restent indépendants
+512 points (128 au minimum tant que l’historique se remplit) et horizon maximal de 60 points. Les collecteurs de métriques restent indépendants
 de l’inférence. La collecte, la préparation et le client borné préexistent ; cette livraison
 ajoute les dix priorités du pilote de production.
 
@@ -52,11 +52,12 @@ snapshot. L’API opérateur respecte la frontière d’accès des autres endpoi
 
 ## Dimensionnement CPU et mémoire mesuré
 
-**Mesures antérieures à l’adaptateur `kex-timesfm-2.5-v2`** (`fix_quantile_crossing` et
-`infer_is_positive` activés) : elles n’ont pas été refaites. Le surcoût attendu se limite à deux
+**Mesures antérieures aux adaptateurs `kex-timesfm-2.5-v2`** (`fix_quantile_crossing` et
+`infer_is_positive` activés) **et v3** (contexte de 128 à 512 points ; un contexte complet est
+traité comme en v2) : elles n’ont pas été refaites. Le surcoût attendu se limite à deux
 `torch.where` sur 60 × 10 valeurs par série, mais il n’est pas mesuré ; relancer `benchmark.py`
 (ci-dessous) sur une machine qui atteint Hugging Face et l’index PyTorch avant de citer ces
-chiffres pour la v2.
+chiffres pour la v3.
 
 Mesure du 3 octobre 2026 sur AMD EPYC 9V74, quota de 8 CPU et limite de 8 Gio, Python 3.12.14,
 PyTorch 2.11.0+cpu / TimesFM 2.0.2. Un processus neuf par réglage ; checkpoint déjà en cache ;

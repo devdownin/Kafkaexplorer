@@ -79,7 +79,7 @@ def test_closed_request_limits(field, value):
 def test_context_admissibility(defect):
     data = payload()
     if defect == "short":
-        data["series"][0]["values"] = [0] * 511
+        data["series"][0]["values"] = [0] * 127
     elif defect == "long":
         data["series"][0]["values"] = [0] * 513
     elif defect in ("nan", "infinity", "overflow", "bool"):
@@ -92,6 +92,13 @@ def test_context_admissibility(defect):
         data["series"][0]["labels"] = {"topic": "sensitive"}
     with pytest.raises(ValidationError):
         ForecastRequest.model_validate(data)
+
+
+def test_a_partial_context_is_admitted_and_lengths_may_differ_within_a_batch():
+    data = payload(n=2)
+    data["series"][0]["values"] = [0.0] * 128
+    request = ForecastRequest.model_validate(data)
+    assert [len(s.values) for s in request.series] == [128, 512]
 
 
 def test_live_ready_auth_and_successful_http_contract():

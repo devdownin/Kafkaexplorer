@@ -150,20 +150,23 @@ def main():
                         'templateType': 'CONSUMER_TIME_LAG', 'executionMode': 'TEMPLATE_BOUNDED_SCAN',
                         'templateParams': {'topic': 'forecast.ci.orders', 'group': 'forecast-ci', 'aggregation': 'MAX'}})
     api('/api/metrics/forecast-ci-lag/refresh', {})
-    candidate = next(metric for metric in api('/api/forecasts/candidates')['metrics'] if metric['metricId'] == 'forecast-ci-lag')
+    catalogue = api('/api/forecasts/candidates')
+    candidate = next(metric for metric in catalogue['metrics'] if metric['metricId'] == 'forecast-ci-lag')
     assert candidate['eligible'] and candidate['unit'] == 'milliseconds', 'Real metric is not eligible'
-    draft = api('/api/forecasts/configuration', {'metricId': candidate['metricId'], 'definitionVersion': candidate['definitionVersion'],
-                'environment': 'local', 'unit': candidate['unit'], 'clusterId': 'local', 'collectorId': 'forecast-ci',
-                'topics': candidate['topics'], 'groups': candidate['groups'], 'stepMillis': 60000, 'horizon': 10,
-                'threshold': None, 'direction': 'ABOVE', 'confirmed': True})
-    configuration = draft['configuration']
-    assert configuration.count('interval: "PT5M"') == 1
-    (ROOT / '.forecast-stack/config/forecasts.yml').write_text(configuration.replace('interval: "PT5M"', 'interval: "PT1M"'))
+    assert candidate['enrolled'], 'An eligible metric is recorded before any forecast is approved'
+    assert catalogue['applyUnavailable'] is None, 'The stack approves at runtime: ' + str(catalogue['applyUnavailable'])
+    # One-minute cycles, so the smoke does not wait the default five: the only reason to restart.
+    (ROOT / '.forecast-stack/config/forecasts.yml').write_text('explorer:\n  forecasting:\n    pilot:\n      interval: "PT1M"\n')
     compose('restart', 'explorer')
-    wait_for(lambda: api('/actuator/health/liveness'), lambda value: value['status'] == 'UP', 'Restart with reviewed series')
+    wait_for(lambda: api('/actuator/health/liveness'), lambda value: value['status'] == 'UP', 'Restart with a one-minute cycle')
     wait_for(lambda: api('/api/metrics'), lambda rows: any(row['id'] == 'forecast-ci-lag' for row in rows), 'Persisted metric restored')
+    approved = api('/api/forecasts/series', {'metricId': candidate['metricId'], 'definitionVersion': candidate['definitionVersion'],
+                'environment': 'local', 'unit': candidate['unit'], 'clusterId': catalogue['clusterId'], 'collectorId': catalogue['collectorId'],
+                'topics': candidate['topics'], 'groups': candidate['groups'], 'stepMillis': 60000, 'horizon': 10,
+                'threshold': None, 'direction': 'ABOVE', 'confirmed': True, 'seasonality': 'NONE'})
+    print('Series approved at runtime, without an exported file: OK', flush=True)
     api('/api/metrics/forecast-ci-lag/refresh', {})
-    series_id = draft['seriesId']
+    series_id = approved['seriesId']
     assert re.fullmatch('[a-f0-9]{64}', series_id)
     real = wait_for(lambda: read_observation(series_id), lambda value: value is not None and value['qualityState'] == 'OBSERVED', 'Real collection persisted')
     assert real['unit'] == 'milliseconds' and real['metricId'] == candidate['metricId']

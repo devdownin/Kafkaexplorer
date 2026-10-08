@@ -6,12 +6,13 @@ import userEvent from '@testing-library/user-event';
 import { ConfirmProvider } from '../ui';
 import { ForecastPanel } from './ForecastPanel';
 import type { ForecastActivationReadiness } from '../../api/types';
-vi.mock('axios', () => ({ default: { get: vi.fn(), put: vi.fn(), isAxiosError: (e: unknown) => Boolean((e as { isAxiosError?: boolean })?.isAxiosError) } }));
+vi.mock('axios', () => ({ default: { get: vi.fn(), put: vi.fn(), delete: vi.fn(), isAxiosError: (e: unknown) => Boolean((e as { isAxiosError?: boolean })?.isAxiosError) } }));
 const ready: ForecastActivationReadiness = { eligible: true, reason: null, blockPoints: 0, blockPointsRequired: 120, lastBlockPassed: true, failedBlocks: 0, failedBlocksToDegrade: 2 };
 const blocked = { ...ready, eligible: false, reason: 'The first quality block holds 40 of 120 realised points', blockPoints: 40, lastBlockPassed: null };
 const seriesWith = (activation: ForecastActivationReadiness, state = 'READY') => ({ enabled: true, state: 'AVAILABLE', series: [{ seriesId: 'a'.repeat(64), metricId: 'metric', environment: 'production',
-  result: { state, strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'ready', context: { points: [], outputUnit: 'messages' },
-    forecast: null, quality: null, baselineMae: {}, evaluatedPoints: 0 }, activation }] });
+  stepMillis: 60000, minimumContextPoints: 128, withdrawable: false,
+  result: { state, strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'ready', context: { status: 'READY', observedPoints: 512, points: [], outputUnit: 'messages' },
+    forecast: { points: [] }, quality: null, baselineMae: {}, evaluatedPoints: 0 }, activation }] });
 describe('ForecastPanel', () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(cleanup);
@@ -55,14 +56,14 @@ describe('ForecastPanel', () => {
     const button = await screen.findByRole('button',{name:'Approve after quality checks'});
     expect(button).toBeDisabled();
     expect(button).toHaveAccessibleDescription('Not yet: The first quality block holds 40 of 120 realised points');
-    expect(screen.getByText(/current block 40 \/ 120 realised points · 0 of 2 consecutive failed blocks before drift/)).toBeTruthy();
+    expect(screen.getByRole('list', { name: 'Forecast progress' })).toHaveTextContent('40 / 120 realised points · judged in ~80 min');
     expect(axios.put).not.toHaveBeenCalled();
   });
   it('prevents activation of a degraded forecast', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: seriesWith({ ...blocked, reason: 'Drift was detected', failedBlocks: 2, lastBlockPassed: false }, 'DEGRADED') });
     render(<ForecastPanel />);
     expect(await screen.findByRole('button',{name:'Approve after quality checks'})).toBeDisabled();
-    expect(screen.getByText(/last block failed/)).toBeTruthy();
+    expect(screen.getByText(/Drift on consecutive blocks/)).toBeTruthy();
     expect(axios.put).not.toHaveBeenCalled();
   });
   it('shows the server reason when activation is refused', async () => {
@@ -113,5 +114,29 @@ describe('ForecastPanel', () => {
     await user.click(await screen.findByRole('button', { name: 'Configure a forecast' }));
     expect(onConfigure).toHaveBeenCalledOnce();
     expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
+  });
+  it('hands every polled status to the page for its cards', async () => {
+    const status = seriesWith(blocked);
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
+    const onStatus = vi.fn();
+    render(<ConfirmProvider><ForecastPanel onStatus={onStatus} /></ConfirmProvider>);
+    await screen.findByText('ready');
+    expect(onStatus).toHaveBeenCalledWith(status);
+  });
+  it('stops a series approved from the assistant after confirmation, and only such a series', async () => {
+    const status = seriesWith(blocked);
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts'
+      ? { ...status, series: [{ ...status.series[0], withdrawable: true }] } : {} }));
+    vi.mocked(axios.delete).mockResolvedValue({});
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    await user.click(await screen.findByRole('button', { name: 'Stop forecasting this series' }));
+    await user.click(await screen.findByRole('button', { name: 'Stop forecasting' }));
+    expect(axios.delete).toHaveBeenCalledWith(`/api/forecasts/series/${'a'.repeat(64)}`, expect.objectContaining({ timeout: 10000 }));
+  });
+  it('offers no stop for a series the deployment configuration approved', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? seriesWith(blocked) : {} }));
+    render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    await screen.findByText('ready');
+    expect(screen.queryByRole('button', { name: 'Stop forecasting this series' })).toBeNull();
   });
 });

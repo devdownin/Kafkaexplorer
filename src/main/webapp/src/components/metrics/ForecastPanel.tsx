@@ -6,29 +6,29 @@ import { Badge, Button, useConfirm } from '../ui';
 import { copyText } from '../../clipboard';
 import type { BadgeTone } from '../ui';
 import type {
-  ForecastActivationReadiness, ForecastActivationRefusal, ForecastProgress as Progress, ForecastStatus,
+  ForecastActivationRefusal, ForecastProgress as Progress, ForecastStatus,
 } from '../../api/types';
 import { ForecastPreparation } from './ForecastPreparation';
 import { ForecastProgress } from './ForecastProgress';
+import { ForecastTimeline } from './ForecastTimeline';
 
 const STATE_TONE: Record<string, BadgeTone> = { READY: 'success', DEGRADED: 'error' };
 /** Plain words on the page; the pilot's own term stays in the tooltip and in the API. */
 const VISIBILITY_LABEL: Record<string, string> = { ACTIVE: 'Approved', SHADOW: 'Observing' };
 const POLL_MS = 30000;
 
-/** Where realised quality stands against the block verdict that decides drift and activation. */
-function qualityProgress(a: ForecastActivationReadiness) {
-  const last = a.lastBlockPassed === null ? 'no block judged yet' : a.lastBlockPassed ? 'last block passed' : 'last block failed';
-  return `Quality: ${last} · current block ${a.blockPoints} / ${a.blockPointsRequired} realised points · `
-    + `${a.failedBlocks} of ${a.failedBlocksToDegrade} consecutive failed blocks before drift`;
-}
-
 function isProgress(data: Progress | undefined, seriesId: string): data is Progress {
   return data?.seriesId === seriesId && (data.state === 'UNAVAILABLE' || Number.isFinite(data.observedPoints))
     && data.requiredPoints === 512 && Array.isArray(data.topics) && Array.isArray(data.groups);
 }
 
-export function ForecastPanel({ onConfigure }: { onConfigure?: () => void }) {
+export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
+  onConfigure?: () => void;
+  /** Receives every status the panel polls, so the page can show it on the cards without a second poll. */
+  onStatus?: (status: ForecastStatus | null) => void;
+  /** Bumped by the page after an approval, to poll at once rather than at the next tick. */
+  refresh?: number;
+}) {
   const [status, setStatus] = useState<ForecastStatus | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [progressError, setProgressError] = useState('');
@@ -50,7 +50,7 @@ export function ForecastPanel({ onConfigure }: { onConfigure?: () => void }) {
         if (!data || typeof data.enabled !== 'boolean' || typeof data.state !== 'string' || !Array.isArray(data.series))
           throw new Error('Invalid forecast status response');
         if (disposed) return;
-        setStatus(data); setError('');
+        setStatus(data); setError(''); onStatus?.(data);
         const seriesId = data.series.some(s => s.seriesId === selected) ? selected : data.series[0]?.seriesId;
         if (!seriesId) { setProgress(null); return; }
         try {
@@ -69,7 +69,8 @@ export function ForecastPanel({ onConfigure }: { onConfigure?: () => void }) {
     }
     void poll();
     return () => { disposed = true; controller.abort(); clearTimeout(timer); };
-  }, [revision, selected]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onStatus is the page's state setter, stable
+  }, [revision, selected, refresh]);
   const series = status?.series.find(s => s.seriesId === selected) ?? status?.series[0];
   const result = series?.result;
   const seriesProgress = progress?.seriesId === series?.seriesId ? progress : null;
@@ -88,6 +89,18 @@ export function ForecastPanel({ onConfigure }: { onConfigure?: () => void }) {
     } catch (e) {
       const refusal = axios.isAxiosError<ForecastActivationRefusal>(e) ? e.response?.data?.reason : undefined;
       setError(typeof refusal === 'string' ? `Approval refused: ${refusal}` : 'Approval unavailable. Retry after the next refresh.');
+    } finally { setBusy(false); }
+  }
+  async function withdraw() {
+    if (!series || busy) return;
+    if (!await confirm({ title: 'Stop this forecast?', description: 'Withdraws the approval made from the assistant. Collected history and past results are kept until retention removes them.', confirmLabel: 'Stop forecasting', tone: 'danger' })) return;
+    setBusy(true);
+    try {
+      await axios.delete(`/api/forecasts/series/${encodeURIComponent(series.seriesId)}`, { timeout: 10000 });
+      setSelected(''); setRevision(v => v + 1);
+    } catch (e) {
+      const refusal = axios.isAxiosError<ForecastActivationRefusal>(e) ? e.response?.data?.reason : undefined;
+      setError(typeof refusal === 'string' ? `Stop refused: ${refusal}` : 'Stop unavailable. Retry after the next refresh.');
     } finally { setBusy(false); }
   }
   async function copyResult() {
@@ -116,10 +129,11 @@ export function ForecastPanel({ onConfigure }: { onConfigure?: () => void }) {
           <Badge>{result.context.outputUnit}</Badge>
         </span>}
       </div>
+      {series && <ForecastTimeline series={series} />}
       {series && <ForecastProgress progress={seriesProgress} error={progressError} result={result} />}
+      {series?.withdrawable && <Button variant="ghost" onClick={() => void withdraw()} disabled={busy}>Stop forecasting this series</Button>}
       {!result ? <p>No persisted forecast yet.</p> : <>
         <p>{result.reason}</p>
-        {series?.activation && <p>{qualityProgress(series.activation)}</p>}
         {result.forecast && <div style={{ height: 260 }} aria-label="Measured history and forecast">
           <ResponsiveContainer><ComposedChart data={chart}>
             <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={v => new Date(v).toLocaleTimeString()} />
@@ -143,9 +157,9 @@ export function ForecastPanel({ onConfigure }: { onConfigure?: () => void }) {
         {result.visibility === 'ACTIVE'
           ? <Button onClick={() => void activation()} disabled={busy}>Return to observing</Button>
           : <div className="space-y-1">
+            {/* The timeline's approval step says what still blocks it; the button points at it. */}
             <Button onClick={() => void activation()} disabled={busy || !series?.activation?.eligible}
-              aria-describedby={series?.activation?.reason ? 'forecast-activation-blocker' : undefined}>Approve after quality checks</Button>
-            {series?.activation?.reason && <p id="forecast-activation-blocker" className="text-sm">Not yet: {series.activation.reason}</p>}
+              aria-describedby={series?.activation?.eligible ? undefined : 'forecast-step-approval'}>Approve after quality checks</Button>
           </div>}
       </>}
     </>}

@@ -100,6 +100,14 @@ public final class MetricSeriesPreparer {
             points.add(new PreparedMetricSeries.Point(from + (i + 1L) * profile.stepMillis(),
                 value, false, bucket.size()));
         }
+        // A context that has not filled yet starts at its first value, once that leaves enough of
+        // one: the empty prefix is history that does not exist, not a gap in history that does.
+        int first = 0;
+        while (first < points.size() && points.get(first).value() == null) first++;
+        if (first > 0 && first < points.size() && points.size() - first >= MIN_CONTEXT_POINTS) {
+            points = new ArrayList<>(points.subList(first, points.size()));
+            from = Math.addExact(from, Math.multiplyExact((long) first, profile.stepMillis()));
+        }
         int missing = (int) points.stream().filter(p -> p.value() == null).count();
         int trailing = 0;
         for (int i = points.size() - 1; i >= 0 && points.get(i).value() == null; i--) trailing++;
@@ -112,7 +120,9 @@ public final class MetricSeriesPreparer {
         else if (trailing > (offset == 1 ? 0 : MAX_GAP_STEPS)) {
             status = STALE; reason = "Latest complete windows have no usable observation";
         } else if (points.getFirst().value() == null) {
-            status = WARMING_UP; reason = "Context or counter predecessor is not yet available";
+            status = WARMING_UP;
+            reason = "Collecting history: " + (points.size() - first) + " of the "
+                + Math.min(MIN_CONTEXT_POINTS, profile.contextPoints()) + " points a first forecast needs";
         } else if (longest > MAX_GAP_STEPS || missing > points.size() * MAX_MISSING_FRACTION
             || (offset == 1 && missing > 0)) {
             status = INSUFFICIENT_HISTORY; reason = "Gaps exceed the preparation policy";
@@ -127,6 +137,9 @@ public final class MetricSeriesPreparer {
             }
             reason = "Short gauge gaps filled using past values only";
         }
+        if (status == READY && points.size() < profile.contextPoints())
+            reason = "Partial context: " + points.size() + " of " + profile.contextPoints()
+                + " points collected so far; " + reason.substring(0, 1).toLowerCase(java.util.Locale.ROOT) + reason.substring(1);
         return result(status, reason, seriesId, definitionVersion, unit, from, to,
             profile, policy, fingerprint, points, imputed);
     }
@@ -138,6 +151,11 @@ public final class MetricSeriesPreparer {
             policyFingerprint(seriesId, version, unit, profile), "", List.of(), 0);
     }
 
+    /**
+     * Still {@code preparation-v1} although partial contexts are now admitted: a context whose first
+     * bucket holds a value is prepared exactly as before, and a new label would have orphaned every
+     * quality window already accumulated, for series whose inputs did not change.
+     */
     private String policyFingerprint(String seriesId, String version, String unit, SeriesPreparationProfile profile) {
         return MetricObservation.digest(List.of("preparation-v1", seriesId, version, unit, profile,
             MAX_GAP_STEPS, MAX_MISSING_FRACTION, "causal-carry"));
@@ -156,9 +174,10 @@ public final class MetricSeriesPreparer {
         String version, String unit, long from, long to, SeriesPreparationProfile profile, String policy,
         String fingerprint, List<PreparedMetricSeries.Point> points, int imputed) {
         int observed = (int) points.stream().filter(p -> p.value() != null && !p.imputed()).count();
+        int length = points.isEmpty() ? profile.contextPoints() : points.size();
         return new PreparedMetricSeries(status, reason, seriesId, version, unit,
             profile.transformation() == COUNTER_RATE ? unit + "/second" : unit,
-            from, to, profile, policy, fingerprint, observed, profile.contextPoints() - observed, imputed, points);
+            from, to, profile, policy, fingerprint, observed, length - observed, imputed, points);
     }
 
     private static void requireText(String value) {

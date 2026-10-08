@@ -48,8 +48,9 @@ public class ForecastSetupService {
   public record Readiness(long checkedAt, boolean probed, List<Check> checks) {}
   public record Candidate(String metricId, String name, String definitionVersion, String unit,
       String transformation, List<String> topics, List<String> groups, boolean eligible,
-      boolean enrolled, List<String> blockers) {}
-  public record Candidates(List<Candidate> metrics, int total, boolean truncated, String clusterId, String collectorId) {}
+      boolean enrolled, List<String> blockers, long suggestedStepMillis) {}
+  public record Candidates(List<Candidate> metrics, int total, boolean truncated, String clusterId, String collectorId,
+      String applyUnavailable) {}
   public record DraftRequest(String metricId, String definitionVersion, String environment, String unit,
       String clusterId, String collectorId, List<String> topics, List<String> groups, long stepMillis,
       int horizon, Double threshold, String direction, boolean confirmed, String seasonality) {}
@@ -99,14 +100,17 @@ public class ForecastSetupService {
         "Check pilot.enabled and explorer.mcp.tools allow/deny lists; reconnect the agent"));
     checks.add(new Check("postgres", root.getHistory().isEnabled() ? "NOT_CHECKED" : "CONFIG_REQUIRED",
         root.getHistory().isEnabled() ? "History configured; connection not probed" : "Durable history disabled",
-        "Configure PostgreSQL and explicitly enrolled metric IDs, then test dependencies"));
+        "Configure PostgreSQL; eligible metrics are then recorded without listing them, then test dependencies"));
     checks.add(new Check("timesfm", root.getInference().isEnabled() ? "NOT_CHECKED" : "CONFIG_REQUIRED",
         root.getInference().isEnabled() ? "Inference configured; readiness not probed" : "TimesFM disabled",
         "Start the forecasts Docker stack or configure TimesFM origin and token, then test dependencies"));
-    int approved = root.getPilot().getSeries().size();
+    var series = approvedSeries();
+    int approved = series.size();
     checks.add(new Check("series", approved > 0 ? "READY" : "CONFIG_REQUIRED",
-        approved + " approved series", "Use the configuration assistant, review the file and restart with it"));
-    boolean scope = approved > 0 && root.getPilot().getSeries().stream().allMatch(this::configuredScopePermits);
+        approved + " approved series", applyUnavailable() == null
+            ? "Use the configuration assistant to start a forecast"
+            : "Use the configuration assistant, review the file and restart with it"));
+    boolean scope = approved > 0 && series.stream().allMatch(this::configuredScopePermits);
     checks.add(new Check("scope", scope ? "READY" : "CONFIG_REQUIRED",
         scope ? "Configured MCP environment/topic/group scope permits every approved source"
           : "Configured MCP scope blocks approved sources or no sources are approved",
@@ -152,33 +156,41 @@ public class ForecastSetupService {
   public Candidates candidates() {
     var all = metrics.getAllMetrics();
     return new Candidates(all.stream().sorted(java.util.Comparator.comparing(MetricConfig::id))
-        .limit(100).map(this::candidate).toList(), all.size(), all.size() > 100, root.getHistory().getClusterId(), root.getHistory().getCollectorId());
+        .limit(100).map(this::candidate).toList(), all.size(), all.size() > 100, root.getHistory().getClusterId(),
+        root.getHistory().getCollectorId(), applyUnavailable());
   }
 
   private Candidate candidate(MetricConfig m) {
+    var blockers = new ArrayList<>(ForecastEligibility.blockers(m));
     try { m = MetricService.normalizeObservationDefinition(m); }
     catch (IllegalArgumentException e) {
       return new Candidate(m.id(), m.name(), MetricObservation.definitionVersion(m), "UNKNOWN", "GAUGE_MEAN",
-          List.of(), List.of(), false, root.getHistory().getMetricIds().contains(m.id()),
-          List.of("Invalid metric definition; edit and save the metric before enrollment"));
+          List.of(), List.of(), false, root.getHistory().getMetricIds().contains(m.id()), List.copyOf(blockers),
+          suggestedStepMillis(m));
     }
-    var p = m.templateParams() == null ? Map.<String, Object>of() : m.templateParams();
-    String unit = MetricObservation.unit(m);
-    var blockers = new ArrayList<String>();
-    if (unit.isBlank() || unit.equals("UNKNOWN")) blockers.add("Set a known unit: this template does not fix one, so add a \"unit\" template parameter to the metric");
-    String type = m.type() == null ? "GAUGE" : m.type().toUpperCase(java.util.Locale.ROOT);
-    if (!Set.of("GAUGE", "COUNTER").contains(type)) blockers.add("A scalar GAUGE or COUNTER is required");
-    if (m.templateType() == null || m.templateType().equals("RAW_SQL"))
-      blockers.add("Raw SQL has unverified source scope; use a supported template");
-    if (m.labelFields() != null && !m.labelFields().isEmpty() || m.labelTopic() != null && !m.labelTopic().isBlank())
-      blockers.add("Labelled metrics require a separately approved series; the assistant supports unlabelled values");
-    if ("FLINK_MANAGED_JOB".equals(m.executionMode())) blockers.add("Managed jobs do not capture scalar observations");
+    var h = root.getHistory();
+    boolean enrolled = h.getMetricIds().contains(m.id()) || h.isEnabled() && h.isEnrollEligible() && blockers.isEmpty();
     if (m.errorMessage() != null && !m.errorMessage().isBlank()) blockers.add("Resolve the metric collection error first");
+    var p = m.templateParams() == null ? Map.<String, Object>of() : m.templateParams();
     var topics = strings(p, "topic", "leftTopic", "rightTopic", "sourceTopic", "targetTopic");
     var groups = strings(p, "group");
-    return new Candidate(m.id(), m.name(), MetricObservation.definitionVersion(m), unit,
-        type.equals("COUNTER") ? "COUNTER_RATE" : "GAUGE_MEAN", topics, groups, blockers.isEmpty(),
-        root.getHistory().getMetricIds().contains(m.id()), List.copyOf(blockers));
+    boolean counter = "COUNTER".equals(m.type());
+    return new Candidate(m.id(), m.name(), MetricObservation.definitionVersion(m), MetricObservation.unit(m),
+        counter ? "COUNTER_RATE" : "GAUGE_MEAN", topics, groups, blockers.isEmpty(), enrolled,
+        List.copyOf(blockers), suggestedStepMillis(m));
+  }
+
+  /** Sampling intervals the assistant offers; each keeps 513 buckets inside a 30-day retention. */
+  static final List<Long> STEPS = List.of(30_000L, 60_000L, 300_000L, 900_000L);
+
+  /**
+   * The smallest offered interval holding two collections, so a bucket survives one late refresh.
+   * Proposing a minute to a metric collected every five left four buckets in five empty, and the
+   * preparation refused the series for gaps the operator never chose.
+   */
+  long suggestedStepMillis(MetricConfig m) {
+    long collected = Math.max(1, metrics.collectionIntervalMs(m));
+    return STEPS.stream().filter(step -> step >= 2 * collected).findFirst().orElse(STEPS.getLast());
   }
 
   private static List<String> strings(Map<String, Object> p, String... keys) {
@@ -187,7 +199,10 @@ public class ForecastSetupService {
     return List.copyOf(values);
   }
 
-  public Draft draft(DraftRequest r) {
+  /** A declaration checked against the metric and the pilot: the series, and every approval with it. */
+  private record Approval(ForecastPilotProperties.Series spec, List<ForecastPilotProperties.Series> approved) {}
+
+  private Approval approval(DraftRequest r) {
     if (r == null || !r.confirmed()) throw new IllegalArgumentException("Review and confirm all sources before exporting");
     var m = metrics.getAllMetrics().stream().filter(v -> v.id().equals(r.metricId())).findFirst()
         .orElseThrow(() -> new IllegalArgumentException("Unknown metric"));
@@ -224,7 +239,7 @@ public class ForecastSetupService {
         // No verdict exists before a full quality block, so a smaller minimum read as a promise the
         // gate could not keep.
         null, .8, ForecastQualityWindow.blockPoints(r.horizon()));
-    var approved = new ArrayList<>(root.getPilot().getSeries());
+    var approved = new ArrayList<>(approvedSeries());
     if (approved.stream().anyMatch(existing -> existing.seriesId().equals(id)))
       throw new IllegalArgumentException("This series is already approved; edit its deployment configuration explicitly");
     approved.add(spec);
@@ -232,21 +247,65 @@ public class ForecastSetupService {
     validation.setMaxSeries(root.getPilot().getMaxSeries());
     validation.setInterval(root.getPilot().getInterval()); validation.setRetention(root.getPilot().getRetention());
     validation.setSeries(approved); validation.validate();
-    var enrolled = new java.util.TreeSet<>(h.getMetricIds()); enrolled.add(m.id());
-    if (enrolled.size() > 100) throw new IllegalArgumentException("History enrollment exceeds 100 metrics");
+    return new Approval(spec, List.copyOf(approved));
+  }
+
+  /** What this instance holds in memory: a diagnostic or an export never reads the database. */
+  private List<ForecastPilotProperties.Series> approvedSeries() {
+    return root.getPilot().approved();
+  }
+
+  public Draft draft(DraftRequest r) {
+    var a = approval(r);
+    var h = root.getHistory();
+    var enrolled = new java.util.TreeSet<>(h.getMetricIds());
+    // Eligible metrics are recorded without being listed; listing one too would spend the bound twice.
+    if (!h.isEnrollEligible()) enrolled.add(a.spec().metricId());
+    if (enrolled.size() > MetricHistoryProperties.MAX_METRICS)
+      throw new IllegalArgumentException("History enrollment exceeds 100 metrics");
     String yaml = "# Reviewed forecast configuration. Existing approvals are preserved; export does not change runtime.\nexplorer:\n  forecasting:\n"
         + "    history:\n      enabled: true\n      cluster-id: " + quote(r.clusterId()) + "\n      collector-id: " + quote(r.collectorId())
+        + "\n      enroll-eligible: " + h.isEnrollEligible()
         + "\n      metric-ids: " + quote(enrolled)
         + "\n    pilot:\n      enabled: true\n      interval: " + quote(root.getPilot().getInterval().toString())
         + "\n      retention: " + quote(root.getPilot().getRetention().toString())
         + "\n      max-series: " + root.getPilot().getMaxSeries()
-        + "\n      series: " + seriesYaml(approved) + "\n";
-    return new Draft(yaml, id, List.of("Review every SQL dependency, topic and group; structured suggestions may be incomplete",
+        + "\n      series: " + seriesYaml(a.approved()) + "\n";
+    return new Draft(yaml, a.spec().seriesId(), List.of("Review every SQL dependency, topic and group; structured suggestions may be incomplete",
         "Merge with your deployment configuration; existing runtime-approved series and enrollment are preserved",
         "Configure PostgreSQL credentials and TimesFM separately; secrets are never exported",
         "For the Docker stack: save as .forecast-stack/config/forecasts.yml and rerun bin/forecast-stack.sh",
         "Review explorer.mcp.allowed-forecast-environments for " + r.environment() + " and existing topic/group policies",
-        "Restart with this file, collect 512 buckets, then review realised quality before activation"));
+        "Restart with this file; the first forecast follows once enough history is collected, then review realised quality before activation"));
+  }
+
+  /** Why the assistant cannot approve at runtime here; null when it can. */
+  public String applyUnavailable() {
+    if (!root.getPilot().isRuntimeApproval())
+      return "Runtime approval is off (explorer.forecasting.pilot.runtime-approval); export the configuration instead";
+    if (!root.getHistory().isEnabled() || !root.getInference().isEnabled())
+      return "Runtime approval needs durable history and TimesFM inference enabled";
+    if (pilot.getIfAvailable() == null) return "The forecast pilot is disabled";
+    return null;
+  }
+
+  public record Applied(String seriesId) {}
+
+  /** Same validation as the export, then the approval itself: no file, no restart. */
+  public Applied apply(DraftRequest r) throws Exception {
+    String unavailable = applyUnavailable();
+    if (unavailable != null) throw new IllegalStateException(unavailable);
+    var a = approval(r);
+    if (!root.getHistory().mayEnroll(a.spec().metricId()))
+      throw new IllegalArgumentException("This metric is not recorded in history; enable enroll-eligible or list it in metric-ids");
+    pilot.getObject().approve(a.spec());
+    return new Applied(a.spec().seriesId());
+  }
+
+  public void withdraw(String seriesId) throws Exception {
+    var p = pilot.getIfAvailable();
+    if (p == null) throw new IllegalStateException("The forecast pilot is disabled");
+    p.withdraw(seriesId);
   }
 
   private static void bounded(String s, String label) {

@@ -336,7 +336,7 @@ public class McpServerConfiguration {
                 && environment.getProperty("explorer.forecasting.pilot.enabled", Boolean.class, true)) {
             McpToolset placeholder = new ForecastMcpTools(null, null);
             all.add(placeholder);
-            withheld.put(placeholder, "no approved forecast series (explorer.forecasting.pilot.series is empty)");
+            withheld.put(placeholder, "no approved forecast series (explorer.forecasting.pilot.series is empty and runtime-approval is off)");
         }
 
         catalog.publish(all, exposed, withheld);

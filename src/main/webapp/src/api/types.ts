@@ -1602,6 +1602,9 @@ export interface ForecastSeriesView {
   environment: string;
   result: ForecastRecord | null;
   activation: ForecastActivationReadiness;
+  stepMillis: number;
+  minimumContextPoints: number;
+  withdrawable: boolean;
 }
 /** @java ForecastPilotService.ActivationReadiness */
 export interface ForecastActivationReadiness {
@@ -1648,6 +1651,7 @@ export interface ForecastCandidate {
   eligible: boolean;
   enrolled: boolean;
   blockers: string[];
+  suggestedStepMillis: number;
 }
 /** @java ForecastSetupService.Candidates */
 export interface ForecastCandidates {
@@ -1656,6 +1660,7 @@ export interface ForecastCandidates {
   truncated: boolean;
   clusterId: string;
   collectorId: string;
+  applyUnavailable: string | null;
 }
 /** @java ForecastSetupService.DraftRequest */
 export interface ForecastDraftRequest {
@@ -1679,6 +1684,10 @@ export interface ForecastDraft {
   configuration: string;
   seriesId: string;
   instructions: string[];
+}
+/** @java ForecastSetupService.Applied */
+export interface ForecastApplied {
+  seriesId: string;
 }
 /** @java ForecastThresholdPolicy.Direction */
 export type ForecastDirection = 'ABOVE' | 'BELOW';

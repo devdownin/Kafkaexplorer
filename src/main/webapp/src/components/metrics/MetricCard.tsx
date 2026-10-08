@@ -18,11 +18,12 @@
 import React from 'react';
 import { AreaChart, Area, Line, LineChart, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
 // Recharts exporte lui aussi un `Tooltip` : le nôtre est aliasé, comme dans la page.
-import { Button, Tooltip as InfoTooltip } from '../ui';
+import { Badge, Button, Tooltip as InfoTooltip } from '../ui';
 import { useToast } from '../Toast';
 import { copyText } from '../../clipboard';
 import { describeQueryError } from '../../pages/queryError';
 import type { MetricConfig } from '../../api/types';
+import type { ForecastStageSummary } from './forecastStage';
 import { buildAlertRule, thresholdDirection } from '../../pages/metricAlert';
 import { componentSeries, describeMeasurement, describeMetricScope, scopeNoteOf } from '../../pages/metricScope';
 import {
@@ -35,8 +36,10 @@ export const MetricCard: React.FC<{
   onDelete: () => void;
   onRefresh: () => void;
   onPrepareForecast?: () => void;
+  /** Where this metric's forecast stands; absent when it has none, and the card offers to prepare one. */
+  forecast?: ForecastStageSummary;
   refreshing: boolean;
-}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast }) => {
+}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecast }) => {
   const { toast } = useToast();
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
@@ -357,7 +360,9 @@ export const MetricCard: React.FC<{
         )}
       </div>
 
-      {onPrepareForecast && <div className="px-4 py-2 border-t border-outline-variant/60">
+      {forecast ? <div role="group" className="px-4 py-2 border-t border-outline-variant/60 text-xs flex flex-wrap items-center gap-2" aria-label={`Forecast status of ${metric.name || metric.id}`}>
+        <span className="font-semibold">Forecast</span><Badge tone={forecast.tone}>{forecast.label}</Badge><span>{forecast.detail}</span>
+      </div> : onPrepareForecast && <div className="px-4 py-2 border-t border-outline-variant/60">
         <Button variant="ghost" onClick={onPrepareForecast}>Prepare a forecast</Button>
       </div>}
       {/* Footer */}

@@ -10,6 +10,13 @@ public record SeriesPreparationProfile(long stepMillis, int contextPoints, Trans
     public static final int MAX_INPUT_OBSERVATIONS = MetricObservationStore.MAX_READ_OBSERVATIONS - 1;
     public static final int MAX_GAP_STEPS = 2;
     public static final double MAX_MISSING_FRACTION = 0.05;
+    /**
+     * The shortest context a series is forecast from while its full one fills. TimesFM takes any
+     * length up to its compiled maximum; requiring all 512 points meant eight and a half hours of
+     * silence at one minute and five days at fifteen, for a model that reads a quarter of that well.
+     * Activation is unaffected: it still waits for a judged quality block.
+     */
+    public static final int MIN_CONTEXT_POINTS = 128;
 
     public SeriesPreparationProfile {
         if (stepMillis < 1000 || stepMillis > 86_400_000 || contextPoints < 2 || contextPoints > 512) {

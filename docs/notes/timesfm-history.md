@@ -42,8 +42,14 @@ explorer:
       retention: 30d
 ```
 
-`metric-ids` selects 1–100 configured metrics explicitly; no wildcard or automatic capture of every
-metric. `collector-id` must be stable across restarts and unique per collecting instance. Collectors
+`enroll-eligible` (**true**) records every metric the forecast assistant would accept — a supported
+template, a known unit, a scalar GAUGE or COUNTER, no labels, not a managed job — without listing
+it, so the 512 buckets a context needs are already counting when someone decides to forecast; they
+used to start at the restart that followed that decision. `metric-ids` adds metrics explicitly,
+raw SQL included (captured as `UNVERIFIED_SCOPE`); the two share one bound of 100, a listed metric
+is never crowded out, and an eligible one past the bound is not recorded and logged once. With
+`enroll-eligible: false`, `metric-ids` is the whole allowlist and must name 1–100 metrics.
+`collector-id` must be stable across restarts and unique per collecting instance. Collectors
 with different ids have separate series. Shared ownership/leases and aggregation across instances
 will be implemented with orchestration; do not run two instances with the same collector id.
 
@@ -54,7 +60,8 @@ will be implemented with orchestration; do not run two instances with the same c
 | `collector-id` | empty | Stable, unique collecting-instance identity, required when enabled |
 | `jdbc-url` | empty | PostgreSQL JDBC URL; configure TLS according to the deployment |
 | `username`, `password` | empty | Database credentials |
-| `metric-ids` | empty list | Explicit collection allowlist; required when enabled |
+| `enroll-eligible` | `true` | Also record every metric eligible for a forecast |
+| `metric-ids` | empty list | Explicit additions; the whole allowlist, and required, when `enroll-eligible` is off |
 | `queue-capacity` | `128` | Pending observation frames; allowed 1–1,024 |
 | `max-series-per-refresh` | `100` | Samples/components retained per selected metric refresh; allowed 1–1,000 |
 | `retention` | `30d` | Observation retention; allowed 1–90 days |
@@ -101,8 +108,12 @@ the series id, expected definition version, explicit source unit, cutoff and
 `SeriesPreparationProfile`. This contract is independent of the inference model.
 
 The initial profile is 512 points at one-minute cadence. Smaller contexts (2–512 points) and
-cadences from one second to one day are supported for deterministic preparation/tests; the future
-model adapter must enforce its own minimum. The 672-point alternate profile is not implemented yet.
+cadences from one second to one day are supported for deterministic preparation/tests. A context
+still filling — its first buckets empty because collection started later — begins at its first
+value once at least `MIN_CONTEXT_POINTS` (128) remain, and is `READY` with a reason that says so;
+the empty prefix is history that does not exist, not a gap, so it counts neither as missing nor
+against the gap policy. Below that it is `WARMING_UP` with the count so far. The adapter accepts
+128 to 512 points. The 672-point alternate profile is not implemented yet.
 Each output timestamp denotes the **end** of a completed UTC-aligned bucket `[start, end)`.
 The cutoff is rounded down to that cadence. No incomplete bucket or observation at/after the
 rounded cutoff enters a context, an imputation or its input fingerprint.

@@ -1992,6 +1992,11 @@ public class MetricService {
         return now - last >= interval - tolerance;
     }
 
+    /** How often this metric is actually collected: its own interval, never faster than the loop. */
+    public long collectionIntervalMs(MetricConfig config) {
+        return Math.max(metricsRefreshRateMs, configuredRefreshIntervalMs(config));
+    }
+
     private long configuredRefreshIntervalMs(MetricConfig config) {
         Map<String, Object> params = config.templateParams();
         return params == null ? 0L : getLongParam(params, "refreshIntervalMs", 0L);
@@ -2065,7 +2070,7 @@ public class MetricService {
     private void captureObservation(MetricConfig config, String endpoint, List<Map<String, Object>> rows,
         Map<String, String> configuredLabels, Map<String, Object> summary, boolean failed) {
         MetricObservationJournal journal = observationJournal;
-        if (journal == null || !journal.selects(config.id())) return;
+        if (journal == null || !journal.selects(config)) return;
         try {
             String type = config.type() == null ? "GAUGE" : config.type().toUpperCase(Locale.ROOT);
             Map<Map<String, String>, Double> values = new LinkedHashMap<>();

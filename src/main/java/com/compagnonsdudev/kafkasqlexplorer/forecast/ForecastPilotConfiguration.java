@@ -23,7 +23,7 @@ public class ForecastPilotConfiguration {
       throw new IllegalArgumentException("Pilot requires enabled history and inference");
     root.getPilot().validate();
     if (root.getPilot().getSeries().stream()
-        .anyMatch(s -> !root.getHistory().getMetricIds().contains(s.metricId())))
+        .anyMatch(s -> !root.getHistory().mayEnroll(s.metricId())))
       throw new IllegalArgumentException("Pilot metrics must be enrolled in durable history");
     return root.getPilot();
   }
