@@ -50,7 +50,9 @@ keeps the export-only path). Database and model readiness alone do not make a me
 
 ## Configure and approve
 
-1. Open **Metrics Forecast** and read the preparation checklist. **Test PostgreSQL and TimesFM**
+1. Open **Metrics Forecast** and read the preparation checklist. When durable history and TimesFM are
+   both off, it says so once — the stack is not running, start `bin/forecast-stack.sh` — with the
+   individual checks folded underneath, since every other line then fails as a consequence. **Test PostgreSQL and TimesFM**
    runs bounded connection/readiness probes, cached for 30 seconds. It does not create database
    tables or run inference. Disabled dependencies are reported as configuration requirements.
    MCP tool availability comes from the server's actual published catalogue; agent connectivity
