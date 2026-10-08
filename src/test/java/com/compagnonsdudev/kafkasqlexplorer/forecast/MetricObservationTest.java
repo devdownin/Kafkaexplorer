@@ -43,4 +43,23 @@ class MetricObservationTest {
         assertNotEquals(MetricObservation.definitionVersion(a),
             MetricObservation.definitionVersion(metric("First name", a.sql(), Map.of("window", 120, "unit", "messages"))));
     }
+
+    private static MetricConfig templated(String template, Map<String, Object> params) {
+        return new MetricConfig("m1", "n", "GAUGE", null, null, null, null, null, null, null,
+            java.util.List.of(), Map.of(), null, template, params, "TEMPLATE_BOUNDED_SCAN", null, java.util.List.of());
+    }
+
+    @Test
+    void theUnitIsTheOneTheTemplateFixesAndAnExplicitOneFillsTheRest() {
+        assertEquals("topics", MetricObservation.unit(templated("KAFKA_CLUSTER_COUNT", Map.of("measurement", "TOPIC_COUNT"))));
+        assertEquals("brokers", MetricObservation.unit(templated("KAFKA_CLUSTER_COUNT", Map.of("measurement", "BROKER_COUNT"))));
+        assertEquals("records", MetricObservation.unit(templated("TOPIC_COUNT_DELTA", Map.of())));
+        assertEquals("records", MetricObservation.unit(templated("TOPIC_COUNT_DELTA", Map.of("operation", "abs_diff"))));
+        assertEquals("ratio", MetricObservation.unit(templated("TOPIC_COUNT_DELTA", Map.of("operation", "RATIO"))));
+        assertEquals("percent", MetricObservation.unit(templated("TOPIC_COUNT_DELTA", Map.of("operation", "PERCENT_GAP"))));
+        assertEquals("milliseconds", MetricObservation.unit(templated("CONSUMER_TIME_LAG", Map.of("unit", "seconds"))));
+        assertEquals("messages", MetricObservation.unit(templated("TOPIC_COUNT_DELTA", Map.of("unit", "messages"))));
+        assertEquals("UNKNOWN", MetricObservation.unit(templated("RAW_SQL", Map.of())));
+        assertEquals("UNKNOWN", MetricObservation.unit(templated(null, null)));
+    }
 }

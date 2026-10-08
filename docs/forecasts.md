@@ -56,7 +56,10 @@ model readiness alone do not make a metric forecastable.
 2. Choose **Configure a forecast**, or **Prepare a forecast** on a metric card: both open the same
    assistant on the Metrics page. The candidate catalogue shows metadata eligibility and history
    enrollment separately. Unknown units, raw SQL scope, labelled values, non-scalar types, managed
-   jobs and collection errors block the assistant. Correct the metric before proceeding. SQL,
+   jobs and collection errors block the assistant. Correct the metric before proceeding. Every
+   supported template fixes its unit: latencies are `milliseconds`, a cluster count `topics` or
+   `brokers`, a count delta `records`, `ratio` or `percent` by its operation; a `unit` template
+   parameter fills it only where the template leaves it open. SQL,
    DDL and credentials are not returned by this catalogue. The first 100 metrics are listed in
    deterministic ID order; truncation is explicit.
 3. Declare environment, sampling interval (30 s to 15 min), repeating cycle (none, hourly, or

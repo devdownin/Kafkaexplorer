@@ -163,11 +163,9 @@ public class ForecastSetupService {
           List.of("Invalid metric definition; edit and save the metric before enrollment"));
     }
     var p = m.templateParams() == null ? Map.<String, Object>of() : m.templateParams();
-    String unit = p.get("unit") instanceof String u ? u : "UNKNOWN";
-    if (Set.of("CONSUMER_TIME_LAG", "TOPIC_TRANSIT_LATENCY").contains(String.valueOf(m.templateType())))
-      unit = "milliseconds";
+    String unit = MetricObservation.unit(m);
     var blockers = new ArrayList<String>();
-    if (unit.isBlank() || unit.equals("UNKNOWN")) blockers.add("Set a known unit in the metric template parameters");
+    if (unit.isBlank() || unit.equals("UNKNOWN")) blockers.add("Set a known unit: this template does not fix one, so add a \"unit\" template parameter to the metric");
     String type = m.type() == null ? "GAUGE" : m.type().toUpperCase(java.util.Locale.ROOT);
     if (!Set.of("GAUGE", "COUNTER").contains(type)) blockers.add("A scalar GAUGE or COUNTER is required");
     if (m.templateType() == null || m.templateType().equals("RAW_SQL"))
