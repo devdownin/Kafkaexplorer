@@ -59,14 +59,16 @@ model readiness alone do not make a metric forecastable.
    jobs and collection errors block the assistant. Correct the metric before proceeding. SQL,
    DDL and credentials are not returned by this catalogue. The first 100 metrics are listed in
    deterministic ID order; truncation is explicit.
-3. Declare environment, sampling interval (30 s to 15 min), horizon — shown as a duration — and
+3. Declare environment, sampling interval (30 s to 15 min), repeating cycle (none, hourly, or
+   daily where the interval fits it in 2 to 512 samples), horizon — shown as a duration — and
    **all** source topics/groups, edited as removable chips (topics are suggested from the cluster
    catalogue; a name outside it is still accepted). The history cluster/collector identities are prefilled from the
    running collector and folded under **Advanced**; they open by themselves when one is invalid. Structured suggestions are not a SQL dependency analysis. Unit and series
    identity must match the actual collector; units are read-only and stale metric definitions are
    rejected. Counters use rates per second; optional thresholds use forecast output units.
 4. Review and tick the source attestation, then choose **Validate and export**; the attestation is
-   the confirmation, with no second dialog. Server validation enforces
+   the confirmation, with no second dialog. The exported series requires one full quality block (120 realised points and six horizons, whichever is more) before approval, and its
+   season comes from the chosen cycle, so `SEASONAL_NAIVE` is a distinct baseline. Server validation enforces
    source completeness for known template resources, bounded horizons/cadences, history retention,
    configured series budgets and existing collection identities. The YAML preserves existing
    runtime-approved series, enrollment, interval, retention and series budget. It includes no

@@ -1672,6 +1672,7 @@ export interface ForecastDraftRequest {
   threshold: number | null;
   direction: string;
   confirmed: boolean;
+  seasonality: string;
 }
 /** @java ForecastSetupService.Draft */
 export interface ForecastDraft {

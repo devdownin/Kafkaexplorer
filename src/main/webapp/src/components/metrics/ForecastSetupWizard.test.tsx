@@ -45,7 +45,7 @@ describe('ForecastSetupWizard', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(axios.post).toHaveBeenCalledWith('/api/forecasts/configuration', expect.objectContaining({ confirmed: true,
       metricId: 'lag', definitionVersion: 'version', unit: 'milliseconds', clusterId: 'existing', collectorId: 'collector',
-      topics: ['orders'], groups: ['worker'], horizon: 30, threshold: null }), expect.objectContaining({ timeout: 10000 }));
+      topics: ['orders'], groups: ['worker'], horizon: 30, threshold: null, seasonality: 'NONE' }), expect.objectContaining({ timeout: 10000 }));
     expect(screen.getByRole('button', { name: 'Download forecasts.yml' })).toBeTruthy();
   });
   it('displays server validation failures and never presents a downloadable file', async () => {
@@ -125,5 +125,21 @@ describe('ForecastSetupWizard', () => {
       'Come back to Metrics Forecast: history progress appears here once the restarted pilot collects.']);
     expect(screen.getByRole('button', { name: 'Copy configuration' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Download forecasts.yml' })).toBeTruthy();
+  });
+  it('offers only the cycles the sampling interval can carry, and sends the one chosen', async () => {
+    vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: [] } });
+    const user = await sources();
+    const cycle = screen.getByLabelText('Repeating cycle');
+    expect([...cycle.querySelectorAll('option')].map(o => o.textContent)).toEqual(['None', 'Hourly']);
+    await user.selectOptions(screen.getByLabelText('Sampling interval'), '300000');
+    expect([...cycle.querySelectorAll('option')].map(o => o.textContent)).toEqual(['None', 'Hourly', 'Daily']);
+    await user.selectOptions(cycle, 'DAILY');
+    await user.selectOptions(screen.getByLabelText('Sampling interval'), '60000');
+    expect(cycle).toHaveValue('NONE');
+    await user.selectOptions(cycle, 'HOURLY');
+    await user.click(screen.getByRole('button', { name: 'Review configuration' }));
+    await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
+    await screen.findByRole('button', { name: 'Copy configuration' });
+    expect(axios.post).toHaveBeenCalledWith('/api/forecasts/configuration', expect.objectContaining({ seasonality: 'HOURLY', stepMillis: 60000 }), expect.anything());
   });
 });

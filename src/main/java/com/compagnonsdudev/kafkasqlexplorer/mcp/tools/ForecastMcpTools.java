@@ -103,7 +103,7 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
                         guard.dlp().scrub(s.unit()),
                         sources(s)))
             .toList();
-    return result(rows);
+    return result(rows, Coverage.exhausted(rows.size(), 0, 0));
   }
 
   @McpTool(
@@ -123,7 +123,8 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
     return result(
         r == null
             ? Measured.unmeasured(absence(seriesId))
-            : Measured.of(scrub(r.context())));
+            : Measured.of(scrub(r.context())),
+        oneSeries(r == null ? 0 : r.context().points().size()));
   }
 
   @McpTool(
@@ -141,7 +142,8 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
     authorize(seriesId);
     var r = read(seriesId);
     return result(
-        r == null ? Measured.unmeasured(absence(seriesId)) : Measured.of(scrub(r)));
+        r == null ? Measured.unmeasured(absence(seriesId)) : Measured.of(scrub(r)),
+        oneSeries(r == null ? 0 : 1));
   }
 
   public record Quality(
@@ -150,13 +152,17 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
       int evaluatedPoints,
       long evaluatedThrough,
       String currentStrategy,
-      String currentState) {}
+      String currentState,
+      ForecastPilotService.ActivationReadiness activation) {}
 
   @McpTool(
       name = "kex_get_forecast_quality",
       description =
-          "Read realised forecast errors and baseline MAE. Before forecast expiry quality is"
-              + " unmeasured. No evaluation is started.",
+          "Read realised forecast errors, baseline MAE and whether the series can be approved:"
+              + " activation.eligible, the one reason that blocks it, and where the quality block"
+              + " stands (points of the block, last block passed, consecutive failures before"
+              + " drift). Before the first realised horizon quality is unmeasured and the reason"
+              + " says what activation waits for. No evaluation is started.",
       annotations =
           @McpTool.McpAnnotations(
               readOnlyHint = true,
@@ -166,9 +172,12 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
       @McpToolParam(description = "Approved series id") String seriesId) {
     authorize(seriesId);
     var r = read(seriesId);
+    // The page states why a series cannot be approved yet; an agent asking the same question
+    // used to get errors and baseline scores, and no verdict.
+    var activation = scrub(pilot.readiness(seriesId, r));
     return result(
         r == null || r.quality() == null
-            ? Measured.unmeasured("No realised forecast quality yet")
+            ? Measured.unmeasured("No realised forecast quality yet; activation waits for: " + activation.reason())
             : Measured.of(
                 new Quality(
                     r.quality(),
@@ -176,7 +185,9 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
                     r.evaluatedPoints(),
                     r.evaluatedThrough(),
                     r.strategy(),
-                    r.state())));
+                    r.state(),
+                    activation)),
+        oneSeries(r == null ? 0 : 1));
 
   }
 
@@ -238,6 +249,12 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
 
   private String scrub(String text) {
     return guard.dlp().scrub(text);
+  }
+
+  private ForecastPilotService.ActivationReadiness scrub(ForecastPilotService.ActivationReadiness a) {
+    return new ForecastPilotService.ActivationReadiness(
+        a.eligible(), scrub(a.reason()), a.blockPoints(), a.blockPointsRequired(), a.lastBlockPassed(),
+        a.failedBlocks(), a.failedBlocksToDegrade());
   }
 
   private PreparedMetricSeries scrub(PreparedMetricSeries c) {
@@ -312,7 +329,16 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
           "Reads existing results only; nominal quantiles are not guaranteed confidence; no"
               + " alert delivery");
 
-  private <T> ToolResult<T> result(T data) {
-    return ToolResult.of(data, Coverage.exhausted(0, 0, 0), List.of(LIMITS));
+  /**
+   * One approved series read in full, and how many persisted records or history points came back.
+   * Every read used to report a pass over zero sources having read zero records, true of none of
+   * them; a series with nothing persisted is still a complete read whose answer is absence.
+   */
+  private static Coverage oneSeries(long records) {
+    return Coverage.exhausted(1, records, 0);
+  }
+
+  private <T> ToolResult<T> result(T data, Coverage coverage) {
+    return ToolResult.of(data, coverage, List.of(LIMITS));
   }
 }

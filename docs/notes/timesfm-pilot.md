@@ -141,7 +141,8 @@ TimesFM and LAST_VALUE, MOVING_AVERAGE (last 12 training points), SEASONAL_NAIVE
 **Quality is judged over blocks, never over one cohort** (`ForecastQualityWindow`). A cohort is one
 horizon — ten points in the example above — and a calibrated 80 % interval covers fewer than eight
 of ten points about one time in three, so a per-cohort verdict that latches is drift by
-construction. Cohorts accumulate until a block holds at least 120 points; the block is judged once
+construction. Cohorts accumulate until a block holds at least 120 points **and six cohorts** (`blockPoints(horizon)`,
+360 points at a 60-point horizon); the block is judged once
 on its pooled figures and a new one starts. A block fails when its coverage is below
 `minimum-coverage` by more than 2.326 standard errors (the larger of the binomial one and the one
 measured between cohorts, since the points of one horizon share their errors), when its MAE exceeds
@@ -149,8 +150,9 @@ measured between cohorts, since the points of one horizon share their errors), w
 once `minimum-evaluated-points` is reached, latch DEGRADED. Displayed quality and baseline MAE are
 the last judged block, or the cohorts realised so far before the first one closes. In a simulation
 of a calibrated model over 30 days, about 1 % of runs latch whatever the correlation inside a
-cohort; with a horizon of 60 a block holds two cohorts and the between-cohort error is estimated
-from two values, so treat drift on long horizons as weak evidence. This is a gate, not a
+cohort. The six-cohort floor exists for long horizons: at 60 points, 120 points were two cohorts,
+and the between-cohort error was estimated from two values. A long horizon therefore waits longer
+for its first verdict, which is the price of one that means something. This is a gate, not a
 calibration proof or a joint horizon probability.
 
 Metrics Forecast polls persisted results every 30 seconds, cancels reads on unmount, and shows
@@ -199,7 +201,7 @@ environment and **all** source topics and groups. Unknown ids are OUT_OF_SCOPE. 
 | `kex_list_forecastable_metrics` | Authorized metric/series/environment catalogue |
 | `kex_metric_history` | Existing prepared context, at most 512 points; unmeasured before first record |
 | `kex_forecast_metric` | Persisted forecast, state, strategy, quality and provenance |
-| `kex_get_forecast_quality` | Realised TimesFM metrics, four baseline MAEs, sample count, watermark and current state/strategy; unmeasured until maturity |
+| `kex_get_forecast_quality` | Realised TimesFM metrics, four baseline MAEs, sample count, watermark, current state/strategy and `activation` — the same eligibility verdict and reason the page shows, with the quality block's progress; unmeasured until maturity, the reason then naming what activation waits for |
 | `kex_list_predicted_threshold_breaches` | One row per authorized series: `BREACH`, `NO_BREACH`, `NO_POLICY` or `NOT_EVALUATED`, its reason, and for an evaluated forecast the conservative bound, result key, timestamps, revision and fingerprints |
 
 The former `kex_forecast_catalog`, `kex_forecast_get`, `kex_forecast_latest`,

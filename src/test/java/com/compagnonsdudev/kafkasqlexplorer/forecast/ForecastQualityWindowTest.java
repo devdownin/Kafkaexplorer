@@ -100,4 +100,22 @@ class ForecastQualityWindowTest {
         "MAE 0.5200 is above the configured maximum 0.5000",
         window.lastBlock().activationBlocker(.5).orElseThrow());
   }
+
+  @Test
+  void aLongHorizonBlockWaitsForSixCohortsNotJustTheirPoints() {
+    assertEquals(120, ForecastQualityWindow.blockPoints(10));
+    assertEquals(360, ForecastQualityWindow.blockPoints(60));
+    var window = ForecastQualityWindow.EMPTY;
+    for (int i = 0; i < 5; i++) {
+      window = window.add(
+          new ForecastQualityWindow.Cohort(i, 60, new ForecastBacktestEvaluator.Evaluation(1, null, 0, .8, 1), BASELINES, 5),
+          .8, null);
+      assertNull(window.lastBlock(), "cohort " + (i + 1) + " of 60 points must not close a block");
+    }
+    window = window.add(
+        new ForecastQualityWindow.Cohort(5, 60, new ForecastBacktestEvaluator.Evaluation(1, null, 0, .8, 1), BASELINES, 5),
+        .8, null);
+    assertEquals(6, window.lastBlock().cohorts());
+    assertEquals(360, window.lastBlock().points());
+  }
 }
