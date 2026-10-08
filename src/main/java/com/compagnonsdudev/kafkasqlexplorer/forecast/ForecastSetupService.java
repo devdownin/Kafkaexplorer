@@ -68,7 +68,8 @@ public class ForecastSetupService {
    * number of samples, at least two and no more than the 512-point context.
    */
   static int seasonLength(String seasonality, long stepMillis) {
-    long period = switch (seasonality == null ? "NONE" : seasonality) {
+    String cycle = seasonality == null ? "NONE" : seasonality;
+    long period = switch (cycle) {
       case "NONE" -> 0L;
       case "HOURLY" -> 3_600_000L;
       case "DAILY" -> 86_400_000L;
@@ -77,7 +78,7 @@ public class ForecastSetupService {
     if (period == 0) return 1;
     if (stepMillis <= 0 || period % stepMillis != 0 || period / stepMillis < 2 || period / stepMillis > 512)
       throw new IllegalArgumentException(
-          "A " + seasonality.toLowerCase(java.util.Locale.ROOT) + " cycle is not 2 to 512 whole samples at this sampling interval");
+          "A " + cycle.toLowerCase(java.util.Locale.ROOT) + " cycle is not 2 to 512 whole samples at this sampling interval");
     return (int) (period / stepMillis);
   }
 
