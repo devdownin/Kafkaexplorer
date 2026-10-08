@@ -34,7 +34,10 @@ public final class ForecastEligibility {
     if (!Set.of("GAUGE", "COUNTER").contains(type)) blockers.add("A scalar GAUGE or COUNTER is required");
     if (m.templateType() == null || m.templateType().equals("RAW_SQL"))
       blockers.add("Raw SQL has unverified source scope; use a supported template");
-    if (m.labelFields() != null && !m.labelFields().isEmpty() || m.labelTopic() != null && !m.labelTopic().isBlank())
+    // Labels come from labelFields alone: a labelTopic with no field to read from it exports none,
+    // and every metric the suggestions create carries its source topic there. Counting it refused
+    // every suggested template as labelled.
+    if (m.labelFields() != null && !m.labelFields().isEmpty())
       blockers.add("Labelled metrics require a separately approved series; the assistant supports unlabelled values");
     if ("FLINK_MANAGED_JOB".equals(m.executionMode())) blockers.add("Managed jobs do not capture scalar observations");
     return List.copyOf(blockers);
