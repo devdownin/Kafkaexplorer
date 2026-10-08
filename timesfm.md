@@ -52,6 +52,12 @@ snapshot. L’API opérateur respecte la frontière d’accès des autres endpoi
 
 ## Dimensionnement CPU et mémoire mesuré
 
+**Mesures antérieures à l’adaptateur `kex-timesfm-2.5-v2`** (`fix_quantile_crossing` et
+`infer_is_positive` activés) : elles n’ont pas été refaites. Le surcoût attendu se limite à deux
+`torch.where` sur 60 × 10 valeurs par série, mais il n’est pas mesuré ; relancer `benchmark.py`
+(ci-dessous) sur une machine qui atteint Hugging Face et l’index PyTorch avant de citer ces
+chiffres pour la v2.
+
 Mesure du 3 octobre 2026 sur AMD EPYC 9V74, quota de 8 CPU et limite de 8 Gio, Python 3.12.14,
 PyTorch 2.11.0+cpu / TimesFM 2.0.2. Un processus neuf par réglage ; checkpoint déjà en cache ;
 20 inférences chaudes sur données synthétiques, une série, contexte 512 et horizon 60. Le froid
@@ -107,7 +113,7 @@ régression des mocks de la page Metrics : la nouvelle route Forecast recevait u
 La PR corrige le mock et refuse proprement les réponses API incomplètes ; la suite frontend
 complète est désormais verte localement. La CI du dernier commit reste exigée avant fusion.
 
-La qualité affichée et le contrôle de dérive portent sur des blocs disjoints d’au moins 120 points
+La qualité affichée et le contrôle de dérive portent sur des blocs disjoints d’au moins 120 points et six cohortes
 réalisés, jamais sur une cohorte isolée ; deux blocs en échec consécutifs verrouillent DEGRADED
 (voir [le runbook](docs/notes/timesfm-pilot.md) et `TIMESFM-FORECAST-AUDIT.md`, F2). Il s’agit d’un
 seuil statistique simple, pas d’une calibration. Q10–Q90 est un intervalle

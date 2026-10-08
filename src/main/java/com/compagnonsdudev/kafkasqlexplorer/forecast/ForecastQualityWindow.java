@@ -14,7 +14,8 @@ import java.util.stream.Stream;
  * a coin of ten throws: a perfectly calibrated 80 % interval scores under 0.8 on 32 % of them. The
  * verdict used to be taken on each cohort and latched, so drift was a matter of time, not quality.
  *
- * <p>So cohorts accumulate into a block of at least {@link #BLOCK_POINTS} points, the block is
+ * <p>So cohorts accumulate into a block of at least {@link #BLOCK_POINTS} points and
+ * {@link #MIN_BLOCK_COHORTS} cohorts, the block is
  * judged once, and {@link #FAILED_BLOCKS_TO_DEGRADE} consecutive failed blocks are drift. Points
  * of one horizon share their errors, so the coverage gate uses the larger of the binomial standard
  * error and the one measured between cohorts: the first assumes independence, the second does not
@@ -24,6 +25,17 @@ import java.util.stream.Stream;
  */
 public record ForecastQualityWindow(List<Cohort> open, Block lastBlock, int failedBlocks) {
   public static final int BLOCK_POINTS = 120;
+  /**
+   * Cohorts a block needs besides its points. At a 60-point horizon 120 points were two cohorts,
+   * and the between-cohort error the coverage gate relies on was estimated from two values: a
+   * block could pass or fail on the luck of one horizon. Six keeps that estimate meaningful.
+   */
+  public static final int MIN_BLOCK_COHORTS = 6;
+
+  /** Realised points a block needs at this horizon: a cohort is one horizon. */
+  public static int blockPoints(int horizon) {
+    return Math.max(BLOCK_POINTS, MIN_BLOCK_COHORTS * horizon);
+  }
   public static final int FAILED_BLOCKS_TO_DEGRADE = 2;
   /** One-sided 99 %. */
   static final double Z = 2.326;
@@ -102,7 +114,8 @@ public record ForecastQualityWindow(List<Cohort> open, Block lastBlock, int fail
   /** Adds a cohort and, once the block is full, judges it against the operator's gates. */
   public ForecastQualityWindow add(Cohort cohort, double minimumCoverage, Double maxMae) {
     var cohorts = Stream.concat(open.stream(), Stream.of(cohort)).toList();
-    if (cohorts.stream().mapToInt(Cohort::points).sum() < BLOCK_POINTS)
+    if (cohorts.stream().mapToInt(Cohort::points).sum() < BLOCK_POINTS
+        || cohorts.size() < MIN_BLOCK_COHORTS)
       return new ForecastQualityWindow(cohorts, lastBlock, failedBlocks);
     var block = judge(cohorts, minimumCoverage, maxMae);
     return new ForecastQualityWindow(List.of(), block, block.passed() ? 0 : failedBlocks + 1);

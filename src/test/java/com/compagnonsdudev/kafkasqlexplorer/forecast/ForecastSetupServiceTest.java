@@ -143,7 +143,8 @@ class ForecastSetupServiceTest {
     assertEquals(draft.seriesId(), spec.seriesId()); assertEquals("milliseconds", spec.unit());
     assertEquals(ForecastThresholdPolicy.Visibility.SHADOW, spec.threshold().visibility());
     assertEquals(1, spec.seasonLength());
-    assertEquals(ForecastQualityWindow.BLOCK_POINTS, spec.minimumEvaluatedPoints());
+    // Horizon 30: six cohorts are 180 points, more than the 120-point floor.
+    assertEquals(180, spec.minimumEvaluatedPoints());
     assertTrue(bound.getHistory().getMetricIds().contains("lag"));
     assertFalse(draft.configuration().contains("credential")); verifyNoInteractions(history, client, pilot, preparation);
   }

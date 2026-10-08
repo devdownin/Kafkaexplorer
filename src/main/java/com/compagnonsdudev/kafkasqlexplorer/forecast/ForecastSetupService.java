@@ -225,7 +225,7 @@ public class ForecastSetupService {
         r.topics(), r.groups(), profile, r.horizon(), seasonLength(r.seasonality(), r.stepMillis()), threshold,
         // No verdict exists before a full quality block, so a smaller minimum read as a promise the
         // gate could not keep.
-        null, .8, ForecastQualityWindow.BLOCK_POINTS);
+        null, .8, ForecastQualityWindow.blockPoints(r.horizon()));
     var approved = new ArrayList<>(root.getPilot().getSeries());
     if (approved.stream().anyMatch(existing -> existing.seriesId().equals(id)))
       throw new IllegalArgumentException("This series is already approved; edit its deployment configuration explicitly");

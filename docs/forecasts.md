@@ -67,7 +67,7 @@ model readiness alone do not make a metric forecastable.
    identity must match the actual collector; units are read-only and stale metric definitions are
    rejected. Counters use rates per second; optional thresholds use forecast output units.
 4. Review and tick the source attestation, then choose **Validate and export**; the attestation is
-   the confirmation, with no second dialog. The exported series requires one full quality block (120 realised points) before approval, and its
+   the confirmation, with no second dialog. The exported series requires one full quality block (120 realised points and six horizons, whichever is more) before approval, and its
    season comes from the chosen cycle, so `SEASONAL_NAIVE` is a distinct baseline. Server validation enforces
    source completeness for known template resources, bounded horizons/cadences, history retention,
    configured series budgets and existing collection identities. The YAML preserves existing

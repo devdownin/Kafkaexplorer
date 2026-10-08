@@ -119,7 +119,7 @@ public final class ForecastPilotService {
         blocker == null,
         blocker,
         w.openPoints(),
-        ForecastQualityWindow.BLOCK_POINTS,
+        ForecastQualityWindow.blockPoints(spec.horizon()),
         w.lastBlock() == null ? null : w.lastBlock().passed(),
         w.failedBlocks(),
         ForecastQualityWindow.FAILED_BLOCKS_TO_DEGRADE);
@@ -144,7 +144,7 @@ public final class ForecastPilotService {
       return "The first quality block holds "
           + w.openPoints()
           + " of "
-          + ForecastQualityWindow.BLOCK_POINTS
+          + ForecastQualityWindow.blockPoints(spec.horizon())
           + " realised points";
     if (w.failedBlocks() > 0) return "The last quality block failed; a passing block is required";
     return w.lastBlock().activationBlocker(spec.maxMae()).orElse(null);
@@ -208,13 +208,16 @@ public final class ForecastPilotService {
           preparation.prepare(
               spec.seriesId(), spec.definitionVersion(), spec.unit(), cutoff, spec.profile());
       String key = key(spec, context);
+      // Commit, not roll back: the purge above is this cycle's only retention pass for an
+      // unchanged series, and a rollback discarded it, so rows outlived retention while inputs
+      // stood still.
       if (store.contains(c, key)) {
-        c.rollback();
+        c.commit();
         return;
       }
       var previous = store.latest(c, spec.seriesId());
       if (previous != null && previous.key().equals(key)) {
-        c.rollback();
+        c.commit();
         return;
       }
       if (previous != null

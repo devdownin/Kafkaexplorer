@@ -103,7 +103,7 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
                         guard.dlp().scrub(s.unit()),
                         sources(s)))
             .toList();
-    return result(rows);
+    return result(rows, Coverage.exhausted(rows.size(), 0, 0));
   }
 
   @McpTool(
@@ -123,7 +123,8 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
     return result(
         r == null
             ? Measured.unmeasured(absence(seriesId))
-            : Measured.of(scrub(r.context())));
+            : Measured.of(scrub(r.context())),
+        oneSeries(r == null ? 0 : r.context().points().size()));
   }
 
   @McpTool(
@@ -141,7 +142,8 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
     authorize(seriesId);
     var r = read(seriesId);
     return result(
-        r == null ? Measured.unmeasured(absence(seriesId)) : Measured.of(scrub(r)));
+        r == null ? Measured.unmeasured(absence(seriesId)) : Measured.of(scrub(r)),
+        oneSeries(r == null ? 0 : 1));
   }
 
   public record Quality(
@@ -184,7 +186,8 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
                     r.evaluatedThrough(),
                     r.strategy(),
                     r.state(),
-                    activation)));
+                    activation)),
+        oneSeries(r == null ? 0 : 1));
 
   }
 
@@ -326,7 +329,16 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
           "Reads existing results only; nominal quantiles are not guaranteed confidence; no"
               + " alert delivery");
 
-  private <T> ToolResult<T> result(T data) {
-    return ToolResult.of(data, Coverage.exhausted(0, 0, 0), List.of(LIMITS));
+  /**
+   * One approved series read in full, and how many persisted records or history points came back.
+   * Every read used to report a pass over zero sources having read zero records, true of none of
+   * them; a series with nothing persisted is still a complete read whose answer is absence.
+   */
+  private static Coverage oneSeries(long records) {
+    return Coverage.exhausted(1, records, 0);
+  }
+
+  private <T> ToolResult<T> result(T data, Coverage coverage) {
+    return ToolResult.of(data, coverage, List.of(LIMITS));
   }
 }

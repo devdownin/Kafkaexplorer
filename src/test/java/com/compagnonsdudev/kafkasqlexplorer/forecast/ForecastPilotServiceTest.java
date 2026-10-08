@@ -158,7 +158,10 @@ class ForecastPilotServiceTest {
     when(store.latest(connection, spec.seriesId())).thenReturn(record(context, 1, "READY"));
     pilot.refresh(spec, now);
     verifyNoInteractions(client);
-    verify(connection).rollback();
+    // Committed, so the retention purge that ran under the lock is kept.
+    verify(store).purge(eq(connection), anyLong());
+    verify(connection).commit();
+    verify(connection, never()).rollback();
     verify(store, never()).save(any(), anyString(), any(), anyString());
   }
 
@@ -196,14 +199,20 @@ class ForecastPilotServiceTest {
 
   @Test
   void secondConsecutiveFailedBlockDisablesActivationAndRetainsRecord() throws Exception {
+    // Five cohorts already realised (118 points); the sixth closes the block.
     var filling =
-        new ForecastQualityWindow.Cohort(
-            now - 4000, 118, new ForecastBacktestEvaluator.Evaluation(1, null, 1, 0, 3),
-            BASELINES_AT_ZERO, 1);
+        java.util.stream.IntStream.range(0, 5)
+            .mapToObj(
+                i ->
+                    new ForecastQualityWindow.Cohort(
+                        now - 4000 - i, i == 0 ? 22 : 24,
+                        new ForecastBacktestEvaluator.Evaluation(1, null, 1, 0, 3),
+                        BASELINES_AT_ZERO, 1))
+            .toList();
     var old =
         withWindow(
             record(context(now - 2000), 2, "READY"),
-            new ForecastQualityWindow(List.of(filling), null, 1));
+            new ForecastQualityWindow(filling, null, 1));
     when(store.latest(connection, spec.seriesId())).thenReturn(old);
     when(store.matured(eq(connection), eq(spec.seriesId()), anyLong(), anyLong())).thenReturn(old);
     when(store.active(connection, spec.seriesId())).thenReturn(true);
@@ -646,5 +655,19 @@ class ForecastPilotServiceTest {
     when(store.latest(connection, spec.seriesId())).thenReturn(publishedActive);
     when(store.active(connection, spec.seriesId())).thenReturn(false);
     assertEquals(ForecastThresholdPolicy.Visibility.SHADOW, pilot.get(spec.seriesId()).visibility());
+  }
+
+  @Test
+  void singleSeriesReadsReportOneSeriesAndWhatCameBack() throws Exception {
+    var tools = tools(pilot);
+    var absent = tools.get(spec.seriesId()).coverage();
+    assertTrue(absent.complete());
+    assertEquals(1, absent.topicsScanned());
+    assertEquals(0, absent.recordsScanned());
+    when(store.latest(connection, spec.seriesId())).thenReturn(record(context, 1, "READY"));
+    assertEquals(1, tools.get(spec.seriesId()).coverage().recordsScanned());
+    assertEquals(512, tools.history(spec.seriesId()).coverage().recordsScanned());
+    assertEquals(1, tools.quality(spec.seriesId()).coverage().recordsScanned());
+    assertEquals(1, tools.catalog().coverage().topicsScanned());
   }
 }
