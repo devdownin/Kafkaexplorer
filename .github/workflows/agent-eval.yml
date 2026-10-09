@@ -31,7 +31,7 @@ on:
         options: [qwen2.5-3b-instruct, qwen2.5-7b-instruct]
         default: qwen2.5-3b-instruct
       model_sha256:
-        description: Optional SHA-256 of the GGUF; when set, a mismatching download is refused
+        description: SHA-256 of the GGUF; a mismatching download is refused. Empty = the pinned hash of the chosen model (none pinned for qwen2.5-7b-instruct)
         type: string
         default: ''
       # Both fall back to the repository variables of the same name (Settings → Secrets and
@@ -115,17 +115,23 @@ jobs:
       - name: Resolve the model
         env:
           MODEL: ${{ inputs.model }}
+          INPUT_SHA256: ${{ inputs.model_sha256 }}
         run: |
           set -euo pipefail
           case "$MODEL" in
-            qwen2.5-3b-instruct) file=Qwen2.5-3B-Instruct-Q4_K_M.gguf; repo=bartowski/Qwen2.5-3B-Instruct-GGUF ;;
-            qwen2.5-7b-instruct) file=Qwen2.5-7B-Instruct-Q4_K_M.gguf; repo=bartowski/Qwen2.5-7B-Instruct-GGUF ;;
+            qwen2.5-3b-instruct)
+              file=Qwen2.5-3B-Instruct-Q4_K_M.gguf; repo=bartowski/Qwen2.5-3B-Instruct-GGUF
+              # Printed by the spectra-models fetcher on run 37922593625; the size (1929903264)
+              # matches the Hub's. Re-pin deliberately if the upstream file is ever replaced.
+              pinned=9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94 ;;
+            qwen2.5-7b-instruct) file=Qwen2.5-7B-Instruct-Q4_K_M.gguf; repo=bartowski/Qwen2.5-7B-Instruct-GGUF; pinned='' ;;
             *) echo "::error::unknown model $MODEL"; exit 1 ;;
           esac
           {
             echo "LLM_CHAT_MODEL_NAME=$MODEL"
             echo "LLM_CHAT_MODEL_FILE=$file"
             echo "MODEL_URL=https://huggingface.co/$repo/resolve/main/$file"
+            echo "MODEL_SHA256=${INPUT_SHA256:-$pinned}"
           } >> "$GITHUB_ENV"
 
       - name: Set up JDK 25
@@ -138,8 +144,6 @@ jobs:
       # Started first and left to load while the image builds: the download and the build are
       # the two long poles, and neither waits on the other.
       - name: Start llm-chat and fetch the model
-        env:
-          MODEL_SHA256: ${{ inputs.model_sha256 }}
         run: |
           set -euo pipefail
           # shellcheck disable=SC2086  # the stack is a deliberate word list

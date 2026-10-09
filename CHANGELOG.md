@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The agent-eval workflow pins the Qwen2.5-3B GGUF.** `model_sha256` defaults to the hash the
+  fetcher printed (`9c9f56a3…3f94`, size matching the Hub's) for `qwen2.5-3b-instruct`, so a replaced
+  upstream file is refused instead of silently graded; the 7B has none pinned yet, and the input still
+  overrides either.
 - **The agent harness no longer turns its own faults into verdicts on the agent.** A judge that
   cannot grade (provider error, rate limit, reply that is not JSON) is retried three times with a
   backoff and then leaves the scenario `UNJUDGED` — its own outcome in the report and the suite line,
