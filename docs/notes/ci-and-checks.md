@@ -278,6 +278,25 @@ Three workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
   registry that cannot be reached is a `::warning::` inside the script rather than a red run, so
   a failure here means the pin really is behind, and its message names the three files.
 
+- **`agent-eval.yml`** — the MCP agent harness against a real model, `workflow_dispatch` only:
+  never on a push or a pull request, for the reason `SPECAGENT.md` §6 gives (a model's weather has
+  no vote on a merge). It is the run a sandbox cannot do — Docker, `huggingface.co` and
+  `packages.confluent.io` — so the agent is SpectraLLM's `llm-chat` (3B or 7B, fetched by the
+  hub's own `spectra-models` one-shot) and the server graded is the image built from the
+  dispatched ref, never a published one. **It refuses to start without `ANTHROPIC_API_KEY`**,
+  the judge's key: a local model grading itself is not a verdict, and an hour spent producing one
+  is worse than a red first step. It waits for the demo seed to *exit 0* before anything runs,
+  since a fixture read from a half-seeded cluster grades the agent on topics that do not exist
+  yet, and runs `mcp-probe.sh` first, so "the surface was never there" cannot be scored as the
+  model reasoning badly. **`budget_scale` defaults to 5**: the scenario budgets were measured
+  against a hosted API, a 3B on four CPU cores spends most of a 60 s budget reading the tool
+  schemas, and an overrun there would report the runner's hardware as the agent's failure.
+  `AgentRunner` applies the scale, names it in every overrun it reports, and the suite summary
+  repeats it, so a scaled run is never compared with an unscaled one unawares. The GGUF's digest
+  is an optional input rather than a pin, because nothing here has observed it twice yet; the
+  0.5B model `spectra-hub-stack` pins is too small to call a tool and would grade the scenarios
+  rather than the agent.
+
 **The JAR is signed, keylessly** (`actions/attest-build-provenance` in `release.yml`'s `build`
 job, hence the `id-token: write` + `attestations: write` on it). The image had a full SLSA
 provenance and an SBOM while the JAR beside it on the same Release had only `SHA256SUMS.txt` —

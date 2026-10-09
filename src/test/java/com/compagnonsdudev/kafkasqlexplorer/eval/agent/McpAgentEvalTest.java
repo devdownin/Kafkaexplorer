@@ -138,8 +138,11 @@ class McpAgentEvalTest {
         String judgeCaveat = unconfigured.isEmpty()
                 ? models.judgeCaveat().map(caveat -> "\n  NOTE: " + caveat).orElse("")
                 : "";
+        String budgetNote = budgetScale() == 1.0 ? ""
+                : "\n  NOTE: every budgetMs was scaled by AGENT_EVAL_BUDGET_SCALE=" + budgetScale()
+                + " — time-bound verdicts are not comparable with an unscaled run.";
         Stream<DynamicTest> summary = Stream.of(DynamicTest.dynamicTest("summary",
-                () -> System.out.println(ScenarioReport.renderSuite(reports) + judgeCaveat)));
+                () -> System.out.println(ScenarioReport.renderSuite(reports) + judgeCaveat + budgetNote)));
         return Stream.concat(cases, summary);
     }
 
@@ -159,7 +162,7 @@ class McpAgentEvalTest {
                          new McpHttpClient(endpoint, Duration.ofSeconds(20), authToken())) {
                 mcp.initialize();
                 AgentRunner.Session session =
-                        new AgentRunner(agent, mcp, operator).run(scenario);
+                        new AgentRunner(agent, mcp, operator, budgetScale()).run(scenario);
                 attempts.add(new ScenarioReport.Attempt(attempt,
                         session.trace().failures(scenario),
                         judge.score(scenario.verdict(), session.answer()),
@@ -208,6 +211,21 @@ class McpAgentEvalTest {
     private static String endpointUrl() {
         String configured = System.getenv("AGENT_EVAL_MCP_URL");
         return configured == null || configured.isBlank() ? "http://localhost:8080/mcp" : configured;
+    }
+
+    /**
+     * {@code AGENT_EVAL_BUDGET_SCALE}: multiplies every scenario's {@code budgetMs}, for a model on
+     * hardware slower than the hosted API the budgets were calibrated on. One by default, never
+     * below one, and printed in the summary whenever it is not one.
+     */
+    private static double budgetScale() {
+        String configured = System.getenv("AGENT_EVAL_BUDGET_SCALE");
+        try {
+            return configured == null || configured.isBlank()
+                    ? 1.0 : Math.max(1.0, Double.parseDouble(configured.trim()));
+        } catch (NumberFormatException e) {
+            return 1.0;
+        }
     }
 
     /**

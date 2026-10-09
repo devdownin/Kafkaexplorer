@@ -444,6 +444,15 @@ sens où une CI l'exige, et le faire garder une PR reviendrait à laisser la mé
 tiers décider d'un merge. Sa place est une exécution délibérée avant une release, et un
 `workflow_dispatch` séparé si l'on veut le planifier.
 
+Ce `workflow_dispatch` existe : `.github/workflows/agent-eval.yml` construit la stack depuis la
+référence lancée, attend la fin du semis de démo et le `mcp-probe`, sert un modèle local par le
+`llm-chat` de SpectraLLM (3B ou 7B) et fait juger par un modèle Anthropic — il refuse de démarrer
+sans le secret `ANTHROPIC_API_KEY`. Le rapport, les logs de la stack et ceux de `llm-chat` sont
+publiés en artefact. Les budgets ayant été calibrés sur une API hébergée, `AGENT_EVAL_BUDGET_SCALE`
+(entrée `budget_scale`, 5 par défaut) les multiplie ; il ne descend jamais sous 1, chaque
+dépassement le cite et le résumé de la suite le répète, pour qu'un run mis à l'échelle ne soit
+jamais lu comme un run qui ne l'est pas.
+
 ---
 
 ## 7. Honnêteté du harnais lui-même

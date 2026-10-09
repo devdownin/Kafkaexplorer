@@ -1,0 +1,198 @@
+# The MCP agent harness (SPECAGENT.md), run against a local model served by SpectraLLM's
+# llama.cpp `llm-chat`, graded by a hosted judge.
+#
+# MANUAL ONLY, and that is SPECAGENT.md §6 rather than caution: a scenario that calls a real
+# model is not deterministic in the sense a merge gate requires, and letting it guard a pull
+# request would hand a third party's weather a vote on a merge. Nothing here runs on a push.
+#
+# It exists because the run needs three things a laptop has and a sandbox often does not:
+# Docker, huggingface.co (the GGUF) and packages.confluent.io (the image is built from this
+# checkout — the server graded is the code on the dispatched ref, not a published image).
+#
+# REQUIRES the repository secret ANTHROPIC_API_KEY, for the judge. A 3B model judging its own
+# answers is asking it whether it is pleased with itself, so without the key the run refuses at
+# the first step instead of spending an hour producing verdicts nobody should read.
+#
+# WHAT IT COSTS: a standard runner (4 vCPU, 16 GB, no GPU). The 3B model is ~1.9 GB and answers
+# a tool-laden turn in tens of seconds; the 7B is ~4.7 GB and roughly twice as slow. The scenario
+# budgets were calibrated on a hosted API, hence `budget_scale` — reported in the summary, so a
+# scaled run is never read as an unscaled one.
+name: Agent eval (SpectraLLM)
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Chat model llm-chat serves (the agent under test)
+        type: choice
+        options: [qwen2.5-3b-instruct, qwen2.5-7b-instruct]
+        default: qwen2.5-3b-instruct
+      model_sha256:
+        description: Optional SHA-256 of the GGUF; when set, a mismatching download is refused
+        type: string
+        default: ''
+      judge_model:
+        description: Anthropic model that grades the answers
+        type: string
+        default: claude-sonnet-5-5
+      scenario:
+        description: One scenario id (empty = all of src/test/resources/eval/agent)
+        type: string
+        default: ''
+      repeat:
+        description: Attempts per scenario (AGENT_EVAL_REPEAT); all must pass
+        type: string
+        default: '1'
+      budget_scale:
+        description: Multiplier on every scenario's budgetMs (AGENT_EVAL_BUDGET_SCALE)
+        type: string
+        default: '5'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    name: Run the agent scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      # The Kafka Explorer stack under test: built from this checkout, MCP on.
+      BASE_STACK: -f docker-compose.yml -f compose/mcp.yml
+      # SpectraLLM's chat server only — its Kafka and Explorer would publish the same ports.
+      SPECTRA_STACK: -f compose/spectra-hub.yml -f compose/spectra-hub.agent-eval.yml
+      MCP_AUTH_TOKEN: dev-only-mcp-token
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Refuse to run without a judge
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          [ -n "$ANTHROPIC_API_KEY" ] || {
+            echo "::error::the repository secret ANTHROPIC_API_KEY is not set. The judge needs it, and a local model grading itself is not a verdict."
+            exit 1
+          }
+
+      - name: Resolve the model
+        env:
+          MODEL: ${{ inputs.model }}
+        run: |
+          set -euo pipefail
+          case "$MODEL" in
+            qwen2.5-3b-instruct) file=Qwen2.5-3B-Instruct-Q4_K_M.gguf; repo=bartowski/Qwen2.5-3B-Instruct-GGUF ;;
+            qwen2.5-7b-instruct) file=Qwen2.5-7B-Instruct-Q4_K_M.gguf; repo=bartowski/Qwen2.5-7B-Instruct-GGUF ;;
+            *) echo "::error::unknown model $MODEL"; exit 1 ;;
+          esac
+          {
+            echo "LLM_CHAT_MODEL_NAME=$MODEL"
+            echo "LLM_CHAT_MODEL_FILE=$file"
+            echo "MODEL_URL=https://huggingface.co/$repo/resolve/main/$file"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: maven
+
+      # Started first and left to load while the image builds: the download and the build are
+      # the two long poles, and neither waits on the other.
+      - name: Start llm-chat and fetch the model
+        env:
+          MODEL_SHA256: ${{ inputs.model_sha256 }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086  # the stack is a deliberate word list
+          docker compose $SPECTRA_STACK up -d llm-chat
+          # The stack's own fetcher rather than a curl written here: resume, checksum and the
+          # volume's ownership are its job. It also fetches the 81 MB embedding model, unused here.
+          # shellcheck disable=SC2086
+          docker compose $SPECTRA_STACK run --rm --no-deps -T \
+            -e SPECTRA_CHAT_MODEL_URL="$MODEL_URL" \
+            -e SPECTRA_CHAT_MODEL_SHA256="$MODEL_SHA256" spectra-models
+
+      - name: Build and start the stack under test
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086
+          docker compose $BASE_STACK up -d --build
+
+      - name: Wait for the demo seed and the Explorer
+        run: |
+          set -euo pipefail
+          # The scenarios' fixtures name topics and keys setup-demo.sh produces; a run started
+          # before the seed finished reads "not found" and grades the agent on an empty cluster.
+          # shellcheck disable=SC2086
+          seeder=$(docker compose $BASE_STACK ps -a -q demo-setup)
+          for _ in $(seq 1 120); do
+            state=$(docker inspect -f '{{.State.Status}}' "$seeder")
+            [ "$state" = exited ] && break
+            sleep 5
+          done
+          code=$(docker inspect -f '{{.State.ExitCode}}' "$seeder")
+          [ "$state" = exited ] && [ "$code" = 0 ] \
+            || { echo "::error::the demo seed did not complete (state $state, exit $code)"; exit 1; }
+          # shellcheck disable=SC2086
+          explorer=$(docker compose $BASE_STACK ps -q explorer)
+          for _ in $(seq 1 72); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' "$explorer")" = healthy ] && exit 0
+            sleep 5
+          done
+          echo "::error::the Explorer never became healthy"
+          exit 1
+
+      # A failed scenario has two causes with one symptom — the model reasoned badly, or the
+      # surface was never there. The probe settles the second before an hour is spent on it.
+      - name: Probe the MCP surface
+        run: MCP_BASE_URL=http://localhost:8080 sh mcp-probe.sh
+
+      - name: Wait for llm-chat to serve the model
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 120); do
+            curl -fsS http://127.0.0.1:8090/health > /dev/null 2>&1 && { echo "llm-chat is serving"; exit 0; }
+            sleep 5
+          done
+          echo "::error::llm-chat never answered /health on 127.0.0.1:8090"
+          exit 1
+
+      - name: Run the scenarios
+        env:
+          CLAUDE_PROVIDER: SPECTRA
+          AGENT_EVAL_JUDGE_PROVIDER: ANTHROPIC
+          AGENT_EVAL_JUDGE_MODEL: ${{ inputs.judge_model }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AGENT_EVAL_REPEAT: ${{ inputs.repeat }}
+          AGENT_EVAL_BUDGET_SCALE: ${{ inputs.budget_scale }}
+          SCENARIO: ${{ inputs.scenario }}
+        run: |
+          set -o pipefail
+          # !build-frontend: the SPA is already inside the image under test, and npm has nothing
+          # to add to a run that only talks to /mcp.
+          ./mvnw -B test -P 'mcp-agent-eval,!build-frontend' \
+            ${SCENARIO:+-Dagent.eval.scenario="$SCENARIO"} 2>&1 | tee "$RUNNER_TEMP/agent-eval.log"
+
+      - name: Collect the logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/eval-artifacts"
+          cp "$RUNNER_TEMP/agent-eval.log" "$RUNNER_TEMP/eval-artifacts/" 2>/dev/null || true
+          cp -r target/surefire-reports "$RUNNER_TEMP/eval-artifacts/" 2>/dev/null || true
+          # shellcheck disable=SC2086
+          docker compose $BASE_STACK logs --no-color > "$RUNNER_TEMP/eval-artifacts/stack.log" 2>&1 || true
+          # shellcheck disable=SC2086
+          docker compose $SPECTRA_STACK logs --no-color llm-chat > "$RUNNER_TEMP/eval-artifacts/llm-chat.log" 2>&1 || true
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: agent-eval-${{ inputs.model }}
+          path: ${{ runner.temp }}/eval-artifacts
+          retention-days: 30
