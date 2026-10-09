@@ -140,7 +140,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied }: { initialMet
       {candidates && <>
         <p>{candidates.total} metric(s){candidates.truncated ? '; showing the first 100' : ''}. Eligibility describes metadata; history and quality are checked separately.</p>
         <Field label="Candidate metric">{p => <Select {...p} value={selected?.metricId ?? ''} onChange={e => choose(e.target.value)}>
-          <option value="">Choose a metric</option>{candidates.metrics.map(c => <option key={c.metricId} value={c.metricId}>{c.name || c.metricId} · {c.eligible ? 'configurable' : 'metadata missing'}</option>)}
+          <option value="">Choose a metric</option>{candidates.metrics.map(c => <option key={c.metricId} value={c.metricId}>{c.name || c.metricId} · {c.eligible ? 'configurable' : c.blockers[0] ?? 'not configurable'}</option>)}
         </Select>}</Field>
         {selected && <>
           <p>Unit: {selected.unit} · {selected.transformation} · {selected.enrolled ? 'History recorded' : 'History not recorded yet'}</p>

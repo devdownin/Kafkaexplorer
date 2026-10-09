@@ -22,6 +22,8 @@ describe('ForecastSetupWizard', () => {
     const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);
     await user.selectOptions(await screen.findByLabelText('Candidate metric'), 'lag');
     expect(screen.getByText('Set a known unit')).toBeTruthy();
+    // The option names the blocker itself, not a generic "metadata missing" whatever the cause.
+    expect(screen.getByRole('option', { name: 'Lag · Set a known unit' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Continue to sources' })).toBeDisabled(); expect(axios.post).not.toHaveBeenCalled();
   });
   it('validates all fields before review and uses existing collector identities', async () => {
