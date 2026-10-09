@@ -187,9 +187,44 @@ class VerdictJudgeTest {
             }
         };
 
-        JudgeVerdict verdict = new VerdictJudge(broken).score(GRID, "answer");
+        JudgeVerdict verdict = new VerdictJudge(broken, 3, millis -> { }).score(GRID, "answer");
 
         assertThat(verdict.passed()).isFalse();
+        assertThat(verdict.inconclusive()).isTrue();
         assertThat(verdict.notJudged()).contains("the judge call failed").contains("HTTP 500");
+    }
+
+    @Test
+    @DisplayName("a judge that fails twice and then answers is believed, after a growing wait")
+    void retriesATransientFailure() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        List<Long> waits = new java.util.ArrayList<>();
+        AgentModel flaky = new AgentModel() {
+            @Override
+            public Turn respond(String s, List<Exchange> t, List<McpHttpClient.ToolSpec> tools) {
+                if (calls.incrementAndGet() < 3) {
+                    throw new IllegalStateException("HTTP 200: ResourceExhausted (16/16)");
+                }
+                return new Turn(allMet(4), List.of());
+            }
+
+            @Override
+            public String describe() {
+                return "flaky";
+            }
+        };
+
+        JudgeVerdict verdict = new VerdictJudge(flaky, 3, waits::add).score(GRID, "answer");
+
+        assertThat(verdict.passed()).isTrue();
+        assertThat(calls).hasValue(3);
+        assertThat(waits).containsExactly(5_000L, 10_000L);
+    }
+
+    @Test
+    @DisplayName("an unparseable reply is the judge's fault, an empty answer is the agent's")
+    void whoseFaultItIs() {
+        assertThat(new VerdictJudge(judge("no json here")).score(GRID, "answer").inconclusive()).isTrue();
+        assertThat(new VerdictJudge(judge(allMet(4))).score(GRID, " ").inconclusive()).isFalse();
     }
 }

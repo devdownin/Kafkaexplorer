@@ -108,6 +108,30 @@ class ScenarioReportTest {
     }
 
     @Test
+    @DisplayName("a judge that could not grade leaves the scenario unjudged, neither passed nor failed")
+    void anUnjudgedScenarioIsItsOwnOutcome() {
+        ScenarioReport report = ScenarioReport.of(SCENARIO, List.of(new ScenarioReport.Attempt(
+                1, List.of(), JudgeVerdict.inconclusive("HTTP 200: ResourceExhausted"), null, "an answer")));
+
+        assertThat(report.outcome()).isEqualTo(ScenarioReport.Outcome.UNJUDGED);
+        assertThat(report.render()).startsWith("UNJUDGED ").contains("ResourceExhausted")
+                .contains("the agent answered: an answer");
+        assertThat(ScenarioReport.renderSuite(List.of(report)))
+                .isEqualTo("0 passed, 0 failed, 0 skipped, 1 unjudged"
+                        + " — a skipped or unjudged scenario is not a passing one");
+    }
+
+    @Test
+    @DisplayName("a broken trace is a failure even when the judge was down")
+    void aTraceFailureOutranksAnUnavailableJudge() {
+        ScenarioReport report = ScenarioReport.of(SCENARIO, List.of(new ScenarioReport.Attempt(
+                1, List.of("it never called kex_trace_key"), JudgeVerdict.inconclusive("HTTP 502"),
+                null, "an answer")));
+
+        assertThat(report.outcome()).isEqualTo(ScenarioReport.Outcome.FAILED);
+    }
+
+    @Test
     @DisplayName("a green scenario is one line, and says how many attempts it survived")
     void aPassIsOneLine() {
         assertThat(ScenarioReport.of(SCENARIO, List.of(passing(1))).render())

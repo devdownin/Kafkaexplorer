@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The agent harness no longer turns its own faults into verdicts on the agent.** A judge that
+  cannot grade (provider error, rate limit, reply that is not JSON) is retried three times with a
+  backoff and then leaves the scenario `UNJUDGED` — its own outcome in the report and the suite line,
+  never a pass and never a failure, and a broken trace still outranks it. A failing *agent* model
+  call is reported as such instead of as "the MCP endpoint did not answer". And a refusal rendered
+  as `[-32041 OUT_OF_SCOPE] …` (how `McpToolInterceptor` writes an execution failure) is now read as
+  its code: the first real run scored a scope guard that had fired as one that had not. Found by the
+  first full run, where a free judge saturated and 13 of 21 scenarios failed for want of a grade.
 - **The MCP agent harness can grade a local model served by SpectraLLM.** `CLAUDE_PROVIDER=SPECTRA`
   drives the hub's `llm-chat` llama-server (`compose/spectra-hub.agent-eval.yml`: `--jinja`, one 32k
   slot, loopback port `AGENT_EVAL_LLM_PORT`) instead of being refused, and

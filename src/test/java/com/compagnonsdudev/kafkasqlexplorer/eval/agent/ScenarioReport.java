@@ -30,7 +30,8 @@ record ScenarioReport(String id,
                       String skipReason,
                       List<Attempt> attempts) {
 
-    enum Outcome { PASSED, FAILED, SKIPPED }
+    /** UNJUDGED: nothing mechanical failed and the judge could not grade — neither a pass nor a fail. */
+    enum Outcome { PASSED, FAILED, SKIPPED, UNJUDGED }
 
     /**
      * One run of the scenario.
@@ -53,6 +54,15 @@ record ScenarioReport(String id,
 
         boolean passed() {
             return traceFailures.isEmpty() && overrun == null && judge.passed();
+        }
+
+        /**
+         * The trace held and the run finished, and only the judge's own fault stands in the way.
+         * A mechanical failure outranks it: a trace that broke a rule is a failure whatever the
+         * judge would have said.
+         */
+        boolean unjudged() {
+            return traceFailures.isEmpty() && overrun == null && judge.inconclusive();
         }
 
         List<String> failures() {
@@ -83,9 +93,15 @@ record ScenarioReport(String id,
         if (skipReason != null) {
             return Outcome.SKIPPED;
         }
-        // Every attempt, not a majority and not the last: see the class comment.
-        return !attempts.isEmpty() && attempts.stream().allMatch(Attempt::passed)
-                ? Outcome.PASSED : Outcome.FAILED;
+        if (attempts.isEmpty()) {
+            return Outcome.FAILED;
+        }
+        // Every attempt, not a majority and not the last: see the class comment. A failed attempt
+        // settles it; an unjudged one only keeps the scenario from being called a pass.
+        if (attempts.stream().anyMatch(a -> !a.passed() && !a.unjudged())) {
+            return Outcome.FAILED;
+        }
+        return attempts.stream().allMatch(Attempt::passed) ? Outcome.PASSED : Outcome.UNJUDGED;
     }
 
     int passes() {
@@ -108,6 +124,20 @@ record ScenarioReport(String id,
                 if (attempts.size() > 1) {
                     text.append("  (").append(attempts.size()).append("/").append(attempts.size())
                             .append(" attempts)");
+                }
+            }
+            case UNJUDGED -> {
+                text.append("UNJUDGED ").append(id).append(" — the run finished and its trace held, "
+                        + "but the judge could not grade the answer, so it is neither a pass nor a "
+                        + "failure of the agent");
+                for (Attempt attempt : attempts) {
+                    if (attempt.unjudged()) {
+                        text.append("\n  attempt ").append(attempt.number()).append(": ")
+                                .append(attempt.judge().failures().get(0))
+                                .append("\n    the agent answered: ")
+                                .append(attempt.answer() == null || attempt.answer().isBlank()
+                                        ? "(nothing)" : attempt.answer().strip());
+                    }
                 }
             }
             case FAILED -> {
@@ -141,7 +171,11 @@ record ScenarioReport(String id,
         long passed = reports.stream().filter(r -> r.outcome() == Outcome.PASSED).count();
         long failed = reports.stream().filter(r -> r.outcome() == Outcome.FAILED).count();
         long skipped = reports.stream().filter(r -> r.outcome() == Outcome.SKIPPED).count();
+        long unjudged = reports.stream().filter(r -> r.outcome() == Outcome.UNJUDGED).count();
+        // Appended after "skipped" so the workflow's summary pattern still matches the prefix.
         return passed + " passed, " + failed + " failed, " + skipped + " skipped"
-                + (skipped > 0 ? " — a skipped scenario is not a passing one" : "");
+                + (unjudged > 0 ? ", " + unjudged + " unjudged" : "")
+                + (unjudged > 0 ? " — a skipped or unjudged scenario is not a passing one"
+                : skipped > 0 ? " — a skipped scenario is not a passing one" : "");
     }
 }
