@@ -287,7 +287,11 @@ Three workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
   `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY`, as `judge_provider` says, and only that one is
   exported to the run, since the harness reads `OPENROUTER_API_KEY` first and would otherwise hand
   it to an Anthropic judge. On OpenRouter `judge_model` has no default and is required: its ids are
-  that catalogue's, and a guessed one fails on the first verdict, an hour in. A local model grading itself is not a verdict, and an hour spent producing one
+  that catalogue's, and a guessed one fails on the first verdict, an hour in. Both inputs fall back
+  to the repository variables `JUDGE_PROVIDER` and `JUDGE_MODEL`, so a judge chosen once is not
+  retyped at every dispatch — which is why the provider is a string input and not a choice: a
+  choice is never empty, and the variable behind it could never be reached. The key stays a
+  *secret*; the first step says so when it finds none. A local model grading itself is not a verdict, and an hour spent producing one
   is worse than a red first step. It waits for the demo seed to *exit 0* before anything runs,
   since a fixture read from a half-seeded cluster grades the agent on topics that do not exist
   yet, and runs `mcp-probe.sh` first, so "the surface was never there" cannot be scored as the

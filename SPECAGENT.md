@@ -448,7 +448,8 @@ Ce `workflow_dispatch` existe : `.github/workflows/agent-eval.yml` construit la 
 référence lancée, attend la fin du semis de démo et le `mcp-probe`, sert un modèle local par le
 `llm-chat` de SpectraLLM (3B ou 7B) et fait juger par un modèle hébergé, chez Anthropic ou OpenRouter
 (`judge_provider`) — il refuse de démarrer sans le secret du fournisseur choisi
-(`ANTHROPIC_API_KEY` ou `OPENROUTER_API_KEY`), et sur OpenRouter sans `judge_model` nommé. Le rapport, les logs de la stack et ceux de `llm-chat` sont
+(`ANTHROPIC_API_KEY` ou `OPENROUTER_API_KEY`), et sur OpenRouter sans `judge_model` nommé. Les
+deux entrées retombent sur les variables de dépôt `JUDGE_PROVIDER` et `JUDGE_MODEL`. Le rapport, les logs de la stack et ceux de `llm-chat` sont
 publiés en artefact. Les budgets ayant été calibrés sur une API hébergée, `AGENT_EVAL_BUDGET_SCALE`
 (entrée `budget_scale`, 5 par défaut) les multiplie ; il ne descend jamais sous 1, chaque
 dépassement le cite et le résumé de la suite le répète, pour qu'un run mis à l'échelle ne soit

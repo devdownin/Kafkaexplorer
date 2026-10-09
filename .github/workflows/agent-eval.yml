@@ -34,13 +34,16 @@ on:
         description: Optional SHA-256 of the GGUF; when set, a mismatching download is refused
         type: string
         default: ''
+      # Both fall back to the repository variables of the same name (Settings → Secrets and
+      # variables → Actions → Variables), so a judge chosen once need not be retyped at every
+      # dispatch. A string rather than a choice for the provider: a choice is never empty, so the
+      # variable could never be reached.
       judge_provider:
-        description: Where the judge runs (its key is the secret of the same name)
-        type: choice
-        options: [ANTHROPIC, OPENROUTER]
-        default: ANTHROPIC
+        description: ANTHROPIC or OPENROUTER (empty = variable JUDGE_PROVIDER, else ANTHROPIC); its key is the secret <provider>_API_KEY
+        type: string
+        default: ''
       judge_model:
-        description: Model that grades the answers (empty = claude-sonnet-5-5 on ANTHROPIC; required on OPENROUTER, e.g. anthropic/<model>)
+        description: Model that grades the answers (empty = variable JUDGE_MODEL, else claude-sonnet-5-5 on ANTHROPIC; required on OPENROUTER)
         type: string
         default: ''
       scenario:
@@ -77,24 +80,37 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Refuse to run without a judge
+      - name: Resolve the judge
+        id: judge
         env:
-          JUDGE_PROVIDER: ${{ inputs.judge_provider }}
-          JUDGE_MODEL: ${{ inputs.judge_model }}
-          JUDGE_KEY: ${{ inputs.judge_provider == 'OPENROUTER' && secrets.OPENROUTER_API_KEY || secrets.ANTHROPIC_API_KEY }}
+          JUDGE_PROVIDER: ${{ inputs.judge_provider || vars.JUDGE_PROVIDER || 'ANTHROPIC' }}
+          JUDGE_MODEL: ${{ inputs.judge_model || vars.JUDGE_MODEL }}
         run: |
           set -euo pipefail
-          [ -n "$JUDGE_KEY" ] || {
-            echo "::error::the repository secret ${JUDGE_PROVIDER}_API_KEY is not set. The judge needs it, and a local model grading itself is not a verdict."
-            exit 1
-          }
+          provider=$(printf '%s' "$JUDGE_PROVIDER" | tr '[:lower:]' '[:upper:]')
+          model="$JUDGE_MODEL"
           # No OpenRouter default: its model ids are its own catalogue's, and a guessed one fails
           # on the first verdict — an hour into the run — rather than here.
-          case "$JUDGE_PROVIDER:$JUDGE_MODEL" in
-            OPENROUTER:) echo "::error::judge_model is required with OPENROUTER — name it as OpenRouter lists it, e.g. anthropic/<model>"; exit 1 ;;
-            ANTHROPIC:) JUDGE_MODEL=claude-sonnet-5-5 ;;
+          case "$provider:$model" in
+            ANTHROPIC:) model=claude-sonnet-5-5 ;;
+            OPENROUTER:) echo "::error::judge_model (or the variable JUDGE_MODEL) is required with OPENROUTER — name it as OpenRouter lists it, e.g. anthropic/<model>"; exit 1 ;;
+            ANTHROPIC:*|OPENROUTER:*) ;;
+            *) echo "::error::judge provider '$provider' is neither ANTHROPIC nor OPENROUTER"; exit 1 ;;
           esac
-          echo "AGENT_EVAL_JUDGE_MODEL=$JUDGE_MODEL" >> "$GITHUB_ENV"
+          echo "Judge: $model on $provider"
+          echo "provider=$provider" >> "$GITHUB_OUTPUT"
+          echo "AGENT_EVAL_JUDGE_PROVIDER=$provider" >> "$GITHUB_ENV"
+          echo "AGENT_EVAL_JUDGE_MODEL=$model" >> "$GITHUB_ENV"
+
+      - name: Refuse to run without the judge's key
+        env:
+          PROVIDER: ${{ steps.judge.outputs.provider }}
+          JUDGE_KEY: ${{ steps.judge.outputs.provider == 'OPENROUTER' && secrets.OPENROUTER_API_KEY || secrets.ANTHROPIC_API_KEY }}
+        run: |
+          [ -n "$JUDGE_KEY" ] || {
+            echo "::error::the repository secret ${PROVIDER}_API_KEY is not set — a secret, not a variable. The judge needs it, and a local model grading itself is not a verdict."
+            exit 1
+          }
 
       - name: Resolve the model
         env:
@@ -183,9 +199,8 @@ jobs:
       - name: Run the scenarios
         env:
           CLAUDE_PROVIDER: SPECTRA
-          AGENT_EVAL_JUDGE_PROVIDER: ${{ inputs.judge_provider }}
-          ANTHROPIC_API_KEY: ${{ inputs.judge_provider == 'ANTHROPIC' && secrets.ANTHROPIC_API_KEY || '' }}
-          OPENROUTER_API_KEY: ${{ inputs.judge_provider == 'OPENROUTER' && secrets.OPENROUTER_API_KEY || '' }}
+          ANTHROPIC_API_KEY: ${{ steps.judge.outputs.provider == 'ANTHROPIC' && secrets.ANTHROPIC_API_KEY || '' }}
+          OPENROUTER_API_KEY: ${{ steps.judge.outputs.provider == 'OPENROUTER' && secrets.OPENROUTER_API_KEY || '' }}
           AGENT_EVAL_REPEAT: ${{ inputs.repeat }}
           AGENT_EVAL_BUDGET_SCALE: ${{ inputs.budget_scale }}
           SCENARIO: ${{ inputs.scenario }}
