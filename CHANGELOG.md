@@ -26,7 +26,8 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `AGENT_EVAL_JUDGE_PROVIDER` lets a hosted model judge it.
 - **`agent-eval.yml` runs that harness in GitHub Actions**, by hand (`workflow_dispatch`): the
   stack built from the ref, the demo seed and `mcp-probe` checked first, `llm-chat` serving Qwen2.5
-  3B or 7B, an Anthropic judge (`ANTHROPIC_API_KEY` secret, required). `AGENT_EVAL_BUDGET_SCALE`
+  3B or 7B, a hosted judge on Anthropic or OpenRouter (`judge_provider`; the matching
+  `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` secret is required). `AGENT_EVAL_BUDGET_SCALE`
   scales every scenario budget for slower hardware and is named in each overrun and the summary.
 
 ## [2.2.5] — 2026-10-08

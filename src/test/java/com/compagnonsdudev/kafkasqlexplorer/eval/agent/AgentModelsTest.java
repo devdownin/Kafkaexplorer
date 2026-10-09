@@ -150,6 +150,22 @@ class AgentModelsTest {
     }
 
     @Test
+    @DisplayName("an OpenRouter judge grades a SPECTRA agent through its own endpoint and key")
+    void theJudgeCanBeOnOpenRouter() {
+        // What agent-eval.yml runs with judge_provider=OPENROUTER: the agent's model is llm-chat's,
+        // the judge's is OpenRouter's, and neither borrows the other's address.
+        AgentModels models = with("CLAUDE_PROVIDER", "SPECTRA", "LLM_CHAT_MODEL_NAME", "qwen",
+                "AGENT_EVAL_JUDGE_PROVIDER", "OPENROUTER", "OPENROUTER_API_KEY", "sk-or",
+                "AGENT_EVAL_JUDGE_MODEL", "anthropic/some-model");
+
+        assertThat(models.unconfigured()).isEmpty();
+        assertThat(models.agent().describe()).isEqualTo("qwen via localhost");
+        assertThat(models.judge()).isInstanceOf(OpenAiToolCallingModel.class);
+        assertThat(models.judge().describe()).isEqualTo("anthropic/some-model via openrouter.ai");
+        assertThat(models.judgeCaveat()).isEmpty();
+    }
+
+    @Test
     @DisplayName("a hosted judge with no key is reported as the judge's problem")
     void aJudgeWithoutAKeyIsNamedAsSuch() {
         assertThat(with("CLAUDE_PROVIDER", "SPECTRA", "LLM_CHAT_MODEL_NAME", "qwen",
