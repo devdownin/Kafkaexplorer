@@ -745,7 +745,7 @@ jobs:
             [docker-compose.yml]="compose/schema-registry.yml compose/ollama.yml compose/mcp.yml compose/image.yml compose/limits.yml compose/ci.yml compose/timesfm.yml compose/forecasts.yml"
             [compose/dev.yml]=""
             [compose/build.yml]=""
-            [compose/spectra-hub.yml]="compose/spectra-hub.ingest.yml compose/spectra-hub.gpu.yml compose/spectra-hub.limits.yml"
+            [compose/spectra-hub.yml]="compose/spectra-hub.ingest.yml compose/spectra-hub.gpu.yml compose/spectra-hub.limits.yml compose/spectra-hub.agent-eval.yml"
           )
 
           docker compose -f docker-compose.yml -f compose/forecasts.yml config --format json | python3 docs/forecast-topology-check.py
