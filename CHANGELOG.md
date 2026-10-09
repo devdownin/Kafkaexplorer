@@ -20,7 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+- **The MCP agent harness can grade a local model served by SpectraLLM.** `CLAUDE_PROVIDER=SPECTRA`
+  drives the hub's `llm-chat` llama-server (`compose/spectra-hub.agent-eval.yml`: `--jinja`, one 32k
+  slot, loopback port `AGENT_EVAL_LLM_PORT`) instead of being refused, and
+  `AGENT_EVAL_JUDGE_PROVIDER` lets a hosted model judge it.
 
 ## [2.2.4] — 2026-10-08
 

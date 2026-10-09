@@ -276,6 +276,7 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   | `compose/dev.yml` | standalone | Hot reload: broker + `spring-boot:run` + Vite. |
   | `compose/build.yml` | standalone | One-shot toolchain (`run --rm`), not a stack. |
   | `compose/spectra-hub.yml` + `.gpu` / `.ingest` / `.limits` | standalone + overlays | The SpectraLLM pair, from published images. |
+  | `compose/spectra-hub.agent-eval.yml` | overlay | The hub's `llm-chat` as the MCP agent harness's model: `--jinja`, one 32k slot, loopback port. |
 
   **`compose/mcp.yml` is the only overlay whose main switch is NOT a variable.** Every guard it
   sets is interpolated — the scope prefixes, the deny-list, the rate limit, the DLP mode, the
