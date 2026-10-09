@@ -1,0 +1,35 @@
+# Overlay: SpectraLLM's chat model as the agent under test of the MCP agent harness.
+#
+#   docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.agent-eval.yml up -d spectra-api llm-chat
+#   docker compose -f docker-compose.yml -f compose/mcp.yml up -d     # the server under test, built from source
+#   CLAUDE_PROVIDER=SPECTRA ./mvnw test -P mcp-agent-eval
+#
+# ONLY TWO SERVICES OF THE HUB ARE STARTED, and that is the point: the hub's own Kafka and
+# Explorer publish the same ports as the base stack, and the server the harness grades is the
+# one built from this checkout — not the published image the hub pins. spectra-api is there to
+# install the chat GGUF on a first boot (llm-chat waits for the file); once the model is in the
+# volume, `up -d llm-chat` alone is enough.
+#
+# What this changes on llm-chat, and why each one:
+#   * `--jinja` — llama-server renders the model's own chat template, which is what turns a
+#     `tools` array into something the model sees and a tool call back into `tool_calls`.
+#     Without it the request succeeds and the model answers in prose, which the harness would
+#     score as an agent that never looked — a verdict about the server, blamed on the model.
+#   * One slot over a larger window. The `@McpTool` descriptions alone are ~26k characters
+#     (~6.5k tokens) before a parameter schema, the system prompt or the first tool result; the
+#     hub's 16384/2 = 8192 per slot leaves no room for a transcript, and llama-server truncates
+#     silently. The harness sends one request at a time, so a second slot buys nothing here.
+#   * A published port, on the LOOPBACK, written flat rather than through BIND_ADDR. The hub
+#     keeps llama-server unpublished because it has no authentication; the harness needs to reach
+#     it from the host, and a BIND_ADDR=0.0.0.0 set for the UIs must not offer an open inference
+#     server to the LAN along with them. The harness reads the same AGENT_EVAL_LLM_PORT.
+#
+# The judge should not be this model: see AGENT_EVAL_JUDGE_PROVIDER in SPECAGENT.md §5.3.
+services:
+  llm-chat:
+    ports:
+      - "127.0.0.1:${AGENT_EVAL_LLM_PORT:-8090}:8081"
+    environment:
+      - LLM_CONTEXT=${AGENT_EVAL_LLM_CONTEXT:-32768}
+      - LLM_PARALLEL=1
+      - LLM_CHAT_EXTRA_ARGS=--jinja ${LLM_CHAT_EXTRA_ARGS:-}

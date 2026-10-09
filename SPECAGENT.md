@@ -399,6 +399,22 @@ Réutilise la configuration existante — `CLAUDE_PROVIDER`, `ANTHROPIC_API_KEY`
 séparément** (`AGENT_EVAL_MODEL`, `AGENT_EVAL_JUDGE_MODEL`) : juger avec le modèle qu'on évalue,
 c'est lui demander s'il est content de lui.
 
+Le juge peut aussi changer de **fournisseur** (`AGENT_EVAL_JUDGE_PROVIDER`, par défaut
+`CLAUDE_PROVIDER`), ce qui permet de faire juger par un modèle hébergé un agent qui tourne en local.
+`CLAUDE_PROVIDER=SPECTRA` désigne le serveur llama.cpp `llm-chat` de SpectraLLM, pas son API
+`/api/query`, qui ne connaît pas les outils : `compose/spectra-hub.agent-eval.yml` le démarre avec
+`--jinja` et le publie sur la boucle locale (`AGENT_EVAL_LLM_PORT`, 8090), le modèle par défaut est
+`LLM_CHAT_MODEL_NAME`, et aucune clé ne lui est envoyée. llama-server ne sert qu'un modèle quel que
+soit le nom demandé : sur ce fournisseur, juge et agent sont donc le même modèle tant que le juge
+n'est pas ailleurs, et le rapport le dit.
+
+```bash
+docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.agent-eval.yml up -d spectra-api llm-chat
+CLAUDE_PROVIDER=SPECTRA LLM_CHAT_MODEL_NAME=qwen2.5-7b-instruct \
+AGENT_EVAL_JUDGE_PROVIDER=ANTHROPIC ANTHROPIC_API_KEY=sk-ant-... AGENT_EVAL_JUDGE_MODEL=claude-sonnet-5 \
+  ./mvnw test -P mcp-agent-eval
+```
+
 ---
 
 ## 6. Exécution

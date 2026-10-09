@@ -98,6 +98,21 @@ guard scenario poses a question the transcript never asked. A provider error is 
 folded into an empty turn, for the same reason in the other direction: scored as "the model said
 nothing", it becomes the agent failing a scenario, which blames the wrong party.
 
+**A local model can be the agent, and the judge can live elsewhere.** `CLAUDE_PROVIDER=SPECTRA`
+used to be refused because SpectraLLM's `POST /api/query` is single-turn and knows no tool; the
+harness now drives the `llm-chat` llama-server behind it instead, through the OpenAI client that
+already spoke to Ollama. Three things in `AgentModels` follow from what that server is, each
+asserted in `AgentModelsTest`. `CLAUDE_BASE_URL` is not read for it — under that provider it names
+Spectra's API, so a chat completion posted there answers 404 about a server that is fine — and the
+port is `AGENT_EVAL_LLM_PORT`, the variable `compose/spectra-hub.agent-eval.yml` publishes. No key is
+sent, since llama-server has no authentication and an OpenRouter key has no business reaching it.
+And two model *names* on one llama-server are one model, so `judgeIsTheAgent` is true there whatever
+the names say: that is why `AGENT_EVAL_JUDGE_PROVIDER` exists, so a 7B agent on a laptop is graded
+by a hosted judge rather than by itself. The overlay passes `--jinja`, without which llama-server
+ignores `tools` and the model answers in prose — scored as an agent that never looked, a verdict
+about the server blamed on the model — and folds the hub's two 8k slots into one 32k window, because
+the tool descriptions alone take most of 8k and llama-server truncates without a word.
+
 **The judge's own honesty is where the harness could most easily lie to itself.** It sees the answer
 and the grid and nothing else — shown the trace it would grade the approach, which the trace already
 asserts exactly, and two measurements of one thing make one that can disagree with itself; shown the

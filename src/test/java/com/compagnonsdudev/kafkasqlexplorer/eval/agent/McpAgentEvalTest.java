@@ -39,6 +39,12 @@ import static org.junit.jupiter.api.Assumptions.abort;
  *   ./mvnw test -P mcp-agent-eval
  *
  * ./mvnw test -P mcp-agent-eval -Dagent.eval.scenario=kpi-no-invented-threshold
+ *
+ * # A local model served by SpectraLLM, graded by a hosted judge
+ * docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.agent-eval.yml up -d spectra-api llm-chat
+ * CLAUDE_PROVIDER=SPECTRA LLM_CHAT_MODEL_NAME=qwen2.5-7b-instruct \
+ * AGENT_EVAL_JUDGE_PROVIDER=ANTHROPIC ANTHROPIC_API_KEY=sk-ant-… AGENT_EVAL_JUDGE_MODEL=claude-sonnet-5 \
+ *   ./mvnw test -P mcp-agent-eval
  * }</pre>
  *
  * <h2>It skips rather than fails, and says why</h2>
@@ -129,9 +135,8 @@ class McpAgentEvalTest {
 
         // The summary is a case of its own so it runs after the others and is visible whatever they
         // did — a total printed from an @AfterAll is swallowed by most reporters.
-        String judgeCaveat = models.judgeIsTheAgent() && unconfigured.isEmpty()
-                ? "\n  NOTE: the judge is the model under evaluation — set AGENT_EVAL_JUDGE_MODEL. "
-                + "Judging with the model being graded is asking it whether it is pleased with itself."
+        String judgeCaveat = unconfigured.isEmpty()
+                ? models.judgeCaveat().map(caveat -> "\n  NOTE: " + caveat).orElse("")
                 : "";
         Stream<DynamicTest> summary = Stream.of(DynamicTest.dynamicTest("summary",
                 () -> System.out.println(ScenarioReport.renderSuite(reports) + judgeCaveat)));
