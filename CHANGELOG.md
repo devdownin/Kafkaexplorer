@@ -24,6 +24,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   drives the hub's `llm-chat` llama-server (`compose/spectra-hub.agent-eval.yml`: `--jinja`, one 32k
   slot, loopback port `AGENT_EVAL_LLM_PORT`) instead of being refused, and
   `AGENT_EVAL_JUDGE_PROVIDER` lets a hosted model judge it.
+- **`agent-eval.yml` runs that harness in GitHub Actions**, by hand (`workflow_dispatch`): the
+  stack built from the ref, the demo seed and `mcp-probe` checked first, `llm-chat` serving Qwen2.5
+  3B or 7B, an Anthropic judge (`ANTHROPIC_API_KEY` secret, required). `AGENT_EVAL_BUDGET_SCALE`
+  scales every scenario budget for slower hardware and is named in each overrun and the summary.
 
 ## [2.2.5] — 2026-10-08
 

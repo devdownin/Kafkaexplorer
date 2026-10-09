@@ -40,15 +40,27 @@ final class AgentRunner {
     private final AgentModel model;
     private final McpHttpClient mcp;
     private final OperatorConsole console;
+    private final double budgetScale;
 
     AgentRunner(AgentModel model, McpHttpClient mcp) {
         this(model, mcp, null);
     }
 
     AgentRunner(AgentModel model, McpHttpClient mcp, OperatorConsole console) {
+        this(model, mcp, console, 1.0);
+    }
+
+    /**
+     * @param budgetScale multiplies every scenario's {@code budgetMs}. The budgets are calibrated on
+     *                    a hosted API; a model on CPU spends that time reading the prompt, and an
+     *                    unscaled overrun would report the runner's hardware as the agent's failure.
+     *                    Never below 1: a scale that tightens a budget measures nothing it states.
+     */
+    AgentRunner(AgentModel model, McpHttpClient mcp, OperatorConsole console, double budgetScale) {
         this.model = model;
         this.mcp = mcp;
         this.console = console;
+        this.budgetScale = Math.max(1.0, budgetScale);
     }
 
     /**
@@ -96,7 +108,8 @@ final class AgentRunner {
         List<AgentModel.Exchange> transcript = new ArrayList<>();
         transcript.add(new AgentModel.Exchange.User(scenario.prompt()));
 
-        long deadline = System.currentTimeMillis() + scenario.budgetMs();
+        long budgetMs = Math.round(scenario.budgetMs() * budgetScale);
+        long deadline = System.currentTimeMillis() + budgetMs;
         int spent = 0;
         String answer = "";
         String overrun = null;
@@ -118,7 +131,9 @@ final class AgentRunner {
                     break;
                 }
                 if (System.currentTimeMillis() > deadline) {
-                    overrun = "it ran past the " + scenario.budgetMs() + " ms budget";
+                    overrun = "it ran past the " + budgetMs + " ms budget"
+                            + (budgetScale == 1.0 ? "" : " (" + scenario.budgetMs()
+                                    + " ms scaled by AGENT_EVAL_BUDGET_SCALE=" + budgetScale + ")");
                     break;
                 }
                 McpHttpClient.ToolAnswer result =
