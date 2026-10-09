@@ -20,7 +20,24 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+- **The MCP agent harness can grade a local model served by SpectraLLM.** `CLAUDE_PROVIDER=SPECTRA`
+  drives the hub's `llm-chat` llama-server (`compose/spectra-hub.agent-eval.yml`: `--jinja`, one 32k
+  slot, loopback port `AGENT_EVAL_LLM_PORT`) instead of being refused, and
+  `AGENT_EVAL_JUDGE_PROVIDER` lets a hosted model judge it.
+- **The agent harness waits for the Explorer after recreating it, and a run in which nothing ran
+  now fails.** The first real run skipped 20 of 21 scenarios because `docker compose up -d` returns
+  before the application answers; a recreation is now followed by a readiness poll. A tool-switch
+  restoration that fails while the endpoint is down no longer replaces the skip report with an
+  error, and `agent-eval.yml` fails on `0 passed, 0 failed`.
+- **`agent-eval.yml` runs that harness in GitHub Actions**, by hand (`workflow_dispatch`): the
+  stack built from the ref, the demo seed and `mcp-probe` checked first, `llm-chat` serving Qwen2.5
+  3B or 7B, a hosted judge on Anthropic or OpenRouter (`judge_provider`; the matching
+  `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` secret is required). `AGENT_EVAL_BUDGET_SCALE`
+  scales every scenario budget for slower hardware and is named in each overrun and the summary.
+
+## [2.2.5] — 2026-10-08
+
+Released from `main` with no entry recorded here; see [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.2.5).
 
 ## [2.2.4] — 2026-10-08
 
@@ -2488,7 +2505,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.4...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.5...HEAD
+[2.2.5]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.4...v2.2.5
 [2.2.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.3...v2.2.4
 [2.2.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.2...v2.2.3
 [2.2.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.1...v2.2.2

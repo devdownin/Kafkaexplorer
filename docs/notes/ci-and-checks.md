@@ -98,6 +98,21 @@ guard scenario poses a question the transcript never asked. A provider error is 
 folded into an empty turn, for the same reason in the other direction: scored as "the model said
 nothing", it becomes the agent failing a scenario, which blames the wrong party.
 
+**A local model can be the agent, and the judge can live elsewhere.** `CLAUDE_PROVIDER=SPECTRA`
+used to be refused because SpectraLLM's `POST /api/query` is single-turn and knows no tool; the
+harness now drives the `llm-chat` llama-server behind it instead, through the OpenAI client that
+already spoke to Ollama. Three things in `AgentModels` follow from what that server is, each
+asserted in `AgentModelsTest`. `CLAUDE_BASE_URL` is not read for it — under that provider it names
+Spectra's API, so a chat completion posted there answers 404 about a server that is fine — and the
+port is `AGENT_EVAL_LLM_PORT`, the variable `compose/spectra-hub.agent-eval.yml` publishes. No key is
+sent, since llama-server has no authentication and an OpenRouter key has no business reaching it.
+And two model *names* on one llama-server are one model, so `judgeIsTheAgent` is true there whatever
+the names say: that is why `AGENT_EVAL_JUDGE_PROVIDER` exists, so a 7B agent on a laptop is graded
+by a hosted judge rather than by itself. The overlay passes `--jinja`, without which llama-server
+ignores `tools` and the model answers in prose — scored as an agent that never looked, a verdict
+about the server blamed on the model — and folds the hub's two 8k slots into one 32k window, because
+the tool descriptions alone take most of 8k and llama-server truncates without a word.
+
 **The judge's own honesty is where the harness could most easily lie to itself.** It sees the answer
 and the grid and nothing else — shown the trace it would grade the approach, which the trace already
 asserts exactly, and two measurements of one thing make one that can disagree with itself; shown the
@@ -262,6 +277,46 @@ Three workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
   lives in `release.yml`, and a second copy is the drift this repository keeps removing. A
   registry that cannot be reached is a `::warning::` inside the script rather than a red run, so
   a failure here means the pin really is behind, and its message names the three files.
+
+- **`agent-eval.yml`** — the MCP agent harness against a real model, `workflow_dispatch` only:
+  never on a push or a pull request, for the reason `SPECAGENT.md` §6 gives (a model's weather has
+  no vote on a merge). It is the run a sandbox cannot do — Docker, `huggingface.co` and
+  `packages.confluent.io` — so the agent is SpectraLLM's `llm-chat` (3B or 7B, fetched by the
+  hub's own `spectra-models` one-shot) and the server graded is the image built from the
+  dispatched ref, never a published one. **It refuses to start without the judge's key** —
+  `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY`, as `judge_provider` says, and only that one is
+  exported to the run, since the harness reads `OPENROUTER_API_KEY` first and would otherwise hand
+  it to an Anthropic judge. On OpenRouter `judge_model` has no default and is required: its ids are
+  that catalogue's, and a guessed one fails on the first verdict, an hour in. Both inputs fall back
+  to the repository variables `JUDGE_PROVIDER` and `JUDGE_MODEL`, so a judge chosen once is not
+  retyped at every dispatch — which is why the provider is a string input and not a choice: a
+  choice is never empty, and the variable behind it could never be reached. The key stays a
+  *secret*; the first step says so when it finds none. A local model grading itself is not a verdict, and an hour spent producing one
+  is worse than a red first step. It waits for the demo seed to *exit 0* before anything runs,
+  since a fixture read from a half-seeded cluster grades the agent on topics that do not exist
+  yet, and runs `mcp-probe.sh` first, so "the surface was never there" cannot be scored as the
+  model reasoning badly. **`budget_scale` defaults to 5**: the scenario budgets were measured
+  against a hosted API, a 3B on four CPU cores spends most of a 60 s budget reading the tool
+  schemas, and an overrun there would report the runner's hardware as the agent's failure.
+  `AgentRunner` applies the scale, names it in every overrun it reports, and the suite summary
+  repeats it, so a scaled run is never compared with an unscaled one unawares. The GGUF's digest
+  is an optional input rather than a pin, because nothing here has observed it twice yet; the
+  0.5B model `spectra-hub-stack` pins is too small to call a tool and would grade the scenarios
+  rather than the agent. **The first real run ran nothing, and showed three things the unit tests
+  could not.** It reached the scenarios and skipped twenty of them in eight seconds, plus one error:
+  `StackReconfigurer` recreated the Explorer for the first scenario that moves a setting and
+  returned as soon as the container had *started*, a minute before it answered — and in that
+  minute the published port accepts a connection and closes it without a byte, which Java reports
+  as `HTTP/1.1 header parser received no bytes`. Every scenario then met a booting server. So a
+  recreation is now followed by a poll of `/actuator/health/readiness` (readiness rather than
+  liveness: the scenarios read the broker) for up to four minutes, and a service that never
+  returns fails with one sentence of its own. The configuration is recorded *before* that wait,
+  since the container runs it whether or not it came up in time, and twenty scenarios asking for
+  the same one must not each recreate it and each wait out four minutes. Second, restoring a
+  mid-session tool switch sat in a `finally`, so when the endpoint was down the restoration's own
+  failure replaced the "skipped" report with an error; it is now said once, inside the skip.
+  Third, `mvn test` exits 0 over a suite that is all skips, so the workflow reads the summary line
+  and fails when no scenario ran.
 
 **The JAR is signed, keylessly** (`actions/attest-build-provenance` in `release.yml`'s `build`
 job, hence the `id-token: write` + `attestations: write` on it). The image had a full SLSA

@@ -399,6 +399,22 @@ Réutilise la configuration existante — `CLAUDE_PROVIDER`, `ANTHROPIC_API_KEY`
 séparément** (`AGENT_EVAL_MODEL`, `AGENT_EVAL_JUDGE_MODEL`) : juger avec le modèle qu'on évalue,
 c'est lui demander s'il est content de lui.
 
+Le juge peut aussi changer de **fournisseur** (`AGENT_EVAL_JUDGE_PROVIDER`, par défaut
+`CLAUDE_PROVIDER`), ce qui permet de faire juger par un modèle hébergé un agent qui tourne en local.
+`CLAUDE_PROVIDER=SPECTRA` désigne le serveur llama.cpp `llm-chat` de SpectraLLM, pas son API
+`/api/query`, qui ne connaît pas les outils : `compose/spectra-hub.agent-eval.yml` le démarre avec
+`--jinja` et le publie sur la boucle locale (`AGENT_EVAL_LLM_PORT`, 8090), le modèle par défaut est
+`LLM_CHAT_MODEL_NAME`, et aucune clé ne lui est envoyée. llama-server ne sert qu'un modèle quel que
+soit le nom demandé : sur ce fournisseur, juge et agent sont donc le même modèle tant que le juge
+n'est pas ailleurs, et le rapport le dit.
+
+```bash
+docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.agent-eval.yml up -d spectra-api llm-chat
+CLAUDE_PROVIDER=SPECTRA LLM_CHAT_MODEL_NAME=qwen2.5-7b-instruct \
+AGENT_EVAL_JUDGE_PROVIDER=ANTHROPIC ANTHROPIC_API_KEY=sk-ant-... AGENT_EVAL_JUDGE_MODEL=claude-sonnet-5 \
+  ./mvnw test -P mcp-agent-eval
+```
+
 ---
 
 ## 6. Exécution
@@ -427,6 +443,17 @@ Il ne tourne pas dans `ci.yml`. Un scénario qui appelle un modèle réel n'est 
 sens où une CI l'exige, et le faire garder une PR reviendrait à laisser la météo d'un fournisseur
 tiers décider d'un merge. Sa place est une exécution délibérée avant une release, et un
 `workflow_dispatch` séparé si l'on veut le planifier.
+
+Ce `workflow_dispatch` existe : `.github/workflows/agent-eval.yml` construit la stack depuis la
+référence lancée, attend la fin du semis de démo et le `mcp-probe`, sert un modèle local par le
+`llm-chat` de SpectraLLM (3B ou 7B) et fait juger par un modèle hébergé, chez Anthropic ou OpenRouter
+(`judge_provider`) — il refuse de démarrer sans le secret du fournisseur choisi
+(`ANTHROPIC_API_KEY` ou `OPENROUTER_API_KEY`), et sur OpenRouter sans `judge_model` nommé. Les
+deux entrées retombent sur les variables de dépôt `JUDGE_PROVIDER` et `JUDGE_MODEL`. Le rapport, les logs de la stack et ceux de `llm-chat` sont
+publiés en artefact. Les budgets ayant été calibrés sur une API hébergée, `AGENT_EVAL_BUDGET_SCALE`
+(entrée `budget_scale`, 5 par défaut) les multiplie ; il ne descend jamais sous 1, chaque
+dépassement le cite et le résumé de la suite le répète, pour qu'un run mis à l'échelle ne soit
+jamais lu comme un run qui ne l'est pas.
 
 ---
 

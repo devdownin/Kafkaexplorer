@@ -39,6 +39,12 @@ import static org.junit.jupiter.api.Assumptions.abort;
  *   ./mvnw test -P mcp-agent-eval
  *
  * ./mvnw test -P mcp-agent-eval -Dagent.eval.scenario=kpi-no-invented-threshold
+ *
+ * # A local model served by SpectraLLM, graded by a hosted judge
+ * docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.agent-eval.yml up -d spectra-api llm-chat
+ * CLAUDE_PROVIDER=SPECTRA LLM_CHAT_MODEL_NAME=qwen2.5-7b-instruct \
+ * AGENT_EVAL_JUDGE_PROVIDER=ANTHROPIC ANTHROPIC_API_KEY=sk-ant-… AGENT_EVAL_JUDGE_MODEL=claude-sonnet-5 \
+ *   ./mvnw test -P mcp-agent-eval
  * }</pre>
  *
  * <h2>It skips rather than fails, and says why</h2>
@@ -98,7 +104,9 @@ class McpAgentEvalTest {
 
         // One reconfigurer for the whole factory: scenarios sharing a serverConfig share a boot, and
         // the last one hands the stack back on the overlay's defaults.
-        stack = new StackReconfigurer(REPOSITORY_ROOT, unconfigured.isEmpty());
+        // Readiness, not liveness: the scenarios read the broker, and that is what readiness adds.
+        stack = new StackReconfigurer(REPOSITORY_ROOT, unconfigured.isEmpty(),
+                StackReconfigurer.Readiness.http(endpoint.resolve("/actuator/health/readiness")));
         List<ScenarioReport> reports = new ArrayList<>();
         // One client per role for the whole factory: rebuilding them per attempt would open a
         // connection pool and a selector thread for every scenario.
@@ -129,12 +137,14 @@ class McpAgentEvalTest {
 
         // The summary is a case of its own so it runs after the others and is visible whatever they
         // did — a total printed from an @AfterAll is swallowed by most reporters.
-        String judgeCaveat = models.judgeIsTheAgent() && unconfigured.isEmpty()
-                ? "\n  NOTE: the judge is the model under evaluation — set AGENT_EVAL_JUDGE_MODEL. "
-                + "Judging with the model being graded is asking it whether it is pleased with itself."
+        String judgeCaveat = unconfigured.isEmpty()
+                ? models.judgeCaveat().map(caveat -> "\n  NOTE: " + caveat).orElse("")
                 : "";
+        String budgetNote = budgetScale() == 1.0 ? ""
+                : "\n  NOTE: every budgetMs was scaled by AGENT_EVAL_BUDGET_SCALE=" + budgetScale()
+                + " — time-bound verdicts are not comparable with an unscaled run.";
         Stream<DynamicTest> summary = Stream.of(DynamicTest.dynamicTest("summary",
-                () -> System.out.println(ScenarioReport.renderSuite(reports) + judgeCaveat)));
+                () -> System.out.println(ScenarioReport.renderSuite(reports) + judgeCaveat + budgetNote)));
         return Stream.concat(cases, summary);
     }
 
@@ -150,37 +160,61 @@ class McpAgentEvalTest {
 
         List<ScenarioReport.Attempt> attempts = new ArrayList<>();
         for (int attempt = 1; attempt <= repeats; attempt++) {
+            RuntimeException unanswered = null;
             try (McpHttpClient mcp =
                          new McpHttpClient(endpoint, Duration.ofSeconds(20), authToken())) {
                 mcp.initialize();
                 AgentRunner.Session session =
-                        new AgentRunner(agent, mcp, operator).run(scenario);
+                        new AgentRunner(agent, mcp, operator, budgetScale()).run(scenario);
                 attempts.add(new ScenarioReport.Attempt(attempt,
                         session.trace().failures(scenario),
                         judge.score(scenario.verdict(), session.answer()),
                         session.overrun(),
                         session.answer()));
             } catch (RuntimeException e) {
+                unanswered = e;
+            }
+            // §7: an override outlives the scenario that set it, and none of them expire. A
+            // scenario that switched a tool off and died leaving it off fails its neighbour for
+            // a reason that does not belong to it — the fault the two FlinkSqlService suites
+            // already paid for. Restored per attempt, since a repeated run switches it off
+            // again on the next one.
+            String unrestored = restoreTool(scenario, operator);
+            if (unanswered != null) {
                 // The endpoint is not answering: the surface was never bound, or the stack is not
                 // up. That is not the agent failing the scenario, and `mcp-probe` is the one-shot
-                // that tells the two apart before a run is spent finding out.
+                // that tells the two apart before a run is spent finding out. A restoration that
+                // fails in that same moment is the same fact twice, and is said once, here — it
+                // used to replace this report with an error and hide that the scenario was skipped.
                 return ScenarioReport.skipped(scenario,
-                        "the MCP endpoint at " + endpoint + " did not answer (" + e.getMessage()
+                        "the MCP endpoint at " + endpoint + " did not answer (" + unanswered.getMessage()
                                 + "). Is the stack up with compose/mcp.yml? Try: docker compose "
                                 + "-f docker-compose.yml -f compose/mcp.yml --profile probe run "
-                                + "--rm mcp-probe");
-            } finally {
-                // §7: an override outlives the scenario that set it, and none of them expire. A
-                // scenario that switched a tool off and died leaving it off fails its neighbour for
-                // a reason that does not belong to it — the fault the two FlinkSqlService suites
-                // already paid for. Restored per attempt, since a repeated run switches it off
-                // again on the next one.
-                if (scenario.midSession() != null) {
-                    operator.enableTool(scenario.midSession().disableTool());
-                }
+                                + "--rm mcp-probe"
+                                + (unrestored == null ? "" : ". The tool switch could not be "
+                                + "restored either: " + unrestored));
+            }
+            if (unrestored != null) {
+                // The scenario ran and the stack is now in a state no later scenario can trust.
+                throw new IllegalStateException(scenario.id() + " ran, but its tool switch could not "
+                        + "be restored (" + unrestored + "); the scenarios after it would be graded "
+                        + "against a server it left altered");
             }
         }
         return ScenarioReport.of(scenario, attempts);
+    }
+
+    /** Switches the scenario's mid-session tool back on; null when done, else why it could not be. */
+    private static String restoreTool(AgentScenario scenario, OperatorConsole operator) {
+        if (scenario.midSession() == null) {
+            return null;
+        }
+        try {
+            operator.enableTool(scenario.midSession().disableTool());
+            return null;
+        } catch (RuntimeException e) {
+            return e.getMessage();
+        }
     }
 
     private static boolean selected(AgentScenario scenario) {
@@ -203,6 +237,21 @@ class McpAgentEvalTest {
     private static String endpointUrl() {
         String configured = System.getenv("AGENT_EVAL_MCP_URL");
         return configured == null || configured.isBlank() ? "http://localhost:8080/mcp" : configured;
+    }
+
+    /**
+     * {@code AGENT_EVAL_BUDGET_SCALE}: multiplies every scenario's {@code budgetMs}, for a model on
+     * hardware slower than the hosted API the budgets were calibrated on. One by default, never
+     * below one, and printed in the summary whenever it is not one.
+     */
+    private static double budgetScale() {
+        String configured = System.getenv("AGENT_EVAL_BUDGET_SCALE");
+        try {
+            return configured == null || configured.isBlank()
+                    ? 1.0 : Math.max(1.0, Double.parseDouble(configured.trim()));
+        } catch (NumberFormatException e) {
+            return 1.0;
+        }
     }
 
     /**

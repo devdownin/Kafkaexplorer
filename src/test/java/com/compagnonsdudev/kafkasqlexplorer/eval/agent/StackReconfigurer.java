@@ -4,8 +4,13 @@ package com.compagnonsdudev.kafkasqlexplorer.eval.agent;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,6 +31,14 @@ import java.util.regex.Pattern;
  * {@code explorer} service. Scenarios sharing a configuration share a boot, which is what keeps the
  * cost at roughly ten seconds per distinct configuration rather than per scenario.
  *
+ * <p><b>A recreated container is waited for.</b> {@code docker compose up -d} returns once the
+ * container has <em>started</em>, which for this application is a minute before it answers — and in
+ * that minute the published port accepts a connection and closes it without a byte. The first real
+ * run skipped twenty scenarios in eight seconds on exactly that, each one reported as an endpoint
+ * that "did not answer". So every recreation is followed by a poll of {@link Readiness} and fails
+ * with a sentence of its own if the service never comes back, which the caller turns into a skip
+ * that names the cause rather than twenty that name a symptom.
+ *
  * <p><b>A key the overlay does not publish is refused, not applied.</b> That is the rule this class
  * exists to enforce: compose passes only the variables the file names, so a setting written into a
  * scenario and absent from the overlay would leave the container on its default while the scenario
@@ -37,14 +50,64 @@ final class StackReconfigurer implements AutoCloseable {
     /** The overlay's own declarations: {@code - EXPLORER_MCP_X=${EXPLORER_MCP_X:-…}}. */
     private static final Pattern PUBLISHED = Pattern.compile("^\\s*-\\s*([A-Z0-9_]+)=", Pattern.MULTILINE);
 
+    /** Whether the recreated service takes requests yet. Polled, so it must be cheap and never throw. */
+    @FunctionalInterface
+    interface Readiness {
+
+        boolean ready();
+
+        /** No wait: for a reconfigurer that is only asked what it would run. */
+        static Readiness immediately() {
+            return () -> true;
+        }
+
+        /**
+         * {@code GET url} answers 200 with {@code "status":"UP"}. A refused connection, a reset one
+         * and a connection closed without a byte — what the published port does while the container
+         * behind it boots — all mean "not yet", never an error.
+         */
+        static Readiness http(URI url) {
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
+            return () -> {
+                try {
+                    HttpResponse<String> response = client.send(
+                            HttpRequest.newBuilder(url).timeout(Duration.ofSeconds(3)).GET().build(),
+                            HttpResponse.BodyHandlers.ofString());
+                    return response.statusCode() == 200 && response.body().contains("\"status\":\"UP\"");
+                } catch (IOException e) {
+                    return false;
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            };
+        }
+    }
+
     private final Path repositoryRoot;
     private final Set<String> published;
     private final boolean enabled;
+    private final Readiness readiness;
+    private final Duration readyWithin;
+    private final Duration pollEvery;
     private Map<String, String> applied = Map.of();
 
     StackReconfigurer(Path repositoryRoot, boolean enabled) {
+        this(repositoryRoot, enabled, Readiness.immediately());
+    }
+
+    /** Four minutes, because a cold Spring Boot with an embedded Flink on a shared runner needs one. */
+    StackReconfigurer(Path repositoryRoot, boolean enabled, Readiness readiness) {
+        this(repositoryRoot, enabled, readiness, Duration.ofSeconds(240), Duration.ofSeconds(2));
+    }
+
+    StackReconfigurer(Path repositoryRoot, boolean enabled, Readiness readiness,
+                      Duration readyWithin, Duration pollEvery) {
         this.repositoryRoot = repositoryRoot;
         this.enabled = enabled;
+        this.readiness = readiness;
+        this.readyWithin = readyWithin;
+        this.pollEvery = pollEvery;
         this.published = readPublished(repositoryRoot.resolve("compose/mcp.yml"));
     }
 
@@ -111,9 +174,34 @@ final class StackReconfigurer implements AutoCloseable {
         if (wanted.equals(applied)) {
             return false;
         }
-        run(wanted);
+        recreate(wanted);
+        // Recorded before the wait: the container now runs this configuration whether or not it
+        // comes up in time, and a scenario that asks for the same one must not recreate it again —
+        // twenty four-minute timeouts in a row is what that would cost.
         applied = wanted;
+        awaitReady();
         return true;
+    }
+
+    /** Polls until the service answers, or fails naming how long it waited. */
+    void awaitReady() {
+        if (!enabled) {
+            return;
+        }
+        long deadline = System.nanoTime() + readyWithin.toNanos();
+        while (!readiness.ready()) {
+            if (System.nanoTime() >= deadline) {
+                throw new IllegalStateException("The explorer service was recreated for this scenario "
+                        + "but did not answer within " + readyWithin.toSeconds() + " s, so no scenario "
+                        + "that needs it can run. Its log is in the stack.log of the uploaded report.");
+            }
+            try {
+                Thread.sleep(pollEvery.toMillis());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted waiting for the explorer service", e);
+            }
+        }
     }
 
     /**
@@ -127,12 +215,14 @@ final class StackReconfigurer implements AutoCloseable {
     @Override
     public void close() {
         if (!applied.isEmpty()) {
-            run(Map.of());
+            // Not waited for: this hands the stack back on its defaults at the end of the suite, and
+            // a close() that could time out would fail a run that had already reported.
+            recreate(Map.of());
             applied = Map.of();
         }
     }
 
-    private void run(Map<String, String> variables) {
+    private void recreate(Map<String, String> variables) {
         if (!enabled) {
             return;
         }

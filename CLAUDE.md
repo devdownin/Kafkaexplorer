@@ -423,9 +423,9 @@ It applies to `src/main/java`, `src/test/java` and every `.ts` / `.tsx` under
 
 ## Project governance & supply chain
 
-`docs/notes/ci-and-checks.md` carries the community-health files, the four workflows beyond
+`docs/notes/ci-and-checks.md` carries the community-health files, the five workflows beyond
 `ci.yml` / `release.yml` / `dockerhub-description.yml` (`codeql.yml`, `security.yml`,
-`scorecard.yml`, `image-pins.yml`), the keyless JAR signing, and what `.gitattributes` and
+`scorecard.yml`, `image-pins.yml`, and the manual-only `agent-eval.yml`), the keyless JAR signing, and what `.gitattributes` and
 `.editorconfig` are for. Two rules bind whether or not that note has been read:
 
 - **Never reference an action by tag.** A new one is pinned like its neighbours — full commit

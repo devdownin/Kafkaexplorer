@@ -182,6 +182,42 @@ class AgentRunnerTest {
         }
     }
 
+    @Test
+    @DisplayName("a scaled budget says it was scaled, and by what, in the overrun it reports")
+    void aScaledBudgetNamesItsScale() throws IOException {
+        // A run on slow hardware is told apart from an unscaled one in the sentence itself, or a
+        // reader comparing two reports would compare two different budgets without knowing it.
+        // Forty round trips against a 2 ms budget: the same reasoning as the test above, with
+        // the margin widened to cover the doubled budget.
+        AgentModel.Turn[] script = new AgentModel.Turn[40];
+        java.util.Arrays.setAll(script, i -> calling("kex_list_topics", Map.of()));
+        ScriptedModel model = new ScriptedModel(script);
+
+        try (McpHttpClient mcp = new McpHttpClient(serve(OK_RESULT), Duration.ofSeconds(5))) {
+            mcp.initialize();
+            AgentRunner.Session session = new AgentRunner(model, mcp, null, 2).run(scenario(50, 1));
+
+            assertThat(session.overrun())
+                    .contains("2 ms budget")
+                    .contains("1 ms scaled by AGENT_EVAL_BUDGET_SCALE=2.0");
+        }
+    }
+
+    @Test
+    @DisplayName("a scale below one is ignored: it would tighten a budget the scenario states")
+    void aScaleBelowOneIsClampedToOne() throws IOException {
+        AgentModel.Turn[] script = new AgentModel.Turn[10];
+        java.util.Arrays.setAll(script, i -> calling("kex_list_topics", Map.of()));
+        ScriptedModel model = new ScriptedModel(script);
+
+        try (McpHttpClient mcp = new McpHttpClient(serve(OK_RESULT), Duration.ofSeconds(5))) {
+            mcp.initialize();
+            AgentRunner.Session session = new AgentRunner(model, mcp, null, 0.1).run(scenario(20, 1));
+
+            assertThat(session.overrun()).isEqualTo("it ran past the 1 ms budget");
+        }
+    }
+
     /** Records the operator's gestures and when they landed, so the ordering can be asserted. */
     private static final class RecordingConsole implements OperatorConsole {
         private final List<String> gestures = new java.util.ArrayList<>();

@@ -2,11 +2,17 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.eval.agent;
 
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -64,11 +70,131 @@ class AgentModelsTest {
     @Test
     @DisplayName("a provider with no tool-calling API is refused, not left to fail mid-run")
     void refusesAProviderThatCannotDriveTools() {
-        // SPECTRA's query API has no tool notion at all. Saying so is the difference between
-        // "fix your environment" and "this provider cannot run this suite".
-        assertThat(with("CLAUDE_PROVIDER", "SPECTRA", "OPENROUTER_API_KEY", "k",
+        // Saying so is the difference between "fix your environment" and "this provider cannot run
+        // this suite".
+        assertThat(with("CLAUDE_PROVIDER", "BEDROCK", "OPENROUTER_API_KEY", "k",
                 "AGENT_EVAL_MODEL", "m").unconfigured())
-                .hasValueSatisfying(reason -> assertThat(reason).contains("tool-calling"));
+                .hasValueSatisfying(reason -> assertThat(reason)
+                        .contains("CLAUDE_PROVIDER=BEDROCK").contains("tool-calling"));
+    }
+
+    @Test
+    @DisplayName("SPECTRA needs no key and takes the alias llm-chat serves as its model")
+    void spectraNeedsNoKeyAndDefaultsToTheServedAlias() {
+        AgentModels models = with("CLAUDE_PROVIDER", "spectra", "LLM_CHAT_MODEL_NAME", "qwen2.5-7b-instruct",
+                "CLAUDE_MODEL", "ignored-by-spectra");
+
+        assertThat(models.unconfigured()).isEmpty();
+        assertThat(models.agent()).isInstanceOf(OpenAiToolCallingModel.class);
+        assertThat(models.agent().describe()).isEqualTo("qwen2.5-7b-instruct via localhost");
+    }
+
+    @Test
+    @DisplayName("SPECTRA without a model names the alias variable, not CLAUDE_MODEL")
+    void spectraWithoutAModelNamesTheAlias() {
+        // CLAUDE_MODEL is ignored by the application under SPECTRA; pointing at it would send the
+        // operator to a variable that changes nothing.
+        assertThat(with("CLAUDE_PROVIDER", "SPECTRA").unconfigured())
+                .hasValueSatisfying(reason -> assertThat(reason)
+                        .contains("AGENT_EVAL_MODEL").contains("LLM_CHAT_MODEL_NAME")
+                        .doesNotContain("CLAUDE_MODEL"));
+    }
+
+    @Test
+    @DisplayName("SPECTRA posts to llm-chat on AGENT_EVAL_LLM_PORT, without the key and ignoring CLAUDE_BASE_URL")
+    void spectraReachesLlmChatWithoutACredential() throws IOException {
+        // CLAUDE_BASE_URL names Spectra's /api/query under this provider, and llama-server has no
+        // authentication: the request must go to the overlay's port and carry nothing.
+        AtomicReference<String> path = new AtomicReference<>();
+        AtomicReference<String> authorization = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            path.set(exchange.getRequestURI().getPath());
+            authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            byte[] body = "{\"choices\":[{\"message\":{\"content\":\"done\"}}]}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            AgentModels models = with("CLAUDE_PROVIDER", "SPECTRA", "LLM_CHAT_MODEL_NAME", "qwen",
+                    "AGENT_EVAL_LLM_PORT", String.valueOf(server.getAddress().getPort()),
+                    "CLAUDE_BASE_URL", "http://spectra-api.invalid:8080",
+                    "OPENROUTER_API_KEY", "sk-must-not-leak");
+
+            AgentModel.Turn turn = models.agent()
+                    .respond("system", List.of(new AgentModel.Exchange.User("go")), List.of());
+
+            assertThat(turn.text()).isEqualTo("done");
+            assertThat(path.get()).isEqualTo("/v1/chat/completions");
+            assertThat(authorization.get()).isNull();
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @DisplayName("a local agent can be graded by a hosted judge, and then no caveat is printed")
+    void theJudgeCanLiveOnAnotherProvider() {
+        AgentModels models = with("CLAUDE_PROVIDER", "SPECTRA", "LLM_CHAT_MODEL_NAME", "qwen",
+                "AGENT_EVAL_JUDGE_PROVIDER", "ANTHROPIC", "ANTHROPIC_API_KEY", "sk-ant",
+                "AGENT_EVAL_JUDGE_MODEL", "claude-x");
+
+        assertThat(models.unconfigured()).isEmpty();
+        assertThat(models.agent()).isInstanceOf(OpenAiToolCallingModel.class);
+        assertThat(models.judge()).isInstanceOf(AnthropicToolCallingModel.class);
+        assertThat(models.judge().describe()).contains("claude-x").contains("api.anthropic.com");
+        assertThat(models.judgeCaveat()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("an OpenRouter judge grades a SPECTRA agent through its own endpoint and key")
+    void theJudgeCanBeOnOpenRouter() {
+        // What agent-eval.yml runs with judge_provider=OPENROUTER: the agent's model is llm-chat's,
+        // the judge's is OpenRouter's, and neither borrows the other's address.
+        AgentModels models = with("CLAUDE_PROVIDER", "SPECTRA", "LLM_CHAT_MODEL_NAME", "qwen",
+                "AGENT_EVAL_JUDGE_PROVIDER", "OPENROUTER", "OPENROUTER_API_KEY", "sk-or",
+                "AGENT_EVAL_JUDGE_MODEL", "anthropic/some-model");
+
+        assertThat(models.unconfigured()).isEmpty();
+        assertThat(models.agent().describe()).isEqualTo("qwen via localhost");
+        assertThat(models.judge()).isInstanceOf(OpenAiToolCallingModel.class);
+        assertThat(models.judge().describe()).isEqualTo("anthropic/some-model via openrouter.ai");
+        assertThat(models.judgeCaveat()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a hosted judge with no key is reported as the judge's problem")
+    void aJudgeWithoutAKeyIsNamedAsSuch() {
+        assertThat(with("CLAUDE_PROVIDER", "SPECTRA", "LLM_CHAT_MODEL_NAME", "qwen",
+                "AGENT_EVAL_JUDGE_PROVIDER", "ANTHROPIC", "AGENT_EVAL_JUDGE_MODEL", "claude-x").unconfigured())
+                .hasValueSatisfying(reason -> assertThat(reason)
+                        .startsWith("judge: ").contains("AGENT_EVAL_JUDGE_PROVIDER is ANTHROPIC"));
+    }
+
+    @Test
+    @DisplayName("on SPECTRA two names are still one model, so the caveat stands")
+    void twoNamesOnLlmChatAreOneModel() {
+        // llama-server ignores the model field: distinct names would pass for distinct models.
+        AgentModels models = with("CLAUDE_PROVIDER", "SPECTRA",
+                "AGENT_EVAL_MODEL", "qwen", "AGENT_EVAL_JUDGE_MODEL", "other-name");
+
+        assertThat(models.judgeIsTheAgent()).isTrue();
+        assertThat(models.judgeCaveat()).hasValueSatisfying(caveat -> assertThat(caveat)
+                .contains("AGENT_EVAL_JUDGE_PROVIDER"));
+    }
+
+    @Test
+    @DisplayName("CLAUDE_BASE_URL is the agent's gateway, not the judge's on another provider")
+    void theBaseUrlBelongsToClaudeProvider() {
+        AgentModels models = with("CLAUDE_PROVIDER", "OLLAMA", "CLAUDE_BASE_URL", "http://gpu-box:11434/v1",
+                "AGENT_EVAL_MODEL", "qwen", "AGENT_EVAL_JUDGE_PROVIDER", "OPENROUTER",
+                "OPENROUTER_API_KEY", "k", "AGENT_EVAL_JUDGE_MODEL", "a/b");
+
+        assertThat(models.agent().describe()).contains("gpu-box");
+        assertThat(models.judge().describe()).contains("openrouter.ai");
     }
 
     @Test
