@@ -104,7 +104,9 @@ class McpAgentEvalTest {
 
         // One reconfigurer for the whole factory: scenarios sharing a serverConfig share a boot, and
         // the last one hands the stack back on the overlay's defaults.
-        stack = new StackReconfigurer(REPOSITORY_ROOT, unconfigured.isEmpty());
+        // Readiness, not liveness: the scenarios read the broker, and that is what readiness adds.
+        stack = new StackReconfigurer(REPOSITORY_ROOT, unconfigured.isEmpty(),
+                StackReconfigurer.Readiness.http(endpoint.resolve("/actuator/health/readiness")));
         List<ScenarioReport> reports = new ArrayList<>();
         // One client per role for the whole factory: rebuilding them per attempt would open a
         // connection pool and a selector thread for every scenario.
@@ -158,6 +160,7 @@ class McpAgentEvalTest {
 
         List<ScenarioReport.Attempt> attempts = new ArrayList<>();
         for (int attempt = 1; attempt <= repeats; attempt++) {
+            RuntimeException unanswered = null;
             try (McpHttpClient mcp =
                          new McpHttpClient(endpoint, Duration.ofSeconds(20), authToken())) {
                 mcp.initialize();
@@ -169,26 +172,49 @@ class McpAgentEvalTest {
                         session.overrun(),
                         session.answer()));
             } catch (RuntimeException e) {
+                unanswered = e;
+            }
+            // §7: an override outlives the scenario that set it, and none of them expire. A
+            // scenario that switched a tool off and died leaving it off fails its neighbour for
+            // a reason that does not belong to it — the fault the two FlinkSqlService suites
+            // already paid for. Restored per attempt, since a repeated run switches it off
+            // again on the next one.
+            String unrestored = restoreTool(scenario, operator);
+            if (unanswered != null) {
                 // The endpoint is not answering: the surface was never bound, or the stack is not
                 // up. That is not the agent failing the scenario, and `mcp-probe` is the one-shot
-                // that tells the two apart before a run is spent finding out.
+                // that tells the two apart before a run is spent finding out. A restoration that
+                // fails in that same moment is the same fact twice, and is said once, here — it
+                // used to replace this report with an error and hide that the scenario was skipped.
                 return ScenarioReport.skipped(scenario,
-                        "the MCP endpoint at " + endpoint + " did not answer (" + e.getMessage()
+                        "the MCP endpoint at " + endpoint + " did not answer (" + unanswered.getMessage()
                                 + "). Is the stack up with compose/mcp.yml? Try: docker compose "
                                 + "-f docker-compose.yml -f compose/mcp.yml --profile probe run "
-                                + "--rm mcp-probe");
-            } finally {
-                // §7: an override outlives the scenario that set it, and none of them expire. A
-                // scenario that switched a tool off and died leaving it off fails its neighbour for
-                // a reason that does not belong to it — the fault the two FlinkSqlService suites
-                // already paid for. Restored per attempt, since a repeated run switches it off
-                // again on the next one.
-                if (scenario.midSession() != null) {
-                    operator.enableTool(scenario.midSession().disableTool());
-                }
+                                + "--rm mcp-probe"
+                                + (unrestored == null ? "" : ". The tool switch could not be "
+                                + "restored either: " + unrestored));
+            }
+            if (unrestored != null) {
+                // The scenario ran and the stack is now in a state no later scenario can trust.
+                throw new IllegalStateException(scenario.id() + " ran, but its tool switch could not "
+                        + "be restored (" + unrestored + "); the scenarios after it would be graded "
+                        + "against a server it left altered");
             }
         }
         return ScenarioReport.of(scenario, attempts);
+    }
+
+    /** Switches the scenario's mid-session tool back on; null when done, else why it could not be. */
+    private static String restoreTool(AgentScenario scenario, OperatorConsole operator) {
+        if (scenario.midSession() == null) {
+            return null;
+        }
+        try {
+            operator.enableTool(scenario.midSession().disableTool());
+            return null;
+        } catch (RuntimeException e) {
+            return e.getMessage();
+        }
     }
 
     private static boolean selected(AgentScenario scenario) {

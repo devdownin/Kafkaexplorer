@@ -24,6 +24,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   drives the hub's `llm-chat` llama-server (`compose/spectra-hub.agent-eval.yml`: `--jinja`, one 32k
   slot, loopback port `AGENT_EVAL_LLM_PORT`) instead of being refused, and
   `AGENT_EVAL_JUDGE_PROVIDER` lets a hosted model judge it.
+- **The agent harness waits for the Explorer after recreating it, and a run in which nothing ran
+  now fails.** The first real run skipped 20 of 21 scenarios because `docker compose up -d` returns
+  before the application answers; a recreation is now followed by a readiness poll. A tool-switch
+  restoration that fails while the endpoint is down no longer replaces the skip report with an
+  error, and `agent-eval.yml` fails on `0 passed, 0 failed`.
 - **`agent-eval.yml` runs that harness in GitHub Actions**, by hand (`workflow_dispatch`): the
   stack built from the ref, the demo seed and `mcp-probe` checked first, `llm-chat` serving Qwen2.5
   3B or 7B, a hosted judge on Anthropic or OpenRouter (`judge_provider`; the matching

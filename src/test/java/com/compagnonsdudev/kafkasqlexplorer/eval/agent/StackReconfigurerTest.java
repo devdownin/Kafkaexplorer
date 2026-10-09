@@ -2,12 +2,19 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.eval.agent;
 
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -106,5 +113,70 @@ class StackReconfigurerTest {
     @DisplayName("a scenario with no serverConfig leaves the stack alone")
     void anEmptyConfigChangesNothing() {
         assertThat(new StackReconfigurer(ROOT, false).applyTo(scenarioWith(Map.of()))).isFalse();
+    }
+
+    @Test
+    @DisplayName("a recreated service is polled until it answers")
+    void waitsUntilTheServiceAnswers() {
+        // `docker compose up -d` returns when the container has started, a minute before it answers.
+        // The first real run skipped twenty scenarios in eight seconds for want of this.
+        AtomicInteger polls = new AtomicInteger();
+        StackReconfigurer stack = new StackReconfigurer(ROOT, true, () -> polls.incrementAndGet() >= 3,
+                Duration.ofSeconds(5), Duration.ofMillis(1));
+
+        stack.awaitReady();
+
+        assertThat(polls).hasValue(3);
+    }
+
+    @Test
+    @DisplayName("a service that never comes back fails with a sentence of its own")
+    void givesUpNamingHowLongItWaited() {
+        StackReconfigurer stack = new StackReconfigurer(ROOT, true, () -> false,
+                Duration.ofMillis(30), Duration.ofMillis(5));
+
+        assertThatThrownBy(stack::awaitReady)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("did not answer within")
+                .hasMessageContaining("stack.log");
+    }
+
+    @Test
+    @DisplayName("a reconfigurer that runs nothing waits for nothing")
+    void aDisabledReconfigurerDoesNotWait() {
+        StackReconfigurer stack = new StackReconfigurer(ROOT, false, () -> {
+            throw new AssertionError("polled although no container was recreated");
+        });
+
+        stack.awaitReady();
+    }
+
+    @Test
+    @DisplayName("HTTP readiness is 'not yet' until a 200 saying UP, and a closed port is 'not yet' too")
+    void httpReadinessIsOnlyYesOnAnUpAnswer() throws IOException {
+        AtomicInteger requests = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/ready", exchange -> {
+            boolean up = requests.incrementAndGet() > 2;
+            byte[] body = (up ? "{\"status\":\"UP\"}" : "{\"status\":\"OUT_OF_SERVICE\"}")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(up ? 200 : 503, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        URI url = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/ready");
+        try {
+            StackReconfigurer.Readiness readiness = StackReconfigurer.Readiness.http(url);
+
+            assertThat(readiness.ready()).isFalse();
+            assertThat(readiness.ready()).isFalse();
+            assertThat(readiness.ready()).isTrue();
+        } finally {
+            server.stop(0);
+        }
+
+        // What the published port does while the container behind it boots, seen from outside.
+        assertThat(StackReconfigurer.Readiness.http(url).ready()).isFalse();
     }
 }
