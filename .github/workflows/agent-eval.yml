@@ -211,6 +211,23 @@ jobs:
           ./mvnw -B test -P 'mcp-agent-eval,!build-frontend' \
             ${SCENARIO:+-Dagent.eval.scenario="$SCENARIO"} 2>&1 | tee "$RUNNER_TEMP/agent-eval.log"
 
+      # `mvn test` exits 0 when every scenario is skipped, on purpose: a skip is not a failure
+      # (SPECAGENT.md §7). In a run somebody dispatched by hand that is the wrong reading — a green
+      # job over a suite in which nothing ran is the false "all passed" this harness exists to
+      # refuse, and the first real run produced exactly that shape: 0 passed, 0 failed, 20 skipped.
+      - name: Refuse a run in which nothing ran
+        run: |
+          set -euo pipefail
+          summary=$(grep -E '[0-9]+ passed, [0-9]+ failed, [0-9]+ skipped' "$RUNNER_TEMP/agent-eval.log" | tail -n 1 || true)
+          [ -n "$summary" ] || { echo "::error::the Maven output carries no scenario summary line"; exit 1; }
+          echo "$summary"
+          passed=$(printf '%s\n' "$summary" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+')
+          failed=$(printf '%s\n' "$summary" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+')
+          if [ $((passed + failed)) -eq 0 ]; then
+            echo "::error::no scenario ran — every one was skipped. The reasons are in the report: the surefire output of the uploaded artifact, and stack.log for the Explorer."
+            exit 1
+          fi
+
       - name: Collect the logs
         if: always()
         run: |

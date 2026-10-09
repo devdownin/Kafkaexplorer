@@ -302,7 +302,21 @@ Three workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
   repeats it, so a scaled run is never compared with an unscaled one unawares. The GGUF's digest
   is an optional input rather than a pin, because nothing here has observed it twice yet; the
   0.5B model `spectra-hub-stack` pins is too small to call a tool and would grade the scenarios
-  rather than the agent.
+  rather than the agent. **The first real run ran nothing, and showed three things the unit tests
+  could not.** It reached the scenarios and skipped twenty of them in eight seconds, plus one error:
+  `StackReconfigurer` recreated the Explorer for the first scenario that moves a setting and
+  returned as soon as the container had *started*, a minute before it answered — and in that
+  minute the published port accepts a connection and closes it without a byte, which Java reports
+  as `HTTP/1.1 header parser received no bytes`. Every scenario then met a booting server. So a
+  recreation is now followed by a poll of `/actuator/health/readiness` (readiness rather than
+  liveness: the scenarios read the broker) for up to four minutes, and a service that never
+  returns fails with one sentence of its own. The configuration is recorded *before* that wait,
+  since the container runs it whether or not it came up in time, and twenty scenarios asking for
+  the same one must not each recreate it and each wait out four minutes. Second, restoring a
+  mid-session tool switch sat in a `finally`, so when the endpoint was down the restoration's own
+  failure replaced the "skipped" report with an error; it is now said once, inside the skip.
+  Third, `mvn test` exits 0 over a suite that is all skips, so the workflow reads the summary line
+  and fails when no scenario ran.
 
 **The JAR is signed, keylessly** (`actions/attest-build-provenance` in `release.yml`'s `build`
 job, hence the `id-token: write` + `attestations: write` on it). The image had a full SLSA
