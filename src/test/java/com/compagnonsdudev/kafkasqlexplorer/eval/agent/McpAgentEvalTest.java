@@ -126,7 +126,9 @@ class McpAgentEvalTest {
                     ScenarioReport report =
                             run(scenario, agent, judge, operator, endpoint, repeats);
                     reports.add(report);
-                    if (report.outcome() == ScenarioReport.Outcome.SKIPPED) {
+                    if (report.outcome() == ScenarioReport.Outcome.SKIPPED
+                            || report.outcome() == ScenarioReport.Outcome.UNJUDGED) {
+                        // Neither ran to a verdict: reported, never counted as a pass or a failure.
                         abort(report.render());
                     }
                     if (report.outcome() == ScenarioReport.Outcome.FAILED) {
@@ -161,6 +163,7 @@ class McpAgentEvalTest {
         List<ScenarioReport.Attempt> attempts = new ArrayList<>();
         for (int attempt = 1; attempt <= repeats; attempt++) {
             RuntimeException unanswered = null;
+            AgentRunner.AgentModelFailure modelFailed = null;
             try (McpHttpClient mcp =
                          new McpHttpClient(endpoint, Duration.ofSeconds(20), authToken())) {
                 mcp.initialize();
@@ -171,6 +174,8 @@ class McpAgentEvalTest {
                         judge.score(scenario.verdict(), session.answer()),
                         session.overrun(),
                         session.answer()));
+            } catch (AgentRunner.AgentModelFailure e) {
+                modelFailed = e;
             } catch (RuntimeException e) {
                 unanswered = e;
             }
@@ -180,6 +185,14 @@ class McpAgentEvalTest {
             // already paid for. Restored per attempt, since a repeated run switches it off
             // again on the next one.
             String unrestored = restoreTool(scenario, operator);
+            if (modelFailed != null) {
+                // The endpoint answered; the model under test did not. Said apart from the
+                // endpoint so a provider's 429 is not read as a stack that never came up.
+                return ScenarioReport.skipped(scenario, "the agent model call failed ("
+                        + modelFailed.getMessage() + "), so the scenario did not run to a verdict"
+                        + (unrestored == null ? "" : ". The tool switch could not be restored "
+                        + "either: " + unrestored));
+            }
             if (unanswered != null) {
                 // The endpoint is not answering: the surface was never bound, or the stack is not
                 // up. That is not the agent failing the scenario, and `mcp-probe` is the one-shot

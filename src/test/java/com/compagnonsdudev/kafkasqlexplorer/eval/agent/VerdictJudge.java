@@ -50,11 +50,29 @@ final class VerdictJudge {
             One entry per numbered requirement, in the order given. "why" is always required, \
             including when met — it is what makes a disputed grade re-readable.""";
 
+    /** Three tries, then the judge is declared unavailable for this answer. */
+    private static final int ATTEMPTS = 3;
+    private static final long FIRST_BACKOFF_MS = 5_000;
+
     private final AgentModel judge;
     private final ObjectMapper json = new ObjectMapper();
+    private final int attempts;
+    private final Pause pause;
+
+    /** Injectable so a test does not wait out a backoff. */
+    @FunctionalInterface
+    interface Pause {
+        void sleep(long millis) throws InterruptedException;
+    }
 
     VerdictJudge(AgentModel judge) {
+        this(judge, ATTEMPTS, Thread::sleep);
+    }
+
+    VerdictJudge(AgentModel judge, int attempts, Pause pause) {
         this.judge = judge;
+        this.attempts = Math.max(1, attempts);
+        this.pause = pause;
     }
 
     JudgeVerdict score(AgentScenario.Verdict grid, String answer) {
@@ -69,15 +87,38 @@ final class VerdictJudge {
             return JudgeVerdict.notJudged("the agent produced no final answer to grade");
         }
 
-        String reply;
-        try {
-            reply = judge.respond(SYSTEM_PROMPT,
-                    List.of(new AgentModel.Exchange.User(prompt(requirements, answer))),
-                    List.of()).text();
-        } catch (RuntimeException e) {
-            return JudgeVerdict.notJudged("the judge call failed: " + e.getMessage());
+        String reply = null;
+        RuntimeException failure = null;
+        for (int attempt = 1; attempt <= attempts && reply == null; attempt++) {
+            try {
+                reply = judge.respond(SYSTEM_PROMPT,
+                        List.of(new AgentModel.Exchange.User(prompt(requirements, answer))),
+                        List.of()).text();
+            } catch (RuntimeException e) {
+                failure = e;
+                if (attempt < attempts && !backOff(attempt)) {
+                    break;
+                }
+            }
+        }
+        if (reply == null) {
+            // Inconclusive, not failed: a provider that answered 502 or 429 said nothing about
+            // the agent, and the answer it was asked to grade stays ungraded.
+            return JudgeVerdict.inconclusive("the judge call failed after " + attempts + " attempt(s): "
+                    + (failure == null ? "no reply" : failure.getMessage()));
         }
         return read(reply, requirements);
+    }
+
+    /** Waits 5 s, then 10 s…; false when interrupted, so the caller stops retrying. */
+    private boolean backOff(int attempt) {
+        try {
+            pause.sleep(FIRST_BACKOFF_MS << (attempt - 1));
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     private record Requirement(String kind, String expectation) {
@@ -105,7 +146,7 @@ final class VerdictJudge {
      * Reads the judge's JSON, and refuses to guess.
      *
      * <p>A reply that does not parse, or that grades a different number of requirements than were
-     * asked, is <b>not judged</b> rather than partially believed: filling the gaps with "met" would
+     * asked, is <b>inconclusive</b> rather than partially believed: filling the gaps with "met" would
      * pass a scenario nobody scored, and filling them with "not met" would fail an agent for the
      * judge's mistake. Both are the false verdict §7 exists to prevent, in opposite directions.
      */
@@ -114,10 +155,10 @@ final class VerdictJudge {
         try {
             findings = json.readTree(extractJson(reply)).path("findings");
         } catch (IOException e) {
-            return JudgeVerdict.notJudged("the judge did not answer JSON: " + abbreviate(reply));
+            return JudgeVerdict.inconclusive("the judge did not answer JSON: " + abbreviate(reply));
         }
         if (!findings.isArray() || findings.size() != requirements.size()) {
-            return JudgeVerdict.notJudged("the judge graded " + (findings.isArray() ? findings.size() : 0)
+            return JudgeVerdict.inconclusive("the judge graded " + (findings.isArray() ? findings.size() : 0)
                     + " requirement(s) where " + requirements.size() + " were asked");
         }
 
@@ -127,12 +168,12 @@ final class VerdictJudge {
         for (JsonNode finding : findings) {
             JsonNode index = finding.path("index");
             if (!index.isInt() || index.asInt() < 0 || index.asInt() >= requirements.size()) {
-                return JudgeVerdict.notJudged("a finding carries no usable index: " + finding);
+                return JudgeVerdict.inconclusive("a finding carries no usable index: " + finding);
             }
             byIndex.put(index.asInt(), finding);
         }
         if (byIndex.size() != requirements.size()) {
-            return JudgeVerdict.notJudged("the judge graded the same requirement twice");
+            return JudgeVerdict.inconclusive("the judge graded the same requirement twice");
         }
 
         List<JudgeVerdict.Finding> graded = new ArrayList<>();

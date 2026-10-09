@@ -136,6 +136,30 @@ class AgentRunnerTest {
     }
 
     @Test
+    @DisplayName("a failing model call is its own exception, not an MCP failure")
+    void aModelFailureIsNamed() throws IOException {
+        AgentModel broken = new AgentModel() {
+            @Override
+            public Turn respond(String s, List<Exchange> t, List<McpHttpClient.ToolSpec> tools) {
+                throw new IllegalStateException("HTTP 429");
+            }
+
+            @Override
+            public String describe() {
+                return "broken";
+            }
+        };
+
+        try (McpHttpClient mcp = new McpHttpClient(serve(OK_RESULT), Duration.ofSeconds(5))) {
+            mcp.initialize();
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> new AgentRunner(broken, mcp).run(scenario(6, 60_000)))
+                    .isInstanceOf(AgentRunner.AgentModelFailure.class)
+                    .hasMessage("HTTP 429");
+        }
+    }
+
+    @Test
     @DisplayName("the ceiling stops the loop and is reported, not silently absorbed")
     void stopsAtTheCeiling() throws IOException {
         // §5.2: the bound is an assertion. A run that quietly truncated and then answered would

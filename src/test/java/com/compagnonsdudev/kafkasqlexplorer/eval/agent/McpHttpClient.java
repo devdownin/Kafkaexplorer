@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * The harness's own MCP client: streamable HTTP against the running application's {@code /mcp}.
@@ -37,6 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class McpHttpClient implements AutoCloseable {
 
     private static final String PROTOCOL_VERSION = "2025-06-18";
+    private static final Pattern EXECUTION_FAILURE = Pattern.compile("^\\s*\\[(-\\d+)\\s+[A-Z_]+]");
 
     private final ObjectMapper json = new ObjectMapper();
     private final HttpClient http;
@@ -161,7 +164,7 @@ final class McpHttpClient implements AutoCloseable {
         JsonNode payload = reparse(text);
 
         Integer refusal = result.path("isError").asBoolean(false)
-                ? codeIn(payload).orElse(null) : null;
+                ? codeIn(payload).or(() -> codeInText(text)).orElse(null) : null;
         String resumeToken = text(payload.path("coverage").path("resumeToken"));
         String auditStatus = firstText(payload, "status", "runStatus", "auditStatus");
         return new ToolAnswer(text, refusal, resumeToken, auditStatus, retryAfterMs(payload));
@@ -171,6 +174,17 @@ final class McpHttpClient implements AutoCloseable {
     private Optional<Integer> codeIn(JsonNode payload) {
         JsonNode code = payload.path("code");
         return code.isNumber() ? Optional.of(code.asInt()) : Optional.empty();
+    }
+
+    /**
+     * The code of an execution failure written as {@code [-32041 OUT_OF_SCOPE] message}, which is
+     * how {@code McpToolInterceptor.executionFailure} renders it — as prose, not as JSON. Reading
+     * only the JSON form reported every such refusal as a call that ran, so a guard that fired was
+     * scored as one that did not.
+     */
+    private Optional<Integer> codeInText(String text) {
+        Matcher matcher = EXECUTION_FAILURE.matcher(text == null ? "" : text);
+        return matcher.find() ? Optional.of(Integer.parseInt(matcher.group(1))) : Optional.empty();
     }
 
     private Long retryAfterMs(JsonNode node) {

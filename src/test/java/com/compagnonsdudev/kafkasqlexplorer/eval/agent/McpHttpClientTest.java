@@ -180,6 +180,23 @@ class McpHttpClientTest {
     }
 
     @Test
+    @DisplayName("an execution failure rendered as [code NAME] message is a refusal with that code")
+    void readsABracketedExecutionRefusal() throws IOException {
+        // McpToolInterceptor.executionFailure writes prose, not JSON: reading only the JSON form
+        // scored a guard that fired as a guard that did not.
+        String refusal = """
+                {"jsonrpc":"2.0","id":3,"result":{"isError":true,"content":[{"type":"text",
+                 "text":"[-32041 OUT_OF_SCOPE] demo.payments.dlq is outside demo.orders."}]}}""";
+        try (McpHttpClient client = new McpHttpClient(
+                serve(m -> withCall(m, refusal), true), Duration.ofSeconds(5))) {
+            client.initialize();
+
+            assertThat(client.callTool("kex_sql_query", Map.of()).refusalCode())
+                    .isEqualTo(McpRefusal.OUT_OF_SCOPE);
+        }
+    }
+
+    @Test
     @DisplayName("a tool that answered prose is an answer, not a client failure")
     void tolerantOfANonJsonPayload() throws IOException {
         String prose = """

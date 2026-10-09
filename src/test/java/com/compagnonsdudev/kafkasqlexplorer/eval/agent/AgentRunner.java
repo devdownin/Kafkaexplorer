@@ -64,6 +64,17 @@ final class AgentRunner {
     }
 
     /**
+     * The agent model's own call failed — a provider error, a rate limit, a malformed reply.
+     * Its own type so the report can say so, instead of blaming the MCP endpoint for a fault of the
+     * model under test, which is what every {@code RuntimeException} used to be read as.
+     */
+    static final class AgentModelFailure extends RuntimeException {
+        AgentModelFailure(Throwable cause) {
+            super(cause.getMessage(), cause);
+        }
+    }
+
+    /**
      * What one session produced.
      *
      * @param answer     the agent's final prose, which is all the judge ever sees
@@ -115,7 +126,12 @@ final class AgentRunner {
         String overrun = null;
 
         while (true) {
-            AgentModel.Turn turn = model.respond(SYSTEM_PROMPT, List.copyOf(transcript), tools);
+            AgentModel.Turn turn;
+            try {
+                turn = model.respond(SYSTEM_PROMPT, List.copyOf(transcript), tools);
+            } catch (RuntimeException e) {
+                throw new AgentModelFailure(e);
+            }
             answer = turn.text();
             if (turn.isFinal()) {
                 break;
