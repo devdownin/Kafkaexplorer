@@ -135,7 +135,7 @@ final class McpHttpClient implements AutoCloseable {
         ToolAnswer answer = readAnswer(envelope);
         calls.add(new ToolCall(calls.size() + 1, name, arguments, answer.refusalCode(),
                 answer.resumeToken(), answer.auditStatus(), answer.retryAfterMs(),
-                startedAt, finishedAt));
+                startedAt, finishedAt, answer.text()));
         return answer;
     }
 

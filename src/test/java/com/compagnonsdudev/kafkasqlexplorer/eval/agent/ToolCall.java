@@ -27,6 +27,9 @@ import java.util.Map;
  * @param retryAfterMs the wait a rate-limit refusal named, null when it named none
  * @param startedAtMs  monotonic clock at the request, for the rate-limit assertion
  * @param finishedAtMs monotonic clock at the answer
+ * @param answerText   the tool's answer exactly as the server sent it (or the JSON-RPC error message),
+ *                     kept so a guard that "did not fire" can be told from a refusal whose code the
+ *                     client failed to read: the report quotes it
  */
 record ToolCall(int ordinal,
                 String name,
@@ -36,10 +39,19 @@ record ToolCall(int ordinal,
                 String auditStatus,
                 Long retryAfterMs,
                 long startedAtMs,
-                long finishedAtMs) {
+                long finishedAtMs,
+                String answerText) {
 
     ToolCall {
         arguments = arguments == null ? Map.of() : Map.copyOf(arguments);
+        answerText = answerText == null ? "" : answerText;
+    }
+
+    ToolCall(int ordinal, String name, Map<String, Object> arguments, Integer refusalCode,
+             String resumeToken, String auditStatus, Long retryAfterMs, long startedAtMs,
+             long finishedAtMs) {
+        this(ordinal, name, arguments, refusalCode, resumeToken, auditStatus, retryAfterMs,
+                startedAtMs, finishedAtMs, "");
     }
 
     /** A call the server refused, whatever the reason. */

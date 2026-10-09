@@ -175,7 +175,32 @@ record ToolCallTrace(List<ToolCall> calls, Set<String> listedTools) {
         }
         return List.of("the scenario expects " + McpRefusal.describe(scenario.expectRefusal())
                 + " and no such refusal was returned — the guard did not fire, so this run says "
-                + "nothing about how the agent reads it");
+                + "nothing about how the agent reads it. What each call came back with: "
+                + describeAnswers());
+    }
+
+    /**
+     * What the server actually sent back, call by call.
+     *
+     * <p>Two different faults print the same "the guard did not fire": a guard that really stayed
+     * silent, and a refusal whose code the client could not read. Two runs of the first full
+     * agent-eval reported the second as the first — the agent's own answer quoted the scope that
+     * had refused it — and nothing in the report could tell them apart. The raw text can.
+     */
+    private String describeAnswers() {
+        if (calls.isEmpty()) {
+            return "no call was made";
+        }
+        return String.join(" | ", calls.stream()
+                .map(call -> "#" + call.ordinal() + " " + call.name() + " → code "
+                        + (call.refusalCode() == null ? "none read" : call.refusalCode())
+                        + ", \"" + abbreviate(call.answerText()) + "\"")
+                .toList());
+    }
+
+    private static String abbreviate(String text) {
+        String flat = text.strip().replaceAll("\\s+", " ");
+        return flat.length() <= 240 ? flat : flat.substring(0, 240) + "…";
     }
 
     private String describeCalls() {
