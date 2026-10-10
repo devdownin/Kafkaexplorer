@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A call that never answers no longer blocks the agent harness.** Every HTTP client of the harness
+  (agent model, judge, MCP endpoint, operator console) now has a response timeout — 10 min for the
+  agent (`AGENT_EVAL_REQUEST_TIMEOUT_S`), 2 min for the judge and MCP, 30 s for the console — where
+  `HttpClient` had only a connect timeout; a scenario is also capped by its scaled budget plus 25 min
+  and interrupted past it (`HardCap`), reported as skipped. And each scenario's report is printed as
+  soon as it ends, not left to the failure message the reporter prints at the end. The third full run
+  lost 3 h 39 min and every unprinted report to one stalled call, until the job's own limit
+  cancelled it.
 - **A guard that "did not fire" now shows what the server sent.** The agent harness's report for a
   guard scenario (`-32041`, `-32029`, `-32042`) quotes each call's raw answer beside the code the
   client read. Two full runs reported the scope guard as silent while the agent's own answer quoted

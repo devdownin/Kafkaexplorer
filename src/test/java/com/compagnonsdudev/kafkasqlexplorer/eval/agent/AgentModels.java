@@ -58,8 +58,25 @@ final class AgentModels {
     }
 
     AgentModel agent() {
-        return build(agentRole());
+        return build(agentRole(), agentRequestTimeout());
     }
+
+    /**
+     * {@code AGENT_EVAL_REQUEST_TIMEOUT_S}: how long one model request may take, 600 s by default.
+     * Long because a 3B model on a CPU runner spends minutes on a prompt carrying every tool
+     * description; finite because a request with no limit blocked a whole run for 3 h 39 min.
+     */
+    Duration agentRequestTimeout() {
+        try {
+            long seconds = Long.parseLong(get("AGENT_EVAL_REQUEST_TIMEOUT_S", "600").trim());
+            return Duration.ofSeconds(Math.max(10, seconds));
+        } catch (NumberFormatException e) {
+            return OpenAiToolCallingModel.DEFAULT_REQUEST_TIMEOUT;
+        }
+    }
+
+    /** A judge only has to read an answer and a grid: two minutes, after which it is retried. */
+    private static final Duration JUDGE_REQUEST_TIMEOUT = Duration.ofMinutes(2);
 
     /**
      * The judge, which defaults to the same model as the agent and should not be left there.
@@ -69,7 +86,7 @@ final class AgentModels {
      * the report can carry the caveat instead of hiding it.
      */
     AgentModel judge() {
-        return build(judgeRole());
+        return build(judgeRole(), JUDGE_REQUEST_TIMEOUT);
     }
 
     /**
@@ -134,17 +151,19 @@ final class AgentModels {
         return role.model().isBlank() ? Optional.of("no model: set " + variables) : Optional.empty();
     }
 
-    private AgentModel build(Role role) {
+    private AgentModel build(Role role, Duration requestTimeout) {
         Duration timeout = Duration.ofSeconds(30);
         if ("ANTHROPIC".equals(role.provider())) {
             return new AnthropicToolCallingModel(
-                    URI.create(baseUrl(role.provider()) + "/messages"), key(), role.model(), 4096, timeout);
+                    URI.create(baseUrl(role.provider()) + "/messages"), key(), role.model(), 4096, timeout,
+                    requestTimeout);
         }
         // No key for llm-chat: llama-server has no authentication, and sending it the OpenRouter
         // key would hand a credential to a process that has no use for it.
         String key = SPECTRA.equals(role.provider()) ? "" : key();
         return new OpenAiToolCallingModel(
-                URI.create(baseUrl(role.provider()) + "/chat/completions"), key, role.model(), timeout);
+                URI.create(baseUrl(role.provider()) + "/chat/completions"), key, role.model(), timeout,
+                requestTimeout);
     }
 
     private String provider(String variable, String fallback) {

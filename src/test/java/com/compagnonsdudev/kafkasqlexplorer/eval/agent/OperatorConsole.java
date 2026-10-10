@@ -73,6 +73,7 @@ interface OperatorConsole {
         private void post(String tool, String body) {
             HttpRequest.Builder builder = HttpRequest.newBuilder(
                             base.resolve("/api/mcp/toggle/tool/" + tool))
+                    .timeout(Duration.ofSeconds(30))
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body));
             if (bearerToken != null) {

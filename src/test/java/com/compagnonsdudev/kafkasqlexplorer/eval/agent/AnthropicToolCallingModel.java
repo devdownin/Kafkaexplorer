@@ -44,12 +44,22 @@ final class AnthropicToolCallingModel implements AgentModel {
     private final String model;
     private final int maxTokens;
 
+    private final Duration requestTimeout;
+
     AnthropicToolCallingModel(URI endpoint, String apiKey, String model, int maxTokens,
                               Duration timeout) {
+        this(endpoint, apiKey, model, maxTokens, timeout,
+                OpenAiToolCallingModel.DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    /** {@code requestTimeout}: see {@link OpenAiToolCallingModel}; without it a stalled answer never ends. */
+    AnthropicToolCallingModel(URI endpoint, String apiKey, String model, int maxTokens,
+                              Duration timeout, Duration requestTimeout) {
         this.endpoint = endpoint;
         this.apiKey = apiKey;
         this.model = model;
         this.maxTokens = maxTokens;
+        this.requestTimeout = requestTimeout;
         this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
     }
 
@@ -146,6 +156,7 @@ final class AnthropicToolCallingModel implements AgentModel {
 
     private JsonNode post(ObjectNode request) {
         HttpRequest httpRequest = HttpRequest.newBuilder(endpoint)
+                .timeout(requestTimeout)
                 .header("Content-Type", "application/json")
                 .header("x-api-key", apiKey == null ? "" : apiKey)
                 .header("anthropic-version", API_VERSION)

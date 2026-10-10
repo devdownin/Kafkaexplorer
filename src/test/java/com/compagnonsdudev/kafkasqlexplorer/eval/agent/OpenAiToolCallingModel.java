@@ -40,10 +40,27 @@ final class OpenAiToolCallingModel implements AgentModel {
     private final String apiKey;
     private final String model;
 
+    /** A CPU-served model can take minutes over a long prompt; a stalled one must still end. */
+    static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofMinutes(10);
+
+    private final Duration requestTimeout;
+
     OpenAiToolCallingModel(URI endpoint, String apiKey, String model, Duration timeout) {
+        this(endpoint, apiKey, model, timeout, DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    /**
+     * @param timeout        how long to wait for the connection
+     * @param requestTimeout how long to wait for the answer. {@code HttpClient} has none by default:
+     *                       a response that stops mid-way blocked a run for 3 h 39 min, until the
+     *                       job's own limit cancelled it and every unprinted report with it
+     */
+    OpenAiToolCallingModel(URI endpoint, String apiKey, String model, Duration timeout,
+                           Duration requestTimeout) {
         this.endpoint = endpoint;
         this.apiKey = apiKey;
         this.model = model;
+        this.requestTimeout = requestTimeout;
         this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
     }
 
@@ -142,6 +159,7 @@ final class OpenAiToolCallingModel implements AgentModel {
 
     private JsonNode post(ObjectNode request) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(endpoint)
+                .timeout(requestTimeout)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(request.toString()));
         if (apiKey != null && !apiKey.isBlank()) {
