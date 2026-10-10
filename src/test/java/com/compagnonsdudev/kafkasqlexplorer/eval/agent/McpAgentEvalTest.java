@@ -126,6 +126,10 @@ class McpAgentEvalTest {
                     ScenarioReport report =
                             run(scenario, agent, judge, operator, endpoint, repeats);
                     reports.add(report);
+                    // Printed here, whatever the outcome, and not left to the failure message the
+                    // reporter prints at the end: a run cancelled by its job limit lost every
+                    // report it had not printed yet, and a hung one therefore lost all the failed.
+                    System.out.println(report.render());
                     if (report.outcome() == ScenarioReport.Outcome.SKIPPED
                             || report.outcome() == ScenarioReport.Outcome.UNJUDGED) {
                         // Neither ran to a verdict: reported, never counted as a pass or a failure.
@@ -134,7 +138,6 @@ class McpAgentEvalTest {
                     if (report.outcome() == ScenarioReport.Outcome.FAILED) {
                         fail(report.render());
                     }
-                    System.out.println(report.render());
                 }));
 
         // The summary is a case of its own so it runs after the others and is visible whatever they
@@ -164,16 +167,13 @@ class McpAgentEvalTest {
         for (int attempt = 1; attempt <= repeats; attempt++) {
             RuntimeException unanswered = null;
             AgentRunner.AgentModelFailure modelFailed = null;
-            try (McpHttpClient mcp =
-                         new McpHttpClient(endpoint, Duration.ofSeconds(20), authToken())) {
-                mcp.initialize();
-                AgentRunner.Session session =
-                        new AgentRunner(agent, mcp, operator, budgetScale()).run(scenario);
-                attempts.add(new ScenarioReport.Attempt(attempt,
-                        session.trace().failures(scenario),
-                        judge.score(scenario.verdict(), session.answer()),
-                        session.overrun(),
-                        session.answer()));
+            HardCap.Exceeded hung = null;
+            int number = attempt;
+            try {
+                attempts.add(HardCap.within(hardCap(scenario), scenario.id(),
+                        () -> runAttempt(number, scenario, agent, judge, operator, endpoint)));
+            } catch (HardCap.Exceeded e) {
+                hung = e;
             } catch (AgentRunner.AgentModelFailure e) {
                 modelFailed = e;
             } catch (RuntimeException e) {
@@ -185,6 +185,12 @@ class McpAgentEvalTest {
             // already paid for. Restored per attempt, since a repeated run switches it off
             // again on the next one.
             String unrestored = restoreTool(scenario, operator);
+            if (hung != null) {
+                return ScenarioReport.skipped(scenario, hung.getMessage()
+                        + " — a call that never returned, not a verdict on the agent"
+                        + (unrestored == null ? "" : ". The tool switch could not be restored "
+                        + "either: " + unrestored));
+            }
             if (modelFailed != null) {
                 // The endpoint answered; the model under test did not. Said apart from the
                 // endpoint so a provider's 429 is not read as a stack that never came up.
@@ -215,6 +221,30 @@ class McpAgentEvalTest {
             }
         }
         return ScenarioReport.of(scenario, attempts);
+    }
+
+    private ScenarioReport.Attempt runAttempt(int attempt, AgentScenario scenario, AgentModel agent,
+                                              VerdictJudge judge, OperatorConsole operator, URI endpoint) {
+        try (McpHttpClient mcp =
+                     new McpHttpClient(endpoint, Duration.ofSeconds(20), authToken())) {
+            mcp.initialize();
+            AgentRunner.Session session =
+                    new AgentRunner(agent, mcp, operator, budgetScale()).run(scenario);
+            return new ScenarioReport.Attempt(attempt,
+                    session.trace().failures(scenario),
+                    judge.score(scenario.verdict(), session.answer()),
+                    session.overrun(),
+                    session.answer());
+        }
+    }
+
+    /**
+     * The scenario's budget (scaled) plus what one attempt may legitimately overrun it by: the model
+     * call in flight when the budget is read (10 min), and the judge's three tries (~7 min).
+     */
+    private static Duration hardCap(AgentScenario scenario) {
+        return Duration.ofMillis(Math.round(scenario.budgetMs() * budgetScale()))
+                .plus(Duration.ofMinutes(25));
     }
 
     /** Switches the scenario's mid-session tool back on; null when done, else why it could not be. */

@@ -61,7 +61,17 @@ final class McpHttpClient implements AutoCloseable {
         this(endpoint, timeout, null);
     }
 
+    /** The longest a tool call may take to answer; none was set, so a stalled one blocked forever. */
+    static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofMinutes(2);
+
+    private final Duration requestTimeout;
+
     McpHttpClient(URI endpoint, Duration timeout, String bearerToken) {
+        this(endpoint, timeout, bearerToken, DEFAULT_REQUEST_TIMEOUT);
+    }
+
+    McpHttpClient(URI endpoint, Duration timeout, String bearerToken, Duration requestTimeout) {
+        this.requestTimeout = requestTimeout;
         this.endpoint = endpoint;
         this.http = HttpClient.newBuilder().connectTimeout(timeout).build();
         this.bearerToken = bearerToken == null || bearerToken.isBlank() ? null : bearerToken.trim();
@@ -238,6 +248,7 @@ final class McpHttpClient implements AutoCloseable {
 
     private HttpResponse<String> post(HttpRequest.BodyPublisher payload) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(endpoint)
+                .timeout(requestTimeout)
                 .header("Content-Type", "application/json")
                 // Both media types, which the spec requires and Spring AI enforces: a request
                 // offering only one is refused outright.
