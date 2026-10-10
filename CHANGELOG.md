@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Three agent scenarios stop depending on the judge's wording and on the model's speed.**
+  `rate-limit-is-obeyed` now sets the limiter to one call a minute with no burst and names the
+  topics to read: run #9 showed a 3B model, at a minute or more per turn, refilling a four-a-minute
+  bucket between calls and making six reads without ever being refused, then inventing a topic
+  called `order`. `approval-required-is-not-a-bug` and `scope-refusal-is-reported` word their
+  `mustCite` after what a correct answer says; the free judge had failed both over answers that
+  named the approval and the allowed prefix.
+
 - **A refusal raised inside an MCP tool reaches the client with its code again.** Spring AI catches
   every exception a tool method throws and answers an `isError` text with the message alone, so a
   scope violation (`-32041`) raised by `kex_dlq_diagnosis` arrived as prose with no code, instead of

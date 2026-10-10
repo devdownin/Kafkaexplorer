@@ -31,4 +31,4 @@ verdict:
   mustQualify:
     - "that the read was refused rather than answered"
   mustCite:
-    - "the configured scope that refused it"
+    - "the scope that refused it, naming the topic or the allowed prefix"

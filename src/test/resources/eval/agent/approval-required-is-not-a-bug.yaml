@@ -34,4 +34,4 @@ verdict:
   mustQualify:
     - "that the call was refused pending an approval"
   mustCite:
-    - "what has to happen for the call to succeed"
+    - "that a human has to approve the call (a token to obtain) before it can succeed"
