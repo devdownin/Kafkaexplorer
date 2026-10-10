@@ -13,6 +13,15 @@ package com.compagnonsdudev.kafkasqlexplorer.mcp.guard;
  */
 public class McpToolException extends RuntimeException {
 
+    /**
+     * The last refusal raised on this thread. Spring AI catches every {@code RuntimeException} a
+     * tool method throws and returns it as an {@code isError} text result, keeping the message and
+     * dropping the exception — so a refusal raised inside a tool never reaches the interceptor as
+     * the exception it was, and -32041 arrived as prose with no code. A tool call runs on one
+     * thread from the interceptor to the tool's return, which is what makes this recoverable.
+     */
+    private static final ThreadLocal<McpToolException> RAISED = new ThreadLocal<>();
+
     private final McpErrorCode errorCode;
     private final McpGuard guard;
 
@@ -20,6 +29,19 @@ public class McpToolException extends RuntimeException {
         super(message);
         this.errorCode = errorCode;
         this.guard = guard;
+        RAISED.set(this);
+    }
+
+    /** Forgets any refusal raised earlier on this thread; called before a tool is invoked. */
+    public static void forgetRaised() {
+        RAISED.remove();
+    }
+
+    /** The refusal raised on this thread since {@link #forgetRaised()}, removed as it is read. */
+    public static McpToolException takeRaised() {
+        McpToolException raised = RAISED.get();
+        RAISED.remove();
+        return raised;
     }
 
     /**

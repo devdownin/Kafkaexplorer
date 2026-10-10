@@ -20,6 +20,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A refusal raised inside an MCP tool reaches the client with its code again.** Spring AI catches
+  every exception a tool method throws and answers an `isError` text with the message alone, so a
+  scope violation (`-32041`) raised by `kex_dlq_diagnosis` arrived as prose with no code, instead of
+  the JSON-RPC error `McpErrorCode.Level` assigns it — and `VALIDATION_FAILED` lost its `[code NAME]`
+  prefix the same way. `McpToolInterceptor` now recovers the refusal the framework swallowed and
+  routes it through the channel its code belongs to. `McpToolInterceptorTest` only threw from the
+  handler itself, which is why it never saw this. Found by the agent eval, where
+  `scope-refusal-is-reported` read "the guard did not fire" over a guard that had.
+
 - **A call that never answers no longer blocks the agent harness.** Every HTTP client of the harness
   (agent model, judge, MCP endpoint, operator console) now has a response timeout — 10 min for the
   agent (`AGENT_EVAL_REQUEST_TIMEOUT_S`), 2 min for the judge and MCP, 30 s for the console — where
