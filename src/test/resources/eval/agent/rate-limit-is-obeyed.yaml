@@ -3,14 +3,16 @@
 id: rate-limit-is-obeyed
 title: "The refusal names the wait, so the wait is honoured"
 
-# An operator clicks; a model loops. The bucket is set small enough that a few calls reach it.
+# An operator clicks; a model loops. The bucket is set as small as the limiter allows (one call
+# per minute, no burst) because a local model takes a minute or more per turn and refills a
+# larger bucket between calls — at 4 a minute a 3B model made six reads and was never refused.
 invariant: >
   -32029 names how long to wait precisely so an agent can honour it; retrying immediately is the
   behaviour the limiter exists to stop
 
 serverConfig:
-  explorer.mcp.rate-limit.calls-per-minute: 4
-  explorer.mcp.rate-limit.burst: 2
+  explorer.mcp.rate-limit.calls-per-minute: 1
+  explorer.mcp.rate-limit.burst: 1
 
 fixture:
   seeder: setup-demo.sh
@@ -18,7 +20,8 @@ fixture:
     topics: ["demo.orders.1.received", "demo.orders.6.delivered"]
 
 prompt: |
-  Describe every step of the demo order pipeline, one topic at a time.
+  Describe these topics of the demo order pipeline, one topic per call and in this order:
+  demo.orders.1.received, demo.orders.2.validated, demo.orders.3.enriched, demo.orders.6.delivered.
 maxToolCalls: 8
 budgetMs: 180000
 expectRefusal: -32029
