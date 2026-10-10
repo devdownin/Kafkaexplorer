@@ -137,7 +137,9 @@ public class McpToolInterceptor {
             approvals.spend(tool, approvalToken(arguments), identity);
             rateLimiter.check(identity);
 
+            McpToolException.forgetRaised();
             CallToolResult result = delegate.apply(exchange, request);
+            rethrowRefusalTheFrameworkSwallowed(result);
             Measured<Long> outputBytes = sizeOf(result);
 
             if (outputBytes.measured() && outputBytes.value() > properties.getHardMaxOutputBytes()) {
@@ -250,6 +252,27 @@ public class McpToolInterceptor {
      * message is the planner's own — its line and column are the whole reason this path exists
      * instead of a hard error the client may never show.
      */
+    /**
+     * Gives a refusal raised inside a tool back its identity. Spring AI turns an exception thrown by
+     * a tool method into a plain {@code isError} text result, so without this the code, the guard
+     * and the error channel chosen by {@link McpErrorCode.Level} were all lost for every refusal
+     * raised past this layer (a scope violation, a validation failure). The message is compared
+     * before the exception is trusted, so a refusal that was built and caught is not mistaken for
+     * the reason the call failed.
+     */
+    private static void rethrowRefusalTheFrameworkSwallowed(CallToolResult result) {
+        McpToolException raised = McpToolException.takeRaised();
+        if (raised == null || !Boolean.TRUE.equals(result.isError()) || raised.getMessage() == null) {
+            return;
+        }
+        boolean carriesIt = result.content().stream()
+                .anyMatch(c -> c instanceof io.modelcontextprotocol.spec.McpSchema.TextContent t
+                        && t.text() != null && t.text().contains(raised.getMessage()));
+        if (carriesIt) {
+            throw raised;
+        }
+    }
+
     private static CallToolResult executionFailure(McpToolException e) {
         return CallToolResult.builder()
                 .isError(true)

@@ -122,6 +122,34 @@ class McpToolInterceptorTest {
     }
 
     @Test
+    void a_refusal_the_framework_turned_into_text_still_reaches_the_agent_as_its_code() {
+        // Spring AI catches what a tool method throws and answers isError text with the message
+        // only; the test above throws from the handler itself and so could never see this.
+        assertThatThrownBy(() -> invoke((exchange, request) -> {
+            try {
+                throw new McpScopeViolationException("topics", List.of("prod.payments"), List.of("demo."));
+            } catch (RuntimeException e) {
+                return CallToolResult.builder().isError(true)
+                        .addTextContent(e.getMessage() + System.lineSeparator() + e.getMessage()).build();
+            }
+        }, Map.of()))
+                .isInstanceOf(McpError.class)
+                .satisfies(e -> assertThat(((McpError) e).getJsonRpcError().code()).isEqualTo(-32041));
+        assertThat(recorder.recent(McpCallFilter.all(), 10)).singleElement()
+                .satisfies(call -> assertThat(call.deniedByGuard()).isEqualTo(McpGuard.SCOPE));
+    }
+
+    @Test
+    void a_refusal_that_was_built_and_caught_does_not_turn_a_different_failure_into_a_denial() {
+        CallToolResult result = invoke((exchange, request) -> {
+            new McpScopeViolationException("topics", List.of("x"), List.of("demo."));
+            return CallToolResult.builder().isError(true).addTextContent("the broker timed out").build();
+        }, Map.of());
+
+        assertThat(result.isError()).isTrue();
+    }
+
+    @Test
     void a_user_sql_error_comes_back_as_tool_output_so_the_model_can_correct_it() {
         // The SDK documents isError as "the tool EXECUTION failed and the content contains error
         // information" — that result reaches the model. A JSON-RPC error is a failure of the call
