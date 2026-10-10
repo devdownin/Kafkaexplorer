@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A guard that "did not fire" now shows what the server sent.** The agent harness's report for a
+  guard scenario (`-32041`, `-32029`, `-32042`) quotes each call's raw answer beside the code the
+  client read. Two full runs reported the scope guard as silent while the agent's own answer quoted
+  the scope that refused it, and the report could not tell a guard that stayed quiet from a refusal
+  whose code the client failed to parse.
 - **The agent-eval workflow pins the Qwen2.5-3B GGUF.** `model_sha256` defaults to the hash the
   fetcher printed (`9c9f56a3…3f94`, size matching the Hub's) for `qwen2.5-3b-instruct`, so a replaced
   upstream file is refused instead of silently graded; the 7B has none pinned yet, and the input still

@@ -215,4 +215,21 @@ class ToolCallTraceTest {
                 null)))
                 .hasSizeGreaterThanOrEqualTo(5);
     }
+
+    @Test
+    @DisplayName("a guard that did not fire quotes what each call came back with")
+    void aMissingRefusalShowsTheRawAnswers() {
+        // The same sentence used to cover a guard that stayed silent and a refusal whose code the
+        // client could not read; the raw text is what tells them apart.
+        ToolCall unread = new ToolCall(1, "kex_sql_query", Map.of(), null, null, null, null, 0, 1,
+                "Topic demo.payments.dlq is outside the allowed prefixes: demo.orders.");
+        ToolCallTrace observed = new ToolCallTrace(List.of(unread), LISTED);
+
+        assertThat(observed.failures(scenario(trace(List.of(), List.of(), null, 0),
+                McpRefusal.OUT_OF_SCOPE)))
+                .anySatisfy(failure -> assertThat(failure)
+                        .contains("the guard did not fire")
+                        .contains("#1 kex_sql_query → code none read")
+                        .contains("outside the allowed prefixes"));
+    }
 }
