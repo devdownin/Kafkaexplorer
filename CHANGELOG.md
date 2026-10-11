@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.3.0] — 2026-10-11
+
 - **The SpectraLLM hub stack pins SpectraLLM 0.10.0** (was 0.9.0), the first release that carries
   its MCP server — so `compose/spectra-hub.mcp.yml` works without setting `SPECTRA_IMAGE_TAG`.
 
@@ -2559,7 +2563,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.5...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.0...HEAD
+[2.3.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.5...v2.3.0
 [2.2.5]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.4...v2.2.5
 [2.2.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.3...v2.2.4
 [2.2.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.2...v2.2.3
