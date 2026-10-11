@@ -20,6 +20,9 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The SpectraLLM hub stack pins SpectraLLM 0.10.0** (was 0.9.0), the first release that carries
+  its MCP server — so `compose/spectra-hub.mcp.yml` works without setting `SPECTRA_IMAGE_TAG`.
+
 - **`compose/spectra-hub.mcp.yml` serves SpectraLLM's MCP server beside the Explorer's.** One
   overlay turns on Spectra's read-only `spectra_*` tools on `http://localhost:8081/mcp`, sets the
   `SPECTRA_API_KEY` that server requires, hands the same key to the Explorer, and ships a

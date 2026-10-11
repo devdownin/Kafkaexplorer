@@ -11,9 +11,9 @@
 # servers and it can trace a record through the cluster with kex_* and look it up in the indexed
 # corpus with spectra_*.
 #
-# THE IMAGE HAS TO CARRY IT. The MCP server landed in SpectraLLM after the release this stack
-# pins by default, so SPECTRA_IMAGE_TAG must name a newer one — the probe below says so in those
-# words when /mcp answers 404, rather than leaving an agent to report "no tools".
+# THE IMAGE HAS TO CARRY IT. The MCP server ships from SpectraLLM 0.10.0, the release this stack
+# pins by default. A SPECTRA_IMAGE_TAG set to an older one serves no /mcp — the probe below says
+# so in those words when /mcp answers 404, rather than leaving an agent to report "no tools".
 #
 # WHY A KEY, AND WHAT IT COSTS
 #   * Spectra refuses to serve /mcp without SPECTRA_API_KEY (503): an endpoint an agent calls in
