@@ -20,6 +20,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **`compose/spectra-hub.mcp.yml` serves SpectraLLM's MCP server beside the Explorer's.** One
+  overlay turns on Spectra's read-only `spectra_*` tools on `http://localhost:8081/mcp`, sets the
+  `SPECTRA_API_KEY` that server requires, hands the same key to the Explorer, and ships a
+  `spectra-mcp-probe` one-shot that checks the five tools answer — and says so when the image is
+  older than the MCP server. Spectra's own UI answers 401 while it is on, since it sends no key.
+- **The Explorer now sends SpectraLLM's key as `X-API-Key`.** It sent only `Authorization:
+  Bearer`, which Spectra's `ApiKeyFilter` never reads, so setting `SPECTRA_API_KEY` silenced
+  Process Mining with a 401. The bearer header is still sent, for a reverse proxy in front.
+
 - **Three agent scenarios stop depending on the judge's wording and on the model's speed.**
   `rate-limit-is-obeyed` now sets the limiter to one call a minute with no burst and names the
   topics to read: run #9 showed a 3B model, at a minute or more per turn, refilling a four-a-minute

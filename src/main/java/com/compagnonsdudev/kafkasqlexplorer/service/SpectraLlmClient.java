@@ -71,9 +71,12 @@ public class SpectraLlmClient implements LlmClient {
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody));
             LlmHttpSupport.withTimeout(requestBuilder, config);
 
-            // SpectraLLM is API-key-less by default, but honour a bearer token if one is configured
-            // (e.g. when the instance sits behind an authenticating reverse proxy).
+            // SpectraLLM is API-key-less by default. When a key is configured it goes out twice, on
+            // purpose: SpectraLLM's own ApiKeyFilter reads `X-API-Key` and nothing else, so the
+            // bearer header alone answered 401 the moment SPECTRA_API_KEY was set — which the
+            // MCP overlay requires. The bearer stays for an authenticating reverse proxy in front.
             if (config.isApiKeyConfigured()) {
+                requestBuilder.header("X-API-Key", config.getApiKey());
                 requestBuilder.header("Authorization", "Bearer " + config.getApiKey());
             }
 
