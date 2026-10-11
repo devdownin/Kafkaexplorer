@@ -1,0 +1,73 @@
+# Overlay: SpectraLLM's read-only MCP server, beside the Explorer's.
+#
+#   docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml up -d
+#   docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
+#     --profile probe run --rm spectra-mcp-probe
+#
+# The endpoint is `http://localhost:${SPECTRA_API_PORT:-8081}/mcp` (Streamable HTTP) and it wants
+# `X-API-Key: $SPECTRA_API_KEY` on every call. Five tools, none of which writes: spectra_search
+# (passages and scores, no model call), spectra_ask (a RAG answer with its sources),
+# spectra_list_documents, spectra_preview_document and spectra_status. Point an agent at both
+# servers and it can trace a record through the cluster with kex_* and look it up in the indexed
+# corpus with spectra_*.
+#
+# THE IMAGE HAS TO CARRY IT. The MCP server landed in SpectraLLM after the release this stack
+# pins by default, so SPECTRA_IMAGE_TAG must name a newer one — the probe below says so in those
+# words when /mcp answers 404, rather than leaving an agent to report "no tools".
+#
+# WHY A KEY, AND WHAT IT COSTS
+#   * Spectra refuses to serve /mcp without SPECTRA_API_KEY (503): an endpoint an agent calls in
+#     a loop and that returns the corpus's text is not one to open unauthenticated. The default
+#     below is a published development value, as compose/mcp.yml does for the Explorer's token:
+#     export your own before anyone else can reach the stack.
+#   * The key applies to all of /api/**, not to /mcp alone. The Explorer is given it (CLAUDE_API_KEY
+#     below) and sends it as X-API-Key, so Process Mining keeps answering. SPECTRA'S OWN UI DOES
+#     NOT: its pages call /api/** without the header and get 401 while this overlay is on. Use
+#     Swagger (http://localhost:8081/swagger-ui, which is exempt) or drop the overlay to use it.
+services:
+  spectra-api:
+    environment:
+      - SPECTRA_MCP_ENABLED=true
+      # Development/CI fallback only. Shared environments must inject a real secret.
+      - SPECTRA_API_KEY=${SPECTRA_API_KEY:-dev-only-spectra-key}
+
+  explorer:
+    environment:
+      - CLAUDE_API_KEY=${SPECTRA_API_KEY:-dev-only-spectra-key}
+
+  spectra-mcp-probe:
+    image: curlimages/curl:8.21.0
+    profiles: ["probe"]
+    depends_on:
+      spectra-api:
+        condition: service_healthy
+    environment:
+      - SPECTRA_MCP_URL=http://spectra-api:8080/mcp
+      - SPECTRA_MCP_KEY=${SPECTRA_API_KEY:-dev-only-spectra-key}
+    # initialize, then tools/list, and the five names checked. A 404 is named for what it is.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -u
+        H='-H Content-Type:application/json -H Accept:application/json,text/event-stream'
+        init=$$(curl -s -D /tmp/h -o /tmp/b -w '%{http_code}' $$H -H "X-API-Key: $$SPECTRA_MCP_KEY" \
+          -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' \
+          "$$SPECTRA_MCP_URL")
+        case "$$init" in
+          200) ;;
+          404) echo "FAIL: /mcp is not served — this spectrallm image predates the MCP server; set SPECTRA_IMAGE_TAG to a newer release"; exit 1 ;;
+          401) echo "FAIL: 401 — SPECTRA_API_KEY differs between the probe and spectra-api"; exit 1 ;;
+          503) echo "FAIL: 503 — spectra-api has MCP on but no SPECTRA_API_KEY"; exit 1 ;;
+          *) echo "FAIL: initialize answered HTTP $$init"; cat /tmp/b; exit 1 ;;
+        esac
+        session=$$(grep -i '^mcp-session-id:' /tmp/h | cut -d' ' -f2 | tr -d '\r')
+        curl -s -o /dev/null $$H -H "X-API-Key: $$SPECTRA_MCP_KEY" -H "Mcp-Session-Id: $$session" \
+          -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' "$$SPECTRA_MCP_URL"
+        tools=$$(curl -s $$H -H "X-API-Key: $$SPECTRA_MCP_KEY" -H "Mcp-Session-Id: $$session" \
+          -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' "$$SPECTRA_MCP_URL")
+        missing=0
+        for t in spectra_search spectra_ask spectra_list_documents spectra_preview_document spectra_status; do
+          echo "$$tools" | grep -q "\"$$t\"" && echo "ok   $$t" || { echo "MISSING $$t"; missing=1; }
+        done
+        exit $$missing

@@ -183,6 +183,16 @@ file wires the pair. There were two, and the deletion of the other is the point:
   auto-install off, together with the file name and the alias — the four have to agree, and
   `.env.example` sets them in one block for that reason.
 
+  `compose/spectra-hub.mcp.yml` turns on SpectraLLM's read-only MCP server (`spectra_*` tools on
+  `/mcp`, port 8081). It has to set `SPECTRA_API_KEY`, because Spectra answers 503 on `/mcp`
+  without one, and that key covers all of `/api/**`: the Explorer is handed the same value as
+  `CLAUDE_API_KEY` and sends it as `X-API-Key` — it used to send only `Authorization: Bearer`,
+  which Spectra's filter never reads, so any key at all silenced Process Mining with a 401 —
+  while Spectra's own UI, which sends no key, answers 401 for as long as the overlay is on. Its
+  `spectra-mcp-probe` one-shot (`--profile probe run --rm`) does the handshake and `tools/list`,
+  and names a 404 as what it is: a `spectrallm` image older than the MCP server, which the
+  default `SPECTRA_IMAGE_TAG` is.
+
   `compose/spectra-hub.ingest.yml` is the one that makes the pair more than a shared
   model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
   answers questions with cited sources and the Explorer's audits can read it (`EXPLORER_USE_RAG`,
@@ -275,7 +285,7 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   | `compose/ci.yml` | overlay | CI-only, layered on `image.yml`. |
   | `compose/dev.yml` | standalone | Hot reload: broker + `spring-boot:run` + Vite. |
   | `compose/build.yml` | standalone | One-shot toolchain (`run --rm`), not a stack. |
-  | `compose/spectra-hub.yml` + `.gpu` / `.ingest` / `.limits` | standalone + overlays | The SpectraLLM pair, from published images. |
+  | `compose/spectra-hub.yml` + `.gpu` / `.ingest` / `.limits` / `.mcp` | standalone + overlays | The SpectraLLM pair, from published images. |
   | `compose/spectra-hub.agent-eval.yml` | overlay | The hub's `llm-chat` as the MCP agent harness's model: `--jinja`, one 32k slot, loopback port. |
 
   **`compose/mcp.yml` is the only overlay whose main switch is NOT a variable.** Every guard it

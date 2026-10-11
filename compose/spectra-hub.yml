@@ -77,10 +77,11 @@
 #     would block on llm-chat's healthcheck for the length of that download.
 #
 # NO AUTHENTICATION ANYWHERE IN THIS STACK, on purpose and by default: Kafka Explorer has none
-# at all, and SPECTRA_API_KEY is empty below. Setting that key would also break the pair —
-# Kafka Explorer's SpectraLlmClient sends `Authorization: Bearer`, while Spectra's ApiKeyFilter
-# reads `X-API-Key` — so the Explorer's audits would answer 401 with nothing else changing.
-# Keep BIND_ADDR on the loopback, or put something authenticating in front of it.
+# at all, and SPECTRA_API_KEY is empty below. Setting that key costs Spectra's own UI, which
+# calls /api/** without the X-API-Key header and gets 401; the Explorer is unaffected as long
+# as it is given the same key (CLAUDE_API_KEY), since it sends it as X-API-Key. That pairing is
+# what compose/spectra-hub.mcp.yml does, because SpectraLLM's MCP server refuses to run without
+# a key. Keep BIND_ADDR on the loopback, or put something authenticating in front of it.
 name: kafka-explorer-spectra-hub
 
 services:
@@ -280,8 +281,8 @@ services:
       - SPECTRA_LLM_CHAT_FILE=${LLM_CHAT_MODEL_FILE:-Qwen2.5-7B-Instruct-Q4_K_M.gguf}
       - SPECTRA_LLM_EMBEDDING_MODEL=${LLM_EMBED_MODEL_NAME:-nomic-embed-text}
       - SPECTRA_LLM_EMBEDDING_FILE=${LLM_EMBED_MODEL_FILE:-embed.gguf}
-      # Empty = no authentication. Read the header note before setting it: the Explorer sends a
-      # Bearer token, this filter reads X-API-Key, so a key here silences Process Mining.
+      # Empty = no authentication. Read the header note before setting it: a key here makes
+      # Spectra's own UI answer 401, and the Explorer needs the same key as CLAUDE_API_KEY.
       - SPECTRA_API_KEY=${SPECTRA_API_KEY:-}
       # Must cover a full generation on CPU, and must not be shorter than the Explorer's own
       # request timeout — the API would abandon the answer while the caller is still waiting.

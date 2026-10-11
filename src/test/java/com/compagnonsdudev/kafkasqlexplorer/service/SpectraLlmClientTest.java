@@ -25,6 +25,7 @@ class SpectraLlmClientTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AtomicReference<String> lastRequestBody = new AtomicReference<>();
     private final AtomicReference<String> lastRequestPath = new AtomicReference<>();
+    private final AtomicReference<String> lastApiKeyHeader = new AtomicReference<>();
 
     @AfterEach
     void tearDown() {
@@ -50,6 +51,7 @@ class SpectraLlmClientTest {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/query", exchange -> {
             lastRequestPath.set(exchange.getRequestURI().getPath());
+            lastApiKeyHeader.set(exchange.getRequestHeaders().getFirst("X-API-Key"));
             lastRequestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             int n = callCount.incrementAndGet();
             boolean fail = n <= failuresBeforeSuccess;
@@ -67,6 +69,26 @@ class SpectraLlmClientTest {
         config.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
         config.setRequestTimeoutSeconds(5);
         return config;
+    }
+
+    @Test
+    void aConfiguredKeyIsSentAsTheHeaderSpectraReads() throws Exception {
+        // SpectraLLM's ApiKeyFilter reads X-API-Key only; a bearer token alone answered 401.
+        ClaudeConfig config = startServer(200, "{\"answer\":\"ok\",\"sources\":[]}");
+        config.setApiKey("spectra-key");
+
+        new SpectraLlmClient(config).generate("sys", "user");
+
+        assertEquals("spectra-key", lastApiKeyHeader.get());
+    }
+
+    @Test
+    void noKeyMeansNoApiKeyHeader() throws Exception {
+        ClaudeConfig config = startServer(200, "{\"answer\":\"ok\",\"sources\":[]}");
+
+        new SpectraLlmClient(config).generate("sys", "user");
+
+        assertNull(lastApiKeyHeader.get());
     }
 
     @Test
