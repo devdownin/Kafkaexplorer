@@ -3,6 +3,7 @@
 package com.compagnonsdudev.kafkasqlexplorer.mcp.tools;
 
 import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.Measured;
+import org.springframework.ai.mcp.annotation.McpToolParam;
 
 import java.util.List;
 
@@ -75,10 +76,17 @@ public final class OperationalView {
      * @param name stable stage label used in evidence; optional for callers
      * @param topic Kafka topic observed at this stage
      * @param consumerGroupId group that consumes this stage, when the stage has one
+     *
+     * <p>The two optional components say so to the schema generator: it marks every record
+     * component required unless told otherwise, so the published schema demanded a
+     * {@code consumerGroupId} the code already treated as optional — and the MCP server, which
+     * validates calls against that schema, refused a stage without one before any of it ran.
      */
     public record ProcessStage(
+            @McpToolParam(required = false, description = "Stable stage label used in evidence")
             String name,
             String topic,
+            @McpToolParam(required = false, description = "Group that consumes this stage, when it has one")
             String consumerGroupId
     ) {
     }

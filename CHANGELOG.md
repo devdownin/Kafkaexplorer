@@ -20,7 +20,21 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+- **A process stage no longer has to name a consumer group.** `kex_process_health`,
+  `kex_compare_process_state` and `kex_incident_evidence` published a schema in which every
+  component of a stage was required, so the MCP server — which validates a call against it —
+  refused `{"name": "input", "topic": "orders"}` before the tool ran, though the code and the
+  description both treat `name` and `consumerGroupId` as optional. Only `topic` is required now.
+  Found by Kex-anHarness's live contract against the 2.3.0 image.
+
+- **`compose/ecosystem.yml` runs the three projects together** — this one, SpectraLLM and the
+  Kex-anHarness agent — from published images, on top of `compose/spectra-hub.yml` and its
+  `.mcp.yml`. The hub stack's SpectraLLM API moves from host port 8081 to **8089**: 8081 is the
+  agent's, and the port plan the three READMEs now share is 8080 Explorer · 8081 Kex-anHarness ·
+  8088/8089 SpectraLLM UI/API · 9092 Kafka.
+
+- **The « Ecosystem » section is generated.** `docs/check-ecosystem.py`, the same file in the three
+  repositories, writes it into both READMEs and the Docker Hub page and fails CI when one drifts.
 
 ## [2.3.0] — 2026-10-11
 

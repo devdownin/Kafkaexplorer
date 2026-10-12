@@ -15,6 +15,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.TestPropertySource;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -106,6 +107,32 @@ class McpServerBootTest {
                     .describedAs("%s must carry an input schema", tool.name())
                     .isNotNull();
         });
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void a_process_stage_requires_its_topic_and_nothing_else() {
+        // The schema is what the MCP server validates a call against: a stage component left
+        // "required" by the generator refused a stage without a consumer group before the tool
+        // ran, though the code and its description both treat the group as optional.
+        List<SyncToolSpecification> staged = toolSpecs.stream()
+                .filter(spec -> properties(spec).containsKey("stages"))
+                .toList();
+        assertThat(staged).extracting(spec -> spec.tool().name())
+                .contains("kex_process_health", "kex_compare_process_state", "kex_incident_evidence");
+        assertThat(staged).allSatisfy(spec -> {
+            Map<String, Object> stages = (Map<String, Object>) properties(spec).get("stages");
+            Map<String, Object> item = (Map<String, Object>) stages.get("items");
+            assertThat((List<String>) item.get("required"))
+                    .describedAs("%s: a stage requires its topic only", spec.tool().name())
+                    .containsExactly("topic");
+        });
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> properties(SyncToolSpecification spec) {
+        Object properties = spec.tool().inputSchema().get("properties");
+        return properties == null ? Map.of() : (Map<String, Object>) properties;
     }
 
     @Test
