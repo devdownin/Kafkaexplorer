@@ -20,7 +20,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+- **The three-project stack is booted in CI.** `ecosystem-stack` starts Kafka, the Explorer and the
+  Kex-anHarness agent from `compose/ecosystem.yml` and asserts that the agent finds the `kex_*`
+  tools by service name and gets an answer from one — where `config` was all that had checked it.
+- **The sibling projects' image pins are checked too.** `check-image-pins.py` requires one tag per
+  sibling (SpectraLLM, Kex-anHarness) across the tree, and with `--published` asks Docker Hub
+  whether it is behind; "newest" is now the most recently pushed `X.Y.Z`, since a mistyped tag
+  (`kex-agent-ai:9.9.23`) outranks every real release by number. The hub stack moves to
+  **SpectraLLM 0.11.0**, which had been published while the stack went on pulling 0.10.0.
+- **`check-ecosystem.py --siblings`**, on the weekly `image-pins` schedule, compares the shared
+  script with its copies in SpectraLLM and Kex-anHarness.
 
 ## [2.3.1] — 2026-10-12
 

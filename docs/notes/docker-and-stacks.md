@@ -190,8 +190,8 @@ file wires the pair. There were two, and the deletion of the other is the point:
   which Spectra's filter never reads, so any key at all silenced Process Mining with a 401 —
   while Spectra's own UI, which sends no key, answers 401 for as long as the overlay is on. Its
   `spectra-mcp-probe` one-shot (`--profile probe run --rm`) does the handshake and `tools/list`,
-  and names a 404 as what it is: a `spectrallm` image older than the MCP server (0.10.0, the
-  default `SPECTRA_IMAGE_TAG`), which an older pin in `.env` still produces.
+  and names a 404 as what it is: a `spectrallm` image older than the MCP server (0.10.0; the
+  default `SPECTRA_IMAGE_TAG` is later), which an older pin in `.env` still produces.
 
   `compose/ecosystem.yml` adds the third project, the Kex-anHarness agent, on top of the pair and
   its `.mcp.yml`: it turns the Explorer's MCP server on (read-only, the bearer shared with the
@@ -202,7 +202,11 @@ file wires the pair. There were two, and the deletion of the other is the point:
   is what Process Mining can wait for, not what a tool loop can), so without a key it starts
   `DEGRADED` and says so. The section that presents the three is generated, not written: every
   README and Docker Hub page carries it between `ecosystem:start`/`end` markers, and
-  `docs/check-ecosystem.py` — the same file in the three repositories — fails when one drifts.
+  `docs/check-ecosystem.py` — the same file in the three repositories — fails when one drifts;
+  its `--siblings` mode, on the weekly `image-pins` schedule, compares the script itself with the
+  other two copies. CI boots the overlay in `ecosystem-stack` (Kafka, the Explorer and the agent,
+  without SpectraLLM's half, which `spectra-hub-stack` already covers), and `check-image-pins.py`
+  holds the SpectraLLM and agent pins to the same rules as the Explorer's.
 
   `compose/spectra-hub.ingest.yml` is the one that makes the pair more than a shared
   model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
