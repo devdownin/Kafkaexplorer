@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Sibling pins are bumped, not only reported.** The weekly `image-pins` run gains a
+  `sibling-bump` job: `check-image-pins.py --bump-siblings` moves the SpectraLLM and Kex-anHarness
+  pins Docker Hub has overtaken, and a pull request is opened for review — as `release.yml` already
+  does for the Explorer's own pin.
+- **One slogan per surface.** The site's title, hero and meta description now say what the README
+  and the Docker Hub page say.
+
 - **The three-project stack is booted in CI.** `ecosystem-stack` starts Kafka, the Explorer and the
   Kex-anHarness agent from `compose/ecosystem.yml` and asserts that the agent finds the `kex_*`
   tools by service name and gets an answer from one — where `config` was all that had checked it.
