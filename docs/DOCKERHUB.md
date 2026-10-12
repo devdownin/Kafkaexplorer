@@ -1,6 +1,6 @@
 <!-- This file IS the Docker Hub overview page; the web UI is overwritten by the next sync.
      Editing it: every link and image must be ABSOLUTE (it renders outside the repository),
-     and docs/check-links.py enforces that. Full notes at the bottom of this file. -->
+     and docs/check-links.py enforces that. -->
 
 # ⚡ Kafka SQL Explorer
 
@@ -91,7 +91,7 @@ window, plus duplicates and poison records for the audit to find.
 
 ### With a private AI beside it, from published images
 
-Process Mining can be answered by [SpectraLLM](https://hub.docker.com/r/compagnonsdudev/spectrallm)
+Process Mining can be answered by [SpectraLLM](https://github.com/devdownin/SpectraLLM)
 — a local RAG stack published under this same namespace — so the flowcharts and the anomaly
 hunt run on your machine, with no API key and nothing leaving your network.
 [`compose/spectra-hub.yml`](https://github.com/devdownin/Kafkaexplorer/blob/main/compose/spectra-hub.yml)
@@ -106,7 +106,7 @@ docker compose -f compose/spectra-hub.yml pull
 docker compose -f compose/spectra-hub.yml up -d
 ```
 
-Kafka Explorer on **http://localhost:8080**, the SpectraLLM UI on **http://localhost:8088**.
+Kafka SQL Explorer on **http://localhost:8080**, the SpectraLLM UI on **http://localhost:8088**.
 The first boot downloads ~4.8 GB of model weights in the background — nothing waits for it,
 so both interfaces are up in seconds and Process Mining starts answering once the weights
 land. Plan for ~16 GB of RAM; a GPU turns minutes per analysis into seconds, through the
@@ -299,6 +299,18 @@ or place an authenticating reverse proxy in front of it. The MCP bearer protects
 agent endpoint, not the web UI. Pin a release digest in production and see
 [SECURITY.md](https://github.com/devdownin/Kafkaexplorer/blob/main/SECURITY.md)
 for vulnerability reports.
+
+## 🧩 Ecosystem
+
+Three open-source projects, published under the same Docker Hub namespace, each usable on its own and wired to the others through MCP:
+
+| Project | What it does | Image | License |
+|---|---|---|---|
+| **Kafka SQL Explorer** *(this project)* | Explore Kafka, query it in Flink SQL, audit it with AI — and serve it to agents as a read-only MCP server | [`compagnonsdudev/kafkaexplorer`](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer) | AGPL-3.0-or-later |
+| [SpectraLLM](https://github.com/devdownin/SpectraLLM) | Turn your documents into a private, fine-tuned AI — local RAG, fine-tuning, and an MCP server over the corpus | [`compagnonsdudev/spectrallm`](https://hub.docker.com/r/compagnonsdudev/spectrallm) | AGPL-3.0-or-later |
+| [Kex-anHarness](https://github.com/devdownin/Kex-anHarness) | A governed AI agent that works through MCP tools — supervision, human approvals, audit trail | [`compagnonsdudev/kex-agent-ai`](https://hub.docker.com/r/compagnonsdudev/kex-agent-ai) | GPL-3.0-or-later |
+
+How they fit: Kex-anHarness reads Kafka through Kafka SQL Explorer's MCP server and searches documents through SpectraLLM's; Kafka SQL Explorer can use SpectraLLM as its private LLM provider.
 
 ## 📚 More
 

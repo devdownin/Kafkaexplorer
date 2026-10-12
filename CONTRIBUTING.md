@@ -35,7 +35,7 @@ New source files carry the licence header — see [Licence headers](#licence-hea
 
 ### Prerequisites
 
-- JDK 25 (`java.version` in `pom.xml`; the enforcer plugin refuses anything older)
+- JDK 21 or newer (`java.version` in `pom.xml`; the enforcer plugin refuses anything older). CI and the Docker build use JDK 25
 - Docker and Docker Compose
 - Maven — or just use the checked-in wrapper, `./mvnw`
 

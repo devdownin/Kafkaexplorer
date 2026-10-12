@@ -80,6 +80,9 @@ NOT_A_PATH = {
     # Container images and registry references.
     'apache/kafka', 'compagnonsdudev/kafkaexplorer', 'docker.io/compagnonsdudev/kafkaexplorer',
     'ghcr.io/devdownin/kafkaexplorer', 'unknown/unknown',
+    # The two sibling projects' images, named by the Ecosystem section the READMEs and the
+    # Docker Hub page share with SpectraLLM and Kex-anHarness.
+    'compagnonsdudev/spectrallm', 'compagnonsdudev/kex-agent-ai',
     # Build platforms. `linux/arm64` alone was enough while only CLAUDE.md and
     # CONTRIBUTING.md were read — the note that used to sit here said the amd64 form was
     # always written with a comma and therefore already rejected. That stopped being true

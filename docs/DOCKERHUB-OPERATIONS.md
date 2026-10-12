@@ -1,4 +1,4 @@
-# KafkaExplorer deployment reference
+# Kafka SQL Explorer deployment reference
 
 The [Docker Hub overview](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer) is kept below 25 KB so the registry can show it in full. This guide contains the detailed settings and troubleshooting notes.
 

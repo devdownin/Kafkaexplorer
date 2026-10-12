@@ -14,7 +14,7 @@
 [![Flink 2.3](https://img.shields.io/badge/Flink-2.3-E6526F?logo=apacheflink&logoColor=white)](https://flink.apache.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-[Site web](https://devdownin.github.io/Kafkaexplorer/) · [Tour des fonctionnalités](docs/FEATURES.md) · [Démarrage rapide](#-démarrage-rapide) · [Contribuer](CONTRIBUTING.md) · [🇬🇧 English](README.md)
+[Site web](https://devdownin.github.io/Kafkaexplorer/) · [Tour des fonctionnalités](docs/FEATURES.md) · [Démarrage rapide](#-démarrage-rapide) · [Écosystème](#-écosystème) · [Contribuer](CONTRIBUTING.md) · [🇬🇧 English](README.md)
 
 </div>
 
@@ -197,6 +197,18 @@ Si vous souhaitez compiler l'intégralité du projet localement (sans Docker pou
 ```bash
 ./mvnw clean package
 ```
+## 🧩 Écosystème
+
+Trois projets open source, publiés sous le même espace Docker Hub, utilisables seuls et branchés entre eux par MCP :
+
+| Projet | Ce qu'il fait | Image | Licence |
+|---|---|---|---|
+| **Kafka SQL Explorer** *(ce projet)* | Explorer Kafka, l'interroger en Flink SQL, l'auditer avec l'IA — et le servir aux agents en serveur MCP en lecture seule | [`compagnonsdudev/kafkaexplorer`](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer) | AGPL-3.0-or-later |
+| [SpectraLLM](https://github.com/devdownin/SpectraLLM) | Transformer vos documents en IA privée et fine-tunée — RAG local, fine-tuning, et un serveur MCP sur le corpus | [`compagnonsdudev/spectrallm`](https://hub.docker.com/r/compagnonsdudev/spectrallm) | AGPL-3.0-or-later |
+| [Kex-anHarness](https://github.com/devdownin/Kex-anHarness) | Un agent IA gouverné qui agit par des outils MCP — supervision, validations humaines, piste d'audit | [`compagnonsdudev/kex-agent-ai`](https://hub.docker.com/r/compagnonsdudev/kex-agent-ai) | GPL-3.0-or-later |
+
+Comment ils s'emboîtent : Kex-anHarness lit Kafka par le serveur MCP de Kafka SQL Explorer et cherche dans les documents par celui de SpectraLLM ; Kafka SQL Explorer peut prendre SpectraLLM comme fournisseur de LLM privé.
+
 ## 🤝 Contribuer
 
 Les contributions sont bienvenues — le code est volontairement très commenté pour servir aussi de ressource d'apprentissage sur l'intégration Flink SQL + Spring Boot.
