@@ -863,7 +863,7 @@ jobs:
           # ci.yml is in the list because this job is DEFINED there: editing the workflow can
           # edit the stack's own assertions. setup-demo.sh / seed-demo-once.sh and
           # .env.example are in it because the stack mounts and reads them.
-          if grep -qE '^(compose/spectra-hub|scripts/spectra-hub/|setup-demo\.sh$|seed-demo-once\.sh$|\.env\.example$|docs/check-image-pins\.py$|\.github/workflows/ci\.yml$)' changed.txt; then
+          if grep -qE '^(compose/spectra-hub|compose/ecosystem\.yml$|scripts/spectra-hub/|setup-demo\.sh$|seed-demo-once\.sh$|\.env\.example$|docs/check-image-pins\.py$|\.github/workflows/ci\.yml$)' changed.txt; then
             echo "touched=true" >> "$GITHUB_OUTPUT"
             echo "· the published-images stack is affected — booting it"
           else
@@ -1106,6 +1106,74 @@ jobs:
       - name: Dump logs on failure
         if: failure()
         run: docker compose logs --no-color --tail 200 || true
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v || true
+
+  # compose/ecosystem.yml puts the three projects together, and until this job nothing had ever
+  # started it: `config` resolved, and the claim that the agent reaches the Explorer's MCP server
+  # through it rested on a reading. Booted here WITHOUT SpectraLLM — its half is what
+  # spectra-hub-stack above already boots, and its models are what CI has no business pulling —
+  # so what is asserted is this file's own wiring: the Explorer's MCP server on, the bearer the
+  # same on both sides, the agent's image pulled at its pin and finding the kex_* tools by
+  # service name. The agent's SpectraLLM connection is left unreachable on purpose and checked
+  # to be reported as such, not as a failure of the whole agent.
+  ecosystem-stack:
+    name: Smoke-test the three-project stack
+    needs: hub-changes
+    if: needs.hub-changes.outputs.touched == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_FILE: compose/spectra-hub.yml:compose/spectra-hub.mcp.yml:compose/ecosystem.yml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Pull the Explorer and the agent at their pins
+        run: docker compose pull --quiet kafka-data-init kafka explorer agent
+
+      # --no-deps: the agent's dependency on spectra-api would otherwise start the whole
+      # SpectraLLM half and its model download.
+      - name: Start Kafka, the Explorer and the agent
+        run: docker compose up -d --no-deps kafka-data-init kafka explorer agent
+
+      - name: The agent must find the Explorer's MCP tools by service name
+        run: |
+          set -euo pipefail
+          auth='Authorization: Bearer dev-only-agent-key'
+          for _ in $(seq 1 60); do
+            servers=$(curl -fsS -H "$auth" http://127.0.0.1:8081/api/agent/mcp/servers 2>/dev/null) && \
+              case "$servers" in *'"initialized":true'*'"kex_list_topics"'*|*'"kex_list_topics"'*'"initialized":true'*) break ;; esac
+            sleep 5
+          done
+          echo "$servers" | python3 -c '
+          import json, sys
+          servers = {s["connection"]: s for s in json.load(sys.stdin)}
+          explorer = servers.get("kafka-explorer")
+          assert explorer, f"no kafka-explorer connection: {sorted(servers)}"
+          assert explorer["initialized"], f"kafka-explorer not initialized: {explorer}"
+          tools = {t["name"] for t in explorer["tools"]}
+          assert "kex_list_topics" in tools and "kex_process_health" in tools, sorted(tools)
+          print(f"· kafka-explorer: {len(tools)} tools")
+          spectra = servers.get("spectrallm")
+          assert spectra, "the overlay declared no spectrallm connection"
+          assert not spectra.get("tools"), "spectrallm cannot serve tools: its half is not started"
+          print("· spectrallm: declared and reported unreachable, as it should be here")
+          '
+
+      - name: A real tool call through the agent
+        run: |
+          set -euo pipefail
+          result=$(curl -fsS -X POST -H 'Authorization: Bearer dev-only-agent-key' \
+            -H 'Content-Type: application/json' -d '{"arguments":{}}' \
+            http://127.0.0.1:8081/api/agent/mcp/servers/kafka-explorer/tools/kex_list_topics)
+          echo "$result" | head -c 600; echo
+          echo "$result" | grep -q 'coverage'
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail 200 explorer agent || true
 
       - name: Tear down
         if: always()

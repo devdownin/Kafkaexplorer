@@ -20,6 +20,19 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The three-project stack is booted in CI.** `ecosystem-stack` starts Kafka, the Explorer and the
+  Kex-anHarness agent from `compose/ecosystem.yml` and asserts that the agent finds the `kex_*`
+  tools by service name and gets an answer from one — where `config` was all that had checked it.
+- **The sibling projects' image pins are checked too.** `check-image-pins.py` requires one tag per
+  sibling (SpectraLLM, Kex-anHarness) across the tree, and with `--published` asks Docker Hub
+  whether it is behind; "newest" is now the most recently pushed `X.Y.Z`, since a mistyped tag
+  (`kex-agent-ai:9.9.23`) outranks every real release by number. The hub stack moves to
+  **SpectraLLM 0.11.0**, which had been published while the stack went on pulling 0.10.0.
+- **`check-ecosystem.py --siblings`**, on the weekly `image-pins` schedule, compares the shared
+  script with its copies in SpectraLLM and Kex-anHarness.
+
+## [2.3.1] — 2026-10-12
+
 - **A process stage no longer has to name a consumer group.** `kex_process_health`,
   `kex_compare_process_state` and `kex_incident_evidence` published a schema in which every
   component of a stage was required, so the MCP server — which validates a call against it —
@@ -2577,7 +2590,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.0...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.1...HEAD
+[2.3.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.5...v2.3.0
 [2.2.5]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.4...v2.2.5
 [2.2.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.3...v2.2.4

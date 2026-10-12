@@ -64,3 +64,10 @@ jobs:
       # and its message names the three files to edit.
       - name: Are the published-image pins still current?
         run: python3 docs/check-image-pins.py --published
+
+      # The other half of keeping step with the two sibling projects: `docs/check-ecosystem.py`
+      # is one file copied into three repositories, and a copy edited in one of them only drifts
+      # from the other two without anything on a pull request noticing — by design, since a change
+      # to it lands in three pull requests and the first merged must not fail the others.
+      - name: Is the shared ecosystem script still identical across the three repositories?
+        run: python3 docs/check-ecosystem.py --siblings

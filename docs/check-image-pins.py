@@ -25,6 +25,14 @@ Three checks, all offline, all on facts already in the repository.
    its own. Offline, all that can be decided is that the pin is not *ahead* of the newest `v*`
    git tag — an image nobody has published yet.
 
+5. **The sibling projects' pins say one thing each.** SpectraLLM (`spectrallm` and
+   `spectrallm-frontend`, which are built from one commit and only ever tested together) and the
+   Kex-anHarness agent (`kex-agent-ai`) are pinned by hand like the Explorer is, and nothing
+   bumps them: no release of theirs opens a pull request here. Offline, every reference to one
+   of them must carry the same tag; with `--published`, that tag must not be behind Docker Hub.
+   SpectraLLM 0.11.0 was published while the hub stack went on pulling 0.10.0, and nothing said
+   so.
+
 4. **`--published` only: the pin is not behind what is actually on Docker Hub.** That is the
    staleness reminder, and it deliberately asks the registry rather than the git tags, because
    a tag is not an image. Two ways that gap bites: for the ten to twenty minutes a release
@@ -127,10 +135,23 @@ def newest_release() -> str | None:
 
 
 DOCKER_HUB_TAGS = ("https://hub.docker.com/v2/repositories/"
-                   "compagnonsdudev/kafkaexplorer/tags?page_size=100")
+                   "compagnonsdudev/{repository}/tags?page_size=100")
+
+# Sibling project -> the image names that make it up. One tag per sibling: SpectraLLM's backend
+# and frontend are built from one commit and tested only together.
+SIBLINGS = {
+    "SpectraLLM": ("spectrallm", "spectrallm-frontend"),
+    "Kex-anHarness": ("kex-agent-ai",),
+}
 
 
-def newest_published() -> tuple[str | None, str | None]:
+def image_name(image: str) -> str:
+    """The repository name of an image reference, without registry, namespace or tag."""
+    last = image.rpartition("/")[2]
+    return last.rpartition(":")[0] if ":" in last else last
+
+
+def newest_published(repository: str = "kafkaexplorer") -> tuple[str | None, str | None]:
     """The newest `X.Y.Z` tag on Docker Hub, or (None, why-not).
 
     The registry is the authority on what an `up` can pull; the git tags are not. A tag exists
@@ -138,15 +159,18 @@ def newest_published() -> tuple[str | None, str | None]:
     if it finished at all.
     """
     try:
-        with urllib.request.urlopen(DOCKER_HUB_TAGS, timeout=20) as response:
+        with urllib.request.urlopen(DOCKER_HUB_TAGS.format(repository=repository), timeout=20) as response:
             payload = json.load(response)
     except (urllib.error.URLError, TimeoutError, ValueError, OSError) as error:
         return None, f"{type(error).__name__}: {error}"
+    # The most recently PUSHED X.Y.Z, not the highest number: a tag is a string anyone with push
+    # rights can mistype, and one did — `kex-agent-ai:9.9.23`, pushed for 0.9.23, outranks every
+    # real release by number and would have demanded a bump to it for ever.
     versions = []
     for entry in payload.get("results", []):
         parts = str(entry.get("name", "")).split(".")
         if len(parts) == 3 and all(p.isdigit() for p in parts):
-            versions.append((tuple(int(p) for p in parts), entry["name"]))
+            versions.append((str(entry.get("last_updated", "")), entry["name"]))
     if not versions:
         return None, "the registry listed no X.Y.Z tag"
     return max(versions)[1], None
@@ -238,6 +262,33 @@ def main() -> int:
         else:
             print(f"Docker Hub serves kafkaexplorer:{newest}; the pin is current.")
 
+    # 5. The siblings: one tag each across the tree, and — when asked — not behind Docker Hub.
+    sibling_pins: dict[str, str] = {}
+    for project, names in SIBLINGS.items():
+        tags: dict[str, set[str]] = {}
+        for path, _, resolved in refs:
+            if image_name(resolved) in names:
+                tags.setdefault(tag_of(resolved) or "", set()).add(str(path.relative_to(ROOT)))
+        if not tags:
+            problems.append(f"no compose file pulls {project} ({', '.join(names)}) — renamed?")
+        elif len(tags) > 1:
+            listed = ", ".join(f"{tag} ({', '.join(sorted(files))})" for tag, files in sorted(tags.items()))
+            problems.append(f"{project} is pinned to different versions in different files: {listed}")
+        else:
+            sibling_pins[project] = next(iter(tags))
+    if published_check and not problems:
+        for project, pinned_tag in sorted(sibling_pins.items()):
+            newest, why_not = newest_published(SIBLINGS[project][0])
+            if newest is None:
+                print(f"::warning::could not ask Docker Hub about {project} ({why_not}) — "
+                      f"its pin ({pinned_tag}) was not checked for staleness")
+            elif version_of(pinned_tag) and version_of(newest) > version_of(pinned_tag):
+                problems.append(
+                    f"the stacks pull {project} {pinned_tag} while Docker Hub serves {newest} — "
+                    "bump its default in the compose files and .env.example")
+            else:
+                print(f"Docker Hub serves {project} {newest}; the pin is current.")
+
     if problems:
         for problem in problems:
             print(f"  ✗ {problem}")
@@ -246,7 +297,8 @@ def main() -> int:
 
     print(f"{len(refs)} image references checked across "
           f"{len(set(p for p, _, _ in refs))} compose files")
-    print(f"All pinned; llama.cpp CPU/CUDA agree; kafkaexplorer:{pinned} is not ahead of v{release}.")
+    print(f"All pinned; llama.cpp CPU/CUDA agree; kafkaexplorer:{pinned} is not ahead of v{release}; "
+          + ", ".join(f"{p} {tag}" for p, tag in sorted(sibling_pins.items())) + " pinned once each.")
     return 0
 
 
