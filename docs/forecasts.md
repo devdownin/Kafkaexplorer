@@ -8,9 +8,9 @@ durable history and TimesFM are explicitly configured.
 ## Companion agent: Kex-anHarness
 
 [Kex-anHarness](https://github.com/devdownin/Kex-anHarness), formerly Kex Agent AI, reads
-KafkaExplorer’s forecast tools through MCP. See its [forecast guide](https://github.com/devdownin/Kex-anHarness/blob/main/docs/TIMESFM.md)
-for the agent’s Forecasts page and MCP diagnostics. The GitHub repository URL and published
-`kex-agent-ai` image names retain their existing identifiers.
+Kafka SQL Explorer’s forecast tools through MCP. See its [forecast guide](https://github.com/devdownin/Kex-anHarness/blob/main/docs/TIMESFM.md)
+for the agent’s Forecasts page and MCP diagnostics. Its published image keeps its former name,
+[`compagnonsdudev/kex-agent-ai`](https://hub.docker.com/r/compagnonsdudev/kex-agent-ai).
 
 ## Start the complete local stack
 

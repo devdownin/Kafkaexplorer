@@ -68,6 +68,7 @@
                     <a href="#features" class="text-sm font-medium hover:text-primary transition-colors">Features</a>
                     <a href="#innovation" class="text-sm font-medium hover:text-primary transition-colors">Innovation</a>
                     <a href="#ai" class="text-sm font-medium hover:text-primary transition-colors">AI Analysis</a>
+                    <a href="#ecosystem" class="text-sm font-medium hover:text-primary transition-colors">Ecosystem</a>
                     <a href="#quickstart" class="px-4 py-2 bg-primary text-surface font-bold rounded hover:bg-white transition-all transform hover:scale-105">Get Started</a>
                 </div>
 
@@ -85,6 +86,7 @@
                 <a href="#innovation" class="block text-lg font-medium hover:text-primary transition-colors py-2 border-b border-border/50">Innovation</a>
                 <a href="#ai" class="block text-lg font-medium hover:text-primary transition-colors py-2 border-b border-border/50">AI Analysis</a>
                 <a href="#docs" class="block text-lg font-medium hover:text-primary transition-colors py-2 border-b border-border/50">Docs</a>
+                <a href="#ecosystem" class="block text-lg font-medium hover:text-primary transition-colors py-2 border-b border-border/50">Ecosystem</a>
                 <a href="#quickstart" class="block w-full text-center px-4 py-3 bg-primary text-surface font-bold rounded mt-4">Get Started</a>
             </div>
         </div>
@@ -225,7 +227,7 @@
     <section id="features" class="py-24">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="text-center mb-16">
-                <h2 class="text-primary font-bold tracking-widest text-sm uppercase mb-4">Ecosystem</h2>
+                <h2 class="text-primary font-bold tracking-widest text-sm uppercase mb-4">Features</h2>
                 <h3 class="text-4xl font-bold text-white mb-4 uppercase">Powerful Tools for Data Engineers</h3>
                 <p class="text-slate-400 max-w-2xl mx-auto">One integrated platform to handle everything from discovery to deep auditing.</p>
             </div>
@@ -392,6 +394,37 @@
         </div>
     </section>
 
+    <!-- Ecosystem -->
+    <section id="ecosystem" class="py-24">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-primary font-bold tracking-widest text-sm uppercase mb-4">Ecosystem</h2>
+                <h3 class="text-4xl font-bold text-white mb-4 uppercase">Three projects, one MCP wiring</h3>
+                <p class="text-slate-400 max-w-2xl mx-auto">Each one runs on its own; all three are published under the same Docker Hub namespace and plug into each other through MCP.</p>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <a href="https://hub.docker.com/r/compagnonsdudev/kafkaexplorer" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
+                    <span class="material-symbols-outlined text-primary mb-4">terminal</span>
+                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">Kafka SQL Explorer <span class="text-xs text-primary align-middle">· This project</span></h4>
+                    <p class="text-sm text-slate-400 mb-4">Explore Kafka, query it in Flink SQL, audit it with AI — and serve it to agents as a read-only MCP server.</p>
+                    <p class="text-xs text-slate-500 font-mono">compagnonsdudev/kafkaexplorer · AGPL-3.0</p>
+                </a>
+                <a href="https://github.com/devdownin/SpectraLLM" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
+                    <span class="material-symbols-outlined text-primary mb-4">library_books</span>
+                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">SpectraLLM</h4>
+                    <p class="text-sm text-slate-400 mb-4">Turn your documents into a private, fine-tuned AI — local RAG, fine-tuning, and an MCP server over the corpus. Can answer Process Mining here with no API key.</p>
+                    <p class="text-xs text-slate-500 font-mono">compagnonsdudev/spectrallm · AGPL-3.0</p>
+                </a>
+                <a href="https://github.com/devdownin/Kex-anHarness" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
+                    <span class="material-symbols-outlined text-primary mb-4">smart_toy</span>
+                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">Kex-anHarness</h4>
+                    <p class="text-sm text-slate-400 mb-4">A governed AI agent that works through MCP tools — it reads this cluster through the MCP server above, with supervision, human approvals and an audit trail.</p>
+                    <p class="text-xs text-slate-500 font-mono">compagnonsdudev/kex-agent-ai · GPL-3.0</p>
+                </a>
+            </div>
+        </div>
+    </section>
+
     <!-- Quickstart -->
     <section id="quickstart" class="py-24">
         <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
@@ -446,6 +479,9 @@
                 <div class="flex gap-6">
                     <a href="https://github.com/devdownin/Kafkaexplorer" class="text-slate-500 hover:text-white transition-colors">
                         <span class="material-symbols-outlined">star</span> GitHub
+                    </a>
+                    <a href="https://hub.docker.com/r/compagnonsdudev/kafkaexplorer" class="text-slate-500 hover:text-white transition-colors">
+                        <span class="material-symbols-outlined">deployed_code</span> Docker Hub
                     </a>
                     <a href="mailto:contact@compagnonsdudev.com" class="text-slate-500 hover:text-white transition-colors">
                         <span class="material-symbols-outlined">mail</span> Contact

@@ -14,7 +14,7 @@
 [![Flink 2.3](https://img.shields.io/badge/Flink-2.3-E6526F?logo=apacheflink&logoColor=white)](https://flink.apache.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-[Website](https://devdownin.github.io/Kafkaexplorer/) · [Feature Tour](docs/FEATURES.md) · [Quick Start](#-quick-start) · [Contributing](CONTRIBUTING.md) · [🇫🇷 Français](README.fr.md)
+[Website](https://devdownin.github.io/Kafkaexplorer/) · [Feature Tour](docs/FEATURES.md) · [Quick Start](#-quick-start) · [Ecosystem](#-ecosystem) · [Contributing](CONTRIBUTING.md) · [🇫🇷 Français](README.fr.md)
 
 </div>
 
@@ -192,6 +192,18 @@ If you prefer to compile the entire project locally without Docker, Maven handle
 ```bash
 ./mvnw clean package
 ```
+## 🧩 Ecosystem
+
+Three open-source projects, published under the same Docker Hub namespace, each usable on its own and wired to the others through MCP:
+
+| Project | What it does | Image | License |
+|---|---|---|---|
+| **Kafka SQL Explorer** *(this project)* | Explore Kafka, query it in Flink SQL, audit it with AI — and serve it to agents as a read-only MCP server | [`compagnonsdudev/kafkaexplorer`](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer) | AGPL-3.0-or-later |
+| [SpectraLLM](https://github.com/devdownin/SpectraLLM) | Turn your documents into a private, fine-tuned AI — local RAG, fine-tuning, and an MCP server over the corpus | [`compagnonsdudev/spectrallm`](https://hub.docker.com/r/compagnonsdudev/spectrallm) | AGPL-3.0-or-later |
+| [Kex-anHarness](https://github.com/devdownin/Kex-anHarness) | A governed AI agent that works through MCP tools — supervision, human approvals, audit trail | [`compagnonsdudev/kex-agent-ai`](https://hub.docker.com/r/compagnonsdudev/kex-agent-ai) | GPL-3.0-or-later |
+
+How they fit: Kex-anHarness reads Kafka through Kafka SQL Explorer's MCP server and searches documents through SpectraLLM's; Kafka SQL Explorer can use SpectraLLM as its private LLM provider.
+
 ## 🤝 Contributing
 
 Contributions are welcome — the codebase is deliberately heavily commented to double as a learning resource for Flink SQL + Spring Boot integration.
