@@ -6,7 +6,7 @@
 # Endpoints (loopback only by default — see BIND_ADDR)
 #   Kafka Explorer .......... http://localhost:8080
 #   SpectraLLM UI ........... http://localhost:8088
-#   SpectraLLM API .......... http://localhost:8081   (POST /api/query, Swagger on /swagger-ui)
+#   SpectraLLM API .......... http://localhost:8089   (POST /api/query, Swagger on /swagger-ui)
 #   Kafka (from the host) ... localhost:9092
 #
 # THIS IS THE SPECTRALLM STACK. There used to be two.
@@ -257,8 +257,10 @@ services:
     image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm:${SPECTRA_IMAGE_TAG:-0.10.0}
     ports:
       # The UI reaches the API through nginx (`/api/` → spectra-api:8080), so this publication
-      # is for Swagger, curl and scripts. Host 8081 rather than 8080: the Explorer owns that one.
-      - "${BIND_ADDR:-127.0.0.1}:${SPECTRA_API_PORT:-8081}:8080"
+      # is for Swagger, curl and scripts. Host 8089 rather than 8080, which the Explorer owns, or
+      # 8081, which Kex-anHarness owns: the port plan the three projects' READMEs share, so this
+      # stack and the agent's run side by side (compose/ecosystem.yml puts all three together).
+      - "${BIND_ADDR:-127.0.0.1}:${SPECTRA_API_PORT:-8089}:8080"
     depends_on:
       spectra-data-init:
         condition: service_completed_successfully

@@ -184,7 +184,7 @@ file wires the pair. There were two, and the deletion of the other is the point:
   `.env.example` sets them in one block for that reason.
 
   `compose/spectra-hub.mcp.yml` turns on SpectraLLM's read-only MCP server (`spectra_*` tools on
-  `/mcp`, port 8081). It has to set `SPECTRA_API_KEY`, because Spectra answers 503 on `/mcp`
+  `/mcp`, host port 8089). It has to set `SPECTRA_API_KEY`, because Spectra answers 503 on `/mcp`
   without one, and that key covers all of `/api/**`: the Explorer is handed the same value as
   `CLAUDE_API_KEY` and sends it as `X-API-Key` — it used to send only `Authorization: Bearer`,
   which Spectra's filter never reads, so any key at all silenced Process Mining with a 401 —
@@ -192,6 +192,17 @@ file wires the pair. There were two, and the deletion of the other is the point:
   `spectra-mcp-probe` one-shot (`--profile probe run --rm`) does the handshake and `tools/list`,
   and names a 404 as what it is: a `spectrallm` image older than the MCP server (0.10.0, the
   default `SPECTRA_IMAGE_TAG`), which an older pin in `.env` still produces.
+
+  `compose/ecosystem.yml` adds the third project, the Kex-anHarness agent, on top of the pair and
+  its `.mcp.yml`: it turns the Explorer's MCP server on (read-only, the bearer shared with the
+  agent) and points the agent at both servers by service name. The host ports follow the plan
+  the three READMEs share — 8080 Explorer, 8081 agent, 8088/8089 SpectraLLM UI/API, 9092 Kafka —
+  which is why `SPECTRA_API_PORT` left 8081: the agent's own stack publishes there, and the two
+  could not run on one machine. The agent's model is deliberately not in the stack (a 7B on CPU
+  is what Process Mining can wait for, not what a tool loop can), so without a key it starts
+  `DEGRADED` and says so. The section that presents the three is generated, not written: every
+  README and Docker Hub page carries it between `ecosystem:start`/`end` markers, and
+  `docs/check-ecosystem.py` — the same file in the three repositories — fails when one drifts.
 
   `compose/spectra-hub.ingest.yml` is the one that makes the pair more than a shared
   model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus

@@ -300,6 +300,7 @@ agent endpoint, not the web UI. Pin a release digest in production and see
 [SECURITY.md](https://github.com/devdownin/Kafkaexplorer/blob/main/SECURITY.md)
 for vulnerability reports.
 
+<!-- ecosystem:start -->
 ## 🧩 Ecosystem
 
 Three open-source projects, published under the same Docker Hub namespace, each usable on its own and wired to the others through MCP:
@@ -311,6 +312,17 @@ Three open-source projects, published under the same Docker Hub namespace, each 
 | [Kex-anHarness](https://github.com/devdownin/Kex-anHarness) | A governed AI agent that works through MCP tools — supervision, human approvals, audit trail | [`compagnonsdudev/kex-agent-ai`](https://hub.docker.com/r/compagnonsdudev/kex-agent-ai) | GPL-3.0-or-later |
 
 How they fit: Kex-anHarness reads Kafka through Kafka SQL Explorer's MCP server and searches documents through SpectraLLM's; Kafka SQL Explorer can use SpectraLLM as its private LLM provider.
+
+**All three together**, from published images — nothing is built:
+
+```bash
+git clone https://github.com/devdownin/Kafkaexplorer.git && cd Kafkaexplorer
+docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
+  -f compose/ecosystem.yml up -d
+```
+
+Ports, one plan for the three: **8080** Kafka SQL Explorer · **8081** Kex-anHarness · **8088** / **8089** SpectraLLM UI / API · **9092** Kafka. SpectraLLM's own stack keeps 80 / 8080 when it runs alone; `SPECTRA_UI_PORT=8088 SPECTRA_API_PORT=8089` puts it beside the other two.
+<!-- ecosystem:end -->
 
 ## 📚 More
 

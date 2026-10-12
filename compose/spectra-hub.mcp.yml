@@ -4,7 +4,7 @@
 #   docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
 #     --profile probe run --rm spectra-mcp-probe
 #
-# The endpoint is `http://localhost:${SPECTRA_API_PORT:-8081}/mcp` (Streamable HTTP) and it wants
+# The endpoint is `http://localhost:${SPECTRA_API_PORT:-8089}/mcp` (Streamable HTTP) and it wants
 # `X-API-Key: $SPECTRA_API_KEY` on every call. Five tools, none of which writes: spectra_search
 # (passages and scores, no model call), spectra_ask (a RAG answer with its sources),
 # spectra_list_documents, spectra_preview_document and spectra_status. Point an agent at both
@@ -23,7 +23,7 @@
 #   * The key applies to all of /api/**, not to /mcp alone. The Explorer is given it (CLAUDE_API_KEY
 #     below) and sends it as X-API-Key, so Process Mining keeps answering. SPECTRA'S OWN UI DOES
 #     NOT: its pages call /api/** without the header and get 401 while this overlay is on. Use
-#     Swagger (http://localhost:8081/swagger-ui, which is exempt) or drop the overlay to use it.
+#     Swagger (http://localhost:8089/swagger-ui, which is exempt) or drop the overlay to use it.
 services:
   spectra-api:
     environment:

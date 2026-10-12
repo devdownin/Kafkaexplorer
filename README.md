@@ -83,7 +83,7 @@ Then open **http://localhost:8080** and start clicking. That's it.
 - **With Confluent Schema Registry** (Avro topics): `docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d`
 - **With a local LLM pre-wired** (Ollama): `docker compose -f docker-compose.yml -f compose/ollama.yml up -d`
 - **With the MCP server on** (for an agent): `docker compose -f docker-compose.yml -f compose/mcp.yml up -d` — the endpoint is `http://localhost:8080/mcp`, the console is the app's own **MCP** page, and every guard is an `.env` variable. `/mcp` requires a bearer token (`EXPLORER_MCP_AUTH_TOKEN`): the overlay ships a development default that protects nothing, so export your own (`export EXPLORER_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"`) for anything reachable by more than you. The overlay also turns TLS enforcement off because it is a loopback stack — everywhere else, terminate TLS and leave `explorer.mcp.require-tls` true. The rest of the application still authenticates nobody: keep `BIND_ADDR` on the loopback. Check it answers with `MCP_AUTH_TOKEN=… docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe`.
-- **With a private AI stack beside it** (SpectraLLM, images only — nothing built, no SpectraLLM checkout): `docker compose -f compose/spectra-hub.yml up -d` — Explorer on 8080, SpectraLLM UI on 8088. The first boot downloads ~4.8 GB of model weights in the background and nothing waits for it. Overlays next to it add a GPU (`.gpu.yml`), memory limits (`.limits.yml`), or have SpectraLLM index the topics themselves (`.ingest.yml`). For a laptop, four `.env` lines swap the 7B chat model for a 3B — see `.env.example`.
+- **With a private AI stack beside it** (SpectraLLM, images only — nothing built, no SpectraLLM checkout): `docker compose -f compose/spectra-hub.yml up -d` — Explorer on 8080, SpectraLLM UI on 8088. The first boot downloads ~4.8 GB of model weights in the background and nothing waits for it. Overlays next to it add a GPU (`.gpu.yml`), memory limits (`.limits.yml`), or have SpectraLLM index the topics themselves (`.ingest.yml`); `compose/ecosystem.yml`, with `.mcp.yml`, adds the Kex-anHarness agent on 8081 (see [Ecosystem](#-ecosystem)). For a laptop, four `.env` lines swap the 7B chat model for a 3B — see `.env.example`.
 - **The same stack, but pulling the published image instead of building it**: `docker compose -f docker-compose.yml -f compose/image.yml up -d`
 - **From source** (JDK 21 or newer): start Kafka with `docker compose up -d kafka`, then `./mvnw spring-boot:run`
 - **Build with nothing installed but Docker** — no JDK, no Maven, no Node:
@@ -192,6 +192,8 @@ If you prefer to compile the entire project locally without Docker, Maven handle
 ```bash
 ./mvnw clean package
 ```
+
+<!-- ecosystem:start -->
 ## 🧩 Ecosystem
 
 Three open-source projects, published under the same Docker Hub namespace, each usable on its own and wired to the others through MCP:
@@ -203,6 +205,17 @@ Three open-source projects, published under the same Docker Hub namespace, each 
 | [Kex-anHarness](https://github.com/devdownin/Kex-anHarness) | A governed AI agent that works through MCP tools — supervision, human approvals, audit trail | [`compagnonsdudev/kex-agent-ai`](https://hub.docker.com/r/compagnonsdudev/kex-agent-ai) | GPL-3.0-or-later |
 
 How they fit: Kex-anHarness reads Kafka through Kafka SQL Explorer's MCP server and searches documents through SpectraLLM's; Kafka SQL Explorer can use SpectraLLM as its private LLM provider.
+
+**All three together**, from published images — nothing is built:
+
+```bash
+git clone https://github.com/devdownin/Kafkaexplorer.git && cd Kafkaexplorer
+docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
+  -f compose/ecosystem.yml up -d
+```
+
+Ports, one plan for the three: **8080** Kafka SQL Explorer · **8081** Kex-anHarness · **8088** / **8089** SpectraLLM UI / API · **9092** Kafka. SpectraLLM's own stack keeps 80 / 8080 when it runs alone; `SPECTRA_UI_PORT=8088 SPECTRA_API_PORT=8089` puts it beside the other two.
+<!-- ecosystem:end -->
 
 ## 🤝 Contributing
 
