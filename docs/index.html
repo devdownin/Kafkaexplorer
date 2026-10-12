@@ -422,6 +422,15 @@
                     <p class="text-xs text-slate-500 font-mono">compagnonsdudev/kex-agent-ai · GPL-3.0</p>
                 </a>
             </div>
+            <div class="mt-12 max-w-4xl mx-auto">
+                <p class="text-slate-300 mb-4"><span class="font-bold text-white">All three together</span>, from published images — nothing is built:</p>
+                <div class="bg-black/60 rounded-lg p-4 border border-border overflow-x-auto">
+                    <code class="text-primary font-mono text-sm whitespace-pre">git clone https://github.com/devdownin/Kafkaexplorer.git &amp;&amp; cd Kafkaexplorer
+docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
+  -f compose/ecosystem.yml up -d</code>
+                </div>
+                <p class="text-sm text-slate-400 mt-4">One port plan for the three: <span class="font-mono text-slate-300">8080</span> Kafka SQL Explorer · <span class="font-mono text-slate-300">8081</span> Kex-anHarness · <span class="font-mono text-slate-300">8088 / 8089</span> SpectraLLM UI / API · <span class="font-mono text-slate-300">9092</span> Kafka.</p>
+            </div>
         </div>
     </section>
 

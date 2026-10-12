@@ -1,0 +1,83 @@
+# Overlay: the three projects together — Kafka SQL Explorer, SpectraLLM and the Kex-anHarness
+# agent — from published images, nothing built.
+#
+#     docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
+#       -f compose/ecosystem.yml pull
+#     docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
+#       -f compose/ecosystem.yml up -d
+#
+# Ports — the plan the three READMEs share, so the stacks can also run side by side:
+#   Kafka SQL Explorer ...... http://localhost:8080   (UI, REST API, /mcp)
+#   Kex-anHarness ........... http://localhost:8081   (Control Center, /api/agent)
+#   SpectraLLM UI ........... http://localhost:8088
+#   SpectraLLM API .......... http://localhost:8089   (/mcp, Swagger)
+#   Kafka (from the host) ... localhost:9092
+#
+# WHY spectra-hub.mcp.yml IS PART OF THE COMMAND. The agent reads the corpus through
+# SpectraLLM's MCP server, which that overlay turns on and which refuses to run without
+# SPECTRA_API_KEY. The key below defaults to the same published development value, so the two
+# agree when neither is set; export one value for both before anyone else can reach the stack.
+#
+# THE AGENT'S MODEL IS NOT IN THIS STACK. Kex-anHarness calls a hosted model — Anthropic by
+# default, OpenRouter with KEX_AGENT_LLM_PROVIDER=openai — and starts DEGRADED, saying so, when
+# the key is missing: the Control Center, the MCP catalogue and the supervision views still
+# answer. SpectraLLM's llama.cpp server is not offered as a substitute here: a 7B model on CPU is
+# what Process Mining can wait for, not what an agent's tool loop can.
+#
+# Read-only on both sides. The Explorer's MCP server is registered read-only (no mutating tool
+# exists as a bean), and SpectraLLM's five tools never write; the agent observes and recommends.
+services:
+
+  explorer:
+    environment:
+      # The Explorer ships its MCP server off; this is what turns it on. Same token on both
+      # sides — it is one bearer, presented by the agent and checked by the Explorer.
+      - EXPLORER_MCP_ENABLED=true
+      - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
+      # Cleartext on the compose network only. Anywhere else, keep the TLS requirement and
+      # terminate TLS in front.
+      - EXPLORER_MCP_REQUIRE_TLS=false
+      - EXPLORER_MCP_READONLY=true
+
+  agent:
+    # Pinned like every other image here: `latest` would serve whatever was published on the
+    # day of the pull, and the agent's MCP contract is tested against a given Explorer release.
+    image: ${KEX_AGENT_IMAGE_NAMESPACE:-compagnonsdudev}/kex-agent-ai:${KEX_AGENT_IMAGE_TAG:-0.10.0}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${KEX_AGENT_PORT:-8081}:8081"
+    # `service_started`: the agent's MCP clients connect lazily, at the first request, so
+    # waiting on the Explorer's or Spectra's healthcheck would only delay the Control Center.
+    depends_on:
+      explorer:
+        condition: service_started
+      spectra-api:
+        condition: service_started
+    environment:
+      - KEX_AGENT_LLM_PROVIDER=${KEX_AGENT_LLM_PROVIDER:-anthropic}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      # The bearer the Control Center and /api/** ask for. Without one the agent answers 503.
+      - KEX_AGENT_API_KEY=${KEX_AGENT_API_KEY:-dev-only-agent-key}
+      - KAFKA_EXPLORER_URL=http://explorer:8080
+      - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
+      # SpectraLLM as a second MCP server, through the agent's own relaxed binding. The agent
+      # keeps spectra_search, spectra_list_documents and spectra_preview_document, and refuses
+      # spectra_ask and spectra_status unless told otherwise (its application.yml).
+      - SPECTRALLM_URL=http://spectra-api:8080
+      - SPECTRA_API_KEY=${SPECTRA_API_KEY:-dev-only-spectra-key}
+      - SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_URL=http://spectra-api:8080
+      - SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_ENDPOINT=/mcp
+    volumes:
+      - agent_state:/var/lib/kex
+    healthcheck:
+      # /dev/tcp rather than /actuator/health: the agent's JRE image carries neither curl nor wget.
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8081'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    stop_grace_period: 35s
+    restart: unless-stopped
+
+volumes:
+  agent_state:

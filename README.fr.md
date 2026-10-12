@@ -83,7 +83,7 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
 - **Avec Confluent Schema Registry** (topics Avro) : `docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d`
 - **Avec un LLM local pré-câblé** (Ollama) : `docker compose -f docker-compose.yml -f compose/ollama.yml up -d`
 - **Avec le serveur MCP activé** (pour un agent) : `docker compose -f docker-compose.yml -f compose/mcp.yml up -d` — l'endpoint est `http://localhost:8080/mcp`, la console est la page **MCP** de l'application, et chaque garde est une variable `.env`. `/mcp` exige un jeton bearer (`EXPLORER_MCP_AUTH_TOKEN`) : l'overlay livre une valeur de développement qui ne protège rien, donc exportez la vôtre (`export EXPLORER_MCP_AUTH_TOKEN="$(openssl rand -hex 32)"`) dès que la pile est joignable par quelqu'un d'autre que vous. L'overlay désactive aussi l'exigence de TLS parce que c'est une pile loopback — partout ailleurs, terminez le TLS et laissez `explorer.mcp.require-tls` à true. Le reste de l'application n'authentifie toujours personne : garder `BIND_ADDR` sur la loopback. Vérifier qu'il répond : `MCP_AUTH_TOKEN=… docker compose -f docker-compose.yml -f compose/mcp.yml --profile probe run --rm mcp-probe`.
-- **Avec une IA privée à côté** (SpectraLLM, images seules — rien n'est construit, aucun checkout de SpectraLLM) : `docker compose -f compose/spectra-hub.yml up -d` — l'explorateur sur 8080, l'interface SpectraLLM sur 8088. Le premier démarrage télécharge ~4,8 Go de poids en arrière-plan, et rien ne l'attend. Des overlays voisins ajoutent le GPU (`.gpu.yml`), les limites mémoire (`.limits.yml`), ou font indexer les topics eux-mêmes par SpectraLLM (`.ingest.yml`). Pour un portable, quatre lignes de `.env` remplacent le modèle 7B par un 3B — voir `.env.example`.
+- **Avec une IA privée à côté** (SpectraLLM, images seules — rien n'est construit, aucun checkout de SpectraLLM) : `docker compose -f compose/spectra-hub.yml up -d` — l'explorateur sur 8080, l'interface SpectraLLM sur 8088. Le premier démarrage télécharge ~4,8 Go de poids en arrière-plan, et rien ne l'attend. Des overlays voisins ajoutent le GPU (`.gpu.yml`), les limites mémoire (`.limits.yml`), ou font indexer les topics eux-mêmes par SpectraLLM (`.ingest.yml`) ; `compose/ecosystem.yml`, avec `.mcp.yml`, ajoute l'agent Kex-anHarness sur 8081 (voir [Écosystème](#-écosystème)). Pour un portable, quatre lignes de `.env` remplacent le modèle 7B par un 3B — voir `.env.example`.
 - **La même stack, mais en tirant l'image publiée au lieu de la construire** : `docker compose -f docker-compose.yml -f compose/image.yml up -d`
 - **Depuis les sources** (JDK 21 ou supérieur) : lancez Kafka avec `docker compose up -d kafka`, puis `./mvnw spring-boot:run`
 - **Builder sans rien installer d'autre que Docker** — ni JDK, ni Maven, ni Node :
@@ -197,6 +197,8 @@ Si vous souhaitez compiler l'intégralité du projet localement (sans Docker pou
 ```bash
 ./mvnw clean package
 ```
+
+<!-- ecosystem:start -->
 ## 🧩 Écosystème
 
 Trois projets open source, publiés sous le même espace Docker Hub, utilisables seuls et branchés entre eux par MCP :
@@ -208,6 +210,17 @@ Trois projets open source, publiés sous le même espace Docker Hub, utilisables
 | [Kex-anHarness](https://github.com/devdownin/Kex-anHarness) | Un agent IA gouverné qui agit par des outils MCP — supervision, validations humaines, piste d'audit | [`compagnonsdudev/kex-agent-ai`](https://hub.docker.com/r/compagnonsdudev/kex-agent-ai) | GPL-3.0-or-later |
 
 Comment ils s'emboîtent : Kex-anHarness lit Kafka par le serveur MCP de Kafka SQL Explorer et cherche dans les documents par celui de SpectraLLM ; Kafka SQL Explorer peut prendre SpectraLLM comme fournisseur de LLM privé.
+
+**Les trois ensemble**, depuis les images publiées — rien n'est construit :
+
+```bash
+git clone https://github.com/devdownin/Kafkaexplorer.git && cd Kafkaexplorer
+docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
+  -f compose/ecosystem.yml up -d
+```
+
+Les ports, un seul plan pour les trois : **8080** Kafka SQL Explorer · **8081** Kex-anHarness · **8088** / **8089** interface / API SpectraLLM · **9092** Kafka. La stack propre de SpectraLLM garde 80 / 8080 quand elle tourne seule ; `SPECTRA_UI_PORT=8088 SPECTRA_API_PORT=8089` la place à côté des deux autres.
+<!-- ecosystem:end -->
 
 ## 🤝 Contribuer
 

@@ -745,7 +745,7 @@ jobs:
             [docker-compose.yml]="compose/schema-registry.yml compose/ollama.yml compose/mcp.yml compose/image.yml compose/limits.yml compose/ci.yml compose/timesfm.yml compose/forecasts.yml"
             [compose/dev.yml]=""
             [compose/build.yml]=""
-            [compose/spectra-hub.yml]="compose/spectra-hub.ingest.yml compose/spectra-hub.gpu.yml compose/spectra-hub.limits.yml compose/spectra-hub.agent-eval.yml compose/spectra-hub.mcp.yml"
+            [compose/spectra-hub.yml]="compose/spectra-hub.ingest.yml compose/spectra-hub.gpu.yml compose/spectra-hub.limits.yml compose/spectra-hub.agent-eval.yml compose/spectra-hub.mcp.yml compose/ecosystem.yml"
           )
 
           docker compose -f docker-compose.yml -f compose/forecasts.yml config --format json | python3 docs/forecast-topology-check.py
@@ -982,7 +982,7 @@ jobs:
             echo "::error::$name never answered ($url) — last reply: ${body:-(none)}"
             return 1
           }
-          probe "the Spectra API" http://127.0.0.1:8081/actuator/health/readiness '"status":"UP"'
+          probe "the Spectra API" http://127.0.0.1:8089/actuator/health/readiness '"status":"UP"'
           probe "the Spectra UI" http://127.0.0.1:8088/ ""
           probe "the UI's /api/ proxy to spectra-api" http://127.0.0.1:8088/api/status ""
 
