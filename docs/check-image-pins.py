@@ -143,6 +143,36 @@ SIBLINGS = {
     "SpectraLLM": ("spectrallm", "spectrallm-frontend"),
     "Kex-anHarness": ("kex-agent-ai",),
 }
+# The variable each sibling's pin is written as, in the compose defaults and in .env.example.
+SIBLING_VARS = {"SpectraLLM": "SPECTRA_IMAGE_TAG", "Kex-anHarness": "KEX_AGENT_IMAGE_TAG"}
+
+
+def bump_siblings() -> list[str]:
+    """Move every sibling pin that Docker Hub has overtaken to what it serves; say what moved.
+
+    Nothing else bumps them — no release of theirs opens a pull request here — so the weekly
+    `image-pins` run calls this and opens the pull request itself, rather than only going red.
+    A registry that cannot be reached moves nothing: "we could not ask" is not "it is current".
+    """
+    moved = []
+    files = [ROOT / "docker-compose.yml", *sorted((ROOT / "compose").glob("*.yml")), ROOT / ".env.example"]
+    for project, var in SIBLING_VARS.items():
+        newest, why_not = newest_published(SIBLINGS[project][0])
+        if newest is None:
+            print(f"::warning::could not ask Docker Hub about {project} ({why_not}) — not bumped")
+            continue
+        for path in files:
+            text = path.read_text(encoding="utf-8")
+            new = re.sub(rf"(\$\{{{var}:-)(\d+\.\d+\.\d+)(\}})",
+                         lambda m: m.group(1) + (newest if version_of(newest) > version_of(m.group(2)) else m.group(2)) + m.group(3),
+                         text)
+            new = re.sub(rf"(?m)^({var}=)(\d+\.\d+\.\d+)$",
+                         lambda m: m.group(1) + (newest if version_of(newest) > version_of(m.group(2)) else m.group(2)),
+                         new)
+            if new != text:
+                path.write_text(new, encoding="utf-8")
+                moved.append(f"{project} {newest} in {path.relative_to(ROOT)}")
+    return moved
 
 
 def image_name(image: str) -> str:
@@ -177,6 +207,10 @@ def newest_published(repository: str = "kafkaexplorer") -> tuple[str | None, str
 
 
 def main() -> int:
+    if "--bump-siblings" in sys.argv[1:]:
+        moved = bump_siblings()
+        print("\n".join(moved) if moved else "every sibling pin already names what Docker Hub serves")
+        return 0
     published_check = "--published" in sys.argv[1:]
     problems: list[str] = []
     refs = image_refs()

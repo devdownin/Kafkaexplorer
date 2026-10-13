@@ -310,7 +310,7 @@ Four overlays sit beside it, each layered onto that file:
 | [`…gpu.yml`](../compose/spectra-hub.gpu.yml) | Both llama.cpp servers on CUDA — minutes per analysis become seconds. |
 | [`…limits.yml`](../compose/spectra-hub.limits.yml) | Memory limits on the seven long-running services. The four it leaves out are one-shots that exit. |
 | [`…ingest.yml`](../compose/spectra-hub.ingest.yml) | SpectraLLM indexes the topics themselves, so the corpus answers questions about what is *in* your messages — and `CLAUDE_USE_RAG=true` lets the audits read it. |
-| [`…mcp.yml`](../compose/spectra-hub.mcp.yml) | SpectraLLM's read-only MCP server on `http://localhost:8089/mcp` (`spectra_*` tools), behind `SPECTRA_API_KEY`. Needs SpectraLLM 0.10.0 or later (the default pin, 0.11.0, carries it); Spectra's own UI answers 401 while it is on. |
+| [`…mcp.yml`](../compose/spectra-hub.mcp.yml) | SpectraLLM's read-only MCP server on `http://localhost:8089/mcp` (`spectra_*` tools), behind `SPECTRA_API_KEY`. Needs SpectraLLM 0.10.0 or later (the default pin carries it); Spectra's own UI answers 401 while it is on. |
 
 **A 3B chat model instead of the 7B** — ~2 GB of weights rather than 4.7, half the memory and an
 answer in a fraction of the time — used to be a fourth overlay and is now four lines of `.env`.

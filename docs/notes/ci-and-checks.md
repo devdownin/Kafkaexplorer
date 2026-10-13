@@ -278,6 +278,14 @@ Three workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
   registry that cannot be reached is a `::warning::` inside the script rather than a red run, so
   a failure here means the pin really is behind, and its message names the three files.
 
+  **The pull requests the workflows open start no CI when `GITHUB_TOKEN` opens them** — GitHub's
+  rule against workflow loops — so `release.yml`'s follow-up and `sibling-bump` each said "close
+  and reopen". The optional `AUTOMATION_PR_TOKEN` secret removes that gesture: a fine-grained token
+  (or an App token) with contents and pull-requests write on this repository, read as
+  `secrets.AUTOMATION_PR_TOKEN || secrets.GITHUB_TOKEN`. It stays optional so a fork is not failed
+  on a secret it cannot have, and the pull request body says which of the two applies. The branch
+  push still uses the checkout's `GITHUB_TOKEN`; only the pull request's creation needs the other.
+
 - **`agent-eval.yml`** — the MCP agent harness against a real model, `workflow_dispatch` only:
   never on a push or a pull request, for the reason `SPECAGENT.md` §6 gives (a model's weather has
   no vote on a merge). It is the run a sandbox cannot do — Docker, `huggingface.co` and
