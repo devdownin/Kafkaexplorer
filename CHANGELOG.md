@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The pull requests the workflows open can start CI on their own.** `release.yml`'s follow-up and
+  `image-pins.yml`'s `sibling-bump` use the optional `AUTOMATION_PR_TOKEN` secret when it exists
+  (a fine-grained token or an App token with contents and pull-requests write); a pull request
+  opened with `GITHUB_TOKEN` starts no workflow, which is why they had to be closed and reopened.
+  Without the secret nothing changes.
 - **Sibling pins are bumped, not only reported.** The weekly `image-pins` run gains a
   `sibling-bump` job: `check-image-pins.py --bump-siblings` moves the SpectraLLM and Kex-anHarness
   pins Docker Hub has overtaken, and a pull request is opened for review — as `release.yml` already
