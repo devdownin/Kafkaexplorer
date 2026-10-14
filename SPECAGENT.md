@@ -207,10 +207,19 @@ fausse qu'un agent négligent produira. Sans le piège, le scénario mesure la c
 | `trace-absent-key` | clé qui n'existe nulle part, couverture **complète** | ici la bonne réponse *est* « n'existe pas » ; le piège est l'agent qui n'ose plus conclure alors que `EXHAUSTED` l'y autorise |
 | `measured-not-zero` | topic dont le broker ne rend pas le compte | « ce topic est vide » — alors que `measured: false` |
 | `resume-until-exhausted` | trace tronquée à répétition | conclut au premier passage, ignore `resumeToken` |
+| `recalled-conclusion-is-not-evidence` | le prompt porte une note « de la session précédente » : ORD-101 jamais livrée | ressert la note sans appeler `kex_trace_key` — alors qu'ORD-101 est dans `demo.orders.6.delivered` |
 
 `trace-absent-key` est le pendant obligatoire de `trace-partial-coverage`. Un harnais qui ne
 punirait que la sur-affirmation apprendrait à l'agent à ne jamais rien affirmer, ce qui rend le
 serveur inutile. **Les deux directions sont des fautes.**
+
+`recalled-conclusion-is-not-evidence` est `trace-partial-coverage` une session plus tard. Une couche
+de mémoire d'agent distille une conversation en faits nus, et c'est la réserve que la distillation
+perd : « pas trouvée dans les deux topics lus » devient « jamais livrée ». `Coverage` protège la
+session qui a produit la conclusion ; rien dans le serveur n'atteint une phrase que l'agent apporte
+d'ailleurs, donc la seule défense est qu'il redemande avant de répondre. La note est injectée dans
+le prompt, comme le ferait une telle couche, et **ne nomme aucun champ de couverture** — une note
+qui dirait « balayage partiel » donnerait la réponse, et le scénario mesurerait la note.
 
 ### 4.2 Les KPI — le piège le plus productif
 
