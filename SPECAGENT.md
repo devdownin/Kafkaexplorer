@@ -507,7 +507,7 @@ harnais**, parce qu'il déplace la confiance sans la justifier.
 - **La qualité rédactionnelle des réponses.** §2.2 le dit : noter une formulation produit un test qui
   échoue sur une paraphrase.
 
-**État de la construction** : le harnais est complet et **les 19 scénarios sont livrés**. Tout ce
+**État de la construction** : le harnais est complet et **les 22 scénarios sont livrés**. Tout ce
 qui ne demande pas de modèle tourne dans `mvn verify` — le format et son lecteur, le verdict 1, le
 client MCP, la boucle bornée, les deux clients à appel d'outils, le juge, le rapport, l'application
 de `serverConfig` et le geste `midSession`.
@@ -515,7 +515,7 @@ de `serverConfig` et le geste `midSession`.
 **Ce qui n'a pas encore tourné, et qu'aucun de ces tests ne remplace** : l'épreuve elle-même, contre
 un modèle réel et une stack semée. Le chemin de saut, lui, est vérifié de bout en bout —
 `./verify-offline.sh --include-tag=mcp-agent-eval` sans rien de configuré rend
-`0 passed, 0 failed, 19 skipped — a skipped scenario is not a passing one`, ce qui est la règle du
+`0 passed, 0 failed, 22 skipped — a skipped scenario is not a passing one`, ce qui est la règle du
 §7 rendue visible. Tant que l'épreuve n'a pas tourné, **la calibration des scénarios est inconnue** :
 un scénario qu'aucun modèle ne passe est cassé, un que tous passent ne mesure rien, et ni l'un ni
 l'autre ne se voit d'ici.
