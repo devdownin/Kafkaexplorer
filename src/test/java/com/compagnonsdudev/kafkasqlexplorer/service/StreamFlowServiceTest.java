@@ -375,6 +375,27 @@ class StreamFlowServiceTest {
             "expected the failing topic to be named, got " + response.warnings());
     }
 
+    /**
+     * A mistyped target is not a topic that was read and held nothing: it is failed, named, and the
+     * existing topics it is a prefix of are suggested. It used to be searched, find no partition and
+     * count as scanned — an empty, complete-looking answer about a topic that does not exist.
+     */
+    @Test
+    void aTargetTopicThatDoesNotExistIsFailedNotScanned() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders.1.received", "orders.6.delivered"));
+        onSearch("orders.1.received", found(List.of(message(0, 1L, 100L, "K-1", "a")), 1));
+
+        StreamFlowResponse response = service.getStreamFlow(
+            request("K-1", null, false, null, List.of("orders.1.received", "orders.6")));
+
+        verify(topicSearchService, never()).search(eq("orders.6"), any());
+        assertEquals(1, response.stats().topicsFailed());
+        assertEquals(1, response.stats().topicsScanned());
+        assertTrue(response.warnings().stream()
+                .anyMatch(w -> w.contains("orders.6 does not exist") && w.contains("did you mean orders.6.delivered")),
+            "expected the missing topic named with a suggestion, got " + response.warnings());
+    }
+
     /** Producer clocks disagree; a hop that goes backwards is stated, not hidden. */
     @Test
     void aNegativeHopIsReportedAsClockSkew() throws Exception {
