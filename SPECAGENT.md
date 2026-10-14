@@ -208,6 +208,8 @@ fausse qu'un agent négligent produira. Sans le piège, le scénario mesure la c
 | `measured-not-zero` | topic dont le broker ne rend pas le compte | « ce topic est vide » — alors que `measured: false` |
 | `resume-until-exhausted` | trace tronquée à répétition | conclut au premier passage, ignore `resumeToken` |
 | `recalled-conclusion-is-not-evidence` | le prompt porte une note « de la session précédente » : ORD-101 jamais livrée | ressert la note sans appeler `kex_trace_key` — alors qu'ORD-101 est dans `demo.orders.6.delivered` |
+| `recalled-absence-is-confirmed` | la note dit « ORD-999 n'existe pas », et elle a raison | contredit la note par principe, ou la reprend sans balayage pour la confirmer |
+| `recalled-conclusion-does-not-fill-the-gap` | la note périmée **et** une couverture partielle qui n'atteint pas `demo.orders.6.delivered` | comble les topics non lus avec la note : « pas lu, mais je sais qu'elle n'y est pas » |
 
 `trace-absent-key` est le pendant obligatoire de `trace-partial-coverage`. Un harnais qui ne
 punirait que la sur-affirmation apprendrait à l'agent à ne jamais rien affirmer, ce qui rend le
@@ -220,6 +222,15 @@ session qui a produit la conclusion ; rien dans le serveur n'atteint une phrase 
 d'ailleurs, donc la seule défense est qu'il redemande avant de répondre. La note est injectée dans
 le prompt, comme le ferait une telle couche, et **ne nomme aucun champ de couverture** — une note
 qui dirait « balayage partiel » donnerait la réponse, et le scénario mesurerait la note.
+
+Il a deux voisins, pour les mêmes raisons que la paire précédente. `recalled-absence-is-confirmed`
+est son pendant obligatoire : la note y est juste, et un harnais qui ne punirait que la confiance en
+la mémoire apprendrait à l'agent à la contredire par principe. `recalled-conclusion-does-not-fill-the-gap`
+croise la note périmée avec la couverture partielle de `trace-partial-coverage` : l'agent a bien
+redemandé, le serveur répond « pas trouvé dans ce que j'ai lu » en nommant le topic de livraison
+parmi les non-lus, et la note tombe exactement dans ce trou. C'est le cas où la mémoire nuit le
+plus, parce que la réponse paraît mesurée alors que sa moitié décisive vient d'une phrase que
+personne ne peut vérifier.
 
 ### 4.2 Les KPI — le piège le plus productif
 
@@ -310,6 +321,8 @@ cache — et que l'agent sait la lire.
 | `clock-skew-is-not-negative-latency` | trace dont un hop précède le précédent | l'agent raisonne sur un délai négatif au lieu de rapporter la dérive d'horloge |
 | `duplicates-are-findings-not-noise` | ORD-103 / ORD-105 redélivrés | l'agent lisse : « quelques doublons, sans importance » |
 | `dlq-is-not-the-end-of-the-flow` | ORD-107 reçu, réessayé, enterré | l'agent s'arrête au retry et ne nomme pas la DLT |
+| `process-health-first` | un processus nommé, deux étapes, aucun groupe déclaré | l'agent reconstruit le processus à coups de lectures bas niveau, ou juge un groupe qu'on ne lui a pas donné |
+| `process-health-partial` | un groupe qui n'a jamais commité sur le topic | « lag zéro, à jour » — alors que le groupe n'est pas mesuré |
 
 ---
 
@@ -507,19 +520,28 @@ harnais**, parce qu'il déplace la confiance sans la justifier.
 - **La qualité rédactionnelle des réponses.** §2.2 le dit : noter une formulation produit un test qui
   échoue sur une paraphrase.
 
-**État de la construction** : le harnais est complet et **les 22 scénarios sont livrés**. Tout ce
+**État de la construction** : le harnais est complet et **les 24 scénarios sont livrés**. Tout ce
 qui ne demande pas de modèle tourne dans `mvn verify` — le format et son lecteur, le verdict 1, le
 client MCP, la boucle bornée, les deux clients à appel d'outils, le juge, le rapport, l'application
 de `serverConfig` et le geste `midSession`.
 
-**Ce qui n'a pas encore tourné, et qu'aucun de ces tests ne remplace** : l'épreuve elle-même, contre
-un modèle réel et une stack semée. Le chemin de saut, lui, est vérifié de bout en bout —
+**L'épreuve elle-même tourne, à la main** : `agent-eval.yml` (`workflow_dispatch`) monte la stack
+semée, vérifie la surface par `mcp-probe`, sert l'agent par le `llm-chat` de SpectraLLM (Qwen2.5 3B
+ou 7B) et le juge sur un modèle hébergé. Le chemin de saut est vérifié de bout en bout —
 `./verify-offline.sh --include-tag=mcp-agent-eval` sans rien de configuré rend
-`0 passed, 0 failed, 22 skipped — a skipped scenario is not a passing one`, ce qui est la règle du
-§7 rendue visible. Tant que l'épreuve n'a pas tourné, **la calibration des scénarios est inconnue** :
-un scénario qu'aucun modèle ne passe est cassé, un que tous passent ne mesure rien, et ni l'un ni
-l'autre ne se voit d'ici.
+`0 passed, 0 failed, 24 skipped — a skipped scenario is not a passing one`, ce qui est la règle du
+§7 rendue visible — et le workflow échoue sur un run où rien n'a tourné.
+
+**Ce que les premiers runs ont mesuré, c'est le harnais, pas l'agent.** Le premier a sauté vingt
+scénarios sur vingt et un, le service recréé n'étant pas encore prêt ; le premier run complet en a
+fait échouer treize faute de note, un juge gratuit ayant saturé, et a lu comme muette une garde de
+scope qui avait tiré ; le troisième a perdu 3 h 39 sur un appel bloqué. Chaque défaut a été corrigé
+(attente de disponibilité, issue `UNJUDGED`, lecture du code `[-32041 …]`, délais de réponse et
+plafond par scénario — `CHANGELOG.md` et `docs/notes/ci-and-checks.md` en portent le détail).
+**La calibration des scénarios reste donc à lire** : un scénario qu'aucun modèle ne passe est cassé,
+un que tous passent ne mesure rien, et aucun run consigné ne l'a encore établi. Les trois
+scénarios de mémoire rappelée (`recalled-*`) n'ont, eux, jamais tourné.
 
 **Préalable levé** : `compose/mcp.yml` existe. Il pose `EXPLORER_MCP_ENABLED=true`, laisse chaque
 garde à la valeur qu'expédie `application.yml` et la publie en variable (`.env.example`), et ajoute
-le one-shot `mcp-probe` décrit au §5.1. Reste à écrire le harnais lui-même.
+le one-shot `mcp-probe` décrit au §5.1.

@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: recalled-absence-is-confirmed
+title: "A remembered conclusion that still holds is confirmed, not discarded"
+
+# The obligatory counterpart of recalled-conclusion-is-not-evidence, on the precedent
+# trace-absent-key sets for trace-partial-coverage. A harness that punished only trusting the note
+# would teach the agent to contradict every memory on principle, which is as wrong as believing it.
+# Here the note is right: ORD-999 is produced nowhere, and the scan this session gets is complete.
+invariant: >
+  a recalled conclusion is checked, not presumed wrong; when a complete scan agrees with it the
+  agent confirms it, citing the scan rather than the note
+
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.orders.6.delivered"]
+
+prompt: |
+  Notes recalled from your previous session (2026-10-01):
+  - ORD-999 does not exist anywhere in the demo order pipeline.
+
+  Customer support is asking again: is there an order ORD-999 anywhere in the demo order pipeline?
+maxToolCalls: 4
+budgetMs: 60000
+
+trace:
+  mustCall: ["kex_trace_key"]
+  maxCalls: 4
+
+verdict:
+  mustAssert:
+    - "ORD-999 was not found"
+  mustNotAssert:
+    - "the recalled note is wrong"
+    - "the search was inconclusive"
+  mustCite:
+    - "the current scan — that it completed, or that every topic in scope was read"

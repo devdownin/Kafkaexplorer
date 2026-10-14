@@ -24,6 +24,11 @@ A scenario that expects `-32041` without narrowing a scope prefix is expecting a
 armed, and it fails as "the guard did not fire" — a true sentence about a scenario that was never
 capable of firing it.
 
+A fourth is about `SPECAGENT.md`, which **counts the scenarios and catalogues them by hand**. Its §8
+said 19 while 21 shipped, and two of them were in no catalogue table at all: a scenario nobody can
+find in the specification is one nobody calibrates, and a count that has drifted is the wrong figure
+under the right label. Every count it states and every scenario id are resolved against the files.
+
 No network, no broker, no build: the same shape as its eleven neighbours, discovered by the same
 `for check in docs/check-*.py` loop in `ci.yml`.
 
@@ -38,6 +43,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCENARIOS = ROOT / "src/test/resources/eval/agent"
 SEEDER = ROOT / "setup-demo.sh"
+SPEC = ROOT / "SPECAGENT.md"
 TOOL_SOURCES = ROOT / "src/main/java/com/compagnonsdudev/kafkasqlexplorer/mcp/tools"
 
 # Which setting arms which refusal. The harness cannot infer this and the scenario author can get
@@ -54,6 +60,14 @@ GUARD_SETTINGS = {
     # exception ScenarioLoader names.
     -32043: ("kafka.bootstrap-servers",),
 }
+
+# The sentences in SPECAGENT.md that state how many scenarios exist. Named one by one rather than
+# matched on any number near the word "scenario", so a figure in a measurement elsewhere in the
+# specification is never mistaken for the count.
+SPEC_COUNTS = (
+    re.compile(r"les (\d+) scénarios sont livrés"),
+    re.compile(r"(\d+) skipped — a skipped scenario is not a passing one"),
+)
 
 # A refusal a scenario arms by DOING something during the session rather than by setting anything.
 # -32044 has both shapes: a deny-list set in advance, and an operator throwing the runtime switch
@@ -94,6 +108,30 @@ def read_list(body: str, key: str) -> list[str]:
         return [m.strip().strip('"') for m in re.findall(r"^\s*-\s*(.+)$", block.group(2),
                                                          re.MULTILINE)]
     return []
+
+
+def spec_problems(files: list[pathlib.Path]) -> tuple[int, list[str]]:
+    """The counts SPECAGENT.md states, and its catalogue, against the scenario files."""
+    if not SPEC.exists():
+        return 0, [f"the specification is missing: {SPEC.relative_to(ROOT)}"]
+    spec = SPEC.read_text(encoding="utf-8")
+    problems: list[str] = []
+    resolved = 0
+    for pattern in SPEC_COUNTS:
+        found = pattern.findall(spec)
+        if not found:
+            problems.append(f"SPECAGENT.md: no sentence matches /{pattern.pattern}/ — the count it "
+                            "carried was reworded, so this check would stop checking it")
+        for count in found:
+            resolved += 1
+            if int(count) != len(files):
+                problems.append(f"SPECAGENT.md states {count} scenarios in "
+                                f"/{pattern.pattern}/, but {len(files)} ship")
+    for path in files:
+        resolved += 1
+        if f"`{path.stem}`" not in spec:
+            problems.append(f"SPECAGENT.md: scenario '{path.stem}' is in no catalogue entry (§4)")
+    return resolved, problems
 
 
 def main() -> int:
@@ -161,6 +199,10 @@ def main() -> int:
                     ways = list(settings) + ([f"a {action} block"] if action else [])
                     problems.append(f"{name}: expects {code} but arms none of "
                                     f"{', '.join(ways)}, so the guard cannot fire")
+
+    spec_resolved, spec_issues = spec_problems(files)
+    resolved += spec_resolved
+    problems.extend(spec_issues)
 
     if problems:
         for problem in problems:
