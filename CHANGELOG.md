@@ -20,6 +20,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **An exact-key search on a single-partition topic no longer claims to have narrowed.** Key
+  partitioning (always on in the exact-key mode of Stream Flow and `kex_trace_key`) warned "Scanned
+  partition 0 of 1 only … Turn key partitioning off to scan every partition" on a topic with one
+  partition, where the read had covered the whole topic. An agent eval run read that warning as a
+  partial scan and hedged a correct "not found" (`recalled-absence-is-confirmed`, 2 of 3 attempts).
+  One partition is now scanned without the shortcut and without the warning.
 - **The pull requests the workflows open can start CI on their own.** `release.yml`'s follow-up and
   `image-pins.yml`'s `sibling-bump` use the optional `AUTOMATION_PR_TOKEN` secret when it exists
   (a fine-grained token or an App token with contents and pull-requests write); a pull request
