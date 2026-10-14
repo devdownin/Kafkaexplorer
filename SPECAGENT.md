@@ -475,7 +475,10 @@ deux entrées retombent sur les variables de dépôt `JUDGE_PROVIDER` et `JUDGE_
 publiés en artefact. Les budgets ayant été calibrés sur une API hébergée, `AGENT_EVAL_BUDGET_SCALE`
 (entrée `budget_scale`, 5 par défaut) les multiplie ; il ne descend jamais sous 1, chaque
 dépassement le cite et le résumé de la suite le répète, pour qu'un run mis à l'échelle ne soit
-jamais lu comme un run qui ne l'est pas.
+jamais lu comme un run qui ne l'est pas. L'entrée `request_timeout_s` règle de même
+`AGENT_EVAL_REQUEST_TIMEOUT_S` (600 s par défaut) : le 7B sur ce runner n'a pas fini son premier
+tour dans ce délai, et le scénario a été sauté. Elle se relève avec `budget_scale`, sans quoi le
+tour qui aboutit dépasse le budget du scénario.
 
 ---
 

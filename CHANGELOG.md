@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **`agent-eval.yml` takes a `request_timeout_s` input**, passed to the harness as
+  `AGENT_EVAL_REQUEST_TIMEOUT_S` (empty keeps 600 s). Qwen2.5-7B on the standard runner did not
+  finish its first tool-laden turn within 600 s, so every 7B scenario was skipped; raise it with
+  `budget_scale` (1800 and 30 for the 7B).
 - **An exact-key search on a single-partition topic no longer claims to have narrowed.** Key
   partitioning (always on in the exact-key mode of Stream Flow and `kex_trace_key`) warned "Scanned
   partition 0 of 1 only … Turn key partitioning off to scan every partition" on a topic with one
