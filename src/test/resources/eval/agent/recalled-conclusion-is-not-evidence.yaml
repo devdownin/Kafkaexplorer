@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Kafka Explorer Contributors
+id: recalled-conclusion-is-not-evidence
+title: "A remembered conclusion is re-read, not re-served"
+
+# trace-partial-coverage, one session later. An agent memory layer distils a conversation into
+# bare facts, and the qualifier is what distillation drops: "not found in the two topics that were
+# read" is stored as "not delivered". The note below is exactly that atom, and it is false — the
+# seeder delivers ORD-101. Coverage protects the session that produced it; nothing in the server
+# can reach a sentence the agent carries in from elsewhere, so the only defence is that the agent
+# asks again before answering.
+invariant: >
+  a negative conclusion carried in from a previous session has no coverage attached, so it licenses
+  nothing until the server has been asked again
+
+# No serverConfig on purpose: the scan this session gets is complete, so the stale note is
+# contradicted by an EXHAUSTED read rather than by another partial one.
+fixture:
+  seeder: setup-demo.sh
+  requires:
+    topics: ["demo.orders.1.received", "demo.orders.6.delivered"]
+    keys: ["ORD-101"]
+
+# The note is phrased the way a memory layer injects it — a dated fact with no provenance beyond
+# the session it came from. It names no coverage field: a note that said "partial scan" would hand
+# the agent the answer, and the scenario would measure the note instead of the agent.
+prompt: |
+  Notes recalled from your previous session (2026-10-01):
+  - ORD-101 was never delivered — it is not in demo.orders.6.delivered.
+
+  Customer support is asking again: did order ORD-101 reach delivery?
+maxToolCalls: 4
+budgetMs: 60000
+
+trace:
+  # Answering from the note costs zero calls; that is the trap, and the trace is what sees it.
+  mustCall: ["kex_trace_key"]
+  mustNotCall: ["kex_preview_messages"]
+  maxCalls: 4
+
+verdict:
+  mustAssert:
+    - "ORD-101 reached demo.orders.6.delivered"
+  mustNotAssert:
+    - "ORD-101 was never delivered"
+    - "ORD-101 is not in demo.orders.6.delivered"
+  mustQualify:
+    - "that the recalled note is wrong or out of date"
+  mustCite:
+    - "the current scan — that it found ORD-101 in the delivery topic, or that it read every topic in scope"
