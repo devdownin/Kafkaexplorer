@@ -58,6 +58,13 @@ on:
         description: Multiplier on every scenario's budgetMs (AGENT_EVAL_BUDGET_SCALE)
         type: string
         default: '5'
+      # The 7B on this runner did not finish its first tool-laden turn within the harness's 600 s
+      # request timeout (run 38554839728: skipped at 600.8 s). Raise it with budget_scale, or the
+      # turn that now completes overruns the scenario budget instead.
+      request_timeout_s:
+        description: Seconds one agent model request may take (AGENT_EVAL_REQUEST_TIMEOUT_S; empty = 600). For qwen2.5-7b-instruct, 1800 with budget_scale 30
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -207,6 +214,7 @@ jobs:
           OPENROUTER_API_KEY: ${{ steps.judge.outputs.provider == 'OPENROUTER' && secrets.OPENROUTER_API_KEY || '' }}
           AGENT_EVAL_REPEAT: ${{ inputs.repeat }}
           AGENT_EVAL_BUDGET_SCALE: ${{ inputs.budget_scale }}
+          AGENT_EVAL_REQUEST_TIMEOUT_S: ${{ inputs.request_timeout_s }}
           SCENARIO: ${{ inputs.scenario }}
         run: |
           set -o pipefail

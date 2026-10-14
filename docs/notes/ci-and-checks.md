@@ -307,7 +307,11 @@ Three workflows beyond `ci.yml` / `release.yml` / `dockerhub-description.yml`:
   against a hosted API, a 3B on four CPU cores spends most of a 60 s budget reading the tool
   schemas, and an overrun there would report the runner's hardware as the agent's failure.
   `AgentRunner` applies the scale, names it in every overrun it reports, and the suite summary
-  repeats it, so a scaled run is never compared with an unscaled one unawares. The GGUF's digest
+  repeats it, so a scaled run is never compared with an unscaled one unawares. **`request_timeout_s`**
+  feeds `AGENT_EVAL_REQUEST_TIMEOUT_S` (empty keeps the harness's 600 s): the 7B did not finish its
+  first tool-laden turn within 600 s on this runner, and the scenario was skipped rather than graded.
+  It is raised together with `budget_scale` (1800 and 30 for the 7B), or the turn that now completes
+  overruns the scenario budget instead. The GGUF's digest
   is an optional input rather than a pin, because nothing here has observed it twice yet; the
   0.5B model `spectra-hub-stack` pins is too small to call a tool and would grade the scenarios
   rather than the agent. **The first real run ran nothing, and showed three things the unit tests

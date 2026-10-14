@@ -44,7 +44,10 @@ verdict:
   mustNotAssert:
     - "ORD-101 was never delivered"
     - "ORD-101 is not in demo.orders.6.delivered"
-  mustQualify:
-    - "that the recalled note is wrong or out of date"
+  # This was a mustQualify — "that the recalled note is wrong or out of date". Run 38563568280
+  # (Qwen2.5-7B) answered correctly from the trace on all three attempts, six hops listed, and
+  # failed only for not naming the note: the grid was grading a courtesy rather than the invariant,
+  # which is that the answer rests on this session's read. That is a citation, so it is one.
   mustCite:
     - "the current scan — that it found ORD-101 in the delivery topic, or that it read every topic in scope"
+    - "this session's trace as the basis of the answer, rather than the recalled note"

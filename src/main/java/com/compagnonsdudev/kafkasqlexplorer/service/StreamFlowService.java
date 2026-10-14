@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -62,6 +63,7 @@ public class StreamFlowService {
 
     /** Hard ceiling on records scanned in one topic, whatever the request asks for. */
     private static final int MAX_RECORDS_PER_TOPIC = 1000;
+    private static final int MAX_TOPIC_SUGGESTIONS = 3;
     /**
      * Applied when the request asks for nothing usable — an omitted or non-positive cap. It used to
      * be a primitive {@code int} whose zero scanned no record at all and reported an empty flow for
@@ -169,7 +171,8 @@ public class StreamFlowService {
             explorerConfig.getSearchTimeoutMs());
         MessageMatcher.from(criteria);
 
-        List<String> topicsToScan = resolveTopics(request, timeLimit, warnings);
+        Set<String> unknownTopics = new HashSet<>();
+        List<String> topicsToScan = resolveTopics(request, timeLimit, warnings, unknownTopics);
         if (topicsToScan.isEmpty()) {
             return emptyResponse(warnings, request, recordLimit, timeLimit, startNanos);
         }
@@ -179,7 +182,7 @@ public class StreamFlowService {
         tracker.announceStart();
 
         long deadlineNanos = startNanos + TimeUnit.MILLISECONDS.toNanos(explorerConfig.getStreamFlowTimeoutMs());
-        List<TopicScan> scans = scanTopics(topicsToScan, request, recordLimit, timeLimit,
+        List<TopicScan> scans = scanTopics(topicsToScan, unknownTopics, request, recordLimit, timeLimit,
             deadlineNanos, cancelled, tracker);
 
         return buildResponse(topicsToScan, request, scans, recordLimit, timeLimit,
@@ -327,7 +330,8 @@ public class StreamFlowService {
      * matches almost anything and would draw a node that means nothing) and capped, because a
      * cluster with thousands of topics would otherwise open thousands of consumers.
      */
-    private List<String> resolveTopics(StreamFlowRequest request, Integer timeLimit, List<String> warnings) {
+    private List<String> resolveTopics(StreamFlowRequest request, Integer timeLimit, List<String> warnings,
+                                       Set<String> unknownTopics) {
         List<String> requested = request.targetTopics();
         if (requested != null && !requested.isEmpty()) {
             List<String> targets = requested.stream()
@@ -335,7 +339,7 @@ public class StreamFlowService {
                 .map(String::trim)
                 .distinct()
                 .toList();
-            warnUnknownTopics(targets, warnings);
+            unknownTopics.addAll(unknownTopics(targets, warnings));
             return targets;
         }
 
@@ -434,18 +438,36 @@ public class StreamFlowService {
         return ranked;
     }
 
-    private void warnUnknownTopics(List<String> targets, List<String> warnings) {
+    /**
+     * Target topics the cluster does not have. They stay in scope and are reported as failed, not
+     * scanned: a search on a missing topic finds no partition and answered EXHAUSTED with nothing
+     * read, so a mistyped name came back as a complete negative over a topic that does not exist —
+     * measured, an agent traced {@code demo.orders.6} for {@code demo.orders.6.delivered} and
+     * concluded the order was never delivered.
+     */
+    private Set<String> unknownTopics(List<String> targets, List<String> warnings) {
         List<String> known;
         try {
             known = kafkaAdminService.listTopics();
         } catch (Exception e) {
             log.debug("Could not verify target topics: {}", e.getMessage());
-            return;
+            return Set.of();
         }
-        List<String> unknown = targets.stream().filter(t -> !known.contains(t)).toList();
-        if (!unknown.isEmpty()) {
-            warnings.add("Unknown topic(s), nothing was read from them: " + String.join(", ", unknown) + ".");
+        Set<String> unknown = new LinkedHashSet<>();
+        for (String target : targets) {
+            if (known.contains(target)) {
+                continue;
+            }
+            unknown.add(target);
+            List<String> candidates = known.stream()
+                .filter(t -> t.startsWith(target))
+                .sorted()
+                .limit(MAX_TOPIC_SUGGESTIONS)
+                .toList();
+            warnings.add("Topic " + target + " does not exist, nothing was read from it"
+                + (candidates.isEmpty() ? "." : " — did you mean " + String.join(", ", candidates) + "?"));
         }
+        return unknown;
     }
 
     /**
@@ -457,12 +479,15 @@ public class StreamFlowService {
      * task that has not started yet never runs — and the response reports how many topics were
      * skipped.
      */
-    private List<TopicScan> scanTopics(List<String> topics, StreamFlowRequest request, int recordLimit,
+    private List<TopicScan> scanTopics(List<String> topics, Set<String> unknownTopics,
+                                       StreamFlowRequest request, int recordLimit,
                                        Integer timeLimit, long deadlineNanos, BooleanSupplier cancelled,
                                        ProgressTracker tracker) {
         List<CompletableFuture<TopicScan>> futures = topics.stream()
             .map(topic -> CompletableFuture.supplyAsync(
-                () -> scanTopic(topic, request, recordLimit, timeLimit, deadlineNanos, cancelled, tracker),
+                () -> unknownTopics.contains(topic)
+                    ? missingTopic(topic, tracker)
+                    : scanTopic(topic, request, recordLimit, timeLimit, deadlineNanos, cancelled, tracker),
                 executorService))
             .toList();
 
@@ -491,6 +516,13 @@ public class StreamFlowService {
             }
         }
         return tracker.snapshot();
+    }
+
+    /** A target the cluster does not have: failed, so the coverage never counts it as read. */
+    private static TopicScan missingTopic(String topic, ProgressTracker tracker) {
+        TopicScan scan = TopicScan.failed(topic, "topic does not exist");
+        tracker.record(scan);
+        return scan;
     }
 
     private TopicScan scanTopic(String topic, StreamFlowRequest request, int recordLimit,

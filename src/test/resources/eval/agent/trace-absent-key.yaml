@@ -31,5 +31,10 @@ verdict:
   mustNotAssert:
     - "the search was inconclusive"
     - "more topics would need to be scanned to answer"
+  # Recalibrated after run 38566813979 (Qwen2.5-7B): with no `topics`, kex_trace_key reads the
+  # whole cluster (79 topics) and demo.iot.sensors stops at the record cap, so the scan this
+  # scenario assumed complete is not. All three attempts answered "not found" and named that
+  # topic; the grid failed them for not citing a completion that did not happen. What the answer
+  # owes is the scan's real extent — complete, or the topic it did not finish — not a claim of it.
   mustCite:
-    - "that the scan completed — the stop reason, or that every topic in scope was read"
+    - "what the scan covered — that it completed, or which topic it did not read in full"

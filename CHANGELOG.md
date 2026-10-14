@@ -20,6 +20,22 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A trace target that does not exist is reported as not read, not as an empty topic.** A missing
+  topic in Stream Flow's targets or `kex_trace_key`'s `topics` was still searched, found no
+  partition and counted as scanned, so the trace could answer `EXHAUSTED` — a complete negative —
+  about a topic that does not exist. In the agent eval the 3B model traced `demo.orders.6` for
+  `demo.orders.6.delivered` and concluded the order was never delivered. Such a topic is now failed
+  (`PARTIAL_FAILURE` over MCP), and the warning names the existing topics it is a prefix of.
+- **`agent-eval.yml` takes a `request_timeout_s` input**, passed to the harness as
+  `AGENT_EVAL_REQUEST_TIMEOUT_S` (empty keeps 600 s). Qwen2.5-7B on the standard runner did not
+  finish its first tool-laden turn within 600 s, so every 7B scenario was skipped; raise it with
+  `budget_scale` (1800 and 30 for the 7B).
+- **An exact-key search on a single-partition topic no longer claims to have narrowed.** Key
+  partitioning (always on in the exact-key mode of Stream Flow and `kex_trace_key`) warned "Scanned
+  partition 0 of 1 only … Turn key partitioning off to scan every partition" on a topic with one
+  partition, where the read had covered the whole topic. An agent eval run read that warning as a
+  partial scan and hedged a correct "not found" (`recalled-absence-is-confirmed`, 2 of 3 attempts).
+  One partition is now scanned without the shortcut and without the warning.
 - **The pull requests the workflows open can start CI on their own.** `release.yml`'s follow-up and
   `image-pins.yml`'s `sibling-bump` use the optional `AUTOMATION_PR_TOKEN` secret when it exists
   (a fine-grained token or an App token with contents and pull-requests write); a pull request

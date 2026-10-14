@@ -356,7 +356,10 @@ public class TopicSearchService {
             return all;
         }
         String key = request.value();
-        if (key == null || key.isBlank() || all.isEmpty()) {
+        // One partition: there is nothing to narrow, and the warning below would describe a partial
+        // scan of a read that covered the whole topic — measured, an agent read it as "not found in
+        // what was scanned" on a complete scan.
+        if (key == null || key.isBlank() || all.size() < 2) {
             return all;
         }
         int partition = Utils.toPositive(Utils.murmur2(key.getBytes(StandardCharsets.UTF_8))) % all.size();

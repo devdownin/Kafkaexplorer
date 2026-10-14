@@ -232,6 +232,17 @@ class TopicSearchServiceTest {
             "a narrowed scan must say what it assumed, got " + response.warnings());
     }
 
+    /** A single partition is the whole topic: a "partition 0 of 1 only" warning would misreport a full scan. */
+    @Test
+    void keyPartitioningOnASinglePartitionTopicScansItWithoutClaimingToHaveNarrowed() {
+        seedRecords("{}");
+
+        TopicSearchResponse response = service.search(TOPIC, keySearch("K-1", true, "EQ"));
+
+        assertEquals(1, mockConsumer.assignment().size());
+        assertTrue(response.warnings().isEmpty(), "nothing was narrowed, got " + response.warnings());
+    }
+
     /** A substring match says nothing about which key was hashed, so the shortcut does not apply. */
     @Test
     void keyPartitioningIsIgnoredAndExplainedOutsideAnExactKeySearch() {
