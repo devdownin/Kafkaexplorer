@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.3.2] — 2026-10-17
+
 - **A trace target that does not exist is reported as not read, not as an empty topic.** A missing
   topic in Stream Flow's targets or `kex_trace_key`'s `topics` was still searched, found no
   partition and counted as scanned, so the trace could answer `EXHAUSTED` — a complete negative —
@@ -2618,7 +2622,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.1...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.2...HEAD
+[2.3.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.5...v2.3.0
 [2.2.5]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.4...v2.2.5
