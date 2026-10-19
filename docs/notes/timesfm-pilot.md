@@ -237,6 +237,37 @@ such series and answer an empty `EXHAUSTED` list, which read as "nothing predict
 TimesFM was down and every series was on its fallback. Series without a policy are listed as
 `NO_POLICY` and are not counted as requested.
 
+## Timestral shadow model
+
+`services/timesfm` can run `mistralai/Timestral-28M` beside TimesFM as a **shadow**: the same
+request contract on `POST /v1/shadow/forecast`, the same bearer token and body bound, readiness on
+`/health/shadow/ready`. It answers under its own `modelId`, `modelRevision` and `adapterVersion`
+(`kex-timestral-28m-v1`), which `TimesFmClient.decode` rejects, so a shadow answer cannot be
+stored or activated as a TimesFM forecast by mistake. Nothing in the application calls it yet.
+Scoring it against realised values (same cohorts, same baselines) is the next step, and it
+belongs to the Java side.
+
+- **Off unless pinned.** `TIMESTRAL_REVISION` (40-hex Hub commit) and `TIMESTRAL_SHA256` (the
+  weights' LFS digest) are both empty by default, and then the endpoints answer 404
+  `SHADOW_DISABLED`. With only one of them set, the service refuses to start, because a shadow
+  scored on an unpinned `main` measures a model nobody can name afterwards. The pin is the
+  operator's to read from the Hub and is not committed here, because accepting the weights'
+  licence is a deployment decision: it is a Modified MIT licence that **excludes any company above
+  $20M monthly revenue**. Prefetch downloads and verifies it like the primary checkpoint.
+- **Isolated.** It runs in its own child process (`ModelWorker` with `shadow_predictions` as
+  decoder), started after the primary. Its failure, timeout or crash leaves `/health/ready` and
+  `/v1/forecast` untouched.
+- **Yields to the primary.** A shadow call is refused with 429 while TimesFM is computing, and
+  runs on `TIMESTRAL_THREADS` (1) inside the same `cpus` budget. A primary call that arrives
+  during a shadow call still overlaps it, so keep that thread count low.
+- **Validated, not repaired.** The output must be `(series, 1, horizon, 21)`, finite and
+  non-decreasing across all 21 levels. Q10, Q50 and Q90 are read by level (indexes 2, 10 and 18),
+  and `central` is the median. Contexts shorter than the longest one in the batch are left-padded
+  with NaN, which Timestral reads as missing rather than as zeros.
+- The package is pinned to a commit
+  (`timestral @ git+https://github.com/mistralai/timestral@a534bdb…`), which is why the image
+  build needs `git`. `TIMESFM_RUN_REAL_MODEL=1` with the pin set runs its opt-in smoke test.
+
 ## Metrics and operational checks
 
 Monitor the existing history/client metrics plus `explorer_forecast_strategy_total` (TIMESFM,

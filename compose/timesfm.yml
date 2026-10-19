@@ -25,6 +25,11 @@ services:
       # Keep those writes on the model volume when the container root is read-only.
       HF_HOME: /models
       TIMESFM_THREADS: ${TIMESFM_THREADS:-4}
+      # Timestral shadow (POST /v1/shadow/forecast): off while both pins are empty, refused when
+      # only one is set. Read both from the Hub after accepting the weights' licence.
+      TIMESTRAL_REVISION: ${TIMESTRAL_REVISION:-}
+      TIMESTRAL_SHA256: ${TIMESTRAL_SHA256:-}
+      TIMESTRAL_THREADS: ${TIMESTRAL_THREADS:-1}
     cpus: ${TIMESFM_CPUS:-4.0}
     mem_limit: ${TIMESFM_MEM_LIMIT:-8g}
     healthcheck:

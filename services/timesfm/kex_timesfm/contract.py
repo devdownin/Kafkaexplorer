@@ -65,9 +65,12 @@ def named_predictions(request: ForecastRequest, central, quantiles) -> list[dict
         raise ValueError("central output is not the median")
     if (np.diff(quantiles[:, :, 1:], axis=2) < 0).any():
         raise ValueError("crossed model quantiles")
+    return series_rows(request, central, quantiles[:, :, 1], quantiles[:, :, 5], quantiles[:, :, 9])
+
+
+def series_rows(request: ForecastRequest, central, q10, q50, q90) -> list[dict]:
     return [
         {"seriesId": item.seriesId, "central": central[i].tolist(),
-         "q10": quantiles[i, :, 1].tolist(), "q50": quantiles[i, :, 5].tolist(),
-         "q90": quantiles[i, :, 9].tolist()}
+         "q10": q10[i].tolist(), "q50": q50[i].tolist(), "q90": q90[i].tolist()}
         for i, item in enumerate(request.series)
     ]
