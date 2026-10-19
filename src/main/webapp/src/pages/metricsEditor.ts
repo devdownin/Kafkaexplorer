@@ -137,7 +137,8 @@ export function validateDdlSql(ddl: string): ValidationMsg[] {
   if (!/^CREATE\s+TABLE\b/i.test(stripped))
     msgs.push({ level: 'error', text: 'DDL must be a CREATE TABLE statement.' });
 
-  if (/\b(DROP|DELETE|TRUNCATE)\b/i.test(stripped))
+  // Outside the quoted values: `'topic' = 'account-delete-requests'` is a name, not a statement.
+  if (/\b(DROP|DELETE|TRUNCATE)\b/i.test(stripped.replace(/'(?:[^']|'')*'/g, "''").replace(/`[^`]*`/g, '``')))
     msgs.push({ level: 'error', text: 'Destructive keywords (DROP, DELETE, TRUNCATE) are not allowed in the DDL field.' });
 
   if (!/\bWITH\b/i.test(stripped))

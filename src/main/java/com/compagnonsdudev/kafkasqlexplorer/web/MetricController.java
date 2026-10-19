@@ -66,7 +66,8 @@ public class MetricController {
             m.id(), m.name(), m.type(), m.sql(), m.description(),
             m.warningThreshold(), m.criticalThreshold(), m.lastValue(), m.lastUpdateTime(),
             m.errorMessage(), m.history(), m.lastSummary(), masked, m.templateType(),
-            m.templateParams(), m.executionMode(), m.labelTopic(), m.labelFields());
+            m.templateParams(), m.executionMode(), m.labelTopic(), m.labelFields(),
+            m.componentHistory());
     }
 
     @GetMapping("/metadata")

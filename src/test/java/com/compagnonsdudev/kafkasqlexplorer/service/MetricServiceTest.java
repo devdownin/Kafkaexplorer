@@ -292,6 +292,50 @@ class MetricServiceTest {
     }
 
     @Test
+    void anEditKeepsWhatTheServerMeasuredNotWhatTheModalOpenedWith() {
+        service.init();
+        service.save(new MetricConfig("m", "m", "GAUGE", "SELECT 1 AS metric_value", "d", null, null,
+            5.0, 111L, "refused earlier", List.of(1.0, 2.0)));
+
+        // The editor posts the card as it was when the modal opened, long before the last refresh.
+        service.save(new MetricConfig("m", "m", "GAUGE", "SELECT 1 AS metric_value", "new description", null, null,
+            1.0, 1L, "stale", List.of()));
+
+        MetricConfig stored = service.getById("m").orElseThrow();
+        assertEquals(5.0, stored.lastValue());
+        assertEquals(111L, stored.lastUpdateTime());
+        assertEquals(List.of(1.0, 2.0), stored.history());
+        // Nothing about the definition changed, so the error still describes it.
+        assertEquals("refused earlier", stored.errorMessage());
+    }
+
+    @Test
+    void aChangedDefinitionDoesNotKeepTheMeasurementOrTheErrorOfTheOneItReplaced() {
+        service.init();
+        service.save(new MetricConfig("m", "m", "GAUGE", "SELECT broken AS metric_value", "d", null, null,
+            5.0, 111L, "unknown column broken", List.of(5.0)));
+
+        service.save(new MetricConfig("m", "m", "GAUGE", "SELECT 1 AS metric_value", "d", null, null,
+            5.0, 111L, "unknown column broken", List.of(5.0)));
+
+        MetricConfig stored = service.getById("m").orElseThrow();
+        assertNull(stored.errorMessage());
+        assertNull(stored.lastValue());
+        assertNull(stored.lastUpdateTime());
+        // The history is deliberately kept across an edit.
+        assertEquals(List.of(5.0), stored.history());
+    }
+
+    @Test
+    void aNewMetricKeepsWhatItCameWith() {
+        service.init();
+        service.save(new MetricConfig("fresh", "fresh", "GAUGE", "SELECT 1 AS metric_value", "d", null, null,
+            3.0, 7L, null, List.of(3.0)));
+
+        assertEquals(3.0, service.getById("fresh").orElseThrow().lastValue());
+    }
+
+    @Test
     void previewCountDeltaTemplateComputesDifference() {
         stubBySql(Map.of("topic_a", directCount(12.0), "topic_b", directCount(7.0)));
 

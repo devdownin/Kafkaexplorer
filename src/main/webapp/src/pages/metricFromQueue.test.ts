@@ -33,6 +33,12 @@ describe('queueMetricDraft', () => {
     expect(draft.templateParams).toMatchObject({ countBy: 'OFFSETS', window: 'SINCE_LAST_REFRESH' });
   });
 
+  it('is a bounded-scan template, not the raw-SQL mode the empty metric starts in', () => {
+    // `{...EMPTY_METRIC, ...draft}` keeps whatever the draft does not name: left unset, the saved
+    // template carried `executionMode: 'SQL'`, which no option of the template editor matches.
+    expect(draft.executionMode).toBe('TEMPLATE_BOUNDED_SCAN');
+  });
+
   it('proposes no threshold at all', () => {
     // Les cartes proposées ailleurs posent des seuils qui sont des multiples de quelque chose de
     // mesuré et le disent ; ici rien ne l'a été, donc un chiffre rond serait une invention.

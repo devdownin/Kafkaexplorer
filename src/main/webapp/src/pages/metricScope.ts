@@ -29,7 +29,9 @@ export interface ScopeChip {
 export const LOW_MATCH_RATE = 0.9;
 
 function num(source: Record<string, unknown>, key: string): number | null {
-  const value = source[key];
+  const raw = source[key];
+  // The editor stores what was typed or picked, so a number arrives as a string as often as not.
+  const value = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : raw;
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 

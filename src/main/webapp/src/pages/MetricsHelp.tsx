@@ -181,7 +181,7 @@ const MetricsHelp: React.FC = () => {
                 <span className="text-primary/50 block mb-2">// RAW_SQL Example</span>
                 <span className="text-primary">SELECT</span> COUNT(*) <span className="text-primary">AS</span> metric_value,<br/>
                 error_code <span className="text-primary">AS</span> label_code<br/>
-                <span className="text-primary">FROM</span> "topic_orders"<br/>
+                <span className="text-primary">FROM</span> `orders`<br/>
                 <span className="text-primary">WHERE</span> status = 'FAILED'<br/>
                 <span className="text-primary">GROUP BY</span> error_code;
               </div>

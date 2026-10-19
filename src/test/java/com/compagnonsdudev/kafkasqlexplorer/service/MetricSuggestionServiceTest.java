@@ -606,6 +606,17 @@ class MetricSuggestionServiceTest {
     }
 
     @Test
+    void aStatusFieldNamedLikeAReservedWordIsQuotedAsAnAliasToo() {
+        mapping(Map.of(), Map.of("demo.orders", "$.value"));
+
+        MetricSuggestion status = find(
+            service.suggest(new MetricSuggestionRequest(null, "map-1")), "pm:status:demo.orders");
+
+        // `AS value` does not parse, so the metric would have failed on every refresh.
+        assertTrue(status.metric().sql().contains("SELECT `value` AS `value`,"), status.metric().sql());
+    }
+
+    @Test
     void aNestedStatusPathIsRefusedRatherThanTurnedIntoSqlThatCannotRun() {
         mapping(Map.of(), Map.of("demo.orders", "$.order.header.status"));
 

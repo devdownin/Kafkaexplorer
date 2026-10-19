@@ -96,7 +96,10 @@ function freshnessSeconds(params: Record<string, unknown> | null): { seconds: nu
 }
 
 function guard(metricId: string, seconds: number): string {
-  return `time() - explorer_metric_last_success_timestamp_seconds{metric_id="${metricId}"} < ${seconds}`;
+  // `on(metric_id)` is not decoration: the gauge carries every label column of its rows, the
+  // timestamp only `metric_id`/`metric_name`/`metric_type`, and `and` matches on the whole label
+  // set — so without it a metric with a GROUP BY or label chip never fired, through a real breach.
+  return `on(metric_id) (time() - explorer_metric_last_success_timestamp_seconds{metric_id="${metricId}"} < ${seconds})`;
 }
 
 /**
