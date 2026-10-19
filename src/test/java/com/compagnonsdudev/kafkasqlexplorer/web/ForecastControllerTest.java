@@ -36,4 +36,16 @@ class ForecastControllerTest {
     assertNull(response.getBody());
     verify(pilot).activate("id", false);
   }
+
+  @Test
+  void theShadowComparisonIs404WhenOffAnd204BeforeAFirstRow() throws Exception {
+    assertEquals(404, controller().shadow("id").getStatusCode().value());
+    verify(pilot, never()).shadowComparison(anyString());
+    when(pilot.shadowEnabled()).thenReturn(true);
+    assertEquals(204, controller().shadow("id").getStatusCode().value());
+    doThrow(new IllegalArgumentException("Series is not configured for this pilot"))
+        .when(pilot)
+        .shadowComparison("unknown");
+    assertEquals(404, controller().shadow("unknown").getStatusCode().value());
+  }
 }

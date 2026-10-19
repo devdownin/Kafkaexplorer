@@ -242,10 +242,35 @@ TimesFM was down and every series was on its fallback. Series without a policy a
 `services/timesfm` can run `mistralai/Timestral-28M` beside TimesFM as a **shadow**: the same
 request contract on `POST /v1/shadow/forecast`, the same bearer token and body bound, readiness on
 `/health/shadow/ready`. It answers under its own `modelId`, `modelRevision` and `adapterVersion`
-(`kex-timestral-28m-v1`), which `TimesFmClient.decode` rejects, so a shadow answer cannot be
-stored or activated as a TimesFM forecast by mistake. Nothing in the application calls it yet.
-Scoring it against realised values (same cohorts, same baselines) is the next step, and it
-belongs to the Java side.
+(`kex-timestral-28m-v1`), and each client refuses the other's identity
+(`TimesFmClient.Model`), so a shadow answer cannot be stored or activated as a TimesFM forecast.
+
+**The application scores it** when `explorer.forecasting.inference.shadow.enabled` is true
+(`TIMESTRAL_SHADOW_ENABLED` in the compose stacks; `shadow.timeout`, 15 s, 1–30 s):
+
+- **After TimesFM, never in its way.** The shadow phase runs once TimesFM's record is committed,
+  re-taking the pilot lock in a transaction of its own. Its timeout, invalid answer or fenced
+  lease rolls back only the shadow row (`explorer_forecast_pilot_failures_total{state="SHADOW"}`).
+  A shadow TIMEOUT or UNAVAILABLE latches the shadow alone for the rest of the cycle
+  (`SHADOW_OUT_THIS_CYCLE`); TimesFM's own latch is untouched, and so is the reverse.
+- **Its own table.** `kex_forecast_shadow_v1` holds the shadow rows, purged with the same retention.
+  `kex_forecast_result_v2` — what every read, breach, activation and MCP tool trusts — never
+  sees one. The `ShadowForecastClient` type exists so that injecting a `TimesFmClient` can never
+  resolve to Timestral.
+- **Same cohorts, value for value.** A cohort enters only when TimesFM was just scored on it.
+  The shadow forecast made from the same context end is scored on the same training values,
+  realised values and baselines, and both results go into two parallel windows. Those blocks
+  therefore close together and compare like for like, instead of comparing against TimesFM's
+  own window, which may have started months earlier. A shadow forecast written under another
+  specification, definition or profile is not scored. A different pinned revision starts the
+  evaluation over.
+- **Read-only comparison.** `GET /api/forecasts/{seriesId}/shadow` gives both pooled qualities,
+  the shared baselines, whether each last block passed, and `wouldQualify` with its blocker. That
+  is TimesFM's activation gate applied to the shadow, as a question only. The response is 404
+  when the shadow is off and 204 before a first compatible row. No MCP tool exposes it.
+- The shadow's call is spent inside the same cycle budget as TimesFM's, which is why its timeout
+  is shorter. Watch `explorer_forecasting_shadow_duration_seconds` and
+  `explorer_forecast_shadow_total{state}`.
 
 - **Off unless pinned.** `TIMESTRAL_REVISION` (40-hex Hub commit) and `TIMESTRAL_SHA256` (the
   weights' LFS digest) are both empty by default, and then the endpoints answer 404

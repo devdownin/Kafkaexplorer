@@ -32,6 +32,20 @@ class TimesFmConfigurationTest {
                 assertEquals(1, context.getBeansOfType(TimesFmClient.class).size());
             });
     }
+    @Test void theShadowIsItsOwnTypeSoThePrimaryClientStaysUnambiguous() {
+        var enabled = new String[] {"explorer.forecasting.inference.enabled=true",
+            "explorer.forecasting.inference.token=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "explorer.forecasting.inference.service-url=http://127.0.0.1:1"};
+        runner().withPropertyValues(enabled).run(context ->
+            assertTrue(context.getBeansOfType(ShadowForecastClient.class).isEmpty()));
+        runner().withPropertyValues(enabled).withPropertyValues("explorer.forecasting.inference.shadow.enabled=true")
+            .run(context -> {
+                assertNull(context.getStartupFailure());
+                assertEquals(1, context.getBeansOfType(TimesFmClient.class).size());
+                assertNotNull(context.getBean(TimesFmClient.class));
+                assertEquals(1, context.getBeansOfType(ShadowForecastClient.class).size());
+            });
+    }
     @Test void enabledClientRequiresAServiceCredential() {
         runner().withPropertyValues("explorer.forecasting.inference.enabled=true").run(context ->
             assertNotNull(context.getStartupFailure()));

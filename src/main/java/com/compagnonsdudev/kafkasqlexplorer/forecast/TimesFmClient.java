@@ -35,6 +35,26 @@ public final class TimesFmClient implements AutoCloseable {
     public static final String ADAPTER_VERSION = "kex-timesfm-2.5-v3";
     private static final int MAX_REQUEST_BYTES = 128 * 1024, MAX_RESPONSE_BYTES = 256 * 1024;
     private static final ObjectMapper JSON = new ObjectMapper();
+
+    /**
+     * Which answer this client accepts. A null {@code revision} accepts any pinned commit: the
+     * shadow's pin is the operator's, set on the service, and is recorded rather than enforced.
+     * Each identity is refused by the other's client, so a shadow answer can never be stored as
+     * a TimesFM forecast.
+     */
+    public record Model(
+        String label, String path, String modelId, String revision, String adapterVersion, String meterPrefix) {
+        public static final Model PRIMARY =
+            new Model("TimesFM", "/v1/forecast", MODEL_ID, MODEL_REVISION, ADAPTER_VERSION, "explorer_forecasting_");
+        public static final Model SHADOW = new Model("Timestral shadow", "/v1/shadow/forecast", "mistralai/Timestral-28M", null,
+            "kex-timestral-28m-v1", "explorer_forecasting_shadow_");
+
+        boolean accepts(String answered) {
+            return revision == null ? answered != null && answered.matches("[0-9a-f]{40}") : revision.equals(answered);
+        }
+    }
+
+    private final Model model;
     private final URI endpoint;
     private final String token;
     private final Duration timeout;
@@ -49,18 +69,30 @@ public final class TimesFmClient implements AutoCloseable {
     }
 
     public TimesFmClient(TimesFmInferenceProperties properties, MeterRegistry registry) {
-        endpoint = properties.validateEnabled();
+        this(properties, registry, Model.PRIMARY, properties.getTimeout());
+    }
+
+    /** The Timestral shadow on the same service: same origin and token, its own path, timeout and meters. */
+    public static TimesFmClient shadow(TimesFmInferenceProperties properties, MeterRegistry registry) {
+        return new TimesFmClient(properties, registry, Model.SHADOW, properties.getShadow().validatedTimeout());
+    }
+
+    private TimesFmClient(TimesFmInferenceProperties properties, MeterRegistry registry, Model model, Duration timeout) {
+        this.model = model;
+        endpoint = properties.validateEnabled().resolve(model.path());
         token = properties.getToken();
-        timeout = properties.getTimeout();
+        this.timeout = timeout;
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3))
             .followRedirects(HttpClient.Redirect.NEVER).build();
         this.registry = registry;
-        requests = Counter.builder("explorer_forecasting_requests_total").description("TimesFM calls").register(registry);
-        busy = Counter.builder("explorer_forecasting_busy_total").description("TimesFM calls rejected while busy").register(registry);
-        timeouts = Counter.builder("explorer_forecasting_timeouts_total").description("TimesFM calls that timed out").register(registry);
-        unavailable = Counter.builder("explorer_forecasting_unavailable_total").description("TimesFM unavailable calls").register(registry);
-        invalidOutput = Counter.builder("explorer_forecasting_invalid_output_total").description("TimesFM invalid responses").register(registry);
-        duration = Timer.builder("explorer_forecasting_duration_seconds").description("TimesFM call duration")
+        // Distinct names, not a tag: Prometheus refuses one name registered with two tag sets.
+        String p = model.meterPrefix();
+        requests = Counter.builder(p + "requests_total").description(model.label() + " calls").register(registry);
+        busy = Counter.builder(p + "busy_total").description(model.label() + " calls rejected while busy").register(registry);
+        timeouts = Counter.builder(p + "timeouts_total").description(model.label() + " calls that timed out").register(registry);
+        unavailable = Counter.builder(p + "unavailable_total").description(model.label() + " unavailable calls").register(registry);
+        invalidOutput = Counter.builder(p + "invalid_output_total").description(model.label() + " invalid responses").register(registry);
+        duration = Timer.builder(p + "duration_seconds").description(model.label() + " call duration")
             .publishPercentiles(0.5, 0.95).register(registry);
     }
 
@@ -119,7 +151,7 @@ public final class TimesFmClient implements AutoCloseable {
             if (!response.headers().firstValue("Content-Type").orElse("").split(";")[0].trim().equals("application/json")) {
                 throw new TimesFmInferenceException(INVALID_OUTPUT);
             }
-            var result = decode(JSON.readTree(response.body()), requestId, series, horizon);
+            var result = decode(model, JSON.readTree(response.body()), requestId, series, horizon);
             requests.increment();
             return result;
         } catch (TimesFmInferenceException e) {
@@ -168,11 +200,11 @@ public final class TimesFmClient implements AutoCloseable {
         }
     }
 
-    private static List<MetricForecast> decode(JsonNode root, String requestId, List<PreparedMetricSeries> contexts, int horizon) {
+    private static List<MetricForecast> decode(Model model, JsonNode root, String requestId, List<PreparedMetricSeries> contexts, int horizon) {
         require(root != null && root.isObject() && root.path("schemaVersion").isIntegralNumber()
             && root.path("schemaVersion").asInt() == 1 && requestId.equals(root.path("requestId").textValue())
-            && MODEL_ID.equals(root.path("modelId").textValue()) && MODEL_REVISION.equals(root.path("modelRevision").textValue())
-            && ADAPTER_VERSION.equals(root.path("adapterVersion").textValue())
+            && model.modelId().equals(root.path("modelId").textValue()) && model.accepts(root.path("modelRevision").textValue())
+            && model.adapterVersion().equals(root.path("adapterVersion").textValue())
             && "MEDIAN".equals(root.path("centralStatistic").textValue())
             && root.path("durationMillis").isIntegralNumber() && root.path("durationMillis").canConvertToLong()
             && root.path("durationMillis").longValue() >= 0 && root.path("durationMillis").longValue() <= 30_000);
@@ -196,7 +228,8 @@ public final class TimesFmClient implements AutoCloseable {
             }
             result.add(new MetricForecast(requestId, context.seriesId(), context.definitionVersion(),
                 context.inputFingerprint(), context.profileFingerprint(), context.outputUnit(), context.toExclusive(),
-                MODEL_ID, MODEL_REVISION, ADAPTER_VERSION, "MEDIAN", root.path("durationMillis").longValue(), points));
+                model.modelId(), root.path("modelRevision").textValue(), model.adapterVersion(), "MEDIAN",
+                root.path("durationMillis").longValue(), points));
         }
         return List.copyOf(result);
     }

@@ -72,6 +72,14 @@ public final class ForecastPilotStore {
       s.execute(
           "CREATE TABLE IF NOT EXISTS kex_forecast_pilot_lease_v2 (lease_name VARCHAR(64) PRIMARY"
               + " KEY, owner VARCHAR(64) NOT NULL, expires_at TIMESTAMPTZ NOT NULL)");
+      // Its own table: kex_forecast_result_v2 is what every read, breach and activation trusts.
+      s.execute(
+          "CREATE TABLE IF NOT EXISTS kex_forecast_shadow_v1 (result_key VARCHAR(64) PRIMARY KEY,"
+              + " series_id VARCHAR(64) NOT NULL, generated_at BIGINT NOT NULL, history_end BIGINT"
+              + " NOT NULL, payload TEXT NOT NULL)");
+      s.execute(
+          "CREATE INDEX IF NOT EXISTS kex_forecast_shadow_series_v1 ON"
+              + " kex_forecast_shadow_v1(series_id,history_end DESC,generated_at DESC)");
     }
     initialized = true;
   }
@@ -281,14 +289,75 @@ public final class ForecastPilotStore {
   }
 
   public void purge(Connection c, long cutoff) throws Exception {
+    for (String table : List.of("kex_forecast_result_v2", "kex_forecast_shadow_v1")) {
+      try (var s =
+          c.prepareStatement(
+              "DELETE FROM " + table + " WHERE result_key IN (SELECT result_key FROM " + table
+                  + " WHERE generated_at<? ORDER BY generated_at LIMIT 1000)")) {
+        s.setQueryTimeout(5);
+        s.setLong(1, cutoff);
+        s.executeUpdate();
+      }
+    }
+  }
+
+  public ShadowForecastRecord latestShadow(Connection c, String id) throws Exception {
+    return shadow(
+        c,
+        "SELECT payload FROM kex_forecast_shadow_v1 WHERE series_id=? ORDER BY history_end DESC,"
+            + "generated_at DESC LIMIT 1",
+        id,
+        null);
+  }
+
+  /** The shadow forecast made from the context that ended at {@code historyEnd}. */
+  public ShadowForecastRecord shadowAt(Connection c, String id, long historyEnd) throws Exception {
+    return shadow(
+        c,
+        "SELECT payload FROM kex_forecast_shadow_v1 WHERE series_id=? AND history_end=? ORDER BY"
+            + " generated_at DESC LIMIT 1",
+        id,
+        historyEnd);
+  }
+
+  private ShadowForecastRecord shadow(Connection c, String sql, String id, Long historyEnd)
+      throws Exception {
+    try (var s = c.prepareStatement(sql)) {
+      s.setQueryTimeout(5);
+      s.setString(1, id);
+      if (historyEnd != null) s.setLong(2, historyEnd);
+      try (var r = s.executeQuery()) {
+        if (!r.next()) return null;
+        String payload = r.getString(1);
+        if (payload.length() > 262144)
+          throw new IllegalStateException("Shadow payload exceeds budget");
+        return JSON.readValue(payload, ShadowForecastRecord.class);
+      }
+    }
+  }
+
+  /** Fenced by the same lease as {@link #save}: an expired owner publishes nothing. */
+  public void saveShadow(Connection c, String id, ShadowForecastRecord record, String owner)
+      throws Exception {
+    String payload = JSON.writeValueAsString(record);
+    if (payload.length() > 262144)
+      throw new IllegalArgumentException("Shadow payload exceeds budget");
     try (var s =
         c.prepareStatement(
-            "DELETE FROM kex_forecast_result_v2 WHERE result_key IN (SELECT result_key FROM"
-                + " kex_forecast_result_v2 WHERE generated_at<? ORDER BY generated_at LIMIT"
-                + " 1000)")) {
+            "INSERT INTO kex_forecast_shadow_v1"
+                + " (result_key,series_id,generated_at,history_end,payload)"
+                + " SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM kex_forecast_pilot_lease_v2"
+                + " WHERE lease_name='global' AND owner=? AND expires_at>clock_timestamp()) ON"
+                + " CONFLICT(result_key) DO NOTHING")) {
       s.setQueryTimeout(5);
-      s.setLong(1, cutoff);
-      s.executeUpdate();
+      s.setString(1, record.key());
+      s.setString(2, id);
+      s.setLong(3, record.generatedAt());
+      s.setLong(4, record.context().toExclusive());
+      s.setString(5, payload);
+      s.setString(6, owner);
+      if (s.executeUpdate() != 1)
+        throw new IllegalStateException("Shadow publication fenced or duplicate");
     }
   }
 }

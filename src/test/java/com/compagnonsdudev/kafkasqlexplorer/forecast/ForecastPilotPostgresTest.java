@@ -71,10 +71,20 @@ class ForecastPilotPostgresTest {
       assertFalse(b.acquire(d, "other"));
       d.rollback();
       a.save(c, id, record, owner);
+      var shadow =
+          new ShadowForecastRecord(
+              "d".repeat(64), 60000, "UNAVAILABLE", "shadow", context, null, null, 0, 0, null, null);
+      a.saveShadow(c, id, shadow, owner);
       c.commit();
       assertEquals(record, b.latest(id));
+      try (var read = b.open()) {
+        assertEquals(shadow, b.latestShadow(read, id));
+        assertEquals(shadow, b.shadowAt(read, id, 60000));
+        assertNull(b.shadowAt(read, id, 0));
+      }
       assertTrue(b.acquire(d, "other"));
       assertThrows(IllegalStateException.class, () -> b.save(d, id, record, owner));
+      assertThrows(IllegalStateException.class, () -> b.saveShadow(d, id, shadow, owner));
       d.rollback();
       assertTrue(a.acquire(c, owner));
       try (var s = c.createStatement()) {

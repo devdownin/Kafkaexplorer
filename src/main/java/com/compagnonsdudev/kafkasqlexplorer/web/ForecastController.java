@@ -48,6 +48,24 @@ public class ForecastController {
     }
   }
 
+  /**
+   * Timestral beside TimesFM on the same cohorts. Read-only and operator-side: the shadow is never
+   * served, so it reaches neither the forecast list above nor any MCP tool.
+   */
+  @GetMapping("/{seriesId}/shadow")
+  public ResponseEntity<ForecastPilotService.ShadowComparison> shadow(@PathVariable String seriesId) {
+    var p = services.getIfAvailable();
+    if (p == null || !p.shadowEnabled()) return ResponseEntity.notFound().build();
+    try {
+      var comparison = p.shadowComparison(seriesId);
+      return comparison == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(comparison);
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.notFound().build();
+    } catch (Exception e) {
+      return ResponseEntity.status(503).build();
+    }
+  }
+
   public record Activation(boolean active, boolean confirmed) {}
 
   /** Why activation was refused: the same sentence the page shows beside the button. */

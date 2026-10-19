@@ -39,8 +39,10 @@ public class ForecastPilotConfiguration {
       ForecastPilotStore s,
       ObjectProvider<MetricSeriesPreparationService> preparation,
       ObjectProvider<TimesFmClient> client,
+      ObjectProvider<ShadowForecastClient> shadow,
       MeterRegistry meters) {
-    return new ForecastPilotService(p, s, preparation.getIfAvailable(), client.getIfAvailable(), meters);
+    return new ForecastPilotService(
+        p, s, preparation.getIfAvailable(), client.getIfAvailable(), shadow.getIfAvailable(), meters);
   }
 
   @Bean

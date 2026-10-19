@@ -20,6 +20,7 @@ public final class ForecastPilotService {
   private final ForecastPilotStore store;
   private final MetricSeriesPreparationService preparation;
   private final TimesFmClient client;
+  private final ShadowForecastClient shadow;
   private final MeterRegistry meters;
   private final AtomicBoolean running = new AtomicBoolean();
   private int nextSeries;
@@ -30,6 +31,8 @@ public final class ForecastPilotService {
    * the whole timeout once per series, so a 60 s cycle reached two series and the rest went stale.
    */
   private volatile TimesFmInferenceException.State modelOutThisCycle;
+  /** The same latch for the shadow, kept apart: its outage must not take TimesFM out, nor the reverse. */
+  private volatile TimesFmInferenceException.State shadowOutThisCycle;
 
   public ForecastPilotService(
       ForecastPilotProperties properties,
@@ -37,10 +40,21 @@ public final class ForecastPilotService {
       MetricSeriesPreparationService preparation,
       TimesFmClient client,
       MeterRegistry meters) {
+    this(properties, store, preparation, client, null, meters);
+  }
+
+  public ForecastPilotService(
+      ForecastPilotProperties properties,
+      ForecastPilotStore store,
+      MetricSeriesPreparationService preparation,
+      TimesFmClient client,
+      ShadowForecastClient shadow,
+      MeterRegistry meters) {
     this.properties = properties;
     this.store = store;
     this.preparation = preparation;
     this.client = client;
+    this.shadow = shadow;
     this.meters = meters;
     properties.validate();
     nextScheduledAt = System.currentTimeMillis() + properties.getInterval().toMillis();
@@ -247,6 +261,7 @@ public final class ForecastPilotService {
   public void refresh() {
     if (!running.compareAndSet(false, true)) return;
     modelOutThisCycle = null;
+    shadowOutThisCycle = null;
     try {
       if (properties.isRuntimeApproval()) reloadRuntime();
       var approved = series();
@@ -268,6 +283,7 @@ public final class ForecastPilotService {
       }
     } finally {
       modelOutThisCycle = null;
+      shadowOutThisCycle = null;
       nextScheduledAt = System.currentTimeMillis() + properties.getInterval().toMillis();
       running.set(false);
     }
@@ -324,6 +340,7 @@ public final class ForecastPilotService {
       Map<String, Double> baselineScores = previous == null ? Map.of() : previous.baselineMae();
       var window = previous == null ? ForecastQualityWindow.EMPTY : previous.qualityWindow();
       boolean degraded = previous != null && previous.state().equals("DEGRADED");
+      Realised realised = null;
       if (context.status() == PreparedMetricSeries.Status.READY
           && matured != null
           && matured.forecast() != null
@@ -351,6 +368,15 @@ public final class ForecastPilotService {
           ForecastBaselines.predict(training, actual.size(), spec.seasonLength())
               .forEach((name, p) -> scores.put(name, ForecastBaselines.mae(actual, p)));
           double level = actual.stream().mapToDouble(Math::abs).average().orElseThrow();
+          realised =
+              new Realised(
+                  matured.context().toExclusive(),
+                  points.stream().map(MetricForecast.Point::at).toList(),
+                  training,
+                  actual,
+                  scores,
+                  level,
+                  cohortQuality);
           window =
               window.add(
                   new ForecastQualityWindow.Cohort(
@@ -423,7 +449,198 @@ public final class ForecastPilotService {
               window);
       store.save(c, spec.seriesId(), record, owner);
       c.commit();
+      if (shadow != null && context.status() == PreparedMetricSeries.Status.READY)
+        shadow(c, owner, spec, context, key, realised);
     }
+  }
+
+  /** One cohort TimesFM was just scored on: what the shadow is scored on, value for value. */
+  private record Realised(
+      long historyEnd,
+      List<Long> at,
+      List<Double> training,
+      List<Double> actual,
+      Map<String, Double> baselineMae,
+      double meanAbsActual,
+      ForecastBacktestEvaluator.Evaluation primary) {
+    long through() {
+      return at.getLast();
+    }
+  }
+
+  /**
+   * Runs after TimesFM's record is committed, in a transaction of its own, so nothing the shadow
+   * does — a timeout, an invalid answer, a fenced lease — can withhold or roll back that record.
+   * It never touches visibility, activation or {@code kex_forecast_result_v2}.
+   */
+  private void shadow(
+      Connection c,
+      String owner,
+      ForecastPilotProperties.Series spec,
+      PreparedMetricSeries context,
+      String key,
+      Realised realised) {
+    try {
+      if (!store.acquire(c, owner)) {
+        c.rollback();
+        counter("explorer_forecast_pilot_skipped_total", "SHADOW_LEASE_BUSY").increment();
+        return;
+      }
+      var previous = store.latestShadow(c, spec.seriesId());
+      if (previous != null && !shadowCompatible(spec, previous, context)) previous = null;
+      String revision = previous == null ? null : previous.revision();
+      var shadowWindow = previous == null ? ForecastQualityWindow.EMPTY : previous.shadowWindow();
+      var primaryWindow = previous == null ? ForecastQualityWindow.EMPTY : previous.primaryWindow();
+      int evaluated = previous == null ? 0 : previous.evaluatedPoints();
+      long evaluatedThrough = previous == null ? 0 : previous.evaluatedThrough();
+      if (realised != null && realised.through() > evaluatedThrough) {
+        var scored = store.shadowAt(c, spec.seriesId(), realised.historyEnd());
+        if (scored != null
+            && scored.forecast() != null
+            && shadowCompatible(spec, scored, context)
+            && scored.forecast().points().stream().map(MetricForecast.Point::at).toList().equals(realised.at())) {
+          if (!scored.forecast().modelRevision().equals(revision)) {
+            // Cohorts of another checkpoint say nothing about this one.
+            revision = scored.forecast().modelRevision();
+            shadowWindow = primaryWindow = ForecastQualityWindow.EMPTY;
+            evaluated = 0;
+          }
+          var quality =
+              new ForecastBacktestEvaluator()
+                  .evaluate(realised.training(), realised.actual(), scored.forecast().points(), spec.seasonLength());
+          shadowWindow = shadowWindow.add(cohort(realised, quality), spec.minimumCoverage(), spec.maxMae());
+          primaryWindow =
+              primaryWindow.add(cohort(realised, realised.primary()), spec.minimumCoverage(), spec.maxMae());
+          evaluated += realised.actual().size();
+          evaluatedThrough = realised.through();
+        }
+      }
+      MetricForecast forecast = null;
+      String state = "UNAVAILABLE";
+      String reason;
+      var outage = shadowOutThisCycle;
+      if (outage != null) {
+        reason = "Shadow " + outage + " earlier in this cycle, not called again until the next one";
+        counter("explorer_forecast_pilot_skipped_total", "SHADOW_OUT_THIS_CYCLE").increment();
+      } else {
+        try {
+          forecast = shadow.client().forecast(List.of(context), spec.horizon()).getFirst();
+          state = "READY";
+          reason = "Shadow forecast; never served, scored on TimesFM's cohorts";
+        } catch (TimesFmInferenceException e) {
+          if (e.state() == TimesFmInferenceException.State.TIMEOUT
+              || e.state() == TimesFmInferenceException.State.UNAVAILABLE)
+            shadowOutThisCycle = e.state();
+          reason = "Shadow " + e.state();
+        }
+      }
+      counter("explorer_forecast_shadow_total", state).increment();
+      store.saveShadow(
+          c,
+          spec.seriesId(),
+          new ShadowForecastRecord(
+              key,
+              System.currentTimeMillis(),
+              state,
+              reason,
+              context,
+              forecast,
+              revision,
+              evaluated,
+              evaluatedThrough,
+              shadowWindow,
+              primaryWindow),
+          owner);
+      c.commit();
+    } catch (Exception e) {
+      try {
+        c.rollback();
+      } catch (Exception ignored) {
+        // The connection is closed by the caller either way.
+      }
+      counter("explorer_forecast_pilot_failures_total", "SHADOW").increment();
+      LoggerFactory.getLogger(getClass()).warn("Forecast shadow unavailable");
+    }
+  }
+
+  private static ForecastQualityWindow.Cohort cohort(
+      Realised realised, ForecastBacktestEvaluator.Evaluation quality) {
+    return new ForecastQualityWindow.Cohort(
+        realised.through(), realised.actual().size(), quality, realised.baselineMae(), realised.meanAbsActual());
+  }
+
+  /** The primary's compatibility rule: same specification, definition and preparation profile. */
+  private static boolean shadowCompatible(
+      ForecastPilotProperties.Series spec, ShadowForecastRecord r, PreparedMetricSeries current)
+      throws Exception {
+    return r.key().equals(key(spec, r.context()))
+        && r.context().definitionVersion().equals(current.definitionVersion())
+        && r.context().profileFingerprint().equals(current.profileFingerprint());
+  }
+
+  public boolean shadowEnabled() {
+    return shadow != null;
+  }
+
+  /**
+   * TimesFM and the shadow on the cohorts both were scored on. {@code wouldQualify} applies the
+   * activation gate to the shadow's last block — the same sentence an operator would read for
+   * TimesFM — and answers a question only; nothing here can activate or serve the shadow.
+   */
+  public record ShadowComparison(
+      String seriesId,
+      String state,
+      String reason,
+      String modelId,
+      String revision,
+      long generatedAt,
+      int evaluatedPoints,
+      long evaluatedThrough,
+      int blockPoints,
+      int blockPointsRequired,
+      ForecastBacktestEvaluator.Evaluation shadowQuality,
+      ForecastBacktestEvaluator.Evaluation primaryQuality,
+      Map<String, Double> baselineMae,
+      Boolean shadowBlockPassed,
+      Boolean primaryBlockPassed,
+      boolean wouldQualify,
+      String qualificationBlocker) {}
+
+  public ShadowComparison shadowComparison(String id) throws Exception {
+    var spec = resolve(id);
+    ShadowForecastRecord r;
+    try (var c = store.open()) {
+      r = store.latestShadow(c, id);
+    }
+    if (r == null || !r.key().equals(key(spec, r.context()))) return null;
+    var s = r.shadowWindow();
+    var p = r.primaryWindow();
+    String blocker =
+        s.lastBlock() == null
+            ? "The first shared quality block holds "
+                + s.openPoints()
+                + " of "
+                + ForecastQualityWindow.blockPoints(spec.horizon())
+                + " realised points"
+            : s.lastBlock().activationBlocker(spec.maxMae()).orElse(null);
+    return new ShadowComparison(
+        id,
+        r.state(),
+        r.reason(),
+        TimesFmClient.Model.SHADOW.modelId(),
+        r.revision() != null ? r.revision() : r.forecast() == null ? null : r.forecast().modelRevision(),
+        r.generatedAt(),
+        r.evaluatedPoints(),
+        r.evaluatedThrough(),
+        s.openPoints(),
+        ForecastQualityWindow.blockPoints(spec.horizon()),
+        s.quality(),
+        p.quality(),
+        s.baselineMae(),
+        s.lastBlock() == null ? null : s.lastBlock().passed(),
+        p.lastBlock() == null ? null : p.lastBlock().passed(),
+        blocker == null,
+        blocker);
   }
 
   /**
