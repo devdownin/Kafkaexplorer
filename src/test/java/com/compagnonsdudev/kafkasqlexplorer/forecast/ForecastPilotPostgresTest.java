@@ -73,7 +73,8 @@ class ForecastPilotPostgresTest {
       a.save(c, id, record, owner);
       var shadow =
           new ShadowForecastRecord(
-              "d".repeat(64), 60000, "UNAVAILABLE", "shadow", context, null, null, 0, 0, null, null);
+              "d".repeat(64), 60000, "UNAVAILABLE", "shadow", context, null, null, 0, 0, null, null,
+              null, null, null, null, null);
       a.saveShadow(c, id, shadow, owner);
       c.commit();
       assertEquals(record, b.latest(id));

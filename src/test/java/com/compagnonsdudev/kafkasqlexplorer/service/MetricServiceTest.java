@@ -220,6 +220,23 @@ class MetricServiceTest {
     }
 
     @Test
+    void producedOffsetsNeedTheirTopicAndReportAFailedReadAsAnError() {
+        var produced = new MetricConfig("produced", "orders_produced", "GAUGE", null, "description",
+            null, null, null, null, null, List.of(), Map.of(), null, "KAFKA_CLUSTER_COUNT",
+            Map.of("measurement", "PRODUCED_OFFSETS", "topic", "orders"), "TEMPLATE_BOUNDED_SCAN", null, List.of());
+        Mockito.when(kafkaAdminService.getProducedOffsets("orders")).thenReturn(4200L);
+        assertEquals(4200.0, service.previewMetric(produced).value());
+        Mockito.when(kafkaAdminService.getProducedOffsets("orders")).thenReturn(null);
+        var failed = service.previewMetric(produced);
+        assertNull(failed.value());
+        assertTrue(failed.error().contains("orders"));
+        var topicless = new MetricConfig("produced", "orders_produced", "GAUGE", null, "description",
+            null, null, null, null, null, List.of(), Map.of(), null, "KAFKA_CLUSTER_COUNT",
+            Map.of("measurement", "PRODUCED_OFFSETS"), "TEMPLATE_BOUNDED_SCAN", null, List.of());
+        assertThrows(IllegalArgumentException.class, () -> service.save(topicless));
+    }
+
+    @Test
     void kafkaDefaultsReportMetadataFailureInsteadOfZero() throws Exception {
         Mockito.when(flinkSqlService.listTables()).thenReturn(List.of());
         service.init();

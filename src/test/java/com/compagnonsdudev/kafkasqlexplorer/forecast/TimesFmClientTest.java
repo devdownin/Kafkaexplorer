@@ -154,6 +154,30 @@ class TimesFmClientTest {
         }
     }
 
+    @Test void covariatesTravelOnlyToTheShadowAndOnlyOnTheTargetsGrid() throws Exception {
+        mutate = TimesFmClientTest::answerAsTimestral;
+        start(Duration.ofSeconds(2));
+        var target = context("a", PreparedMetricSeries.Status.READY);
+        var produceRate = context("b", PreparedMetricSeries.Status.READY);
+        assertThrows(IllegalArgumentException.class, () -> client.forecast(target, List.of(produceRate), 2));
+        try (var shadow = TimesFmClient.shadow(properties, meters)) {
+            assertThrows(IllegalArgumentException.class,
+                () -> shadow.forecast(target, List.of(partial("b", SeriesPreparationProfile.MIN_CONTEXT_POINTS)), 2));
+            assertThrows(IllegalArgumentException.class,
+                () -> shadow.forecast(target, List.of(context("b", PreparedMetricSeries.Status.WARMING_UP)), 2));
+            assertEquals(0, calls.get());
+            var forecast = shadow.forecast(target, List.of(produceRate), 2);
+            var sent = captured.get().path("series").get(0).path("pastCovariates");
+            assertEquals(1, sent.size());
+            assertEquals(512, sent.get(0).size());
+            assertEquals(1.0, sent.get(0).get(0).asDouble());
+            assertEquals("mistralai/Timestral-28M", forecast.modelId());
+        }
+        mutate = root -> {};
+        client.forecast(List.of(target), 2);
+        assertTrue(captured.get().path("series").get(0).path("pastCovariates").isMissingNode());
+    }
+
     @Test void shadowTimeoutIsBoundedBelowThePrimaryCeiling() throws Exception {
         start(Duration.ofSeconds(2));
         properties.getShadow().setTimeout(Duration.ofSeconds(31));

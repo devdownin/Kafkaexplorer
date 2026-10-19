@@ -10,7 +10,8 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from .contract import ADAPTER_VERSION, MAX_BODY_BYTES, MAX_RESPONSE_BYTES, MODEL_ID, MODEL_REVISION, ForecastRequest
+from .contract import (ADAPTER_VERSION, MAX_BODY_BYTES, MAX_RESPONSE_BYTES, MODEL_ID, MODEL_REVISION, ForecastRequest,
+                       ShadowForecastRequest)
 from . import timestral
 from .worker import InvalidOutput, ModelWorker, WorkerBusy, WorkerSettings, WorkerTimeout, WorkerUnavailable
 
@@ -93,7 +94,7 @@ def create_app(worker, token: str, *, shadow_worker=None, shadow_pin=None, manag
         return await answer(worker, request, MODEL_ID, MODEL_REVISION, ADAPTER_VERSION)
 
     @app.post("/v1/shadow/forecast")
-    async def shadow_forecast(request: ForecastRequest):
+    async def shadow_forecast(request: ShadowForecastRequest):
         if shadow_worker is None:
             return JSONResponse(SHADOW_DISABLED, status_code=404)
         # The shadow yields to the primary: both share the container's CPUs, and only one answer counts.

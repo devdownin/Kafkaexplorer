@@ -106,6 +106,29 @@ public final class TimesFmClient implements AutoCloseable {
     }
 
     public List<MetricForecast> forecast(List<PreparedMetricSeries> contexts, int horizon) {
+        return forecast(contexts, List.of(), horizon);
+    }
+
+    /**
+     * One context with its past covariates, shadow only: TimesFM's contract is closed and would
+     * answer 422. Each covariate must sit on the context's exact grid, point for point.
+     */
+    public MetricForecast forecast(PreparedMetricSeries context, List<PreparedMetricSeries> covariates, int horizon) {
+        if (!Model.SHADOW.equals(model)) throw new IllegalArgumentException("Covariates are a shadow-only input");
+        if (covariates.isEmpty() || covariates.size() > ForecastPilotProperties.MAX_COVARIATES)
+            throw new IllegalArgumentException("Shadow covariates must number 1 to " + ForecastPilotProperties.MAX_COVARIATES);
+        var grid = context.points().stream().map(PreparedMetricSeries.Point::endAt).toList();
+        for (var c : covariates) {
+            if (c.status() != PreparedMetricSeries.Status.READY
+                || !c.points().stream().map(PreparedMetricSeries.Point::endAt).toList().equals(grid)
+                || c.points().stream().anyMatch(p -> p.value() == null || !Double.isFinite(p.value()) || Math.abs(p.value()) > 1e30))
+                throw new IllegalArgumentException("A covariate must be READY, finite and on its target's grid");
+        }
+        return forecast(List.of(context), List.of(covariates), horizon).getFirst();
+    }
+
+    private List<MetricForecast> forecast(List<PreparedMetricSeries> contexts,
+                                          List<List<PreparedMetricSeries>> covariates, int horizon) {
         var series = List.copyOf(contexts);
         validateInput(series, horizon);
         if (!slot.tryAcquire()) {
@@ -115,8 +138,16 @@ public final class TimesFmClient implements AutoCloseable {
         Timer.Sample sample = Timer.start(registry);
         try {
             String requestId = UUID.randomUUID().toString();
-            var inputs = series.stream().map(s -> Map.of("seriesId", s.seriesId(), "values",
-                s.points().stream().map(PreparedMetricSeries.Point::value).toList())).toList();
+            var inputs = new ArrayList<Map<String, Object>>();
+            for (int i = 0; i < series.size(); i++) {
+                var s = series.get(i);
+                var input = new java.util.LinkedHashMap<String, Object>();
+                input.put("seriesId", s.seriesId());
+                input.put("values", values(s));
+                if (!covariates.isEmpty())
+                    input.put("pastCovariates", covariates.get(i).stream().map(TimesFmClient::values).toList());
+                inputs.add(input);
+            }
             byte[] body = JSON.writeValueAsBytes(Map.of("schemaVersion", 1, "requestId", requestId,
                 "horizonPoints", horizon, "series", inputs));
             if (body.length > MAX_REQUEST_BYTES) throw new IllegalArgumentException("TimesFM request limit exceeded");
@@ -172,6 +203,10 @@ public final class TimesFmClient implements AutoCloseable {
             sample.stop(duration);
             slot.release();
         }
+    }
+
+    private static List<Double> values(PreparedMetricSeries s) {
+        return s.points().stream().map(PreparedMetricSeries.Point::value).toList();
     }
 
     private static void validateInput(List<PreparedMetricSeries> contexts, int horizon) {

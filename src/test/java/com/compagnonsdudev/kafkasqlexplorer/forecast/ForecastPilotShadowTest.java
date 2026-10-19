@@ -65,7 +65,38 @@ class ForecastPilotShadowTest {
       throws Exception {
     return new ShadowForecastRecord(
         ForecastPilotService.key(spec, c), now, "READY", "shadow", c, f, revision,
-        window.openPoints(), 0, window, window);
+        window.openPoints(), 0, window, window, null, null, null, null, null);
+  }
+
+  private ShadowForecastRecord withCovariateForecast(ShadowForecastRecord r, MetricForecast f, String fingerprint) {
+    return new ShadowForecastRecord(
+        r.key(), r.generatedAt(), r.state(), r.reason(), r.context(), r.forecast(), r.revision(),
+        r.evaluatedPoints(), r.evaluatedThrough(), r.shadowWindow(), r.primaryWindow(), "READY", "covariates",
+        fingerprint, f, r.trial());
+  }
+
+  /** The produce rate of the lag's own topic, on the same grid. */
+  private ForecastPilotProperties.ShadowCovariate produceRate(List<String> topics) {
+    return new ForecastPilotProperties.ShadowCovariate(
+        spec.seriesId(), "b".repeat(64), "orders-produced", "v1", "messages/s",
+        SeriesPreparationProfile.Transformation.COUNTER_RATE, topics);
+  }
+
+  private PreparedMetricSeries covariateContext(PreparedMetricSeries target, PreparedMetricSeries.Status status) {
+    var points = target.points().stream()
+        .map(p -> new PreparedMetricSeries.Point(p.endAt(), 7d, false, 1)).toList();
+    return new PreparedMetricSeries(
+        status, "covariate", "b".repeat(64), "v1", "messages/s", "messages/s", target.fromInclusive(),
+        target.toExclusive(), spec.profile(), "covariate-profile", "covariate-input", 512, 0, 0, points);
+  }
+
+  private void declare(ForecastPilotProperties.ShadowCovariate covariate, PreparedMetricSeries.Status status)
+      throws Exception {
+    props.setShadowCovariates(List.of(covariate));
+    when(preparation.prepare(eq("b".repeat(64)), eq("v1"), eq("messages/s"), anyLong(), any()))
+        .thenReturn(covariateContext(context, status));
+    when(shadowClient.forecast(any(PreparedMetricSeries.class), anyList(), eq(2)))
+        .thenReturn(timestral(context, 1, SHADOW_REVISION));
   }
 
   private ShadowForecastRecord savedShadow() throws Exception {
@@ -183,7 +214,8 @@ class ForecastPilotShadowTest {
     var stale = shadowRecord(old, timestral(old, 1, SHADOW_REVISION), null, ForecastQualityWindow.EMPTY);
     when(store.shadowAt(connection, spec.seriesId(), old.toExclusive()))
         .thenReturn(new ShadowForecastRecord(
-            "f".repeat(64), now, "READY", "shadow", old, stale.forecast(), null, 0, 0, null, null));
+            "f".repeat(64), now, "READY", "shadow", old, stale.forecast(), null, 0, 0, null, null,
+            null, null, null, null, null));
     pilot.refresh(spec, now);
     assertEquals(0, savedShadow().evaluatedPoints());
   }
@@ -220,5 +252,103 @@ class ForecastPilotShadowTest {
     assertFalse(comparison.wouldQualify());
     assertEquals("The first shared quality block holds 2 of 120 realised points", comparison.qualificationBlocker());
     assertEquals(0, comparison.shadowQuality().mae());
+  }
+
+  @Test
+  void aDeclaredCovariateIsSentOnTheTargetsGridBesideTheUnivariateRun() throws Exception {
+    declare(produceRate(List.of("orders")), PreparedMetricSeries.Status.READY);
+    pilot.refresh(spec, now);
+    var sent = ArgumentCaptor.forClass(List.class);
+    verify(shadowClient).forecast(eq(context), sent.capture(), eq(2));
+    var covariate = (PreparedMetricSeries) sent.getValue().getFirst();
+    assertEquals(
+        context.points().stream().map(PreparedMetricSeries.Point::endAt).toList(),
+        covariate.points().stream().map(PreparedMetricSeries.Point::endAt).toList());
+    verify(shadowClient).forecast(List.of(context), 2);
+    verify(client, never()).forecast(any(PreparedMetricSeries.class), anyList(), anyInt());
+    var r = savedShadow();
+    assertEquals("READY", r.state());
+    assertEquals("READY", r.covariateState());
+    assertEquals(ForecastPilotService.covariateFingerprint(props.covariatesFor(spec.seriesId())), r.covariateFingerprint());
+  }
+
+  @Test
+  void aCovariateNotYetReadyWaitsWithoutHoldingTheUnivariateRun() throws Exception {
+    declare(produceRate(List.of("orders")), PreparedMetricSeries.Status.WARMING_UP);
+    pilot.refresh(spec, now);
+    verify(shadowClient, never()).forecast(any(PreparedMetricSeries.class), anyList(), anyInt());
+    var r = savedShadow();
+    assertEquals("READY", r.state());
+    assertEquals("WAITING", r.covariateState());
+    assertTrue(r.covariateReason().contains("orders-produced is WARMING_UP"));
+    assertNull(r.covariateFingerprint());
+  }
+
+  @Test
+  void aCovariateOutsideTheTargetsTopicsIsRefusedBeforeAnyRead() throws Exception {
+    declare(produceRate(List.of("payments")), PreparedMetricSeries.Status.READY);
+    pilot.refresh(spec, now);
+    verify(preparation, never()).prepare(eq("b".repeat(64)), anyString(), anyString(), anyLong(), any());
+    assertEquals("REFUSED", savedShadow().covariateState());
+  }
+
+  @Test
+  void threeModelsAreScoredOnTheSameCohortWhenAllThreeForecastIt() throws Exception {
+    declare(produceRate(List.of("orders")), PreparedMetricSeries.Status.READY);
+    var old = maturedPrimary();
+    var fingerprint = ForecastPilotService.covariateFingerprint(props.covariatesFor(spec.seriesId()));
+    var scored = shadowRecord(old, timestral(old, 1.5, SHADOW_REVISION), null, ForecastQualityWindow.EMPTY);
+    when(store.shadowAt(connection, spec.seriesId(), old.toExclusive()))
+        .thenReturn(withCovariateForecast(scored, timestral(old, 1, SHADOW_REVISION), fingerprint));
+    pilot.refresh(spec, now);
+    var t = savedShadow().trial();
+    assertEquals(0, t.multivariateWindow().quality().mae());
+    assertEquals(.5, t.univariateWindow().quality().mae());
+    assertEquals(1, t.primaryWindow().quality().mae());
+    assertEquals(2, t.evaluatedPoints());
+    assertEquals(fingerprint, t.fingerprint());
+  }
+
+  @Test
+  void aForecastMadeUnderAnotherDeclarationIsNotTrialEvidence() throws Exception {
+    declare(produceRate(List.of("orders")), PreparedMetricSeries.Status.READY);
+    var old = maturedPrimary();
+    var scored = shadowRecord(old, timestral(old, 1, SHADOW_REVISION), null, ForecastQualityWindow.EMPTY);
+    when(store.shadowAt(connection, spec.seriesId(), old.toExclusive()))
+        .thenReturn(withCovariateForecast(scored, timestral(old, 1, SHADOW_REVISION), "e".repeat(64)));
+    pilot.refresh(spec, now);
+    var r = savedShadow();
+    assertEquals(0, r.trial().evaluatedPoints());
+    assertEquals(2, r.evaluatedPoints());
+  }
+
+  @Test
+  void covariateDeclarationsAreBounded() {
+    var p = new ForecastPilotProperties();
+    p.setSeries(List.of(spec));
+    p.setShadowCovariates(List.of(produceRate(List.of("payments"))));
+    assertThrows(IllegalArgumentException.class, p::validate);
+    var five = java.util.stream.IntStream.range(0, 5)
+        .mapToObj(i -> new ForecastPilotProperties.ShadowCovariate(
+            spec.seriesId(), Integer.toHexString(i + 11).repeat(64).substring(0, 64), "m" + i, "v1", "u",
+            SeriesPreparationProfile.Transformation.GAUGE_MEAN, List.of("orders")))
+        .toList();
+    p.setShadowCovariates(five);
+    assertThrows(IllegalArgumentException.class, p::validate);
+    assertThrows(IllegalArgumentException.class, () -> new ForecastPilotProperties.ShadowCovariate(
+        spec.seriesId(), spec.seriesId(), "self", "v1", "u", SeriesPreparationProfile.Transformation.GAUGE_MEAN,
+        List.of("orders")));
+  }
+
+  @Test
+  void theComparisonCarriesTheThreeWayTrialOnlyWhenCovariatesAreDeclared() throws Exception {
+    when(store.latestShadow(connection, spec.seriesId()))
+        .thenReturn(shadowRecord(context, timestral(context, 1, SHADOW_REVISION), SHADOW_REVISION, ForecastQualityWindow.EMPTY));
+    assertNull(pilot.shadowComparison(spec.seriesId()).covariates());
+    props.setShadowCovariates(List.of(produceRate(List.of("orders"))));
+    var trial = pilot.shadowComparison(spec.seriesId()).covariates();
+    assertEquals(List.of("orders-produced"), trial.covariateMetricIds());
+    assertFalse(trial.wouldQualify());
+    assertEquals(0, trial.evaluatedPoints());
   }
 }

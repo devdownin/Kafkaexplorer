@@ -25,6 +25,9 @@ public class ForecastPilotConfiguration {
     if (root.getPilot().getSeries().stream()
         .anyMatch(s -> !root.getHistory().mayEnroll(s.metricId())))
       throw new IllegalArgumentException("Pilot metrics must be enrolled in durable history");
+    if (root.getPilot().getShadowCovariates().stream()
+        .anyMatch(c -> !root.getHistory().mayEnroll(c.metricId())))
+      throw new IllegalArgumentException("Shadow covariates must be enrolled in durable history");
     return root.getPilot();
   }
 

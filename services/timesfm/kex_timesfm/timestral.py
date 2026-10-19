@@ -62,6 +62,19 @@ def context_matrix(request: ForecastRequest) -> np.ndarray:
     return matrix
 
 
+def covariate_tensor(request: ForecastRequest) -> np.ndarray | None:
+    """`(B, C, T)` on the same left-padded grid as the targets, or None without covariates."""
+    count = len(getattr(request.series[0], "pastCovariates", []))
+    if count == 0:
+        return None
+    width = max(len(s.values) for s in request.series)
+    tensor = np.full((len(request.series), count, width), np.nan, dtype=np.float32)
+    for i, s in enumerate(request.series):
+        for c, row in enumerate(s.pastCovariates):
+            tensor[i, c, width - len(row):] = row
+    return tensor
+
+
 def shadow_predictions(request: ForecastRequest, quantiles) -> list[dict]:
     """Validates the whole 21-level surface, as the primary adapter does; nothing is repaired."""
     quantiles = np.asarray(quantiles, dtype=np.float64)
@@ -89,9 +102,12 @@ class TimestralShadowModel:
         self.forecaster = TimestralForecaster.from_pretrained(checkpoint(pin, cache_dir))
         if tuple(self.forecaster.quantile_levels) != QUANTILE_LEVELS:
             raise ValueError("unexpected quantile levels")
+        if not self.forecaster.supports_covariates:
+            raise ValueError("checkpoint was not trained with covariates")
 
     def forecast(self, request):
-        result = self.forecaster.forecast(context_matrix(request), prediction_length=request.horizonPoints)
+        result = self.forecaster.forecast(context_matrix(request), prediction_length=request.horizonPoints,
+                                          past_covariates=covariate_tensor(request))
         return (result.quantiles.numpy(),)
 
 

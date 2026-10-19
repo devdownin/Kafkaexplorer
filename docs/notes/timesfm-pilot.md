@@ -268,8 +268,27 @@ request contract on `POST /v1/shadow/forecast`, the same bearer token and body b
   the shared baselines, whether each last block passed, and `wouldQualify` with its blocker. That
   is TimesFM's activation gate applied to the shadow, as a question only. The response is 404
   when the shadow is off and 204 before a first compatible row. No MCP tool exposes it.
-- The shadow's call is spent inside the same cycle budget as TimesFM's, which is why its timeout
-  is shorter. Watch `explorer_forecasting_shadow_duration_seconds` and
+- **Past covariates, shadow only.** `explorer.forecasting.pilot.shadow-covariates` gives a target
+  series up to four other enrolled history series, read at the target's cadence and cut to its exact
+  timestamps. The first pairing is a consumer group's lag (`CONSUMER_TIME_LAG`) with the produce
+  rate of its topic. That rate is the `KAFKA_CLUSTER_COUNT` measurement `PRODUCED_OFFSETS`: end
+  offsets summed over the partitions, which is what was produced rather than what retention left.
+  It is read as a rate through `COUNTER_RATE`, and it is `null`, not a floor, when one partition
+  is silent: a partial sum would read as a reset. TimesFM's contract stays closed: the service
+  answers 422 to a covariate sent to `/v1/forecast`, and the Java client refuses before sending.
+  Each cycle then makes a second shadow call with the covariates. A covariate that is not READY,
+  or does not cover every one of the target's points, makes that call wait (`WAITING`) rather
+  than send a gap the model would read as "no signal". A covariate reading a topic outside the
+  target's declared ones is `REFUSED`. The univariate pair is never held back by either.
+- **Three models, same cohorts.** `CovariateTrial` scores the shadow with covariates, the shadow
+  without them, and TimesFM, on the cohorts all three forecast. A changed declaration
+  (`covariateFingerprint`) or a new pin starts the trial over. `GET /api/forecasts/{id}/shadow`
+  carries it as `covariates`, with `wouldQualify` judged on the multivariate block.
+  `POST /api/forecasts/shadow-covariates` exports the declaration with the history series id
+  computed as an approval computes it. That id cannot be written by hand. Nothing is applied: the
+  export is reviewed, merged and deployed.
+- The shadow's calls (two with covariates) are spent inside the same cycle budget as TimesFM's,
+  which is why their timeout is shorter. Watch `explorer_forecasting_shadow_duration_seconds` and
   `explorer_forecast_shadow_total{state}`.
 
 - **Off unless pinned.** `TIMESTRAL_REVISION` (40-hex Hub commit) and `TIMESTRAL_SHA256` (the

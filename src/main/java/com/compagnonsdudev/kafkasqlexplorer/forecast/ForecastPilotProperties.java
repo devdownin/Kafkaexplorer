@@ -21,6 +21,49 @@ public class ForecastPilotProperties {
    */
   private boolean runtimeApproval;
   private volatile List<Series> runtime = List.of();
+  /** Past covariates the shadow is given beside its univariate run; never sent to TimesFM. */
+  private List<ShadowCovariate> shadowCovariates = List.of();
+  public static final int MAX_COVARIATES = 4;
+
+  /**
+   * Another enrolled history series read on the target's grid, such as a topic's produce rate
+   * beside a consumer group's lag on that topic. Its topics must be among the target's: the
+   * comparison is reported under the target's scope, so the covariate cannot widen it.
+   */
+  public record ShadowCovariate(
+      String targetSeriesId,
+      String seriesId,
+      String metricId,
+      String definitionVersion,
+      String unit,
+      SeriesPreparationProfile.Transformation transformation,
+      List<String> topics) {
+    public ShadowCovariate {
+      topics = topics == null ? List.of() : List.copyOf(topics);
+      if (targetSeriesId == null
+          || !targetSeriesId.matches("[a-f0-9]{64}")
+          || seriesId == null
+          || !seriesId.matches("[a-f0-9]{64}")
+          || seriesId.equals(targetSeriesId)
+          || metricId == null
+          || metricId.isBlank()
+          || definitionVersion == null
+          || definitionVersion.isBlank()
+          || unit == null
+          || unit.isBlank()
+          || unit.equals("UNKNOWN")
+          || transformation == null
+          || topics.isEmpty()
+          || topics.stream().anyMatch(t -> t == null || t.isBlank()))
+        throw new IllegalArgumentException("Invalid shadow covariate");
+    }
+
+    /** Read at the target's cadence and context length, with the covariate's own transformation. */
+    public SeriesPreparationProfile profile(Series target) {
+      return new SeriesPreparationProfile(
+          target.profile().stepMillis(), target.profile().contextPoints(), transformation);
+    }
+  }
 
   public record Series(
       String seriesId,
@@ -89,6 +132,35 @@ public class ForecastPilotProperties {
         || series.stream().map(Series::seriesId).distinct().count() != series.size())
       throw new IllegalArgumentException(
           "Pilot requires 0..max-series unique approved series and bounded interval/retention");
+    var perTarget =
+        shadowCovariates.stream()
+            .collect(java.util.stream.Collectors.groupingBy(ShadowCovariate::targetSeriesId));
+    for (var covariates : perTarget.values()) {
+      if (covariates.size() > MAX_COVARIATES
+          || covariates.stream().map(ShadowCovariate::seriesId).distinct().count() != covariates.size())
+        throw new IllegalArgumentException(
+            "A shadow target takes at most " + MAX_COVARIATES + " distinct covariates");
+    }
+    for (var c : shadowCovariates) {
+      var target = series.stream().filter(s -> s.seriesId().equals(c.targetSeriesId())).findFirst();
+      // A runtime-approved target is checked when the shadow runs; a configured one fails here.
+      if (target.isPresent() && !target.get().topics().containsAll(c.topics()))
+        throw new IllegalArgumentException(
+            "A shadow covariate's topics must be among its target's declared topics");
+    }
+  }
+
+  /** In declaration order, which is the row order of the covariate tensor. */
+  public List<ShadowCovariate> covariatesFor(String targetSeriesId) {
+    return shadowCovariates.stream().filter(c -> c.targetSeriesId().equals(targetSeriesId)).toList();
+  }
+
+  public List<ShadowCovariate> getShadowCovariates() {
+    return shadowCovariates;
+  }
+
+  public void setShadowCovariates(List<ShadowCovariate> v) {
+    shadowCovariates = v == null ? List.of() : List.copyOf(v);
   }
 
   /** The configured series, then the runtime ones; a configured series wins over its runtime copy. */

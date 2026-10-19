@@ -333,8 +333,11 @@ export function validateTemplate(templateType: string, metricType: string,
                           params: Record<string, unknown>): ValidationMsg[] {
   const msgs: ValidationMsg[] = [];
   if (templateType === 'KAFKA_CLUSTER_COUNT') {
-    if (!['TOPIC_COUNT', 'BROKER_COUNT'].includes(paramStr(params, 'measurement')))
-      msgs.push({ level: 'error', text: 'Choose the number of topics or brokers.' });
+    const measurement = paramStr(params, 'measurement');
+    if (!['TOPIC_COUNT', 'BROKER_COUNT', 'PRODUCED_OFFSETS'].includes(measurement))
+      msgs.push({ level: 'error', text: 'Choose the number of topics, of brokers, or the offsets produced to a topic.' });
+    if (measurement === 'PRODUCED_OFFSETS' && !paramStr(params, 'topic').trim())
+      msgs.push({ level: 'error', text: 'Offsets produced need the topic they are read from.' });
     if (metricType !== 'GAUGE')
       msgs.push({ level: 'error', text: 'Kafka Cluster Count supports GAUGE metrics only.' });
   } else if (templateType === 'TOPIC_COUNT_DELTA') {

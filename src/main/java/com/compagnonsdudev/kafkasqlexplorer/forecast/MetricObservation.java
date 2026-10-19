@@ -57,7 +57,11 @@ public record MetricObservation(
         Map<String, Object> p = m.templateParams() == null ? Map.of() : m.templateParams();
         if (p.get("unit") instanceof String u && !u.isBlank()) return u;
         return switch (template) {
-            case "KAFKA_CLUSTER_COUNT" -> "BROKER_COUNT".equals(p.get("measurement")) ? "brokers" : "topics";
+            case "KAFKA_CLUSTER_COUNT" -> switch (String.valueOf(p.get("measurement"))) {
+                case "BROKER_COUNT" -> "brokers";
+                case "PRODUCED_OFFSETS" -> "messages";
+                default -> "topics";
+            };
             case "TOPIC_COUNT_DELTA" -> switch (String.valueOf(p.getOrDefault("operation", "LEFT_MINUS_RIGHT"))
                     .toUpperCase(java.util.Locale.ROOT)) {
                 case "RATIO" -> "ratio";

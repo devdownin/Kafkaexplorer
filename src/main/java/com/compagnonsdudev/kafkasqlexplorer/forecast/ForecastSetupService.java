@@ -174,7 +174,8 @@ public class ForecastSetupService {
     var p = m.templateParams() == null ? Map.<String, Object>of() : m.templateParams();
     var topics = strings(p, "topic", "leftTopic", "rightTopic", "sourceTopic", "targetTopic");
     var groups = strings(p, "group");
-    boolean counter = "COUNTER".equals(m.type());
+    // Produced offsets are published as a gauge but only ever grow: forecast them as a rate.
+    boolean counter = "COUNTER".equals(m.type()) || "PRODUCED_OFFSETS".equals(p.get("measurement"));
     return new Candidate(m.id(), m.name(), MetricObservation.definitionVersion(m), MetricObservation.unit(m),
         counter ? "COUNTER_RATE" : "GAUGE_MEAN", topics, groups, blockers.isEmpty(), enrolled,
         List.copyOf(blockers), suggestedStepMillis(m));
@@ -224,12 +225,7 @@ public class ForecastSetupService {
     if (Math.multiplyExact(r.stepMillis(), 513L) > h.getRetention().toMillis())
       throw new IllegalArgumentException("Context exceeds history retention; choose a shorter cadence or increase retention first");
     String version = MetricObservation.collectedVersion(m, kafka.getBootstrapServers(), r.collectorId());
-    // This template emits its pinned source identifiers as labels even without labelFields.
-    // Include them so the approved series resolves the observations captured by MetricService.
-    Map<String, String> labels = "CONSUMER_TIME_LAG".equals(m.templateType())
-        ? Map.of("topic", String.valueOf(m.templateParams().get("topic")),
-                 "group", String.valueOf(m.templateParams().get("group"))) : Map.of();
-    String id = MetricObservation.seriesId(r.clusterId(), version, m.id(), "value", labels);
+    String id = MetricObservation.seriesId(r.clusterId(), version, m.id(), "value", labels(m));
     if (r.threshold() != null && !Set.of("ABOVE", "BELOW").contains(String.valueOf(r.direction())))
       throw new IllegalArgumentException("Threshold direction must be ABOVE or BELOW");
     var threshold = r.threshold() == null ? null : new ForecastThresholdPolicy(id, version, r.threshold(),
@@ -248,6 +244,70 @@ public class ForecastSetupService {
     validation.setInterval(root.getPilot().getInterval()); validation.setRetention(root.getPilot().getRetention());
     validation.setSeries(approved); validation.validate();
     return new Approval(spec, List.copyOf(approved));
+  }
+
+  /**
+   * This template emits its pinned source identifiers as labels even without labelFields. Include
+   * them so a series resolves the observations captured by MetricService.
+   */
+  private static Map<String, String> labels(MetricConfig m) {
+    return "CONSUMER_TIME_LAG".equals(m.templateType())
+        ? Map.of("topic", String.valueOf(m.templateParams().get("topic")),
+                 "group", String.valueOf(m.templateParams().get("group"))) : Map.of();
+  }
+
+  public record CovariateRequest(String targetSeriesId, String metricId, String definitionVersion,
+      String clusterId, String collectorId, boolean confirmed) {}
+  public record CovariateDraft(String configuration, ForecastPilotProperties.ShadowCovariate covariate,
+      List<String> instructions) {}
+
+  /**
+   * The declaration of a shadow covariate — a produce rate beside a lag, say — with the history
+   * series identity computed exactly as an approval computes it: that hash is not something an
+   * operator can write by hand. Nothing is applied; the export is reviewed and deployed.
+   */
+  public CovariateDraft covariateDraft(CovariateRequest r) {
+    if (r == null || !r.confirmed()) throw new IllegalArgumentException("Review and confirm the covariate before exporting");
+    var target = root.getPilot().resolve(r.targetSeriesId());
+    var m = metrics.getAllMetrics().stream().filter(v -> v.id().equals(r.metricId())).findFirst()
+        .orElseThrow(() -> new IllegalArgumentException("Unknown metric"));
+    m = MetricService.normalizeObservationDefinition(m);
+    var c = candidate(m);
+    if (!c.eligible()) throw new IllegalArgumentException(String.join("; ", c.blockers()));
+    if (!c.definitionVersion().equals(r.definitionVersion())) throw new IllegalArgumentException("Metric changed; reload candidates and review again");
+    if (c.topics().isEmpty() || !target.topics().containsAll(c.topics()))
+      throw new IllegalArgumentException("A covariate must read only topics its target declares: " + target.topics());
+    bounded(r.clusterId(), "cluster ID"); bounded(r.collectorId(), "collector ID");
+    var h = root.getHistory();
+    if (h.isEnabled() && (!h.getClusterId().equals(r.clusterId()) || !h.getCollectorId().equals(r.collectorId())))
+      throw new IllegalArgumentException("Use the existing history cluster and collector identities");
+    String version = MetricObservation.collectedVersion(m, kafka.getBootstrapServers(), r.collectorId());
+    var covariate = new ForecastPilotProperties.ShadowCovariate(target.seriesId(),
+        MetricObservation.seriesId(r.clusterId(), version, m.id(), "value", labels(m)), m.id(), version, c.unit(),
+        SeriesPreparationProfile.Transformation.valueOf(c.transformation()), c.topics());
+    var declared = new ArrayList<>(root.getPilot().getShadowCovariates().stream()
+        .filter(d -> !(d.targetSeriesId().equals(covariate.targetSeriesId()) && d.seriesId().equals(covariate.seriesId())))
+        .toList());
+    declared.add(covariate);
+    var validation = new ForecastPilotProperties();
+    validation.setMaxSeries(root.getPilot().getMaxSeries());
+    validation.setInterval(root.getPilot().getInterval()); validation.setRetention(root.getPilot().getRetention());
+    validation.setSeries(root.getPilot().getSeries()); validation.setShadowCovariates(declared); validation.validate();
+    var enrolled = new java.util.TreeSet<>(h.getMetricIds());
+    if (!h.mayEnroll(m.id())) enrolled.add(m.id());
+    String yaml;
+    try {
+      yaml = "# Reviewed shadow covariates. Timestral only; TimesFM never receives them.\nexplorer:\n  forecasting:\n"
+          + "    history:\n      metric-ids: " + quote(enrolled)
+          + "\n    inference:\n      shadow:\n        enabled: true"
+          + "\n    pilot:\n      shadow-covariates: "
+          + JSON.writerWithDefaultPrettyPrinter().writeValueAsString(declared).replace("\n", "\n        ") + "\n";
+    } catch (Exception e) { throw new IllegalArgumentException("Cannot export shadow covariates"); }
+    return new CovariateDraft(yaml, covariate, List.of(
+        "Merge with your deployment configuration and restart; existing covariates are preserved",
+        "The service needs TIMESTRAL_REVISION and TIMESTRAL_SHA256 for the shadow to answer",
+        "Both series need history at the target's cadence before the first multivariate forecast",
+        "Compare at GET /api/forecasts/" + target.seriesId() + "/shadow once a shared quality block has closed"));
   }
 
   /** What this instance holds in memory: a diagnostic or an export never reads the database. */

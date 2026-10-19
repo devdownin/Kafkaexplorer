@@ -8,8 +8,9 @@ from fastapi.testclient import TestClient
 from kex_timesfm import app as service
 from kex_timesfm import timestral
 from kex_timesfm.app import create_app
-from kex_timesfm.contract import MAX_BODY_BYTES, ForecastRequest
-from kex_timesfm.timestral import QUANTILE_LEVELS, TimestralPin, context_matrix, shadow_predictions
+from kex_timesfm.contract import MAX_BODY_BYTES, ForecastRequest, ShadowForecastRequest
+from kex_timesfm.timestral import (QUANTILE_LEVELS, TimestralPin, context_matrix, covariate_tensor,
+                                   shadow_predictions)
 from kex_timesfm.worker import InvalidOutput, ModelWorker, WorkerBusy, WorkerSettings, WorkerTimeout, WorkerUnavailable
 from tests.test_contract import HEADERS, TOKEN, StubWorker, payload
 
@@ -23,9 +24,11 @@ def surface(n=1, horizon=2):
 
 class ShadowStub(StubWorker):
     busy = False
+    received = None
 
     def forecast(self, request):
         self.calls += 1
+        self.received = request
         if self.error:
             raise self.error()
         return shadow_predictions(request, surface(len(request.series), request.horizonPoints)), 3
@@ -188,3 +191,45 @@ def test_shadow_worker_runs_in_its_own_process_with_its_own_decoder():
         assert predictions[0]["q10"] == [0.1, 0.1]
     finally:
         worker.close()
+
+
+def with_covariates(data, *rows):
+    for series in data["series"]:
+        series["pastCovariates"] = [list(r) if r is not None else [2.0] * len(series["values"]) for r in rows]
+    return data
+
+
+def test_covariates_share_the_targets_left_padded_grid():
+    data = with_covariates(payload(n=2), None)
+    data["series"][0]["values"] = [1.0] * 128
+    data["series"][0]["pastCovariates"] = [[float(i) for i in range(128)]]
+    tensor = covariate_tensor(ShadowForecastRequest.model_validate(data))
+    assert tensor.shape == (2, 1, 512)
+    assert np.isnan(tensor[0, 0, :384]).all()
+    assert tensor[0, 0, 384:].tolist() == [float(i) for i in range(128)]
+    assert (tensor[1, 0] == 2.0).all()
+    assert covariate_tensor(ShadowForecastRequest.model_validate(payload())) is None
+
+
+@pytest.mark.parametrize("defect", ["short", "nan", "too_many", "uneven_batch"])
+def test_inadmissible_covariates_are_refused(defect):
+    data = with_covariates(payload(n=2), None)
+    if defect == "short":
+        data["series"][0]["pastCovariates"] = [[1.0] * 511]
+    elif defect == "nan":
+        data["series"][0]["pastCovariates"][0][3] = float("nan")
+    elif defect == "too_many":
+        data = with_covariates(payload(n=2), None, None, None, None, None)
+    else:
+        data["series"][1]["pastCovariates"] = []
+    with pytest.raises(ValueError):
+        ShadowForecastRequest.model_validate(data)
+
+
+def test_only_the_shadow_route_accepts_covariates():
+    shadow = ShadowStub()
+    with client(shadow=shadow) as http:
+        assert http.post("/v1/forecast", headers=HEADERS, json=with_covariates(payload(), None)).status_code == 422
+        response = http.post("/v1/shadow/forecast", headers=HEADERS, json=with_covariates(payload(), None))
+        assert response.status_code == 200
+        assert len(shadow.received.series[0].pastCovariates) == 1

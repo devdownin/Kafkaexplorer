@@ -450,7 +450,7 @@ public final class ForecastPilotService {
       store.save(c, spec.seriesId(), record, owner);
       c.commit();
       if (shadow != null && context.status() == PreparedMetricSeries.Status.READY)
-        shadow(c, owner, spec, context, key, realised);
+        shadow(c, owner, spec, context, key, realised, cutoff);
     }
   }
 
@@ -479,13 +479,16 @@ public final class ForecastPilotService {
       ForecastPilotProperties.Series spec,
       PreparedMetricSeries context,
       String key,
-      Realised realised) {
+      Realised realised,
+      long cutoff) {
     try {
       if (!store.acquire(c, owner)) {
         c.rollback();
         counter("explorer_forecast_pilot_skipped_total", "SHADOW_LEASE_BUSY").increment();
         return;
       }
+      var covariates = properties.covariatesFor(spec.seriesId());
+      String fingerprint = covariates.isEmpty() ? null : covariateFingerprint(covariates);
       var previous = store.latestShadow(c, spec.seriesId());
       if (previous != null && !shadowCompatible(spec, previous, context)) previous = null;
       String revision = previous == null ? null : previous.revision();
@@ -493,34 +496,58 @@ public final class ForecastPilotService {
       var primaryWindow = previous == null ? ForecastQualityWindow.EMPTY : previous.primaryWindow();
       int evaluated = previous == null ? 0 : previous.evaluatedPoints();
       long evaluatedThrough = previous == null ? 0 : previous.evaluatedThrough();
-      if (realised != null && realised.through() > evaluatedThrough) {
-        var scored = store.shadowAt(c, spec.seriesId(), realised.historyEnd());
-        if (scored != null
-            && scored.forecast() != null
-            && shadowCompatible(spec, scored, context)
-            && scored.forecast().points().stream().map(MetricForecast.Point::at).toList().equals(realised.at())) {
-          if (!scored.forecast().modelRevision().equals(revision)) {
+      var trial = previous == null ? ShadowForecastRecord.CovariateTrial.EMPTY : previous.trial();
+      var scored = realised == null ? null : store.shadowAt(c, spec.seriesId(), realised.historyEnd());
+      if (scored != null
+          && scored.forecast() != null
+          && shadowCompatible(spec, scored, context)
+          && sameHorizon(scored.forecast(), realised)) {
+        var evaluator = new ForecastBacktestEvaluator();
+        var univariate =
+            evaluator.evaluate(realised.training(), realised.actual(), scored.forecast().points(), spec.seasonLength());
+        String scoredRevision = scored.forecast().modelRevision();
+        if (realised.through() > evaluatedThrough) {
+          if (!scoredRevision.equals(revision)) {
             // Cohorts of another checkpoint say nothing about this one.
-            revision = scored.forecast().modelRevision();
+            revision = scoredRevision;
             shadowWindow = primaryWindow = ForecastQualityWindow.EMPTY;
             evaluated = 0;
           }
-          var quality =
-              new ForecastBacktestEvaluator()
-                  .evaluate(realised.training(), realised.actual(), scored.forecast().points(), spec.seasonLength());
-          shadowWindow = shadowWindow.add(cohort(realised, quality), spec.minimumCoverage(), spec.maxMae());
+          shadowWindow = shadowWindow.add(cohort(realised, univariate), spec.minimumCoverage(), spec.maxMae());
           primaryWindow =
               primaryWindow.add(cohort(realised, realised.primary()), spec.minimumCoverage(), spec.maxMae());
           evaluated += realised.actual().size();
           evaluatedThrough = realised.through();
         }
+        if (fingerprint != null
+            && fingerprint.equals(scored.covariateFingerprint())
+            && scored.covariateForecast() != null
+            && sameHorizon(scored.covariateForecast(), realised)
+            && realised.through() > trial.evaluatedThrough()) {
+          if (!trial.belongsTo(fingerprint, scoredRevision))
+            trial = new ShadowForecastRecord.CovariateTrial(fingerprint, scoredRevision, 0, 0, null, null, null);
+          var multivariate =
+              evaluator.evaluate(
+                  realised.training(), realised.actual(), scored.covariateForecast().points(), spec.seasonLength());
+          trial =
+              new ShadowForecastRecord.CovariateTrial(
+                  fingerprint,
+                  scoredRevision,
+                  trial.evaluatedPoints() + realised.actual().size(),
+                  realised.through(),
+                  trial.multivariateWindow().add(cohort(realised, multivariate), spec.minimumCoverage(), spec.maxMae()),
+                  trial.univariateWindow().add(cohort(realised, univariate), spec.minimumCoverage(), spec.maxMae()),
+                  trial.primaryWindow().add(cohort(realised, realised.primary()), spec.minimumCoverage(), spec.maxMae()));
+        }
       }
+      if (fingerprint == null) trial = ShadowForecastRecord.CovariateTrial.EMPTY;
+
       MetricForecast forecast = null;
       String state = "UNAVAILABLE";
       String reason;
       var outage = shadowOutThisCycle;
       if (outage != null) {
-        reason = "Shadow " + outage + " earlier in this cycle, not called again until the next one";
+        reason = outageReason(outage);
         counter("explorer_forecast_pilot_skipped_total", "SHADOW_OUT_THIS_CYCLE").increment();
       } else {
         try {
@@ -528,13 +555,38 @@ public final class ForecastPilotService {
           state = "READY";
           reason = "Shadow forecast; never served, scored on TimesFM's cohorts";
         } catch (TimesFmInferenceException e) {
-          if (e.state() == TimesFmInferenceException.State.TIMEOUT
-              || e.state() == TimesFmInferenceException.State.UNAVAILABLE)
-            shadowOutThisCycle = e.state();
+          latchShadow(e);
           reason = "Shadow " + e.state();
         }
       }
       counter("explorer_forecast_shadow_total", state).increment();
+
+      MetricForecast covariateForecast = null;
+      String covariateState = null;
+      String covariateReason = null;
+      if (fingerprint != null) {
+        covariateState = "UNAVAILABLE";
+        if (shadowOutThisCycle != null) {
+          covariateReason = outageReason(shadowOutThisCycle);
+        } else {
+          var aligned = alignCovariates(spec, context, covariates, cutoff);
+          if (aligned.reason() != null) {
+            covariateState = aligned.state();
+            covariateReason = aligned.reason();
+          } else {
+            try {
+              covariateForecast = shadow.client().forecast(context, aligned.series(), spec.horizon());
+              covariateState = "READY";
+              covariateReason =
+                  "Shadow forecast with " + covariates.size() + " past covariate(s); never served";
+            } catch (TimesFmInferenceException e) {
+              latchShadow(e);
+              covariateReason = "Shadow " + e.state();
+            }
+          }
+        }
+        counter("explorer_forecast_shadow_covariate_total", covariateState).increment();
+      }
       store.saveShadow(
           c,
           spec.seriesId(),
@@ -549,7 +601,12 @@ public final class ForecastPilotService {
               evaluated,
               evaluatedThrough,
               shadowWindow,
-              primaryWindow),
+              primaryWindow,
+              covariateState,
+              covariateReason,
+              covariateForecast == null ? null : fingerprint,
+              covariateForecast,
+              trial),
           owner);
       c.commit();
     } catch (Exception e) {
@@ -561,6 +618,79 @@ public final class ForecastPilotService {
       counter("explorer_forecast_pilot_failures_total", "SHADOW").increment();
       LoggerFactory.getLogger(getClass()).warn("Forecast shadow unavailable");
     }
+  }
+
+  private static boolean sameHorizon(MetricForecast forecast, Realised realised) {
+    return forecast.points().stream().map(MetricForecast.Point::at).toList().equals(realised.at());
+  }
+
+  private void latchShadow(TimesFmInferenceException e) {
+    if (e.state() == TimesFmInferenceException.State.TIMEOUT
+        || e.state() == TimesFmInferenceException.State.UNAVAILABLE)
+      shadowOutThisCycle = e.state();
+  }
+
+  private static String outageReason(TimesFmInferenceException.State outage) {
+    return "Shadow " + outage + " earlier in this cycle, not called again until the next one";
+  }
+
+  /** Covariates on the target's grid, or why not: the state a reader sees, and its reason. */
+  private record Aligned(List<PreparedMetricSeries> series, String state, String reason) {}
+
+  /**
+   * Each covariate is read at the target's cadence and cut to the target's exact timestamps. A
+   * covariate whose history is shorter than the target's context, or that is not READY, waits:
+   * a missing row would be read as "no signal" by the model, which is a claim, not an absence.
+   */
+  private Aligned alignCovariates(
+      ForecastPilotProperties.Series spec,
+      PreparedMetricSeries context,
+      List<ForecastPilotProperties.ShadowCovariate> covariates,
+      long cutoff)
+      throws Exception {
+    var grid = context.points().stream().map(PreparedMetricSeries.Point::endAt).toList();
+    var aligned = new java.util.ArrayList<PreparedMetricSeries>();
+    for (var covariate : covariates) {
+      // A runtime-approved target was not checked at startup.
+      if (!spec.topics().containsAll(covariate.topics()))
+        return new Aligned(
+            List.of(), "REFUSED",
+            "Covariate " + covariate.metricId() + " reads topics outside the target's declared ones");
+      var prepared =
+          preparation.prepare(
+              covariate.seriesId(), covariate.definitionVersion(), covariate.unit(), cutoff, covariate.profile(spec));
+      if (prepared.status() != PreparedMetricSeries.Status.READY)
+        return new Aligned(
+            List.of(), "WAITING", "Covariate " + covariate.metricId() + " is " + prepared.status() + ": " + prepared.reason());
+      var byTime = new HashMap<Long, PreparedMetricSeries.Point>();
+      prepared.points().forEach(p -> byTime.put(p.endAt(), p));
+      if (!byTime.keySet().containsAll(grid))
+        return new Aligned(
+            List.of(), "WAITING",
+            "Covariate " + covariate.metricId() + " does not yet cover the target's " + grid.size() + " points");
+      aligned.add(
+          new PreparedMetricSeries(
+              PreparedMetricSeries.Status.READY, prepared.reason(), prepared.seriesId(), prepared.definitionVersion(),
+              prepared.sourceUnit(), prepared.outputUnit(), context.fromInclusive(), context.toExclusive(),
+              prepared.profile(), prepared.profileFingerprint(), prepared.inputFingerprint(), prepared.observedPoints(),
+              prepared.missingPoints(), prepared.imputedPoints(), grid.stream().map(byTime::get).toList()));
+    }
+    return new Aligned(List.copyOf(aligned), "READY", null);
+  }
+
+  /** Field by field, like {@link #canonical}: a reordered or edited declaration is another trial. */
+  static String covariateFingerprint(List<ForecastPilotProperties.ShadowCovariate> covariates)
+      throws Exception {
+    var out = new StringBuilder("v1|");
+    for (var c : covariates) {
+      field(out, "seriesId", c.seriesId());
+      field(out, "metricId", c.metricId());
+      field(out, "definitionVersion", c.definitionVersion());
+      field(out, "unit", c.unit());
+      field(out, "transformation", c.transformation().name());
+      list(out, "topics", c.topics());
+    }
+    return sha256(out.toString());
   }
 
   private static ForecastQualityWindow.Cohort cohort(
@@ -604,6 +734,28 @@ public final class ForecastPilotService {
       Boolean shadowBlockPassed,
       Boolean primaryBlockPassed,
       boolean wouldQualify,
+      String qualificationBlocker,
+      CovariateComparison covariates) {}
+
+  /**
+   * The three-way trial: the shadow with its covariates, without them, and TimesFM, all on the
+   * cohorts the three were scored on. Null when no covariate is declared for the series.
+   */
+  public record CovariateComparison(
+      List<String> covariateMetricIds,
+      String state,
+      String reason,
+      int evaluatedPoints,
+      int blockPoints,
+      int blockPointsRequired,
+      ForecastBacktestEvaluator.Evaluation multivariateQuality,
+      ForecastBacktestEvaluator.Evaluation univariateQuality,
+      ForecastBacktestEvaluator.Evaluation primaryQuality,
+      Map<String, Double> baselineMae,
+      Boolean multivariateBlockPassed,
+      Boolean univariateBlockPassed,
+      Boolean primaryBlockPassed,
+      boolean wouldQualify,
       String qualificationBlocker) {}
 
   public ShadowComparison shadowComparison(String id) throws Exception {
@@ -615,14 +767,7 @@ public final class ForecastPilotService {
     if (r == null || !r.key().equals(key(spec, r.context()))) return null;
     var s = r.shadowWindow();
     var p = r.primaryWindow();
-    String blocker =
-        s.lastBlock() == null
-            ? "The first shared quality block holds "
-                + s.openPoints()
-                + " of "
-                + ForecastQualityWindow.blockPoints(spec.horizon())
-                + " realised points"
-            : s.lastBlock().activationBlocker(spec.maxMae()).orElse(null);
+    String blocker = qualificationBlocker(spec, s);
     return new ShadowComparison(
         id,
         r.state(),
@@ -637,10 +782,53 @@ public final class ForecastPilotService {
         s.quality(),
         p.quality(),
         s.baselineMae(),
-        s.lastBlock() == null ? null : s.lastBlock().passed(),
-        p.lastBlock() == null ? null : p.lastBlock().passed(),
+        passed(s),
+        passed(p),
+        blocker == null,
+        blocker,
+        covariateComparison(spec, r));
+  }
+
+  private CovariateComparison covariateComparison(ForecastPilotProperties.Series spec, ShadowForecastRecord r)
+      throws Exception {
+    var covariates = properties.covariatesFor(spec.seriesId());
+    if (covariates.isEmpty()) return null;
+    // A trial run under another declaration is not this one's evidence.
+    var t = r.trial().belongsTo(covariateFingerprint(covariates), r.trial().revision())
+        ? r.trial()
+        : ShadowForecastRecord.CovariateTrial.EMPTY;
+    var m = t.multivariateWindow();
+    String blocker = qualificationBlocker(spec, m);
+    return new CovariateComparison(
+        covariates.stream().map(ForecastPilotProperties.ShadowCovariate::metricId).toList(),
+        r.covariateState(),
+        r.covariateReason(),
+        t.evaluatedPoints(),
+        m.openPoints(),
+        ForecastQualityWindow.blockPoints(spec.horizon()),
+        m.quality(),
+        t.univariateWindow().quality(),
+        t.primaryWindow().quality(),
+        m.baselineMae(),
+        passed(m),
+        passed(t.univariateWindow()),
+        passed(t.primaryWindow()),
         blocker == null,
         blocker);
+  }
+
+  private static Boolean passed(ForecastQualityWindow w) {
+    return w.lastBlock() == null ? null : w.lastBlock().passed();
+  }
+
+  private static String qualificationBlocker(ForecastPilotProperties.Series spec, ForecastQualityWindow w) {
+    return w.lastBlock() == null
+        ? "The first shared quality block holds "
+            + w.openPoints()
+            + " of "
+            + ForecastQualityWindow.blockPoints(spec.horizon())
+            + " realised points"
+        : w.lastBlock().activationBlocker(spec.maxMae()).orElse(null);
   }
 
   /**
