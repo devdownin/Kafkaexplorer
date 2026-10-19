@@ -220,6 +220,14 @@ environment and **all** source topics and groups. Unknown ids are OUT_OF_SCOPE. 
 | `kex_forecast_metric` | Persisted forecast, state, strategy, quality and provenance |
 | `kex_get_forecast_quality` | Realised TimesFM metrics, four baseline MAEs, sample count, watermark, current state/strategy and `activation` — the same eligibility verdict and reason the page shows, with the quality block's progress; unmeasured until maturity, the reason then naming what activation waits for |
 | `kex_list_predicted_threshold_breaches` | One row per authorized series: `BREACH`, `NO_BREACH`, `NO_POLICY` or `NOT_EVALUATED`, its reason, and for an evaluated forecast the conservative bound, result key, timestamps, revision and fingerprints |
+| `kex_get_shadow_comparison` | The shadow comparison `GET /api/forecasts/{id}/shadow` returns, scrubbed, after the same authorization; unmeasured before a compatible shadow row; a `SHADOW_NOT_SERVED` warning on every answer |
+
+**The comparison tool is a toolset of its own** (`ShadowForecastMcpTools`), registered only when
+`ShadowComparisonCondition` holds: the pilot on, a series approved or approvable, and inference and
+`inference.shadow.enabled` both true. Had it been a sixth method beside the five, it would be
+described to every agent and refuse on most deployments. Withheld, its catalogue row names the
+setting to change, like the others. It reads persisted rows only: no inference, and
+`wouldQualify` answers a question without being able to approve, serve or alert.
 
 The former `kex_forecast_catalog`, `kex_forecast_get`, `kex_forecast_latest`,
 `kex_forecast_metadata` and `kex_forecast_limits` names are replaced. Reads never perform SQL
@@ -267,7 +275,8 @@ request contract on `POST /v1/shadow/forecast`, the same bearer token and body b
 - **Read-only comparison.** `GET /api/forecasts/{seriesId}/shadow` gives both pooled qualities,
   the shared baselines, whether each last block passed, and `wouldQualify` with its blocker. That
   is TimesFM's activation gate applied to the shadow, as a question only. The response is 404
-  when the shadow is off and 204 before a first compatible row. No MCP tool exposes it.
+  when the shadow is off and 204 before a first compatible row. `kex_get_shadow_comparison` answers
+  the same thing to an agent (see **MCP contract**).
 - **Past covariates, shadow only.** `explorer.forecasting.pilot.shadow-covariates` gives a target
   series up to four other enrolled history series, read at the target's cadence and cut to its exact
   timestamps. The first pairing is a consumer group's lag (`CONSUMER_TIME_LAG`) with the produce
