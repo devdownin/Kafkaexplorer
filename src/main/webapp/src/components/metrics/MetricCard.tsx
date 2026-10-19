@@ -27,7 +27,7 @@ import type { ForecastStageSummary } from './forecastStage';
 import { buildAlertRule, thresholdDirection } from '../../pages/metricAlert';
 import { componentSeries, describeMeasurement, describeMetricScope, scopeNoteOf } from '../../pages/metricScope';
 import {
-  PLACEHOLDER_BARS, STATUS_STYLES, TYPE_META, describeTemplate, getStatus, relativeTime,
+  RAW_SQL, PLACEHOLDER_BARS, STATUS_STYLES, TYPE_META, describeTemplate, getStatus, relativeTime,
 } from '../../pages/metricsEditor';
 
 export const MetricCard: React.FC<{
@@ -44,6 +44,9 @@ export const MetricCard: React.FC<{
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
   const tm = TYPE_META[metric.type] ?? TYPE_META.GAUGE;
+  // A template's parameters are its query: an `sql` left over from the mode it was switched away
+  // from is not what runs, so the footer must not show it — nor offer to copy it.
+  const sqlText = metric.templateType && metric.templateType !== RAW_SQL ? null : metric.sql;
   const scopeChips = describeMetricScope(metric.lastSummary, metric.templateParams);
   const measurement = describeMeasurement(metric.lastSummary);
   const series = componentSeries(metric.componentHistory, metric.history?.length ?? 0);
@@ -307,17 +310,17 @@ export const MetricCard: React.FC<{
       <div className="group border-t border-outline-variant/60 bg-background-dark/40 px-4 py-2.5 flex items-start gap-2">
         <span className="material-symbols-outlined text-primary/40 text-base shrink-0 mt-0.5">code</span>
         <pre
-          title={metric.sql ? metric.sql.replace(/\s+/g, ' ') : describeTemplate(metric)}
+          title={sqlText ? sqlText.replace(/\s+/g, ' ') : describeTemplate(metric)}
           className="flex-1 text-[10px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden"
         >
-          {metric.sql
-            ? metric.sql.replace(/\s+/g, ' ')
+          {sqlText
+            ? sqlText.replace(/\s+/g, ' ')
             : describeTemplate(metric)}
         </pre>
-        {metric.sql && (
-          <button onClick={() => void copyText(metric.sql ?? '').then(ok =>
+        {sqlText && (
+          <button onClick={() => void copyText(sqlText).then(ok =>
               toast(ok ? 'SQL copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))}
-            title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 inline-flex items-center justify-center w-6 h-6 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100">
+            title="Copy SQL" aria-label="Copy the metric SQL" className="shrink-0 inline-flex items-center justify-center w-6 h-6 text-outline hover:text-primary transition-colors opacity-0 group-hover:opacity-100 focus-visible:opacity-100">
             <span className="material-symbols-outlined text-base">content_copy</span>
           </button>
         )}

@@ -110,12 +110,42 @@ describe('ForecastSetupWizard', () => {
     await user.type(screen.getByLabelText('All source topics'), 'payments{Enter}');
     await user.type(screen.getByLabelText('All source topics'), 'orders{Enter}');
     await user.type(screen.getByLabelText('All consumer groups (optional)'), 'billing{Enter}');
-    await user.click(screen.getByRole('button', { name: 'Remove worker' }));
+    await user.click(screen.getByRole('button', { name: 'Remove billing' }));
     expect(screen.getByRole('list', { name: 'All source topics: selected' }).querySelectorAll('li')).toHaveLength(2);
     await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
     await screen.findByRole('button', { name: 'Copy configuration' });
     expect(axios.post).toHaveBeenCalledWith('/api/forecasts/configuration',
-      expect.objectContaining({ topics: ['orders', 'payments'], groups: ['billing'] }), expect.anything());
+      expect.objectContaining({ topics: ['orders', 'payments'], groups: ['worker'] }), expect.anything());
+  });
+  it('refuses, on the field, a declaration that drops a topic or group the metric reads', async () => {
+    // The server answers this with a page-level 400 that names no field.
+    const user = await sources();
+    await user.click(screen.getByRole('button', { name: 'Remove orders' }));
+    await user.type(screen.getByLabelText('All source topics'), 'payments{Enter}');
+    await user.click(screen.getByRole('button', { name: 'Remove worker' }));
+    await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
+    expect(screen.getByText('Keep every topic the metric reads: orders.')).toBeTruthy();
+    expect(screen.getByText('Keep every consumer group the metric reads: worker.')).toBeTruthy();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+  it('says why starting directly is unavailable, and names no mode before the catalogue answers', async () => {
+    let answer: (value: unknown) => void = () => {};
+    vi.mocked(axios.get).mockReturnValue(new Promise(resolve => { answer = resolve; }));
+    render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);
+    expect(screen.queryByText(/Exports the selected series/)).toBeNull();
+    expect(screen.queryByText(/Starts the forecast directly/)).toBeNull();
+    answer({ data: { metrics: [metric], total: 1, truncated: false, applyUnavailable: EXPORT_ONLY } });
+    expect(await screen.findByText(EXPORT_ONLY)).toBeTruthy();
+    expect(screen.getByText(/Exports the selected series/)).toBeTruthy();
+  });
+  it('lets the operator configure another metric once one is exported', async () => {
+    vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: [] } });
+    const user = await sources();
+    await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
+    expect(await screen.findByRole('heading', { name: 'Configuration ready' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Configure another metric' }));
+    expect(screen.getByRole('heading', { name: 'Step 1 of 2 · Choose a metric' })).toBeTruthy();
+    expect(screen.getByLabelText('Candidate metric')).toHaveValue('');
   });
   it('numbers the steps after export and offers a copy beside the download', async () => {
     vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: ['Merge the file', 'Restart'] } });

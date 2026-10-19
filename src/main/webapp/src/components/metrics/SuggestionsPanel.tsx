@@ -174,14 +174,17 @@ export const SuggestionsPanel: React.FC<Props> = ({ response, loading, error, ne
           <p id="suggested-kpis" className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">
             Suggested for this cluster
           </p>
-          <p className="text-[12px] text-on-surface-variant mt-1 max-w-3xl leading-relaxed">{evidence.summary}</p>
+          {/* "Proposals have not been loaded yet" beside the error that says they could not be. */}
+          {!(error && !response) && (
+            <p className="text-[12px] text-on-surface-variant mt-1 max-w-3xl leading-relaxed">{evidence.summary}</p>
+          )}
         </div>
         <Button variant="ghost" size="sm" icon="refresh" onClick={onRefresh} disabled={loading}>
           Re-derive
         </Button>
       </div>
 
-      {error && <div className="mb-3"><ErrorPanel error={error} /></div>}
+      {error && <div className="mb-3"><ErrorPanel error={error} onRetry={onRefresh} /></div>}
 
       {/* Une observation plus fraîche existe : le dire, et rendre le geste immédiat — le panneau
           ne dérive qu'au chargement, donc sans ça un audit lancé ailleurs reste invisible ici. */}
@@ -241,7 +244,7 @@ export const SuggestionsPanel: React.FC<Props> = ({ response, loading, error, ne
         <div className="flex items-center gap-2 text-[12px] text-on-surface-variant py-6">
           <Spinner size={16} /> Deriving KPIs from what has been measured…
         </div>
-      ) : evidence.waiting ? (
+      ) : error && !response ? null : evidence.waiting ? (
         <EmptyState
           icon="lightbulb"
           title="Nothing measured yet"

@@ -20,6 +20,28 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The metrics and forecast pages stop polling behind a hidden tab.** The list (every 15 s) and the
+  forecast panel (three requests every 30 s, one of which re-prepares the series from PostgreSQL)
+  read only while the tab is visible and once on return; a poll that brings nothing new no longer
+  re-renders the page; a series whose shadow answered 404 is not asked again until the panel reloads;
+  the label preview waits for the typing to stop instead of building a consumer per keystroke; and
+  the background animation stops when reduced motion is switched on mid-session.
+- **A stale answer no longer wins.** Suggestions, the SQL preview and the label preview each take a
+  request number, so a slow response landing after a newer one — or after the SQL was edited — is
+  dropped; a preview that failed shows the server's reason instead of "Preview request failed".
+- **A backend that is down no longer reads as an empty page.** A failed metrics load shows the
+  error with a retry instead of "No metrics yet" (one toast, not one per poll); a failed first
+  suggestion derivation shows only its error; the forecast cards drop their stage when the status
+  cannot be read; and an approval refusal stays beside its button instead of vanishing at the next poll.
+- **The editor keeps what was written.** Changing the topic retargets the `'topic'` option and the
+  table of a hand-edited DDL instead of regenerating the JSON template over it; switching template
+  keeps only the parameters both require; a template metric saves no SQL and its card shows none;
+  and a drag that ends on the backdrop no longer closes the editor and deletes the draft.
+- **The forecast panel reads in plain words.** READY is "Forecasting" in a neutral badge, the
+  strategy "TimesFM" or "Baseline fallback", the chart has a legend, a dashed median, the 80 %
+  interval as `low – high` in its tooltip, and dates on its ticks when it spans more than a day.
+  The assistant says why starting directly is unavailable, refuses on the field a declaration that
+  drops a topic or group the metric reads, and offers "Configure another metric" once it is done.
 - **The alert rule a metric card copies fires for a metric that has labels.** The gauge carries
   its row labels (`GROUP BY` columns, label chips) and `explorer_metric_last_success_timestamp_seconds`
   only `metric_id`, `metric_name` and `metric_type`; `and` matches on the whole label set, so the
