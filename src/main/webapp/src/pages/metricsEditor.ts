@@ -419,6 +419,47 @@ export function buildDdlTemplate(topic: string, bootstrapServers: string): strin
   );
 }
 
+/**
+ * The DDL a topic change leaves behind.
+ *
+ * Changing the topic regenerated the template on every keystroke, so a DDL that had been edited by
+ * hand — avro, extra columns, a credential — went back to the JSON template with no undo. Now the
+ * template is regenerated only when it is still the template (or empty); an edited DDL keeps what
+ * was written and has only the two things that name the topic retargeted, when they still name the
+ * old one: the `'topic'` option and the table in `CREATE TABLE`. Anything else is the author's.
+ */
+export function retargetDdl(
+  ddl: string | null | undefined, oldTopic: string, newTopic: string, bootstrapServers: string,
+): string {
+  const current = ddl ?? '';
+  if (!newTopic) return current;
+  if (!current.trim() || (oldTopic && current.trim() === buildDdlTemplate(oldTopic, bootstrapServers).trim()))
+    return buildDdlTemplate(newTopic, bootstrapServers);
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return current
+    .replace(new RegExp(`('topic'\\s*=\\s*')${escape(oldTopic)}(')`, 'i'), (_, open: string, close: string) => `${open}${newTopic}${close}`)
+    .replace(new RegExp(`(CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?)${escape(topicToTable(oldTopic))}\\b`, 'i'),
+      (_, head: string) => `${head}${topicToTable(newTopic)}`);
+}
+
+/**
+ * The parameters that survive a change of template: only those both templates require.
+ *
+ * `templateParams` was kept whole, so a metric switched from a count delta to a consumer lag went
+ * on carrying `leftTopic` and `rightTopic` — which the card then used to label it. Unknown
+ * descriptors (the list not loaded yet) keep everything rather than guessing.
+ */
+export function carryTemplateParams(
+  params: Record<string, unknown> | null | undefined,
+  from: { requiredParams: string[] } | undefined,
+  to: { requiredParams: string[] } | undefined,
+): Record<string, unknown> {
+  const current = params ?? {};
+  if (!from || !to) return current;
+  const shared = new Set(from.requiredParams.filter(key => to.requiredParams.includes(key)));
+  return Object.fromEntries(Object.entries(current).filter(([key]) => shared.has(key)));
+}
+
 // ── SQL templates (dynamic, use selected table name) ──────────────────────
 export function getSqlTemplates(table: string) {
   return [

@@ -75,6 +75,12 @@ describe('Kafka defaults without Flink tables', () => {
   });
 });
 
+/** What a transit-latency metric needs to be saved: both queries, which the fixture above omits. */
+const savableTemplateParams = {
+  sourceTopic: 'demo.orders.1.received', targetTopic: 'demo.orders.2.validated',
+  sourceSql: 'SELECT match_key, event_time FROM demo_orders_1_received',
+  targetSql: 'SELECT match_key, event_time FROM demo_orders_2_validated',
+};
 const templateMetric: MetricConfig = {
   id: 'm-1',
   name: 'gauge_latency_a_to_b',
@@ -333,6 +339,69 @@ describe('Metrics page', () => {
     const dialog = await screen.findByRole('dialog');
     await user.selectOptions(within(dialog).getByLabelText(/Read from/), 'earliest-offset');
     expect(await within(dialog).findByText(/stops moving once the topic outgrows the cap/)).toBeInTheDocument();
+  });
+});
+
+describe('la liste, ses pannes et ses requêtes en vol', () => {
+  it('says the list could not be read instead of "No metrics yet"', async () => {
+    stubApi([]);
+    const answer = mockedAxios.get.getMockImplementation()!;
+    mockedAxios.get.mockImplementation((url: string, ...rest: unknown[]) =>
+      url === '/api/metrics' ? Promise.reject(new Error('Network Error')) : (answer as (u: string, ...r: unknown[]) => Promise<unknown>)(url, ...rest));
+    await renderPage();
+    expect(await screen.findByText('Cannot reach the server')).toBeInTheDocument();
+    expect(screen.queryByText('No metrics yet')).toBeNull();
+  });
+
+  it('shows no SQL for a template whose stale SQL survived a change of mode, and posts none', async () => {
+    const user = userEvent.setup();
+    stubApi([{ ...templateMetric, templateParams: savableTemplateParams, sql: 'SELECT COUNT(*) AS metric_value FROM stale_table' }]);
+    await renderPage();
+    await screen.findByText('gauge_latency_a_to_b');
+    // The query on the card was one that never runs.
+    expect(screen.queryByText(/stale_table/)).toBeNull();
+    expect(screen.queryByLabelText('Copy the metric SQL')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Edit this metric' }));
+    await user.click(await screen.findByRole('button', { name: 'Save & Activate' }));
+    await waitFor(() => expect(mockedAxios.post).toHaveBeenCalledWith('/api/metrics', expect.objectContaining({
+      id: 'm-1', templateType: 'TOPIC_TRANSIT_LATENCY', sql: null })));
+  });
+
+  it('opens the editor without the refusal of the save that failed on another metric', async () => {
+    const user = userEvent.setup();
+    stubApi([{ ...templateMetric, templateParams: savableTemplateParams }]);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, ...rest: unknown[]) =>
+      url === '/api/metrics' ? Promise.reject({ isAxiosError: true, response: { status: 400, data: { error: 'unknown column x' } } })
+        : (post as (u: string, ...r: unknown[]) => Promise<unknown>)(url, ...rest));
+    await renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Edit this metric' }));
+    await user.click(await screen.findByRole('button', { name: 'Save & Activate' }));
+    expect(await screen.findAllByRole('alert')).not.toHaveLength(0);
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await user.click(screen.getByRole('button', { name: 'Edit this metric' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByText(/unknown column x/)).toBeNull();
+  });
+});
+
+describe('la prévisualisation des labels', () => {
+  it('waits for the typing to stop before it asks the server to build a consumer', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      stubApi([]);
+      await renderPage();
+      await user.click((await screen.findAllByRole('button', { name: /Add metric/ }))[0]);
+      await screen.findByRole('dialog');
+      const asked = () => mockedAxios.get.mock.calls.filter(call => String(call[0]).startsWith('/api/metrics/label-preview')).length;
+      // Each keystroke in the topic field changed the topic, and each change was a request.
+      expect(asked()).toBe(0);
+      await vi.advanceTimersByTimeAsync(450);
+      expect(asked()).toBe(1);
+    } finally { vi.useRealTimers(); }
   });
 });
 

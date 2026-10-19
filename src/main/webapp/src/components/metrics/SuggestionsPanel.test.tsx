@@ -189,6 +189,21 @@ describe('SuggestionsPanel', () => {
 
     expect(screen.getByText('Failed to derive suggested KPIs.')).toBeInTheDocument();
   });
+
+  it('says nothing about "nothing measured yet" when the first derivation failed, and offers a retry', async () => {
+    const user = userEvent.setup();
+    const { onRefresh } = renderPanel({
+      response: null,
+      error: { title: 'Failed to derive suggested KPIs.', hint: 'The broker is unreachable.', raw: 'boom' },
+    });
+
+    // The empty state and the header summary read "proposals have not been loaded yet" beside the
+    // error that says they could not be: the confusion of an empty panel this one exists to avoid.
+    expect(screen.queryByText('Nothing measured yet')).toBeNull();
+    expect(screen.queryByText(/have not been loaded yet/)).toBeNull();
+    await user.click(screen.getByRole('button', { name: /Retry/i }));
+    expect(onRefresh).toHaveBeenCalled();
+  });
 });
 
 describe('un audit plus récent', () => {

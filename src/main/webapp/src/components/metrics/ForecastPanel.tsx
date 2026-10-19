@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Area, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Badge, Button, useConfirm } from '../ui';
 import { copyText } from '../../clipboard';
 import type { BadgeTone } from '../ui';
@@ -14,7 +14,16 @@ import { ForecastShadowComparison } from './ForecastShadowComparison';
 import { isShadowComparison, type ShadowView } from './shadowModels';
 import { ForecastTimeline } from './ForecastTimeline';
 
-const STATE_TONE: Record<string, BadgeTone> = { READY: 'success', DEGRADED: 'error' };
+/**
+ * READY only says a forecast was produced, not that it can be approved: a green badge beside a
+ * disabled Approve button read as a contradiction, so it is neutral, and the quality block says
+ * where approval stands. The pilot's own value stays in the tooltip.
+ */
+const STATE_TONE: Record<string, BadgeTone> = { READY: 'neutral', DEGRADED: 'error' };
+const STATE_LABEL: Record<string, string> = {
+  READY: 'Forecasting', STALE: 'Stale', WARMING_UP: 'Collecting history', DEGRADED: 'Degraded',
+};
+const STRATEGY_LABEL: Record<string, string> = { TIMESFM: 'TimesFM' };
 /** Plain words on the page; the pilot's own term stays in the tooltip and in the API. */
 const VISIBILITY_LABEL: Record<string, string> = { ACTIVE: 'Approved', SHADOW: 'Observing' };
 const POLL_MS = 30000;
@@ -37,6 +46,9 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
   const [shadow, setShadow] = useState<{ seriesId: string; view: ShadowView } | null>(null);
   const [selected, setSelected] = useState('');
   const [error, setError] = useState('');
+  // A refusal belongs to the button that was clicked and must outlive the next poll: sharing
+  // `error` with the poll made it vanish within 30 s, and a failing poll overwrite it.
+  const [action, setAction] = useState<{ source: 'approve' | 'withdraw' | 'copy'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -47,7 +59,15 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
     let disposed = false;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    // A series that answered 404 has no shadow configured: asking again every tick answers the same
+    // until the page is reloaded, and this effect re-runs (resetting it) on a revision or refresh.
+    let noShadowFor: string | null = null;
+    let skipped = false;
     async function poll() {
+      // Behind a hidden tab the three requests — one of which re-prepares the series from
+      // PostgreSQL — answer nobody; the visibility listener below reads at once on return.
+      if (document.visibilityState !== 'visible') { skipped = true; timer = setTimeout(poll, POLL_MS); return; }
+      skipped = false;
       try {
         const { data } = await axios.get<ForecastStatus>('/api/forecasts', { signal: controller.signal, timeout: 10000 });
         if (!data || typeof data.enabled !== 'boolean' || typeof data.state !== 'string' || !Array.isArray(data.series))
@@ -66,9 +86,12 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
         }
         // Same loop, same clock: a third poller would be a third loading state for one panel.
         let view: ShadowView;
-        try {
+        if (noShadowFor === seriesId) {
+          view = { kind: 'OFF' };
+        } else try {
           const response = await axios.get<Comparison | ''>(`/api/forecasts/${encodeURIComponent(seriesId)}/shadow`,
             { signal: controller.signal, timeout: 10000, validateStatus: code => code === 200 || code === 204 || code === 404 });
+          if (response.status === 404) noShadowFor = seriesId;
           view = response.status === 404 ? { kind: 'OFF' } : response.status === 204 ? { kind: 'EMPTY' }
             : isShadowComparison(response.data) ? { kind: 'READY', comparison: response.data } : { kind: 'ERROR' };
         } catch {
@@ -76,13 +99,24 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
         }
         if (!disposed) setShadow({ seriesId, view });
       } catch {
-        if (!disposed) setError('Forecast persistence is unavailable. Existing results may be stale.');
+        if (!disposed) {
+          setError('Forecast persistence is unavailable. Existing results may be stale.');
+          // The cards would otherwise keep saying "Ready to approve" about a status nobody can read.
+          onStatus?.(null);
+        }
       } finally {
         if (!disposed) timer = setTimeout(poll, POLL_MS);
       }
     }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && skipped) { clearTimeout(timer); void poll(); }
+    };
+    document.addEventListener('visibilitychange', onVisible);
     void poll();
-    return () => { disposed = true; controller.abort(); clearTimeout(timer); };
+    return () => {
+      disposed = true; controller.abort(); clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onStatus is the page's state setter, stable
   }, [revision, selected, refresh]);
   const series = status?.series.find(s => s.seriesId === selected) ?? status?.series[0];
@@ -90,11 +124,18 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
   const seriesProgress = progress?.seriesId === series?.seriesId ? progress : null;
   const chart = [
     ...(result?.context.points.slice(-60).map(p => ({ at: p.endAt, actual: p.value })) ?? []),
-    ...(result?.forecast?.points.map(p => ({ at: p.at, median: p.q50, floor: p.q10, band: p.q90 - p.q10 })) ?? []),
+    ...(result?.forecast?.points.map(p => ({ at: p.at, median: p.q50, floor: p.q10, band: p.q90 - p.q10, q10: p.q10, q90: p.q90 })) ?? []),
   ];
+  // Fifteen-minute steps over sixty history and sixty forecast points cover a day and more: a tick
+  // that shows only the time then repeats across midnight.
+  const spanMs = chart.length > 1 ? chart[chart.length - 1].at - chart[0].at : 0;
+  const tick = (v: number) => spanMs > 24 * 3600 * 1000
+    ? new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : new Date(v).toLocaleTimeString();
   async function activation() {
     if (!series || busy) return;
     const active = result?.visibility !== 'ACTIVE';
+    setAction(null);
     if (active && !await confirm({ title: 'Approve this forecast?', description: 'Records your approval of its realised quality. It sends no alert and can be returned to observing at any time.', confirmLabel: 'Approve', tone: 'primary' })) return;
     setBusy(true);
     try {
@@ -102,11 +143,12 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
       setRevision(v => v + 1);
     } catch (e) {
       const refusal = axios.isAxiosError<ForecastActivationRefusal>(e) ? e.response?.data?.reason : undefined;
-      setError(typeof refusal === 'string' ? `Approval refused: ${refusal}` : 'Approval unavailable. Retry after the next refresh.');
+      setAction({ source: 'approve', text: typeof refusal === 'string' ? `Approval refused: ${refusal}` : 'Approval unavailable. Retry after the next refresh.' });
     } finally { setBusy(false); }
   }
   async function withdraw() {
     if (!series || busy) return;
+    setAction(null);
     if (!await confirm({ title: 'Stop this forecast?', description: 'Withdraws the approval made from the assistant. Collected history and past results are kept until retention removes them.', confirmLabel: 'Stop forecasting', tone: 'danger' })) return;
     setBusy(true);
     try {
@@ -114,13 +156,13 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
       setSelected(''); setRevision(v => v + 1);
     } catch (e) {
       const refusal = axios.isAxiosError<ForecastActivationRefusal>(e) ? e.response?.data?.reason : undefined;
-      setError(typeof refusal === 'string' ? `Stop refused: ${refusal}` : 'Stop unavailable. Retry after the next refresh.');
+      setAction({ source: 'withdraw', text: typeof refusal === 'string' ? `Stop refused: ${refusal}` : 'Stop unavailable. Retry after the next refresh.' });
     } finally { setBusy(false); }
   }
   async function copyResult() {
     if (!result) return;
     if (await copyText(JSON.stringify(result, null, 2))) setCopied(true);
-    else setError('Copy unavailable in this browser. The result is also served by GET /api/forecasts.');
+    else setAction({ source: 'copy', text: 'Copy unavailable in this browser. The result is also served by GET /api/forecasts.' });
   }
   return <section className="card p-5 space-y-4" aria-label="Metrics Forecast">
     <h2 className="text-lg font-semibold">Metrics Forecast</h2>
@@ -132,12 +174,13 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
     {status?.enabled && status.series.length === 0 && <p>Forecast pilot enabled. Configure approved series, PostgreSQL history and TimesFM inference to calculate forecasts.</p>}
     {status?.enabled && status.series.length > 0 && <>
       <div className="flex flex-wrap items-center gap-2">
-        <label>Series <select value={series?.seriesId ?? ''} onChange={e => { setSelected(e.target.value); setCopied(false); }}>
+        <label>Series <select value={series?.seriesId ?? ''} onChange={e => { setSelected(e.target.value); setCopied(false); setAction(null); }}>
           {status.series.map(s => <option key={s.seriesId} value={s.seriesId}>{s.metricId} · {s.environment}</option>)}
         </select></label>
         {result && <span className="flex flex-wrap gap-1" aria-label="Forecast status">
-          <Badge tone={STATE_TONE[result.state] ?? 'warning'}>{result.state}</Badge>
-          <Badge tone={result.strategy === 'TIMESFM' ? 'neutral' : 'warning'}>{result.strategy}</Badge>
+          <Badge tone={STATE_TONE[result.state] ?? 'warning'} title={result.state}>{STATE_LABEL[result.state] ?? result.state}</Badge>
+          <Badge tone={result.strategy === 'TIMESFM' ? 'neutral' : 'warning'} title={result.strategy}>
+            {STRATEGY_LABEL[result.strategy] ?? 'Baseline fallback'}</Badge>
           <Badge tone={result.visibility === 'ACTIVE' ? 'primary' : 'neutral'} title={result.visibility}>
             {VISIBILITY_LABEL[result.visibility] ?? result.visibility}</Badge>
           <Badge>{result.context.outputUnit}</Badge>
@@ -147,16 +190,24 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
       {series && <ForecastProgress progress={seriesProgress} error={progressError} result={result} />}
       <ForecastShadowComparison view={shadow?.seriesId === series?.seriesId ? shadow?.view ?? null : null} />
       {series?.withdrawable && <Button variant="ghost" onClick={() => void withdraw()} disabled={busy}>Stop forecasting this series</Button>}
+      {action?.source === 'withdraw' && <p role="alert">{action.text}</p>}
       {!result ? <p>No persisted forecast yet.</p> : <>
         <p>{result.reason}</p>
-        {result.forecast && <div style={{ height: 260 }} aria-label="Measured history and forecast">
+        {result.forecast && <div style={{ height: 260 }} role="img" aria-label="Measured history and forecast">
           <ResponsiveContainer><ComposedChart data={chart}>
-            <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={v => new Date(v).toLocaleTimeString()} />
-            <YAxis /><Tooltip labelFormatter={v => new Date(Number(v)).toLocaleString()} />
-            {result.strategy === 'TIMESFM' && <><Area dataKey="floor" stackId="interval" stroke="none" fill="transparent" isAnimationActive={false} />
+            <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={tick} />
+            <YAxis />
+            {/* The band is drawn as a floor plus a width, so its own tooltip value is the width — shown
+                beside the floor it read as an interval narrower than its lower edge. */}
+            <Tooltip labelFormatter={v => new Date(Number(v)).toLocaleString()}
+              formatter={(value, name, item) => name === '80 % interval' && item?.payload
+                ? [`${Number(item.payload.q10).toPrecision(4)} – ${Number(item.payload.q90).toPrecision(4)}`, name]
+                : [value, name]} />
+            <Legend />
+            {result.strategy === 'TIMESFM' && <><Area dataKey="floor" stackId="interval" stroke="none" fill="transparent" tooltipType="none" legendType="none" isAnimationActive={false} />
               <Area dataKey="band" stackId="interval" stroke="none" fill="#64748b" fillOpacity={0.2} name="80 % interval" isAnimationActive={false} /></>}
             <Line dataKey="actual" stroke="#16a34a" dot={false} name="Observed" isAnimationActive={false} />
-            <Line dataKey="median" stroke="#6366f1" dot={false} name={result.strategy === 'TIMESFM' ? 'Median forecast' : 'Baseline forecast'} isAnimationActive={false} />
+            <Line dataKey="median" stroke="#6366f1" strokeDasharray="6 3" dot={false} name={result.strategy === 'TIMESFM' ? 'Median forecast' : 'Baseline forecast'} isAnimationActive={false} />
           </ComposedChart></ResponsiveContainer>
         </div>}
         <p>The 80 % interval is nominal, not a guarantee. A baseline forecast has no interval. No alert is sent.</p>
@@ -168,13 +219,18 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
           </tbody></table>
         </>}
         <Button variant="ghost" onClick={() => void copyResult()}>{copied ? 'Raw result copied' : 'Copy raw result (JSON)'}</Button>
+        {action?.source === 'copy' && <p role="alert">{action.text}</p>}
         </details>
         {result.visibility === 'ACTIVE'
-          ? <Button onClick={() => void activation()} disabled={busy}>Return to observing</Button>
+          ? <div className="space-y-1">
+            <Button onClick={() => void activation()} disabled={busy}>Return to observing</Button>
+            {action?.source === 'approve' && <p role="alert">{action.text}</p>}
+          </div>
           : <div className="space-y-1">
             {/* The timeline's approval step says what still blocks it; the button points at it. */}
             <Button onClick={() => void activation()} disabled={busy || !series?.activation?.eligible}
               aria-describedby={series?.activation?.eligible ? undefined : 'forecast-step-approval'}>Approve after quality checks</Button>
+            {action?.source === 'approve' && <p role="alert">{action.text}</p>}
           </div>}
       </>}
     </>}

@@ -83,6 +83,12 @@ export function ForecastSetupWizard({ initialMetricId, onApplied }: { initialMet
     for (const [key, value] of Object.entries({ environment, clusterId, collectorId, unit }))
       if (!value.trim() || value.length > 128 || [...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) next[key] = 'Use 1–128 printable characters.';
     if (!topics.length) next.topics = 'Add every source topic.';
+    // The server refuses a declaration that drops a topic or group the template reads, with a
+    // page-level 400 that names no field: caught here, on the field, with the names to put back.
+    const missingTopics = (selected?.topics ?? []).filter(t => !topics.includes(t));
+    if (topics.length && missingTopics.length) next.topics = `Keep every topic the metric reads: ${missingTopics.join(', ')}.`;
+    const missingGroups = (selected?.groups ?? []).filter(g => !groups.includes(g));
+    if (missingGroups.length) next.groups = `Keep every consumer group the metric reads: ${missingGroups.join(', ')}.`;
     if (!Number.isInteger(Number(horizon)) || Number(horizon) < 1 || Number(horizon) > 60) next.horizon = 'Use 1–60 forecast points.';
     if (threshold.trim() && !Number.isFinite(Number(threshold))) next.threshold = 'Use a finite threshold.';
     setErrors(next);
@@ -130,10 +136,20 @@ export function ForecastSetupWizard({ initialMetricId, onApplied }: { initialMet
   }
   const cadenceLabel = CADENCES.find(c => c.value === cadence)?.label ?? `${Number(cadence) / 1000} seconds`;
   const done = Boolean(draft || applied);
+  // The flow ended: the form and its Back button are gone, and the only way to configure another
+  // metric was to close the assistant and reopen it.
+  function startOver() {
+    take(null); setStep(1); setDraft(null); setApplied(null); setApproved(false); setCopied(false);
+    setError(''); setErrors({}); setAdvanced(false);
+  }
   return <div className="border border-outline-variant rounded-md p-4 space-y-3" aria-label="Forecast configuration assistant">
-    <h4 className="font-semibold">Step {step} of 2 · {step === 1 ? 'Choose a metric' : canApply ? 'Confirm and start' : 'Confirm and export'}</h4>
-    <p className="text-sm">{canApply ? 'Starts the forecast directly, from the history already collected; no file and no restart.'
-      : 'Exports the selected series while preserving existing approvals. Review and merge the file before restarting.'}</p>
+    <h4 className="font-semibold">{done ? (applied ? 'Forecast started' : 'Configuration ready')
+      : `Step ${step} of 2 · ${step === 1 ? 'Choose a metric' : canApply ? 'Confirm and start' : 'Confirm and export'}`}</h4>
+    {/* Nothing is said about the mode before the catalogue answers: `applyUnavailable` is unknown
+        until then, and the export wording shown meanwhile was replaced by the other one. */}
+    {candidates && <p className="text-sm">{canApply ? 'Starts the forecast directly, from the history already collected; no file and no restart.'
+      : 'Exports the selected series while preserving existing approvals. Review and merge the file before restarting.'}</p>}
+    {candidates?.applyUnavailable && <p className="text-sm">{candidates.applyUnavailable}</p>}
     {error && <p role="alert">{error}</p>}
     {step === 1 && <>
       {!candidates && !error && <p>Loading candidate metrics…</p>}
@@ -154,7 +170,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied }: { initialMet
       <Field id="forecast-environment" label="Environment" error={errors.environment}>{p => <Input {...p} value={environment} onChange={e => setEnvironment(e.target.value)} />}</Field>
       <NameListField id="forecast-topics" label="All source topics" names={topics} onChange={setTopics} topics error={errors.topics}
         description="Verify every SQL dependency; suggestions are not a complete provenance attestation." />
-      <NameListField id="forecast-groups" label="All consumer groups (optional)" names={groups} onChange={setGroups} />
+      <NameListField id="forecast-groups" label="All consumer groups (optional)" names={groups} onChange={setGroups} error={errors.groups} />
       <details open={advanced} onToggle={e => setAdvanced(e.currentTarget.open)}>
         <summary>Advanced: sampling, horizon, threshold and history identities</summary>
         <div className="grid gap-3 sm:grid-cols-2 pt-2">
@@ -186,6 +202,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied }: { initialMet
     {applied && <div role="status" className="space-y-1">
       <p className="font-semibold">Forecast started for {selected?.name || selected?.metricId}.</p>
       <p>It reads the history already collected: the first forecast follows once enough points exist, then quality is judged over realised values before approval is offered.</p>
+      <Button onClick={startOver}>Configure another metric</Button>
     </div>}
     {draft && <>
       <h5 className="font-semibold">Next steps</h5>
@@ -198,6 +215,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied }: { initialMet
       <div className="flex flex-wrap gap-2">
         <Button onClick={download}>Download forecasts.yml</Button>
         <Button variant="ghost" onClick={() => void copyConfiguration()}>{copied ? 'Configuration copied' : 'Copy configuration'}</Button>
+        <Button variant="ghost" onClick={startOver}>Configure another metric</Button>
       </div>
     </>}
   </div>;

@@ -639,6 +639,32 @@ export interface MetricTestResponse {
 }
 
 /**
+ * Un gabarit de métrique, tel que `GET /api/metrics/templates` le décrit. Déclaré dans la page, il
+ * échappait à `check-api-types.py` — la dérive que ce fichier existe pour empêcher.
+ *
+ * @java MetricTemplateDescriptor
+ */
+export interface MetricTemplateDescriptor {
+  type: string;
+  label: string;
+  description: string;
+  supportedMetricTypes: string[];
+  requiredParams: string[];
+}
+
+/**
+ * Le dernier message d'un topic, d'où l'on choisit les labels (`GET /api/metrics/label-preview`).
+ *
+ * @java MetricLabelPreview
+ */
+export interface MetricLabelPreview {
+  topic: string;
+  timestamp: number | null;
+  message: string | null;
+  fields: Record<string, string>;
+}
+
+/**
  * Un refus, avec sa raison — la forme que tout `catch` de ce dépôt lit déjà à travers
  * `extractApiErrorMessage`.
  *

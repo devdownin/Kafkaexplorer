@@ -79,7 +79,9 @@ describe('ForecastPanel', () => {
     vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(ready) });
     render(<ForecastPanel />);
     const badges = await screen.findByLabelText('Forecast status');
-    expect(badges).toHaveTextContent('READYTIMESFMObservingmessages');
+    expect(badges).toHaveTextContent('ForecastingTimesFMObservingmessages');
+    // READY only says a forecast exists: the pilot's word is kept in the tooltip, not on a green badge.
+    expect(screen.getByTitle('READY')).toHaveTextContent('Forecasting');
     expect(screen.getByTitle('SHADOW')).toHaveTextContent('Observing');
     expect(screen.queryByText('READY · TIMESFM · SHADOW · messages')).toBeNull();
   });
@@ -139,6 +141,55 @@ describe('ForecastPanel', () => {
     render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
     await screen.findByText('ready');
     expect(screen.queryByRole('button', { name: 'Stop forecasting this series' })).toBeNull();
+  });
+  it('keeps an approval refusal on screen across the next poll, beside the button that raised it', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(ready) });
+      vi.mocked(axios.put).mockRejectedValue({ isAxiosError: true, response: { status: 409, data: { reason: 'Pilot is refreshing; retry activation' } } });
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+      await user.click(await screen.findByRole('button', { name: 'Approve after quality checks' }));
+      await user.click(screen.getByRole('button', { name: 'Approve' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Approval refused: Pilot is refreshing');
+      const calls = vi.mocked(axios.get).mock.calls.length;
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(vi.mocked(axios.get).mock.calls.length).toBeGreaterThan(calls);
+      // A successful poll used to clear it, within thirty seconds and with no action from anyone.
+      expect(screen.getByRole('alert')).toHaveTextContent('Approval refused: Pilot is refreshing');
+    } finally { vi.useRealTimers(); }
+  });
+  it('tells the page its status is unreadable, so the cards stop claiming a stage', async () => {
+    vi.mocked(axios.get).mockRejectedValue(new Error('503'));
+    const onStatus = vi.fn();
+    render(<ForecastPanel onStatus={onStatus} />);
+    await screen.findByRole('alert');
+    expect(onStatus).toHaveBeenCalledWith(null);
+  });
+  it('asks nothing behind a hidden tab, and stops asking for a shadow that answered 404', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const visibility = vi.spyOn(document, 'visibilityState', 'get');
+    try {
+      vi.mocked(axios.get).mockImplementation(url => Promise.resolve(String(url).endsWith('/shadow')
+        ? { status: 404, data: '' } : String(url).endsWith('/progress') ? { data: {} } : { data: seriesWith(ready) }));
+      visibility.mockReturnValue('visible');
+      render(<ForecastPanel />);
+      await screen.findByRole('button', { name: 'Approve after quality checks' });
+      const shadowCalls = () => vi.mocked(axios.get).mock.calls.filter(c => String(c[0]).endsWith('/shadow')).length;
+      expect(shadowCalls()).toBe(1);
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(shadowCalls()).toBe(1);
+
+      visibility.mockReturnValue('hidden');
+      const before = vi.mocked(axios.get).mock.calls.length;
+      await vi.advanceTimersByTimeAsync(95_000);
+      expect(vi.mocked(axios.get).mock.calls.length).toBe(before);
+
+      visibility.mockReturnValue('visible');
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(10);
+      expect(vi.mocked(axios.get).mock.calls.length).toBeGreaterThan(before);
+    } finally { visibility.mockRestore(); vi.useRealTimers(); }
   });
   describe('shadow comparison', () => {
     const answer = (shadow: { status: number; data: unknown }) => vi.mocked(axios.get).mockImplementation(async (url: string) => {

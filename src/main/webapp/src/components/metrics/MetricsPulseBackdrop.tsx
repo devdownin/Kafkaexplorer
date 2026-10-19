@@ -82,7 +82,8 @@ export const MetricsPulseBackdrop: React.FC<MetricsPulseBackdropProps> = ({ acti
        monte quoi que ce soit ; ce test-ci fait qu'aucune boucle ne démarre. Le CSS seul
        laisserait tourner une animation invisible — exactement ce que le commentaire de `active`
        ci-dessus refuse — et le JS seul laisserait une image s'afficher avant le premier effet. */
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (reduced?.matches) return;
 
     // Plafonné à 2 : au-delà, on quadruple le nombre de pixels à peindre pour un ornement qui est
     // à 16 % d'opacité. C'est la même borne que celle qu'appliquent les fonds de ce genre.
@@ -168,6 +169,7 @@ export const MetricsPulseBackdrop: React.FC<MetricsPulseBackdropProps> = ({ acti
     };
 
     const tick = (now: number) => {
+      if (reduced?.matches) return;
       frame = window.requestAnimationFrame(tick);
       const elapsed = now - lastFrameAt;
       if (elapsed < FRAME_INTERVAL_MS) return;
@@ -189,9 +191,15 @@ export const MetricsPulseBackdrop: React.FC<MetricsPulseBackdropProps> = ({ acti
     observer?.observe(host);
 
     frame = window.requestAnimationFrame(tick);
+    // La préférence peut être activée *pendant* que la page est ouverte : la classe CSS cache alors
+    // le calque, mais la boucle, elle, continuerait de peindre un ornement invisible — ce que le
+    // test au montage ci-dessus existe pour empêcher.
+    const onPreferenceChange = () => { if (reduced?.matches) window.cancelAnimationFrame(frame); };
+    reduced?.addEventListener?.('change', onPreferenceChange);
     return () => {
       window.cancelAnimationFrame(frame);
       observer?.disconnect();
+      reduced?.removeEventListener?.('change', onPreferenceChange);
     };
   }, [active]);
 

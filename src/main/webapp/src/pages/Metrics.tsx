@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import Editor, { useMonaco } from '@monaco-editor/react';
@@ -21,7 +21,10 @@ import { describeQueryError } from './queryError';
 import { clearDraft, readDraft, writeDraft } from '../draftStore';
 // La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
-import type { AuditHistory, ForecastStatus, MetricConfig, MetricSuggestion, MetricSuggestions, MetricTestResponse, TableMetadata } from '../api/types';
+import type {
+  AuditHistory, ForecastStatus, MetricConfig, MetricLabelPreview, MetricSuggestion, MetricSuggestions, MetricTemplateDescriptor,
+  MetricTestResponse, TableMetadata,
+} from '../api/types';
 import { hasRunningMetric } from './metricsHealth';
 import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop';
 import { ForecastSetupWizard } from '../components/metrics/ForecastSetupWizard';
@@ -34,6 +37,7 @@ import { readFlowChains } from './flowChains';
 import { latestProcessModel, modelRoute, readMetricPriorities } from './processModelEvidence';
 import { highlightPriorities, newerAuditNote, suggestionToDraft } from './metricSuggestions';
 import { queueMetricDraft, readQueueDraft } from './metricFromQueue';
+import { startVisiblePolling } from '../visiblePolling';
 import { describeMeasurement, describeMetricScope, describeRefreshCost, scopeNoteOf } from './metricScope';
 // La logique pure de cette page vit dans `metricsEditor.ts` — déplacée, pas réécrite.
 import {
@@ -42,10 +46,12 @@ import {
   TYPE_META,
   buildAutoName,
   buildDdlTemplate,
+  carryTemplateParams,
   extractTopicFromDdl,
   formatPreviewTimestamp,
   getSqlTemplates,
   getStatus,
+  retargetDdl,
   topicToTable,
   validateDdlSql,
   validateMetricName,
@@ -54,21 +60,6 @@ import {
   validateThresholds,
 } from './metricsEditor';
 import type { ValidationMsg } from './metricsEditor';
-
-interface MetricTemplateDescriptor {
-  type: string;
-  label: string;
-  description: string;
-  supportedMetricTypes: string[];
-  requiredParams: string[];
-}
-
-interface MetricLabelPreview {
-  topic: string;
-  timestamp: number | null;
-  message: string | null;
-  fields: Record<string, string>;
-}
 
 // ── Metric template metadata (mirrors the backend TEMPLATE_DESCRIPTORS) ──────
 /** Hauteurs de l'ornement affiché tant qu'aucune donnée n'est arrivée. */
@@ -144,6 +135,9 @@ const Metrics: React.FC = () => {
    */
   const bootstrapServers = catalogBootstrap || 'localhost:9092';
   const [loading, setLoading]           = useState(true);
+  const [listError, setListError]       = useState<QueryErrorInfo | null>(null);
+  // Failing since when: one toast when the list starts failing, not one every poll while it stays down.
+  const listFailing = useRef(false);
   /*
    * L'éditeur de métrique est du SQL écrit à la main, parfois long, et il vivait entièrement dans
    * l'état du modal : aller vérifier un nom de colonne dans l'explorateur de topics le perdait.
@@ -172,6 +166,16 @@ const Metrics: React.FC = () => {
   const [saving, setSaving]             = useState(false);
   const [previewing, setPreviewing]     = useState(false);
   const [previewResult, setPreviewResult] = useState<{ value?: unknown; rows?: unknown[]; error?: string; summary?: Record<string, unknown> } | null>(null);
+  // A response that arrives after the SQL was edited — or after a newer preview was asked for —
+  // describes a query that is no longer on screen; each request takes a number and only the latest
+  // is allowed to write.
+  const previewSeq = useRef(0);
+  const overlayPressed = useRef(false);
+  const clearPreview = useCallback(() => {
+    previewSeq.current += 1;
+    setPreviewResult(null);
+    setPreviewing(false);
+  }, []);
   // Erreur de prévisualisation classée (titre lisible + piste) — voir queryError.ts.
   const previewError = useMemo(
     () => (previewResult?.error ? describeQueryError(previewResult.error) : null),
@@ -190,6 +194,9 @@ const Metrics: React.FC = () => {
   const [nameIsAuto, setNameIsAuto]     = useState(restoredEditor?.nameIsAuto ?? false);
   const [labelPreview, setLabelPreview] = useState<MetricLabelPreview | null>(null);
   const [labelPreviewLoading, setLabelPreviewLoading] = useState(false);
+  // Latest label-preview request, shared by the debounced load and the manual refresh: a slow
+  // answer for the topic that was typed before must not overwrite the one for the topic now shown.
+  const labelSeq = useRef(0);
 
   const monaco = useMonaco();
   /** Échec d'enregistrement, gardé sous les yeux plutôt que dans un toast fugace. */
@@ -213,16 +220,26 @@ const Metrics: React.FC = () => {
   const fetchMetrics = useCallback(async () => {
     try {
       const res = await axios.get<MetricConfig[]>('/api/metrics');
-      setMetrics(res.data);
-    } catch {
-      toast('Failed to fetch metrics', 'error');
+      // A poll that brought nothing new keeps the array, so nothing below re-renders for it.
+      setMetrics(previous => JSON.stringify(previous) === JSON.stringify(res.data) ? previous : res.data);
+      listFailing.current = false;
+      setListError(null);
+    } catch (err) {
+      // Without this a backend that is down read as "No metrics yet" and a total of zero.
+      setListError(describeApiError(err, 'Failed to fetch metrics.'));
+      if (!listFailing.current) toast('Failed to fetch metrics', 'error');
+      listFailing.current = true;
     } finally {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
   }, []);
 
+  // The mount derivation and the one a save triggers can overlap: the older answer, landing last,
+  // put an adopted KPI's card back to "Review & add".
+  const suggestionsSeq = useRef(0);
   const fetchSuggestions = useCallback(async () => {
+    const seq = ++suggestionsSeq.current;
     setSuggestionsLoading(true);
     setSuggestionsError(null);
     try {
@@ -238,6 +255,7 @@ const Metrics: React.FC = () => {
         // trancherait sur l'ordre d'arrivée plutôt que sur la qualité de la mesure.
         processModel: model,
       });
+      if (seq !== suggestionsSeq.current) return;
       setSuggestions(res.data);
       // Le choix du modèle n'a de sens qu'au-dessus des cartes issues de *cette* mesure : deux
       // pipelines produisent deux routes, et un avis sur l'un ne dit rien de l'autre.
@@ -245,9 +263,10 @@ const Metrics: React.FC = () => {
     } catch (err) {
       // Un panneau vide se lirait « ce cluster n'appelle aucun KPI », qui est l'inverse de
       // « la dérivation a échoué ». La raison du serveur reste à l'écran.
+      if (seq !== suggestionsSeq.current) return;
       setSuggestionsError(describeApiError(err, 'Failed to derive suggested KPIs.'));
     } finally {
-      setSuggestionsLoading(false);
+      if (seq === suggestionsSeq.current) setSuggestionsLoading(false);
     }
   }, []);
 
@@ -272,8 +291,7 @@ const Metrics: React.FC = () => {
     axios.get<MetricTemplateDescriptor[]>('/api/metrics/templates')
       .then(r => setTemplates(r.data))
       .catch(err => setTemplatesError(describeApiError(err, 'Failed to load metric templates.')));
-    const iv = setInterval(fetchMetrics, 15000);
-    return () => clearInterval(iv);
+    return startVisiblePolling(() => void fetchMetrics(), 15000);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- poll on mount; fetchMetrics/toast are stable
   }, []);
 
@@ -287,22 +305,29 @@ const Metrics: React.FC = () => {
 
     let cancelled = false;
     setLabelPreviewLoading(true);
-    axios.get<MetricLabelPreview>(`/api/metrics/label-preview?topic=${encodeURIComponent(selectedTopic)}`)
-      .then(response => {
-        if (!cancelled) setLabelPreview(response.data);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLabelPreview(null);
-          toast('Failed to load latest message for label selection', 'error');
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLabelPreviewLoading(false);
-      });
+    // Each keystroke in the topic field changed `selectedTopic`, and each request builds a consumer
+    // on the server: typing `demo.orders.1.received` sent twenty-two of them, and the partial names
+    // raised error toasts. The request waits for the typing to stop.
+    const timer = setTimeout(() => {
+      const seq = ++labelSeq.current;
+      axios.get<MetricLabelPreview>(`/api/metrics/label-preview?topic=${encodeURIComponent(selectedTopic)}`)
+        .then(response => {
+          if (!cancelled && seq === labelSeq.current) setLabelPreview(response.data);
+        })
+        .catch(() => {
+          if (!cancelled && seq === labelSeq.current) {
+            setLabelPreview(null);
+            toast('Failed to load latest message for label selection', 'error');
+          }
+        })
+        .finally(() => {
+          if (!cancelled && seq === labelSeq.current) setLabelPreviewLoading(false);
+        });
+    }, 400);
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
   }, [isModalOpen, selectedTopic]);
@@ -389,7 +414,7 @@ const Metrics: React.FC = () => {
       setNameIsAuto(true);
     }
     setEditorTab('metric');
-    setPreviewResult(null);
+    clearPreview();
     setSaveError(null);
     setIsModalOpen(true);
   };
@@ -430,7 +455,7 @@ const Metrics: React.FC = () => {
       setSelectedTopic(draft.queue);
       setNameIsAuto(false);
       setEditorTab('metric');
-      setPreviewResult(null);
+      clearPreview();
       setSaveError(null);
       setIsModalOpen(true);
       setSearchParams(params => {
@@ -443,7 +468,7 @@ const Metrics: React.FC = () => {
     /* Les affectations d'état vivent dans `openFromUrl` plutôt qu'au corps de l'effet : c'est
        ce que `react-hooks/set-state-in-effect` demande, et ça évite une exception à la règle. */
     openFromUrl();
-  }, [searchParams, setSearchParams]);
+  }, [searchParams, setSearchParams, clearPreview]);
 
   const openSuggestion = (suggestion: MetricSuggestion) => {
     const draft = suggestionToDraft(suggestion);
@@ -451,7 +476,7 @@ const Metrics: React.FC = () => {
     setSelectedTopic(draft.labelTopic ?? '');
     setNameIsAuto(false);
     setEditorTab('metric');
-    setPreviewResult(null);
+    clearPreview();
     setSaveError(null);
     setIsModalOpen(true);
   };
@@ -467,7 +492,7 @@ const Metrics: React.FC = () => {
       // Only rewrite the table where it is actually referenced (FROM/JOIN/TABLE …), never inside
       // column names or string literals that happen to match the old table token.
       sql: m.sql ? m.sql.replace(new RegExp(`\\b(FROM|JOIN|TABLE)\\s+${oldTable}\\b`, 'gi'), `$1 ${newTable}`) : m.sql,
-      createTableSql: topic ? buildDdlTemplate(topic, bootstrapServers) : (m.createTableSql ?? ''),
+      createTableSql: retargetDdl(m.createTableSql, selectedTopic, topic, bootstrapServers),
       labelTopic: topic,
       labelFields: m.labelTopic === topic ? (m.labelFields ?? []) : [],
     }));
@@ -506,7 +531,7 @@ const Metrics: React.FC = () => {
     setEditingMetric(m => ({ ...m, executionMode: mode }));
 
   const onTemplateTypeChange = (tt: string) => {
-    setPreviewResult(null);
+    clearPreview();
     setEditingMetric(m => {
       const desc = templates.find(t => t.type === tt);
       const supported = desc?.supportedMetricTypes ?? ['GAUGE'];
@@ -519,7 +544,8 @@ const Metrics: React.FC = () => {
         executionMode: tt === RAW_SQL ? 'SQL'
           : tt === 'KAFKA_CLUSTER_COUNT' ? 'TEMPLATE_BOUNDED_SCAN'
           : (m.executionMode && m.executionMode !== 'SQL' ? m.executionMode : 'TEMPLATE_BOUNDED_SCAN'),
-        templateParams: tt === RAW_SQL ? {} : (m.templateParams ?? {}),
+        templateParams: tt === RAW_SQL ? {}
+          : carryTemplateParams(m.templateParams, templates.find(t => t.type === m.templateType), desc),
       };
     });
     if (tt !== RAW_SQL) setEditorTab('metric');
@@ -572,7 +598,9 @@ const Metrics: React.FC = () => {
     setSaving(true);
     setSaveError(null);
     try {
-      await axios.post('/api/metrics', editingMetric);
+      // A template's parameters ARE its query: the SQL left from the mode it was switched away from
+      // would be stored beside them and shown on the card as a query that never runs.
+      await axios.post('/api/metrics', isTemplate ? { ...editingMetric, sql: null } : editingMetric);
       toast('Metric saved', 'success');
       setIsModalOpen(false);
       fetchMetrics();
@@ -610,6 +638,7 @@ const Metrics: React.FC = () => {
 
   const handlePreview = async () => {
     if (!isTemplate && !editingMetric.sql?.trim()) return;
+    const seq = ++previewSeq.current;
     setPreviewing(true);
     setPreviewResult(null);
     try {
@@ -618,11 +647,12 @@ const Metrics: React.FC = () => {
       // (or template semantics — count delta, transit latency).
       const res = await axios.post<MetricTestResponse>(
         '/api/metrics/preview-template', editingMetric);
-      setPreviewResult(res.data);
-    } catch {
-      setPreviewResult({ error: 'Preview request failed' });
+      if (seq === previewSeq.current) setPreviewResult(res.data);
+    } catch (err) {
+      // The server's reason — which column, which DDL — is the only useful part of a refusal.
+      if (seq === previewSeq.current) setPreviewResult({ error: describeApiError(err, 'Preview request failed').raw ?? 'Preview request failed' });
     } finally {
-      setPreviewing(false);
+      if (seq === previewSeq.current) setPreviewing(false);
     }
   };
 
@@ -726,12 +756,16 @@ const Metrics: React.FC = () => {
         </div>
       )}
 
+      {listError && !loading && (
+        <ErrorPanel error={listError} onRetry={() => void fetchMetrics()} />
+      )}
+
       {/* Content */}
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" role="status" aria-label="Loading metrics">
           {Array.from({ length: 6 }).map((_, i) => <CardSkeleton key={i} lines={2} />)}
         </div>
-      ) : metrics.length === 0 ? (
+      ) : metrics.length === 0 ? (listError ? null : (
         <EmptyState
           icon="monitoring"
           title="No metrics yet"
@@ -740,7 +774,7 @@ const Metrics: React.FC = () => {
             : 'Pick one of the quick-start templates below, or create your own.'}
           action={<Button variant="primary" icon="add" onClick={() => openEdit()}>Add metric</Button>}
         />
-      ) : (
+      )) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filteredMetrics.length > 0 ? filteredMetrics.map(metric => (
             <MetricCard
@@ -821,7 +855,13 @@ const Metrics: React.FC = () => {
       {/* ── Modal ──────────────────────────────────────────────────────────── */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 glass-overlay"
-          onClick={() => setIsModalOpen(false)}>
+          onMouseDown={e => { overlayPressed.current = e.target === e.currentTarget; }}
+          onClick={e => {
+            // Selecting text in the editor and releasing outside the dialog is a click on the veil,
+            // and it closed the editor and deleted the draft: only a press that began there counts.
+            if (overlayPressed.current && e.target === e.currentTarget) setIsModalOpen(false);
+            overlayPressed.current = false;
+          }}>
           {/* Le dialogue est la carte, pas le voile : `role` sur le conteneur `fixed inset-0`
               annonçait un dialogue de la taille du viewport, et rangeait le clic-pour-fermer
               *dans* le dialogue au lieu de l'extérieur. Le voile ne garde que ce clic.
@@ -880,7 +920,7 @@ const Metrics: React.FC = () => {
                             setNameIsAuto(true);
                             setEditingMetric(m => ({ ...m, name: buildAutoName(m.type ?? 'GAUGE', selectedTopic) }));
                           }}
-                          className="flex items-center gap-0.5 text-[9px] text-outline hover:text-primary transition-colors uppercase tracking-wider"
+                          className="flex items-center gap-0.5 min-h-6 px-1 text-[10px] text-outline hover:text-primary transition-colors uppercase tracking-wider"
                         >
                           <span className="material-symbols-outlined text-[11px]">refresh</span>regenerate
                         </button>
@@ -996,11 +1036,12 @@ const Metrics: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => {
+                            const seq = ++labelSeq.current;
                             setLabelPreviewLoading(true);
                             axios.get<MetricLabelPreview>(`/api/metrics/label-preview?topic=${encodeURIComponent(selectedTopic)}`)
-                              .then(response => setLabelPreview(response.data))
-                              .catch(() => toast('Failed to refresh latest message', 'error'))
-                              .finally(() => setLabelPreviewLoading(false));
+                              .then(response => { if (seq === labelSeq.current) setLabelPreview(response.data); })
+                              .catch(() => { if (seq === labelSeq.current) toast('Failed to refresh latest message', 'error'); })
+                              .finally(() => { if (seq === labelSeq.current) setLabelPreviewLoading(false); });
                           }}
                           className="shrink-0 inline-flex items-center justify-center w-6 h-6 text-on-surface-variant hover:text-primary transition-colors"
                           title="Refresh latest message" aria-label="Refresh the latest message"
@@ -1136,7 +1177,7 @@ const Metrics: React.FC = () => {
                           <div className="space-y-1">
                             {group.items.map(t => (
                               <button key={t.label} type="button"
-                                onClick={() => { setEditingMetric(m => ({ ...m, sql: t.sql })); setPreviewResult(null); setEditorTab('metric'); }}
+                                onClick={() => { setEditingMetric(m => ({ ...m, sql: t.sql })); clearPreview(); setEditorTab('metric'); }}
                                 className="w-full text-left text-xs px-3 py-1.5 rounded-lg text-on-surface-variant hover:text-primary hover:bg-primary/10 transition-colors font-mono">
                                 {t.label}
                               </button>
@@ -1153,9 +1194,9 @@ const Metrics: React.FC = () => {
                 <div className="flex-1 flex flex-col overflow-hidden">
 
                   {/* Tabs */}
-                  <div className="flex items-center border-b border-outline-variant/60 bg-primary/5 px-4 gap-1">
+                  <div role="tablist" aria-label="Metric definition" className="flex items-center border-b border-outline-variant/60 bg-primary/5 px-4 gap-1">
                     {(['metric', 'ddl'] as const).map(tab => (
-                      <button key={tab} type="button" onClick={() => setEditorTab(tab)}
+                      <button key={tab} type="button" role="tab" aria-selected={editorTab === tab} onClick={() => setEditorTab(tab)}
                         className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${
                           editorTab === tab
                             ? 'border-primary text-primary'
@@ -1203,13 +1244,13 @@ const Metrics: React.FC = () => {
                           params={templateParams}
                           executionMode={editingMetric.executionMode ?? 'TEMPLATE_BOUNDED_SCAN'}
                           table={tableName}
-                          setParam={(k, v) => { setParam(k, v); setPreviewResult(null); }}
+                          setParam={(k, v) => { setParam(k, v); clearPreview(); }}
                           setExecutionMode={setExecutionMode}
                         />
                       ) : (
                       <Editor height="100%" defaultLanguage="sql" theme="vs-dark"
                         value={editingMetric.sql ?? ''}
-                        onChange={val => { setEditingMetric(m => ({ ...m, sql: val ?? '' })); setPreviewResult(null); }}
+                        onChange={val => { setEditingMetric(m => ({ ...m, sql: val ?? '' })); clearPreview(); }}
                         options={{ minimap: { enabled: false }, fontSize: 13, fontFamily: 'JetBrains Mono, monospace',
                           lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12, bottom: 12 },
                           wordWrap: 'on', suggest: { showKeywords: true } }}
