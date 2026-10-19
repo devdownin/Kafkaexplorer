@@ -86,6 +86,10 @@ explorer:
       service-url: http://timesfm:8000
       token: ""
       timeout: 35s
+      # Timestral scored beside TimesFM, never served; the service needs its TIMESTRAL_* pin.
+      shadow:
+        enabled: false
+        timeout: 15s
     history:
       enabled: false
       cluster-id: ""

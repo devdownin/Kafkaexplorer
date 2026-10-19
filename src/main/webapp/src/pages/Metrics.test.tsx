@@ -52,6 +52,18 @@ describe('Kafka defaults without Flink tables', () => {
       .toEqual([expect.objectContaining({ level: 'error' })]);
   });
 
+  it('reads produced offsets from one named topic', () => {
+    expect(validateTemplate('KAFKA_CLUSTER_COUNT', 'GAUGE', { measurement: 'PRODUCED_OFFSETS', topic: 'orders' }))
+      .toEqual([]);
+    expect(validateTemplate('KAFKA_CLUSTER_COUNT', 'GAUGE', { measurement: 'PRODUCED_OFFSETS' }))
+      .toEqual([expect.objectContaining({ level: 'error', text: expect.stringContaining('topic') })]);
+    render(<TemplateParamsEditor templateType="KAFKA_CLUSTER_COUNT"
+      params={{ measurement: 'PRODUCED_OFFSETS', topic: 'orders' }} executionMode="TEMPLATE_BOUNDED_SCAN"
+      table="" setParam={vi.fn()} setExecutionMode={vi.fn()} />);
+    expect(screen.getByRole('option', { name: 'Offsets produced to a topic' })).toBeInTheDocument();
+    expect(screen.getByDisplayValue('orders')).toBeInTheDocument();
+  });
+
   it('edits Kafka counts without showing SQL fields or a Flink managed execution mode', () => {
     render(<TemplateParamsEditor templateType="KAFKA_CLUSTER_COUNT"
       params={{ measurement: 'TOPIC_COUNT' }} executionMode="TEMPLATE_BOUNDED_SCAN"

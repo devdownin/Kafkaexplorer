@@ -48,6 +48,34 @@ class ForecastRequest(ClosedModel):
         return self
 
 
+# Shadow only. TimesFM's route keeps the closed ForecastRequest, so a covariate sent there is a 422.
+MAX_COVARIATES = 4
+
+
+class ShadowSeriesInput(SeriesInput):
+    # Past-only covariates on the target's own grid, oldest first: one row per covariate, each as
+    # long as `values`. They condition the forecast and are never forecast themselves.
+    pastCovariates: Annotated[list[list[StrictFloat | StrictInt]], Field(max_length=MAX_COVARIATES)] = []
+
+    @model_validator(mode="after")
+    def aligned_covariates(self):
+        for row in self.pastCovariates:
+            if len(row) != len(self.values) or any(not math.isfinite(v) or abs(v) > 1e30 for v in row):
+                raise ValueError("covariate not aligned with its target")
+        return self
+
+
+class ShadowForecastRequest(ForecastRequest):
+    series: Annotated[list[ShadowSeriesInput], Field(min_length=1, max_length=MAX_BATCH)]
+
+    @model_validator(mode="after")
+    def one_covariate_shape(self):
+        # One tensor per batch: every series must carry the same number of covariates.
+        if len({len(s.pastCovariates) for s in self.series}) != 1:
+            raise ValueError("covariate count differs within the batch")
+        return self
+
+
 def named_predictions(request: ForecastRequest, central, quantiles) -> list[dict]:
     """Upstream 2.0.2 returns central=channel 5 (median), full channel 0 then Q10..Q90.
 
@@ -65,9 +93,12 @@ def named_predictions(request: ForecastRequest, central, quantiles) -> list[dict
         raise ValueError("central output is not the median")
     if (np.diff(quantiles[:, :, 1:], axis=2) < 0).any():
         raise ValueError("crossed model quantiles")
+    return series_rows(request, central, quantiles[:, :, 1], quantiles[:, :, 5], quantiles[:, :, 9])
+
+
+def series_rows(request: ForecastRequest, central, q10, q50, q90) -> list[dict]:
     return [
         {"seriesId": item.seriesId, "central": central[i].tolist(),
-         "q10": quantiles[i, :, 1].tolist(), "q50": quantiles[i, :, 5].tolist(),
-         "q90": quantiles[i, :, 9].tolist()}
+         "q10": q10[i].tolist(), "q50": q50[i].tolist(), "q90": q90[i].tolist()}
         for i, item in enumerate(request.series)
     ]

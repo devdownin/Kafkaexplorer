@@ -108,6 +108,8 @@ NOT_A_PATH = {
     # An OpenRouter model identifier, which that gateway writes `vendor/model`. Le seul jeton
     # de cette forme que la prose nomme hors d'un bloc clôturé.
     'openai/gpt-4o-mini',
+    # A Hugging Face model id, named by the TimesFM pilot note's Timestral shadow section.
+    'mistralai/Timestral-28M',
     # GitHub Action references, which are owner/repo on GitHub, not paths here. Only the ones
     # the prose still names *bare* need an entry — where a SHA pin is quoted with the name,
     # the `@` in the token is enough for looks_like_path to reject it.

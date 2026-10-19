@@ -220,6 +220,14 @@ environment and **all** source topics and groups. Unknown ids are OUT_OF_SCOPE. 
 | `kex_forecast_metric` | Persisted forecast, state, strategy, quality and provenance |
 | `kex_get_forecast_quality` | Realised TimesFM metrics, four baseline MAEs, sample count, watermark, current state/strategy and `activation` — the same eligibility verdict and reason the page shows, with the quality block's progress; unmeasured until maturity, the reason then naming what activation waits for |
 | `kex_list_predicted_threshold_breaches` | One row per authorized series: `BREACH`, `NO_BREACH`, `NO_POLICY` or `NOT_EVALUATED`, its reason, and for an evaluated forecast the conservative bound, result key, timestamps, revision and fingerprints |
+| `kex_get_shadow_comparison` | The shadow comparison `GET /api/forecasts/{id}/shadow` returns, scrubbed, after the same authorization; unmeasured before a compatible shadow row; a `SHADOW_NOT_SERVED` warning on every answer |
+
+**The comparison tool is a toolset of its own** (`ShadowForecastMcpTools`), registered only when
+`ShadowComparisonCondition` holds: the pilot on, a series approved or approvable, and inference and
+`inference.shadow.enabled` both true. Had it been a sixth method beside the five, it would be
+described to every agent and refuse on most deployments. Withheld, its catalogue row names the
+setting to change, like the others. It reads persisted rows only: no inference, and
+`wouldQualify` answers a question without being able to approve, serve or alert.
 
 The former `kex_forecast_catalog`, `kex_forecast_get`, `kex_forecast_latest`,
 `kex_forecast_metadata` and `kex_forecast_limits` names are replaced. Reads never perform SQL
@@ -236,6 +244,82 @@ for topics; here it carries series) plus a `FORECAST_NOT_EVALUATED` warning. The
 such series and answer an empty `EXHAUSTED` list, which read as "nothing predicted" precisely while
 TimesFM was down and every series was on its fallback. Series without a policy are listed as
 `NO_POLICY` and are not counted as requested.
+
+## Timestral shadow model
+
+`services/timesfm` can run `mistralai/Timestral-28M` beside TimesFM as a **shadow**: the same
+request contract on `POST /v1/shadow/forecast`, the same bearer token and body bound, readiness on
+`/health/shadow/ready`. It answers under its own `modelId`, `modelRevision` and `adapterVersion`
+(`kex-timestral-28m-v1`), and each client refuses the other's identity
+(`TimesFmClient.Model`), so a shadow answer cannot be stored or activated as a TimesFM forecast.
+
+**The application scores it** when `explorer.forecasting.inference.shadow.enabled` is true
+(`TIMESTRAL_SHADOW_ENABLED` in the compose stacks; `shadow.timeout`, 15 s, 1–30 s):
+
+- **After TimesFM, never in its way.** The shadow phase runs once TimesFM's record is committed,
+  re-taking the pilot lock in a transaction of its own. Its timeout, invalid answer or fenced
+  lease rolls back only the shadow row (`explorer_forecast_pilot_failures_total{state="SHADOW"}`).
+  A shadow TIMEOUT or UNAVAILABLE latches the shadow alone for the rest of the cycle
+  (`SHADOW_OUT_THIS_CYCLE`); TimesFM's own latch is untouched, and so is the reverse.
+- **Its own table.** `kex_forecast_shadow_v1` holds the shadow rows, purged with the same retention.
+  `kex_forecast_result_v2` — what every read, breach, activation and MCP tool trusts — never
+  sees one. The `ShadowForecastClient` type exists so that injecting a `TimesFmClient` can never
+  resolve to Timestral.
+- **Same cohorts, value for value.** A cohort enters only when TimesFM was just scored on it.
+  The shadow forecast made from the same context end is scored on the same training values,
+  realised values and baselines, and both results go into two parallel windows. Those blocks
+  therefore close together and compare like for like, instead of comparing against TimesFM's
+  own window, which may have started months earlier. A shadow forecast written under another
+  specification, definition or profile is not scored. A different pinned revision starts the
+  evaluation over.
+- **Read-only comparison.** `GET /api/forecasts/{seriesId}/shadow` gives both pooled qualities,
+  the shared baselines, whether each last block passed, and `wouldQualify` with its blocker. That
+  is TimesFM's activation gate applied to the shadow, as a question only. The response is 404
+  when the shadow is off and 204 before a first compatible row. `kex_get_shadow_comparison` answers
+  the same thing to an agent (see **MCP contract**).
+- **Past covariates, shadow only.** `explorer.forecasting.pilot.shadow-covariates` gives a target
+  series up to four other enrolled history series, read at the target's cadence and cut to its exact
+  timestamps. The first pairing is a consumer group's lag (`CONSUMER_TIME_LAG`) with the produce
+  rate of its topic. That rate is the `KAFKA_CLUSTER_COUNT` measurement `PRODUCED_OFFSETS`: end
+  offsets summed over the partitions, which is what was produced rather than what retention left.
+  It is read as a rate through `COUNTER_RATE`, and it is `null`, not a floor, when one partition
+  is silent: a partial sum would read as a reset. TimesFM's contract stays closed: the service
+  answers 422 to a covariate sent to `/v1/forecast`, and the Java client refuses before sending.
+  Each cycle then makes a second shadow call with the covariates. A covariate that is not READY,
+  or does not cover every one of the target's points, makes that call wait (`WAITING`) rather
+  than send a gap the model would read as "no signal". A covariate reading a topic outside the
+  target's declared ones is `REFUSED`. The univariate pair is never held back by either.
+- **Three models, same cohorts.** `CovariateTrial` scores the shadow with covariates, the shadow
+  without them, and TimesFM, on the cohorts all three forecast. A changed declaration
+  (`covariateFingerprint`) or a new pin starts the trial over. `GET /api/forecasts/{id}/shadow`
+  carries it as `covariates`, with `wouldQualify` judged on the multivariate block.
+  `POST /api/forecasts/shadow-covariates` exports the declaration with the history series id
+  computed as an approval computes it. That id cannot be written by hand. Nothing is applied: the
+  export is reviewed, merged and deployed.
+- The shadow's calls (two with covariates) are spent inside the same cycle budget as TimesFM's,
+  which is why their timeout is shorter. Watch `explorer_forecasting_shadow_duration_seconds` and
+  `explorer_forecast_shadow_total{state}`.
+
+- **Off unless pinned.** `TIMESTRAL_REVISION` (40-hex Hub commit) and `TIMESTRAL_SHA256` (the
+  weights' LFS digest) are both empty by default, and then the endpoints answer 404
+  `SHADOW_DISABLED`. With only one of them set, the service refuses to start, because a shadow
+  scored on an unpinned `main` measures a model nobody can name afterwards. The pin is the
+  operator's to read from the Hub and is not committed here, because accepting the weights'
+  licence is a deployment decision: it is a Modified MIT licence that **excludes any company above
+  $20M monthly revenue**. Prefetch downloads and verifies it like the primary checkpoint.
+- **Isolated.** It runs in its own child process (`ModelWorker` with `shadow_predictions` as
+  decoder), started after the primary. Its failure, timeout or crash leaves `/health/ready` and
+  `/v1/forecast` untouched.
+- **Yields to the primary.** A shadow call is refused with 429 while TimesFM is computing, and
+  runs on `TIMESTRAL_THREADS` (1) inside the same `cpus` budget. A primary call that arrives
+  during a shadow call still overlaps it, so keep that thread count low.
+- **Validated, not repaired.** The output must be `(series, 1, horizon, 21)`, finite and
+  non-decreasing across all 21 levels. Q10, Q50 and Q90 are read by level (indexes 2, 10 and 18),
+  and `central` is the median. Contexts shorter than the longest one in the batch are left-padded
+  with NaN, which Timestral reads as missing rather than as zeros.
+- The package is pinned to a commit
+  (`timestral @ git+https://github.com/mistralai/timestral@a534bdb…`), which is why the image
+  build needs `git`. `TIMESFM_RUN_REAL_MODEL=1` with the pin set runs its opt-in smoke test.
 
 ## Metrics and operational checks
 

@@ -53,6 +53,7 @@ class MetricObservationTest {
     void theUnitIsTheOneTheTemplateFixesAndAnExplicitOneFillsTheRest() {
         assertEquals("topics", MetricObservation.unit(templated("KAFKA_CLUSTER_COUNT", Map.of("measurement", "TOPIC_COUNT"))));
         assertEquals("brokers", MetricObservation.unit(templated("KAFKA_CLUSTER_COUNT", Map.of("measurement", "BROKER_COUNT"))));
+        assertEquals("messages", MetricObservation.unit(templated("KAFKA_CLUSTER_COUNT", Map.of("measurement", "PRODUCED_OFFSETS", "topic", "orders"))));
         assertEquals("records", MetricObservation.unit(templated("TOPIC_COUNT_DELTA", Map.of())));
         assertEquals("records", MetricObservation.unit(templated("TOPIC_COUNT_DELTA", Map.of("operation", "abs_diff"))));
         assertEquals("ratio", MetricObservation.unit(templated("TOPIC_COUNT_DELTA", Map.of("operation", "RATIO"))));

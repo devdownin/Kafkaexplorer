@@ -211,6 +211,7 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "timesfm" },
+    { name = "timestral" },
     { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
     { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
     { name = "uvicorn" },
@@ -228,6 +229,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = "==1.11.0" },
     { name = "numpy", specifier = "==2.4.6" },
     { name = "timesfm", specifier = "==2.0.2" },
+    { name = "timestral", git = "https://github.com/mistralai/timestral?rev=a534bdbd244d64f3d9d743f46c7bf6fc330ed4ff" },
     { name = "torch", specifier = "==2.13.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "uvicorn", specifier = "==0.54.0" },
 ]
@@ -525,6 +527,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/48/16/503864c985a1f213ae6182ece73b6538c468b5cd5c21158ede9db3333732/timesfm-2.0.2.tar.gz", hash = "sha256:b03885d3467b09314a4b461e1f6729375844061dd31fd41e3c35aa503c333da3", size = 44127, upload-time = "2026-07-02T18:55:31.815Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ce/f2/3a7ed286070526a0e48487fdfd3b7ca25f90dd0205fd87f4bb27e15ad4fb/timesfm-2.0.2-py3-none-any.whl", hash = "sha256:c7bde94beb1651e1251cdf1e9d09cf6f015e0218d038a4a836a170dc70b08071", size = 44770, upload-time = "2026-07-02T18:55:30.83Z" },
+]
+
+[[package]]
+name = "timestral"
+version = "1.0.0"
+source = { git = "https://github.com/mistralai/timestral?rev=a534bdbd244d64f3d9d743f46c7bf6fc330ed4ff#a534bdbd244d64f3d9d743f46c7bf6fc330ed4ff" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "safetensors" },
+    { name = "torch", version = "2.13.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'darwin'" },
+    { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform != 'darwin'" },
 ]
 
 [[package]]

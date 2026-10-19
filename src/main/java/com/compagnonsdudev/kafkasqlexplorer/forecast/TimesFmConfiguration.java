@@ -16,6 +16,12 @@ public class TimesFmConfiguration {
         return new TimesFmClient(inference, registry);
     }
 
+    @Bean(destroyMethod = "close")
+    @ConditionalOnProperty(prefix = "explorer.forecasting.inference.shadow", name = "enabled", havingValue = "true")
+    ShadowForecastClient shadowForecastClient(ForecastingProperties configuration, MeterRegistry registry) {
+        return new ShadowForecastClient(TimesFmClient.shadow(configuration.getInference(), registry));
+    }
+
     @Bean
     ForecastSnapshotStore forecastSnapshotStore() {
         return new ForecastSnapshotStore();

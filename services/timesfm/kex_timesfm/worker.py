@@ -41,18 +41,18 @@ def _model_factory(settings):
     return TimesFmModel(settings.cache_dir, settings.threads)
 
 
-def _serve(connection, settings, factory):
+def _serve(connection, settings, factory, decode):
     try:
         model = factory(settings)
         warmup = ForecastRequest(schemaVersion=1, requestId="00000000-0000-0000-0000-000000000000",
                                  horizonPoints=1, series=[{"seriesId": "0" * 64, "values": [1.0] * 512}])
-        named_predictions(warmup, *model.forecast(warmup))
+        decode(warmup, *model.forecast(warmup))
         connection.send(("ready", None))
         while True:
             request = connection.recv()
             start = time.monotonic()
             try:
-                predictions = named_predictions(request, *model.forecast(request))
+                predictions = decode(request, *model.forecast(request))
                 connection.send(("ok", (predictions, int((time.monotonic() - start) * 1000))))
             except ValueError:
                 connection.send(("invalid", None))
@@ -71,8 +71,8 @@ def _serve(connection, settings, factory):
 
 
 class ModelWorker:
-    def __init__(self, settings=WorkerSettings(), factory=_model_factory):
-        self.settings, self.factory = settings, factory
+    def __init__(self, settings=WorkerSettings(), factory=_model_factory, decode=named_predictions):
+        self.settings, self.factory, self.decode = settings, factory, decode
         self._lock = threading.Lock()
         self._process = self._connection = None
         self._ready = False
@@ -81,12 +81,16 @@ class ModelWorker:
     def ready(self):
         return self._ready and self._process is not None and self._process.is_alive()
 
+    @property
+    def busy(self):
+        return self._lock.locked()
+
     def start(self):
         with self._lock:
             self._stop()
             ctx = multiprocessing.get_context("spawn")
             self._connection, child = ctx.Pipe()
-            self._process = ctx.Process(target=_serve, args=(child, self.settings, self.factory), daemon=True)
+            self._process = ctx.Process(target=_serve, args=(child, self.settings, self.factory, self.decode), daemon=True)
             self._process.start()
             child.close()
             try:

@@ -175,7 +175,7 @@ public class MetricService {
         new MetricTemplateDescriptor(
             MetricTemplateType.KAFKA_CLUSTER_COUNT.name(),
             "Kafka Cluster Count",
-            "Count visible non-internal topics or brokers using Kafka metadata. No SQL or Flink table required.",
+            "Count visible non-internal topics or brokers, or the offsets produced to one topic, using Kafka metadata. No SQL or Flink table required.",
             List.of("GAUGE"),
             List.of("measurement")
         ),
@@ -807,9 +807,10 @@ public class MetricService {
         switch (templateType) {
             case KAFKA_CLUSTER_COUNT -> {
                 String measurement = requireParam(params, "measurement");
-                if (!Set.of("TOPIC_COUNT", "BROKER_COUNT").contains(measurement)) {
-                    throw new IllegalArgumentException("measurement must be TOPIC_COUNT or BROKER_COUNT");
+                if (!Set.of("TOPIC_COUNT", "BROKER_COUNT", "PRODUCED_OFFSETS").contains(measurement)) {
+                    throw new IllegalArgumentException("measurement must be TOPIC_COUNT, BROKER_COUNT or PRODUCED_OFFSETS");
                 }
+                if ("PRODUCED_OFFSETS".equals(measurement)) requireParam(params, "topic");
                 if (!"GAUGE".equals(metric.type())) {
                     throw new IllegalArgumentException("KAFKA_CLUSTER_COUNT supports GAUGE metrics only");
                 }
@@ -971,6 +972,16 @@ public class MetricService {
 
     private MetricComputationResult computeClusterCount(MetricConfig config) {
         String measurement = requireParam(config.templateParams(), "measurement");
+        if ("PRODUCED_OFFSETS".equals(measurement)) {
+            String topic = requireParam(config.templateParams(), "topic");
+            Long produced = kafkaAdminService.getProducedOffsets(topic);
+            // Never 0 for a read that failed: a cumulative total that falls to zero is a reset.
+            if (produced == null)
+                return MetricComputationResult.error("Offsets of " + topic + " could not be read on every partition");
+            double value = produced;
+            return new MetricComputationResult(List.of(Map.of("metric_value", value)), value, null,
+                Map.of("measurement", measurement, "topic", topic, "source", "Kafka end offsets"));
+        }
         try {
             double value = "TOPIC_COUNT".equals(measurement)
                 ? kafkaAdminService.listTopics().size() : kafkaAdminService.getBrokerCount();

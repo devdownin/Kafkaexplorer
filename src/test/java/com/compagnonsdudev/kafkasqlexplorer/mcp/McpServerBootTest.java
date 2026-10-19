@@ -163,6 +163,16 @@ class McpServerBootTest {
                         toolSpecs.stream().map(spec -> spec.tool().name()).toList());
     }
 
+    /** Registered only where the shadow runs; its schema is derived in {@code McpForecastToolsBootTest}. */
+    static final List<String> SHADOW = List.of("kex_get_shadow_comparison");
+
+    @Test
+    void the_shadow_comparison_is_withheld_by_name_with_the_setting_to_change() {
+        assertThat(catalog.catalog()).filteredOn(d -> SHADOW.contains(d.name()))
+                .singleElement()
+                .satisfies(d -> assertThat(d.visibility().reason()).contains("explorer.forecasting.pilot.series"));
+    }
+
     @Test
     void the_forecast_tools_are_withheld_by_name_until_a_series_is_approved() {
         assertThat(catalog.catalog()).filteredOn(d -> FORECAST.contains(d.name()))

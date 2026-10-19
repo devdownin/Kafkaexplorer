@@ -167,6 +167,40 @@ class McpServerConfigurationTest {
     }
 
     @Test
+    void the_shadow_comparison_needs_the_shadow_on_and_says_so_otherwise() {
+        String series = "explorer.forecasting.pilot.series[0].";
+        var approved = runner.withPropertyValues("explorer.mcp.enabled=true",
+                "explorer.forecasting.history.enabled=true",
+                "explorer.forecasting.history.metric-ids[0]=metric",
+                "explorer.forecasting.inference.enabled=true",
+                "explorer.forecasting.inference.token=" + "x".repeat(32),
+                series + "series-id=" + "a".repeat(64), series + "metric-id=metric",
+                series + "environment=production", series + "definition-version=v1",
+                series + "unit=messages", series + "topics[0]=orders",
+                series + "profile.step-millis=60000", series + "profile.context-points=512",
+                series + "profile.transformation=GAUGE_LAST", series + "horizon=10",
+                series + "season-length=1", series + "minimum-coverage=0.8",
+                series + "minimum-evaluated-points=100");
+        approved.run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).doesNotHaveBean(com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ShadowForecastMcpTools.class);
+            assertThat(context.getBean(McpCatalogService.class).catalog())
+                    .filteredOn(d -> d.name().equals("kex_get_shadow_comparison"))
+                    .singleElement()
+                    .satisfies(d -> {
+                        assertThat(d.visibility().state()).isEqualTo(Visibility.State.HIDDEN);
+                        assertThat(d.visibility().reason()).contains("explorer.forecasting.inference.shadow.enabled");
+                    });
+        });
+        approved.withPropertyValues("explorer.forecasting.inference.shadow.enabled=true").run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context).hasSingleBean(com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ShadowForecastMcpTools.class);
+            assertThat(context.getBean(McpCatalogService.class).exposed()).extracting(ToolDescriptor::name)
+                    .contains("kex_get_shadow_comparison");
+        });
+    }
+
+    @Test
     void runtime_approval_registers_the_forecast_tools_before_any_series_exists() {
         runner.withPropertyValues("explorer.mcp.enabled=true", "explorer.forecasting.pilot.runtime-approval=true")
                 .run(context -> {

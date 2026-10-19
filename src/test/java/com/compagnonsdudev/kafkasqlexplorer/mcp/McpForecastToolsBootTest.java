@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * posture, no series — no longer derives their schemas. A return type the scanner cannot express
  * would then surface on the first deployment that approves a series. This context approves one; the
  * history database and the model are configured but never reached, since nothing here refreshes.
+ * The shadow is on as well, so the comparison tool's schema is derived here too.
  */
 @ExplorerContextTest
 @TestPropertySource(properties = {
@@ -36,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
     "explorer.forecasting.history.metric-ids[0]=metric",
     "explorer.forecasting.inference.enabled=true",
     "explorer.forecasting.inference.token=test-token-that-is-not-a-secret-xxxxxx",
+    "explorer.forecasting.inference.shadow.enabled=true",
     "explorer.forecasting.pilot.series[0].series-id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "explorer.forecasting.pilot.series[0].metric-id=metric",
     "explorer.forecasting.pilot.series[0].environment=production",
@@ -73,5 +75,17 @@ class McpForecastToolsBootTest {
         });
         assertThat(catalog.exposed()).extracting(ToolDescriptor::name)
                 .containsAll(McpServerBootTest.FORECAST);
+    }
+
+    @Test
+    void an_enabled_shadow_registers_its_comparison_tool_with_a_schema() {
+        var shadow = toolSpecs.stream()
+                .filter(spec -> McpServerBootTest.SHADOW.contains(spec.tool().name()))
+                .toList();
+        assertThat(shadow).singleElement().satisfies(spec -> {
+            assertThat(spec.tool().description()).contains("never served");
+            assertThat(spec.tool().inputSchema()).isNotNull();
+        });
+        assertThat(catalog.exposed()).extracting(ToolDescriptor::name).containsAll(McpServerBootTest.SHADOW);
     }
 }
