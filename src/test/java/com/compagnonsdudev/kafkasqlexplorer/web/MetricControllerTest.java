@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer.web;
 
+import com.compagnonsdudev.kafkasqlexplorer.domain.MetricConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestionRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.MetricSuggestions;
 import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
@@ -24,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -43,6 +45,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class MetricControllerTest {
 
     private MetricSuggestionService suggestionService;
+    private MetricService metricService;
     private MockMvc mockMvc;
 
     private static final MetricSuggestions EMPTY =
@@ -51,9 +54,10 @@ class MetricControllerTest {
     @BeforeEach
     void setUp() {
         suggestionService = Mockito.mock(MetricSuggestionService.class);
+        metricService = Mockito.mock(MetricService.class);
         mockMvc = MockMvcBuilders
             .standaloneSetup(new MetricController(
-                Mockito.mock(MetricService.class),
+                metricService,
                 Mockito.mock(FlinkSqlService.class),
                 Mockito.mock(KafkaAdminService.class),
                 Mockito.mock(MessageFormatterService.class),
@@ -170,5 +174,26 @@ class MetricControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"sql\":\"SELECT 1 AS metric_value\"}"))
             .andExpect(status().isMethodNotAllowed());
+    }
+
+    /**
+     * Masking a DDL's credentials rebuilt the record through the constructor that predates the
+     * component series, which sets them to an empty map: a metric on a SASL or Confluent topic lost
+     * its left/right and p95 curves, in the list and on refresh, and nothing else about it changed.
+     */
+    @Test
+    void maskingACredentialKeepsTheComponentSeries() throws Exception {
+        String ddl = "CREATE TABLE t (id STRING) WITH ('connector' = 'kafka', "
+            + "'properties.sasl.jaas.config' = 'PlainLoginModule required password=\"hunter2\";')";
+        var metric = new MetricConfig("m1", "lag_ratio", "GAUGE", null, null, null, null, 0.5, 1L, null,
+            List.of(0.5), java.util.Map.of(), ddl, "TOPIC_COUNT_DELTA", java.util.Map.of(), null, null,
+            List.of(), java.util.Map.of("leftValue", List.of(12.0, 14.0), "rightValue", List.of(7.0, 8.0)));
+        when(metricService.getAllMetrics()).thenReturn(List.of(metric));
+
+        mockMvc.perform(get("/api/metrics"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].createTableSql").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("hunter2"))))
+            .andExpect(jsonPath("$[0].componentHistory.leftValue[1]").value(14.0))
+            .andExpect(jsonPath("$[0].componentHistory.rightValue[0]").value(7.0));
     }
 }

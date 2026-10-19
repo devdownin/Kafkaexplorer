@@ -20,6 +20,26 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The alert rule a metric card copies fires for a metric that has labels.** The gauge carries
+  its row labels (`GROUP BY` columns, label chips) and `explorer_metric_last_success_timestamp_seconds`
+  only `metric_id`, `metric_name` and `metric_type`; `and` matches on the whole label set, so the
+  rule never fired on a labelled gauge, through a real breach. It now reads
+  `… and on(metric_id) (time() - … < S)`.
+- **Saving a metric no longer overwrites what the server measured, nor keeps the error of the
+  definition it replaced.** The editor posts the card as it was when the modal opened; the server
+  now keeps its own last value, timestamp, history and summary, and when the definition changed
+  (SQL, template, labels, DDL, mode) the value and the error of the old one are cleared, so the card
+  reads "pending" exactly while its series is absent. History is still kept across an edit.
+- **A metric on a topic with credentials keeps its left/right and p95 curves.** Masking the DDL for
+  display rebuilt the record without its component series.
+- **Smaller fixes on the metric editor.** A topic named `account-delete-requests` no longer blocks
+  Save on the word "delete"; a window, row count or cadence picked in the editor is read by the
+  refresh-cost sentence and the "every …" chip; the dead-letter link saves a bounded-scan template;
+  a process-mining status field named `value` or `result` is quoted as an alias too; an old save
+  error is no longer shown when another metric is opened; the help page's `RAW_SQL` example parses.
+- **A fallback or stale forecast no longer counts down to approval on the metric card.** The server
+  rules both out before it looks at the quality block; the card now says "Fallback" or "Stale" and
+  the timeline stops showing a stale forecast as done.
 - **Timestral-28M runs as a shadow of TimesFM 2.5.** `services/timesfm` gains
   `POST /v1/shadow/forecast` and `/health/shadow/ready`, in a worker process of its own that yields
   (429) while TimesFM computes and never touches `/health/ready` or `/v1/forecast`. It is off

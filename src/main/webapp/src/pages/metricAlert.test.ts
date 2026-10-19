@@ -58,6 +58,8 @@ describe('la règle Prometheus', () => {
     // Un rafraîchissement en échec garde la valeur précédente : sans ce garde, l'alerte ne
     // distingue pas une vraie condition bloquée d'une condition que plus personne ne mesure.
     expect(advice.rules[0].promql).toContain('explorer_metric_last_success_timestamp_seconds');
+    // The gauge carries its row labels and the companion does not: `and` needs `on(metric_id)`.
+    expect(advice.rules[0].promql).toContain('and on(metric_id) (time() - ');
   });
 
   it('suit la direction des seuils', () => {
@@ -84,6 +86,7 @@ describe('la règle Prometheus', () => {
     expect(advice.rules).toHaveLength(2);
     expect(advice.rules[0].promql).toContain('explorer_metric_gauge');
     expect(advice.rules[1].promql).toContain('explorer_metric_correlation_latency_p95_ms');
+    expect(advice.rules[1].promql).toContain('and on(metric_id) (time() - ');
   });
 
   it('refuse plutôt que d’inventer une règle sur une série qui n’est pas ce nombre', () => {

@@ -42,6 +42,13 @@ export function forecastStage(series: ForecastSeriesView): ForecastStageSummary 
     };
   }
   const a = series.activation;
+  // The server rules these two out before it looks at the quality block (`ForecastPilotService.blocker`),
+  // so a countdown to approval here would promise a date the series cannot reach: a fallback
+  // forecast has no interval to judge, and a stale one is waiting for the next cycle.
+  if (r.state === 'STALE')
+    return { stage: 'BLOCKED', label: 'Stale', tone: 'warning', detail: a.reason ?? r.reason };
+  if (r.strategy !== 'TIMESFM')
+    return { stage: 'BLOCKED', label: 'Fallback', tone: 'warning', detail: a.reason ?? r.reason };
   if (a.eligible) return { stage: 'APPROVABLE', label: 'Ready to approve', tone: 'success', detail: 'Quality checks passed; approve it from Metrics Forecast' };
   const filling = `quality ${a.blockPoints} / ${a.blockPointsRequired} realised points`;
   const detail = a.lastBlockPassed === false
@@ -86,7 +93,10 @@ export function forecastTimeline(series: ForecastSeriesView): TimelineStep[] {
           detail: `${Math.min(collected, need)} / ${need} points · first forecast in ${about(need - collected, step)}` }
         : { key: 'history', label: 'History', state: 'failed', detail: r.reason };
 
-  const forecast: TimelineStep = forecasting && r?.strategy === 'TIMESFM'
+  const stale = r?.state === 'STALE';
+  const forecast: TimelineStep = forecasting && stale
+    ? { key: 'forecast', label: 'Forecast', state: 'current', detail: 'Horizon elapsed; a new forecast is due at the next cycle' }
+    : forecasting && r?.strategy === 'TIMESFM'
     ? { key: 'forecast', label: 'Forecast', state: 'done', detail: `TimesFM · ${r.forecast!.points.length} points ahead` }
     : forecasting
       ? { key: 'forecast', label: 'Forecast', state: 'failed', detail: `Baseline fallback, no interval: ${r!.reason}` }
@@ -97,7 +107,7 @@ export function forecastTimeline(series: ForecastSeriesView): TimelineStep[] {
   const block = `${a.blockPoints} / ${a.blockPointsRequired} realised points`;
   const quality: TimelineStep = r?.state === 'DEGRADED'
     ? { key: 'quality', label: 'Quality', state: 'failed', detail: 'Drift on consecutive blocks; revise the series to restart its evaluation' }
-    : !forecasting
+    : !forecasting || stale || r?.strategy !== 'TIMESFM'
       ? { key: 'quality', label: 'Quality', state: 'pending', detail: `Judged over ${a.blockPointsRequired} realised points` }
       : a.lastBlockPassed === true && a.failedBlocks === 0
         ? { key: 'quality', label: 'Quality', state: 'done', detail: `Last block passed · next ${block}` }

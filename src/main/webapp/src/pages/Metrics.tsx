@@ -390,6 +390,7 @@ const Metrics: React.FC = () => {
     }
     setEditorTab('metric');
     setPreviewResult(null);
+    setSaveError(null);
     setIsModalOpen(true);
   };
 

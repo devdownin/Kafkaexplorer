@@ -1272,7 +1272,9 @@ public class MetricSuggestionService {
 
     private MetricSuggestion statusBreakdown(String topic, String column, String path) {
         String table = DdlGeneratorService.toTableName(topic);
-        String sql = "SELECT `" + column + "` AS " + column + ", COUNT(*) AS metric_value\n"
+        // The alias is quoted like the column: a status field named `value` or `result` is a
+        // reserved word, and a bare alias made the metric fail to parse on every refresh.
+        String sql = "SELECT `" + column + "` AS `" + column + "`, COUNT(*) AS metric_value\n"
             + "FROM " + table + "\n"
             + "GROUP BY `" + column + "`";
 

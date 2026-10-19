@@ -153,6 +153,14 @@ describe('ce que la configuration coûtera', () => {
     expect(note).toContain('aggregate ceiling');
   });
 
+  it('lit une valeur choisie dans l’éditeur, qui y est stockée en chaîne', () => {
+    // `setParam` range ce qui a été saisi ou choisi : « une fois par minute » arrive en '60000'.
+    expect(describeRefreshCost('TOPIC_TRANSIT_LATENCY', { refreshIntervalMs: '300000' }))
+      .toContain('at most every 5 min');
+    expect(describeRefreshCost('TOPIC_TRANSIT_LATENCY', { refreshIntervalMs: '' })).toContain('on every refresh cycle');
+    expect(describeRefreshCost('TOPIC_TRANSIT_LATENCY', { refreshIntervalMs: 'soon' })).toContain('on every refresh cycle');
+  });
+
   it('porte la cadence propre de la métrique quand elle en a une', () => {
     expect(describeRefreshCost('TOPIC_TRANSIT_LATENCY', { refreshIntervalMs: 300_000 }))
       .toContain('at most every 5 min');

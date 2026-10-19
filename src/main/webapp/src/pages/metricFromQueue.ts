@@ -78,6 +78,7 @@ export function queueMetricDraft(draft: QueueMetricDraft): Record<string, unknow
       + 'Dead Letter screen draws, as a series. Counted from offsets, over what each topic produced '
       + 'since the previous refresh.',
     templateType: 'TOPIC_COUNT_DELTA',
+    executionMode: 'TEMPLATE_BOUNDED_SCAN',
     templateParams: {
       leftSql: countSql(draft.queue),
       rightSql: countSql(draft.source),

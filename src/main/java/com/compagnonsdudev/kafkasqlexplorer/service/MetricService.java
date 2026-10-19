@@ -530,18 +530,33 @@ public class MetricService {
         String effectiveDdl = previous != null
             ? DdlGeneratorService.restoreMaskedProperties(metric.createTableSql(), previous.createTableSql())
             : metric.createTableSql();
-        MetricConfig m = normalizeMetric(new MetricConfig(
+        // What a refresh measured belongs to the server: the editor posts the card as it was when the
+        // modal opened — or from a draft up to a week old — and storing that overwrote a newer
+        // measurement and its history. A metric that does not exist yet has none, so it keeps what
+        // it came with.
+        Double lastValue = previous != null ? previous.lastValue() : metric.lastValue();
+        Long lastUpdateTime = previous != null ? previous.lastUpdateTime() : metric.lastUpdateTime();
+        String errorMessage = previous != null ? previous.errorMessage() : metric.errorMessage();
+        List<Double> history = previous != null ? previous.history() : metric.history();
+        Map<String, Object> lastSummary = previous != null ? previous.lastSummary() : metric.lastSummary();
+        MetricConfig edited = normalizeMetric(new MetricConfig(
             id, metric.name(), metric.type(), metric.sql(), metric.description(),
             metric.warningThreshold(), metric.criticalThreshold(),
-            metric.lastValue(), metric.lastUpdateTime(), metric.errorMessage(),
-            metric.history() != null ? metric.history() : List.of(),
-            metric.lastSummary() != null ? metric.lastSummary() : Map.of(),
+            lastValue, lastUpdateTime, errorMessage,
+            history != null ? history : List.of(),
+            lastSummary != null ? lastSummary : Map.of(),
             effectiveDdl,
             metric.templateType(),
             metric.templateParams(),
             metric.executionMode(),
             metric.labelTopic(),
             metric.labelFields() != null ? metric.labelFields() : List.of()));
+        boolean shapeChanged = previous != null && metricShapeChanged(previous, edited);
+        // A measurement and an error describe the definition that produced them: kept after the SQL
+        // was fixed, the card went on showing the value of another question, or the refusal of a query
+        // that no longer exists, until the next cycle. The meters are purged below for the same
+        // reason, so the card reads "pending" exactly while the series is absent. History is kept.
+        MetricConfig m = shapeChanged ? withoutMeasurement(edited) : edited;
         validateMetric(m, true);
         metrics.put(id, m);
         // When an existing metric's shape changes (type, SQL, labels, template, …),
@@ -549,10 +564,19 @@ public class MetricService {
         // tags/values — e.g. an old GAUGE series surviving a switch to COUNTER, or dead
         // label series after a SQL/label edit. Purge them so the next refresh rebuilds
         // cleanly. Value history is intentionally preserved across an edit.
-        if (previous != null && metricShapeChanged(previous, m)) {
+        if (shapeChanged) {
             purgeMeters(id);
         }
         persistToKafka(m);
+    }
+
+    private static MetricConfig withoutMeasurement(MetricConfig m) {
+        return new MetricConfig(
+            m.id(), m.name(), m.type(), m.sql(), m.description(),
+            m.warningThreshold(), m.criticalThreshold(), null, null,
+            null, m.history(), Map.of(), m.createTableSql(), m.templateType(),
+            m.templateParams(), m.executionMode(), m.labelTopic(), m.labelFields(),
+            m.componentHistory());
     }
 
     public void delete(String id) {
@@ -2154,7 +2178,8 @@ public class MetricService {
      * outside, so an alert on {@code value > N} fires the same way whether the condition is real
      * and stuck or simply no longer measured. Set only on a cycle that actually produced a value,
      * it lets the alert require both:
-     * {@code explorer_metric_gauge > N and time() - explorer_metric_last_success_timestamp_seconds < 120}.
+     * {@code explorer_metric_gauge > N and on(metric_id) (time() - explorer_metric_last_success_timestamp_seconds < 120)}
+     * — {@code on(metric_id)} because the gauge carries its row labels and this series does not.
      * A timestamp rather than a boolean: same cardinality, and it carries <em>how</em> stale.
      * {@code ConsumerLagMetrics} carries the same series for the same reason.
      *

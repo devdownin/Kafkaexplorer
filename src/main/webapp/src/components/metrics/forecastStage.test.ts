@@ -39,6 +39,15 @@ describe('forecastStage', () => {
     expect(forecastStage(series({ visibility: 'ACTIVE' })).stage).toBe('APPROVED');
     expect(forecastStage(series({ state: 'DEGRADED' }))).toMatchObject({ stage: 'DEGRADED', tone: 'error' });
   });
+  it('does not count down to approval for a fallback or stale forecast the server rules out first', () => {
+    const fallback = series({ strategy: 'SEASONAL_NAIVE', reason: 'TimesFM unavailable' },
+      { reason: 'The latest forecast is a SEASONAL_NAIVE fallback: TimesFM unavailable' });
+    expect(forecastStage(fallback)).toMatchObject({ stage: 'BLOCKED', label: 'Fallback', tone: 'warning',
+      detail: 'The latest forecast is a SEASONAL_NAIVE fallback: TimesFM unavailable' });
+    const stale = series({ state: 'STALE' }, { reason: 'The latest forecast horizon has elapsed; wait for the next cycle' });
+    expect(forecastStage(stale)).toMatchObject({ stage: 'BLOCKED', label: 'Stale',
+      detail: 'The latest forecast horizon has elapsed; wait for the next cycle' });
+  });
   it('words a duration as an estimate at the scale it falls in', () => {
     expect(about(0, 60000)).toBe('under a minute');
     expect(about(25, 60000)).toBe('~25 min');
@@ -49,6 +58,10 @@ describe('forecastStage', () => {
 
 describe('forecastTimeline', () => {
   const states = (s: ForecastSeriesView) => forecastTimeline(s).map(step => `${step.key}:${step.state}`);
+  it('does not show a stale forecast as done, nor judge quality on a fallback', () => {
+    expect(states(series({ state: 'STALE' }))).toEqual(['history:done', 'forecast:current', 'quality:pending', 'approval:pending']);
+    expect(states(series({ strategy: 'SEASONAL_NAIVE' }))).toEqual(['history:done', 'forecast:failed', 'quality:pending', 'approval:pending']);
+  });
   it('starts on history and names what each later step waits for', () => {
     const steps = forecastTimeline(series({ forecast: null, context: { status: 'WARMING_UP', observedPoints: 68 } as ForecastRecord['context'] }));
     expect(steps.map(s => s.state)).toEqual(['current', 'pending', 'pending', 'pending']);
