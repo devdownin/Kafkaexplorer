@@ -20,7 +20,27 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+- **Timestral-28M runs as a shadow of TimesFM 2.5.** `services/timesfm` gains
+  `POST /v1/shadow/forecast` and `/health/shadow/ready`, in a worker process of its own that yields
+  (429) while TimesFM computes and never touches `/health/ready` or `/v1/forecast`. It is off
+  unless the operator pins both `TIMESTRAL_REVISION` and `TIMESTRAL_SHA256`; half a pin refuses to
+  start. The pin is not committed: the weights' Modified MIT licence excludes companies above
+  $20M monthly revenue, so accepting it is the operator's call. A shadow answer is never served,
+  activated or alerted on.
+- **The pilot scores both models on the same cohorts.** The shadow phase runs after TimesFM's record
+  is committed, writes only to `kex_forecast_shadow_v1`, and feeds a second quality window over the
+  same blocks and baselines; a new pin restarts the evaluation. `GET /api/forecasts/{id}/shadow`
+  returns the comparison with `wouldQualify`.
+- **Lag and produce rate as covariates, shadow only.** `explorer.forecasting.pilot.shadow-covariates`
+  adds a second shadow forecast with up to four past covariates cut to the target's grid, scored
+  against the shadow without them and against TimesFM. A covariate reading a topic the target does
+  not declare is refused. The produce rate comes from a new `KAFKA_CLUSTER_COUNT` measurement,
+  `PRODUCED_OFFSETS`, which answers `null` rather than a partial sum when a partition is silent.
+- **The comparison is visible.** A collapsed "Shadow model comparison" section on Metrics Forecast,
+  and `kex_get_shadow_comparison` over MCP — registered only when the pilot, inference and the
+  shadow are all on, with every answer carrying `SHADOW_NOT_SERVED`.
+- **The hub stack moves to SpectraLLM 0.12.3.** 0.12.1 and 0.12.2 fail to boot (their property
+  records were left unbound); 0.12.3 carries the fix.
 
 ## [2.3.2] — 2026-10-17
 
