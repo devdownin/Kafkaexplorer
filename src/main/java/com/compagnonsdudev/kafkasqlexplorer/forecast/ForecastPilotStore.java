@@ -305,7 +305,7 @@ public final class ForecastPilotStore {
     return shadow(
         c,
         "SELECT payload FROM kex_forecast_shadow_v1 WHERE series_id=? ORDER BY history_end DESC,"
-            + "generated_at DESC LIMIT 1",
+            + " generated_at DESC LIMIT 1",
         id,
         null);
   }
