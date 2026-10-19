@@ -405,6 +405,68 @@ describe('la prévisualisation des labels', () => {
   });
 });
 
+describe('l’éditeur : les labels et le pied du modal', () => {
+  const labelled = { ...templateMetric, templateParams: savableTemplateParams, labelFields: ['region'] };
+  const previewOf = (topic: string, fields: Record<string, string>, message: string | null = '{}') =>
+    ({ data: { topic, timestamp: 1, message, fields } });
+
+  async function openLabelled(user: ReturnType<typeof userEvent.setup>, preview: (topic: string) => unknown) {
+    stubApi([labelled]);
+    const answer = mockedAxios.get.getMockImplementation()!;
+    mockedAxios.get.mockImplementation((url: string, ...rest: unknown[]) =>
+      url.startsWith('/api/metrics/label-preview')
+        ? Promise.resolve(preview(decodeURIComponent(url.split('topic=')[1])))
+        : (answer as (u: string, ...r: unknown[]) => Promise<unknown>)(url, ...rest));
+    await renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Edit this metric' }));
+    return await screen.findByRole('dialog');
+  }
+
+  it('keeps the selected labels while the topic is typed, and settles them on the topic finally chosen', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const dialog = await openLabelled(user, topic => topic === 'demo.orders.2.validated'
+        ? previewOf(topic, { tier: 'gold' })
+        : topic === 'demo.orders.1.received' ? previewOf(topic, { region: 'eu' }) : previewOf(topic, {}, null));
+      await vi.advanceTimersByTimeAsync(450);
+      const region = await within(dialog).findByRole('checkbox', { name: /region/ });
+      expect(region).toBeChecked();
+
+      // One character typed, then a partial name that previews nothing: the selection used to be
+      // emptied here, with no way back.
+      const topic = within(dialog).getByLabelText(/Kafka Topic/);
+      await user.type(topic, 'x');
+      await vi.advanceTimersByTimeAsync(450);
+      expect(within(dialog).getByText('No recent message available on this topic.')).toBeInTheDocument();
+      await user.type(topic, '{Backspace}');
+      await vi.advanceTimersByTimeAsync(450);
+      expect(within(dialog).getByRole('checkbox', { name: /region/ })).toBeChecked();
+
+      // A different topic that really has a message: `region` is not on it.
+      await user.clear(topic);
+      await user.type(topic, 'demo.orders.2.validated');
+      await vi.advanceTimersByTimeAsync(450);
+      await within(dialog).findByRole('checkbox', { name: /tier/ });
+      expect(within(dialog).getByText('0 selected')).toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('says where the error is when the open tab is not the one that fails, and jumps to it', async () => {
+    const user = userEvent.setup();
+    stubApi([{ ...templateMetric, templateParams: savableTemplateParams, createTableSql: 'DROP TABLE orders' }]);
+    await renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Edit this metric' }));
+    const dialog = await screen.findByRole('dialog');
+
+    expect(within(dialog).getByText('Fix errors before saving')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Show the error in the table DDL' }));
+    expect(within(dialog).getByRole('tab', { name: /Table DDL/ })).toHaveAttribute('aria-selected', 'true');
+    // On the tab that fails there is nothing left to point at.
+    expect(within(dialog).queryByRole('button', { name: /Show the error in/ })).toBeNull();
+  });
+});
+
 describe('the scan window of a two-query template', () => {
   it('reads the recent end for a latency and the whole topic for a count', () => {
     expect(defaultReadMode('TOPIC_TRANSIT_LATENCY')).toBe('latest-offset');

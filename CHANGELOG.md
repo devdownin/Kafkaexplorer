@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Typing a topic no longer empties the selected labels.** The selection was dropped on every
+  keystroke that changed the topic text — one character typed and deleted lost it, with no way
+  back. It is now kept while the topic is typed and settled by the preview of the topic finally
+  chosen: only the labels that topic's latest message carries survive, and a partial name that
+  previews nothing changes nothing.
+- **The editor's footer says where the error is.** "Fix errors before saving" now comes with a
+  button that jumps to the tab that fails — the metric SQL or parameters, or the table DDL — when it
+  is not the one open.
 - **The metrics and forecast pages stop polling behind a hidden tab.** The list (every 15 s) and the
   forecast panel (three requests every 30 s, one of which re-prepares the series from PostgreSQL)
   read only while the tab is visible and once on return; a poll that brings nothing new no longer

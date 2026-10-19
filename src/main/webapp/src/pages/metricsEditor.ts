@@ -460,6 +460,19 @@ export function carryTemplateParams(
   return Object.fromEntries(Object.entries(current).filter(([key]) => shared.has(key)));
 }
 
+/**
+ * The label fields still readable on the topic just previewed.
+ *
+ * A label is a field of one topic's messages, so a selection made against topic A means nothing on
+ * topic B — which is why it used to be dropped as soon as the topic text changed, keystroke by
+ * keystroke: typing one character and deleting it emptied the selection, with no undo. It is now
+ * settled when a preview that really read a message arrives for a *different* topic than the one
+ * the labels were chosen on, and only then.
+ */
+export function keepLabelsPresentIn(selected: string[], fields: Record<string, string>): string[] {
+  return selected.filter(field => Object.prototype.hasOwnProperty.call(fields, field));
+}
+
 // ── SQL templates (dynamic, use selected table name) ──────────────────────
 export function getSqlTemplates(table: string) {
   return [
