@@ -6,10 +6,12 @@ import { Badge, Button, useConfirm } from '../ui';
 import { copyText } from '../../clipboard';
 import type { BadgeTone } from '../ui';
 import type {
-  ForecastActivationRefusal, ForecastProgress as Progress, ForecastStatus,
+  ForecastActivationRefusal, ForecastProgress as Progress, ForecastShadowComparison as Comparison, ForecastStatus,
 } from '../../api/types';
 import { ForecastPreparation } from './ForecastPreparation';
 import { ForecastProgress } from './ForecastProgress';
+import { ForecastShadowComparison } from './ForecastShadowComparison';
+import { isShadowComparison, type ShadowView } from './shadowModels';
 import { ForecastTimeline } from './ForecastTimeline';
 
 const STATE_TONE: Record<string, BadgeTone> = { READY: 'success', DEGRADED: 'error' };
@@ -32,6 +34,7 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
   const [status, setStatus] = useState<ForecastStatus | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [progressError, setProgressError] = useState('');
+  const [shadow, setShadow] = useState<{ seriesId: string; view: ShadowView } | null>(null);
   const [selected, setSelected] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -61,6 +64,17 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
         } catch {
           if (!disposed) setProgressError('History progress unavailable. Previous diagnostics may be stale.');
         }
+        // Same loop, same clock: a third poller would be a third loading state for one panel.
+        let view: ShadowView;
+        try {
+          const response = await axios.get<Comparison | ''>(`/api/forecasts/${encodeURIComponent(seriesId)}/shadow`,
+            { signal: controller.signal, timeout: 10000, validateStatus: code => code === 200 || code === 204 || code === 404 });
+          view = response.status === 404 ? { kind: 'OFF' } : response.status === 204 ? { kind: 'EMPTY' }
+            : isShadowComparison(response.data) ? { kind: 'READY', comparison: response.data } : { kind: 'ERROR' };
+        } catch {
+          view = { kind: 'ERROR' };
+        }
+        if (!disposed) setShadow({ seriesId, view });
       } catch {
         if (!disposed) setError('Forecast persistence is unavailable. Existing results may be stale.');
       } finally {
@@ -131,6 +145,7 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
       </div>
       {series && <ForecastTimeline series={series} />}
       {series && <ForecastProgress progress={seriesProgress} error={progressError} result={result} />}
+      <ForecastShadowComparison view={shadow?.seriesId === series?.seriesId ? shadow?.view ?? null : null} />
       {series?.withdrawable && <Button variant="ghost" onClick={() => void withdraw()} disabled={busy}>Stop forecasting this series</Button>}
       {!result ? <p>No persisted forecast yet.</p> : <>
         <p>{result.reason}</p>

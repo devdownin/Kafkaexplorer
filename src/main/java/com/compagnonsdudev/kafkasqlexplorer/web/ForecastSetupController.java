@@ -24,6 +24,11 @@ public class ForecastSetupController {
     try { return ResponseEntity.ok(setup.draft(request)); }
     catch (IllegalArgumentException e) { return ResponseEntity.badRequest().body(new Problem(e.getMessage())); }
   }
+  @PostMapping("/shadow-covariates")
+  public ResponseEntity<?> covariate(@RequestBody ForecastSetupService.CovariateRequest request) {
+    try { return ResponseEntity.ok(setup.covariateDraft(request)); }
+    catch (IllegalArgumentException e) { return ResponseEntity.badRequest().body(new Problem(e.getMessage())); }
+  }
   /** Approves at runtime when the deployment allows it; 409 names why it does not. */
   @PostMapping("/series")
   public ResponseEntity<?> apply(@RequestBody ForecastSetupService.DraftRequest request) {

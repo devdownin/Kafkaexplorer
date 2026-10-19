@@ -53,6 +53,11 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
   }
 
   private ForecastPilotProperties.Series authorize(String id) {
+    return authorize(pilot, guard, id);
+  }
+
+  /** One authorization for every forecast toolset: operator provenance, then scope, before any read. */
+  static ForecastPilotProperties.Series authorize(ForecastPilotService pilot, ToolGuard guard, String id) {
     ForecastPilotProperties.Series s;
     try {
       s = pilot.resolve(id);

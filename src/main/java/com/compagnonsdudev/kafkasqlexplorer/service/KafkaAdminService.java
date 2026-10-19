@@ -331,6 +331,39 @@ public class KafkaAdminService {
         return readRecordCounts(topicNames);
     }
 
+    /**
+     * Offsets ever produced to one topic: the latest offset summed over its partitions. A
+     * cumulative total — what was produced, not what retention left — so a forecast reads it as a
+     * produce rate through its counter-rate preparation.
+     *
+     * <p>{@code null} unless <b>every</b> partition answered. The lenient floor
+     * {@link #readRecordCounts} returns would be wrong here: a partition missing from one read
+     * and back in the next is a drop then a jump, which the rate preparation takes for a counter
+     * reset and the model for a burst.
+     */
+    public Long getProducedOffsets(String topic) {
+        List<TopicPartition> partitions;
+        try {
+            partitions = cachedPartitions(List.of(topic), 10_000).getOrDefault(topic, List.of());
+        } catch (Exception e) {
+            log.debug("Partitions of {} could not be described: {}", LogSafe.name(topic),
+                    LogSafe.text(SqlErrorClassifier.explain(e)));
+            return null;
+        }
+        if (partitions.isEmpty()) return null;
+        try {
+            ListOffsetsResult latest = adminClient.listOffsets(specs(partitions, OffsetSpec.latest()));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            long produced = 0L;
+            for (TopicPartition tp : partitions) produced += awaitOffset(latest, tp, deadline).offset();
+            return produced;
+        } catch (Exception e) {
+            log.debug("Produced offsets of {} could not be read: {}", LogSafe.name(topic),
+                    LogSafe.text(SqlErrorClassifier.explain(e)));
+            return null;
+        }
+    }
+
     private Map<String, Long> readRecordCounts(List<String> topicNames) {
         Map<String, Long> sizes = new HashMap<>();
 

@@ -7,7 +7,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_CACHE_DIR=/tmp/uv-cache
 WORKDIR /app
 
-RUN pip install --no-cache-dir uv==0.9.17 \
+# git: the Timestral shadow package is locked to a commit of its repository, not to PyPI.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir uv==0.9.17 \
  && addgroup --system --gid 10001 timesfm \
  && adduser --system --uid 10001 --gid 10001 --home /app timesfm \
  && mkdir -p /models /tmp/uv-cache \

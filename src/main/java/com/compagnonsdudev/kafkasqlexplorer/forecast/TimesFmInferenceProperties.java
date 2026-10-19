@@ -10,6 +10,7 @@ public class TimesFmInferenceProperties {
     private String serviceUrl = "http://timesfm:8000";
     private String token = "";
     private Duration timeout = Duration.ofSeconds(35);
+    private Shadow shadow = new Shadow();
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean value) { enabled = value; }
@@ -19,6 +20,30 @@ public class TimesFmInferenceProperties {
     public void setToken(String value) { token = value; }
     public Duration getTimeout() { return timeout; }
     public void setTimeout(Duration value) { timeout = value; }
+    public Shadow getShadow() { return shadow; }
+    public void setShadow(Shadow value) { shadow = value; }
+
+    /**
+     * Timestral beside TimesFM on the same service, scored on the same cohorts and never served.
+     * Shorter timeout than the primary's: each shadow call is spent inside the same cycle budget.
+     */
+    public static class Shadow {
+        private boolean enabled;
+        private Duration timeout = Duration.ofSeconds(15);
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean value) { enabled = value; }
+        public Duration getTimeout() { return timeout; }
+        public void setTimeout(Duration value) { timeout = value; }
+
+        Duration validatedTimeout() {
+            if (timeout == null || timeout.compareTo(Duration.ofSeconds(1)) < 0
+                || timeout.compareTo(Duration.ofSeconds(30)) > 0) {
+                throw new IllegalArgumentException("Shadow timeout must be between 1 and 30 seconds");
+            }
+            return timeout;
+        }
+    }
 
     public URI validateEnabled() {
         URI uri;

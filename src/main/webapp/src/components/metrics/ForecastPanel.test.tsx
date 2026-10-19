@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { ConfirmProvider } from '../ui';
 import { ForecastPanel } from './ForecastPanel';
 import type { ForecastActivationReadiness } from '../../api/types';
+import { comparison } from './shadowModels.test';
 vi.mock('axios', () => ({ default: { get: vi.fn(), put: vi.fn(), delete: vi.fn(), isAxiosError: (e: unknown) => Boolean((e as { isAxiosError?: boolean })?.isAxiosError) } }));
 const ready: ForecastActivationReadiness = { eligible: true, reason: null, blockPoints: 0, blockPointsRequired: 120, lastBlockPassed: true, failedBlocks: 0, failedBlocksToDegrade: 2 };
 const blocked = { ...ready, eligible: false, reason: 'The first quality block holds 40 of 120 realised points', blockPoints: 40, lastBlockPassed: null };
@@ -96,9 +97,9 @@ describe('ForecastPanel', () => {
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: String(url).endsWith('/progress') ? progress : seriesWith(ready) }));
     render(<ForecastPanel />);
     expect(await screen.findByText(/40 \/ 512 observed points/)).toBeTruthy();
-    // The preparation diagnostic is read once on mount; only these two are polled.
+    // The preparation diagnostic is read once on mount; only these three are polled, in one loop.
     expect(vi.mocked(axios.get).mock.calls.map(call => call[0]).filter(url => url !== '/api/forecasts/preparation'))
-      .toEqual(['/api/forecasts', `/api/forecasts/${'a'.repeat(64)}/progress`]);
+      .toEqual(['/api/forecasts', `/api/forecasts/${'a'.repeat(64)}/progress`, `/api/forecasts/${'a'.repeat(64)}/shadow`]);
   });
   it('offers the raw result as a copy, not as a page of JSON', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(ready) });
@@ -138,5 +139,35 @@ describe('ForecastPanel', () => {
     render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
     await screen.findByText('ready');
     expect(screen.queryByRole('button', { name: 'Stop forecasting this series' })).toBeNull();
+  });
+  describe('shadow comparison', () => {
+    const answer = (shadow: { status: number; data: unknown }) => vi.mocked(axios.get).mockImplementation(async (url: string) => {
+      if (url.endsWith('/shadow')) return shadow;
+      if (url.endsWith('/progress')) throw new Error('not under test');
+      return { data: seriesWith(ready) };
+    });
+    it('shows nothing when the deployment runs no shadow', async () => {
+      answer({ status: 404, data: '' });
+      render(<ForecastPanel />);
+      await screen.findByRole('button', { name: 'Approve after quality checks' });
+      expect(screen.queryByText('Shadow model comparison')).toBeNull();
+    });
+    it('says a shadow with nothing scored yet is waiting, not broken', async () => {
+      answer({ status: 204, data: '' });
+      render(<ForecastPanel />);
+      expect(await screen.findByText(/no forecast compatible with this series has been scored yet/)).toBeTruthy();
+    });
+    it('compares both models on the same cohorts, and the covariate trial beside them', async () => {
+      answer({ status: 200, data: comparison });
+      render(<ForecastPanel />);
+      const table = await screen.findByRole('table', { name: 'Shadow quality' });
+      expect(table).toHaveTextContent('TimesFM2.000');
+      expect(table).toHaveTextContent('Timestral1.000');
+      expect(screen.getByText('Lowest MAE on the shared cohorts: Timestral.')).toBeTruthy();
+      expect(screen.getByText("Timestral would pass TimesFM's approval gate on its last block.")).toBeTruthy();
+      expect(screen.getByRole('table', { name: 'Shadow quality with covariates' })).toHaveTextContent('Timestral + covariates0.5000');
+      expect(screen.getByText(/Timestral with covariates would not qualify yet: The first shared quality block holds 40 of 120/)).toBeTruthy();
+      expect(axios.put).not.toHaveBeenCalled();
+    });
   });
 });

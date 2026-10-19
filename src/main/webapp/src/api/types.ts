@@ -1616,6 +1616,45 @@ export interface ForecastActivationReadiness {
   failedBlocks: number;
   failedBlocksToDegrade: number;
 }
+/** @java ForecastPilotService.ShadowComparison */
+export interface ForecastShadowComparison {
+  seriesId: string;
+  state: string;
+  reason: string;
+  modelId: string;
+  revision: string | null;
+  generatedAt: number;
+  evaluatedPoints: number;
+  evaluatedThrough: number;
+  blockPoints: number;
+  blockPointsRequired: number;
+  shadowQuality: ForecastEvaluation | null;
+  primaryQuality: ForecastEvaluation | null;
+  baselineMae: Record<string, number>;
+  shadowBlockPassed: boolean | null;
+  primaryBlockPassed: boolean | null;
+  wouldQualify: boolean;
+  qualificationBlocker: string | null;
+  covariates: ForecastCovariateComparison | null;
+}
+/** @java ForecastPilotService.CovariateComparison */
+export interface ForecastCovariateComparison {
+  covariateMetricIds: string[];
+  state: string | null;
+  reason: string | null;
+  evaluatedPoints: number;
+  blockPoints: number;
+  blockPointsRequired: number;
+  multivariateQuality: ForecastEvaluation | null;
+  univariateQuality: ForecastEvaluation | null;
+  primaryQuality: ForecastEvaluation | null;
+  baselineMae: Record<string, number>;
+  multivariateBlockPassed: boolean | null;
+  univariateBlockPassed: boolean | null;
+  primaryBlockPassed: boolean | null;
+  wouldQualify: boolean;
+  qualificationBlocker: string | null;
+}
 /** @java ForecastController.Refusal */
 export interface ForecastActivationRefusal {
   reason: string;

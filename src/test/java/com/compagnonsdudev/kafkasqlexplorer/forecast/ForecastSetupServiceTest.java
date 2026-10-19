@@ -156,6 +156,49 @@ class ForecastSetupServiceTest {
     assertTrue(bound.getHistory().isEnrollEligible()); assertFalse(bound.getHistory().getMetricIds().contains("lag"));
     assertFalse(draft.configuration().contains("credential")); verifyNoInteractions(history, client, pilot, preparation);
   }
+  @Test void aProduceRateCovariateIsDeclaredWithTheSeriesIdentityHistoryRecords() {
+    var target = setup.draft(valid());
+    var yaml = new YamlPropertiesFactoryBean();
+    yaml.setResources(new ByteArrayResource(target.configuration().getBytes(StandardCharsets.UTF_8)));
+    var spec = new Binder(ConfigurationPropertySources.from(new PropertiesPropertySource("draft", yaml.getObject())))
+        .bind("explorer.forecasting", Bindable.of(ForecastingProperties.class)).get().getPilot().getSeries().getFirst();
+    root.getPilot().setSeries(List.of(spec));
+    var produced = new MetricConfig("produced", "Orders produced", "GAUGE", null, "description",
+        null, null, null, null, null, List.of(), Map.of(), null, "KAFKA_CLUSTER_COUNT",
+        Map.of("measurement", "PRODUCED_OFFSETS", "topic", "orders"), "TEMPLATE_BOUNDED_SCAN", null, List.of());
+    when(metrics.getAllMetrics()).thenReturn(List.of(metric, produced));
+    var draft = setup.covariateDraft(new ForecastSetupService.CovariateRequest(spec.seriesId(), "produced",
+        MetricObservation.definitionVersion(produced), "cluster", "collector", true));
+    var c = draft.covariate();
+    String version = MetricObservation.collectedVersion(produced, "kafka:29092", "collector");
+    assertEquals(MetricObservation.seriesId("cluster", version, "produced", "value", Map.of()), c.seriesId());
+    assertEquals(SeriesPreparationProfile.Transformation.COUNTER_RATE, c.transformation());
+    assertEquals("messages", c.unit());
+    assertEquals(List.of("orders"), c.topics());
+    var exported = new YamlPropertiesFactoryBean();
+    exported.setResources(new ByteArrayResource(draft.configuration().getBytes(StandardCharsets.UTF_8)));
+    var bound = new Binder(ConfigurationPropertySources.from(new PropertiesPropertySource("draft", exported.getObject())))
+        .bind("explorer.forecasting", Bindable.of(ForecastingProperties.class)).get();
+    assertEquals(List.of(c), bound.getPilot().getShadowCovariates());
+    assertTrue(bound.getInference().getShadow().isEnabled());
+    verifyNoInteractions(history, client, pilot, preparation);
+  }
+  @Test void aCovariateOnAnotherTopicIsRefused() {
+    var target = setup.draft(valid());
+    var yaml = new YamlPropertiesFactoryBean();
+    yaml.setResources(new ByteArrayResource(target.configuration().getBytes(StandardCharsets.UTF_8)));
+    var spec = new Binder(ConfigurationPropertySources.from(new PropertiesPropertySource("draft", yaml.getObject())))
+        .bind("explorer.forecasting", Bindable.of(ForecastingProperties.class)).get().getPilot().getSeries().getFirst();
+    root.getPilot().setSeries(List.of(spec));
+    var produced = new MetricConfig("produced", "Payments produced", "GAUGE", null, "description",
+        null, null, null, null, null, List.of(), Map.of(), null, "KAFKA_CLUSTER_COUNT",
+        Map.of("measurement", "PRODUCED_OFFSETS", "topic", "payments"), "TEMPLATE_BOUNDED_SCAN", null, List.of());
+    when(metrics.getAllMetrics()).thenReturn(List.of(metric, produced));
+    var refused = assertThrows(IllegalArgumentException.class, () -> setup.covariateDraft(
+        new ForecastSetupService.CovariateRequest(spec.seriesId(), "produced",
+            MetricObservation.definitionVersion(produced), "cluster", "collector", true)));
+    assertTrue(refused.getMessage().contains("topics its target declares"));
+  }
   @Test void withEligibleEnrollmentOffTheExportListsTheMetric() {
     root.getHistory().setEnrollEligible(false);
     var yaml = new YamlPropertiesFactoryBean();

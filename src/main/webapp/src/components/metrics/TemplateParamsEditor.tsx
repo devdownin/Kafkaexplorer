@@ -149,15 +149,21 @@ export const TemplateParamsEditor: React.FC<{
   return (
     <div className="h-full overflow-y-auto p-5 space-y-4">
       {templateType === 'KAFKA_CLUSTER_COUNT' ? (
-        <Field label="Measurement" description="Live Kafka metadata. No SQL or Flink table required. Topics are limited to those visible with your Kafka permissions.">
-          {f => (
-            <Select {...f} value={p('measurement') || ''} onChange={e => setParam('measurement', e.target.value)}>
-              <option value="">Choose a measurement</option>
-              <option value="TOPIC_COUNT">Number of topics</option>
-              <option value="BROKER_COUNT">Number of brokers</option>
-            </Select>
+        <>
+          <Field label="Measurement" description="Live Kafka metadata. No SQL or Flink table required. Topics are limited to those visible with your Kafka permissions.">
+            {f => (
+              <Select {...f} value={p('measurement') || ''} onChange={e => setParam('measurement', e.target.value)}>
+                <option value="">Choose a measurement</option>
+                <option value="TOPIC_COUNT">Number of topics</option>
+                <option value="BROKER_COUNT">Number of brokers</option>
+                <option value="PRODUCED_OFFSETS">Offsets produced to a topic</option>
+              </Select>
+            )}
+          </Field>
+          {p('measurement') === 'PRODUCED_OFFSETS' && (
+            <ParamTopic label="Topic" value={p('topic')} onChange={v => setParam('topic', v)} placeholder="demo.payments" />
           )}
-        </Field>
+        </>
       ) : templateType === 'CONSUMER_TIME_LAG' ? (
         <>
           <ParamTopic label="Topic" value={p('topic')} onChange={v => setParam('topic', v)} placeholder="demo.payments" />

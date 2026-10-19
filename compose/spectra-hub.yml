@@ -228,7 +228,7 @@ services:
   # as the non-root `spectra` — could never write to it. Same idiom as kafka-data-init, and it
   # costs no extra pull: it is the API's own image.
   spectra-data-init:
-    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm:${SPECTRA_IMAGE_TAG:-0.11.0}
+    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm:${SPECTRA_IMAGE_TAG:-0.12.3}
     user: root
     volumes:
       - spectra_data:/app/data
@@ -254,7 +254,7 @@ services:
     restart: unless-stopped
 
   spectra-api:
-    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm:${SPECTRA_IMAGE_TAG:-0.11.0}
+    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm:${SPECTRA_IMAGE_TAG:-0.12.3}
     ports:
       # The UI reaches the API through nginx (`/api/` → spectra-api:8080), so this publication
       # is for Swagger, curl and scripts. Host 8089 rather than 8080, which the Explorer owns, or
@@ -427,7 +427,7 @@ services:
   # work (they carry their context inline, useRag=false) — what stops working is ingesting
   # documents into Spectra.
   spectra-models:
-    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm:${SPECTRA_IMAGE_TAG:-0.11.0}
+    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm:${SPECTRA_IMAGE_TAG:-0.12.3}
     depends_on:
       spectra-data-init:
         condition: service_completed_successfully
@@ -449,7 +449,7 @@ services:
   # baked into the image's nginx.conf, which is why the API service MUST keep the name
   # `spectra-api`.
   frontend:
-    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm-frontend:${SPECTRA_IMAGE_TAG:-0.11.0}
+    image: ${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}/spectrallm-frontend:${SPECTRA_IMAGE_TAG:-0.12.3}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${SPECTRA_UI_PORT:-8088}:80"
     depends_on:

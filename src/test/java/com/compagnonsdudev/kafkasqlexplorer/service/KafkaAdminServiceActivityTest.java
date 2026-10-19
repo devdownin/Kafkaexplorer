@@ -349,4 +349,22 @@ class KafkaAdminServiceActivityTest {
         assertTrue(response.topics().isEmpty());
         org.mockito.Mockito.verify(admin, org.mockito.Mockito.never()).describeTopics(any(Collection.class));
     }
+
+    // ── produced offsets: a forecast covariate's source ───────────────────────
+
+    @Test
+    void producedOffsetsCountWhatWasProducedNotWhatRetentionLeft() {
+        partition(0, 100, START, START + 1);
+        partition(1, 0, START, START + 1, START + 2);
+        topicsExist(TOPIC);
+        assertEquals(105L, service.getProducedOffsets(TOPIC));
+    }
+
+    @Test
+    void producedOffsetsAreNullRatherThanAFloorWhenOnePartitionIsSilent() {
+        partition(0, 0, START, START + 1);
+        unreadablePartition(1);
+        topicsExist(TOPIC);
+        assertNull(service.getProducedOffsets(TOPIC));
+    }
 }

@@ -35,6 +35,8 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.SqlMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.StreamFlowMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.TopicMcpTools;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ForecastMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.tools.ShadowForecastMcpTools;
+import com.compagnonsdudev.kafkasqlexplorer.forecast.ShadowComparisonCondition;
 import com.compagnonsdudev.kafkasqlexplorer.forecast.ApprovedForecastSeriesCondition;
 import com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastPilotService;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
@@ -306,6 +308,12 @@ public class McpServerConfiguration {
         return new ForecastMcpTools(pilot, guard);
     }
 
+    @Bean
+    @Conditional(ShadowComparisonCondition.class)
+    ShadowForecastMcpTools shadowForecastMcpTools(ForecastPilotService pilot, ToolGuard guard) {
+        return new ShadowForecastMcpTools(pilot, guard);
+    }
+
     /**
      * Publishes the catalogue from the toolsets that exist and the ones that were withheld.
      *
@@ -319,6 +327,7 @@ public class McpServerConfiguration {
                                             ObjectProvider<ReadOnlyMcpTools> readTools,
                                             ObjectProvider<MutatingMcpTools> writeTools,
                                             ObjectProvider<ForecastMcpTools> forecastTools,
+                                            ObjectProvider<ShadowForecastMcpTools> shadowTools,
                                             Environment environment) {
         List<McpToolset> all = new ArrayList<>(readTools.stream().toList());
         List<McpToolset> exposed = new ArrayList<>(all);
@@ -337,6 +346,13 @@ public class McpServerConfiguration {
             McpToolset placeholder = new ForecastMcpTools(null, null);
             all.add(placeholder);
             withheld.put(placeholder, "no approved forecast series (explorer.forecasting.pilot.series is empty and runtime-approval is off)");
+        }
+        String shadowWithheld = ShadowComparisonCondition.withheldReason(environment);
+        if (shadowTools.getIfAvailable() == null && shadowWithheld != null
+                && environment.getProperty("explorer.forecasting.pilot.enabled", Boolean.class, true)) {
+            McpToolset placeholder = new ShadowForecastMcpTools(null, null);
+            all.add(placeholder);
+            withheld.put(placeholder, shadowWithheld);
         }
 
         catalog.publish(all, exposed, withheld);
