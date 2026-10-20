@@ -39,6 +39,7 @@ The assistant transforms the message preview into a query design tool:
 - **Read Mode Switch**: Toggle between **Earliest** (start from beginning) and **Latest** (new messages only) offsets directly in the UI.
 - **Dynamic SQL Hints**: Automatic injection of Flink SQL hints (`/*+ OPTIONS(...) */`) for per-query offset control without DDL changes.
 - **Auto-completion**: Intelligent suggestion of topic names and registered tables (`Ctrl+Space`).
+- **A topic is queried by its own name**: `SELECT * FROM "demo.orders.1.received"` and `SELECT * FROM demo_orders_1_received` read the same table — the topic's name as the cluster shows it, or the name the app registers it under, with dots and dashes turned into underscores (the one the Schema Browser lists). The first form also works unquoted, `FROM orders-v1` included, in a `JOIN`, in the table of a window (`TUMBLE(TABLE "demo.iot.sensors", …)`), in the target of an `INSERT`, in a metric's SQL and in the MCP `kex_sql_query` tool. Quote a dotted name when you can: a bare `demo.orders` is also read as table `orders` of database `demo`, and wherever such a database exists it keeps that meaning.
 - **Query History**: Quick access to recent and saved queries, persisted in the browser (localStorage).
 - **Resource Management**: Automatic cancellation of Flink jobs in case of timeout or error, preventing any resource leak in the minicluster.
 
@@ -46,7 +47,7 @@ The assistant transforms the message preview into a query design tool:
 
 ## 5. Visual Query Lineage
 - **Interactive Graph**: A custom SVG dependency graph visualizing the relationships between topics, tables, and views. Pointer, touch and keyboard driven (arrows pan, `+`/`−` zoom, `0` resets, Tab moves between nodes, Enter opens one).
-- **Resolved by Flink, not guessed**: Dependencies come from Flink's own parser walking the resolved operation tree, so a windowed source (`FROM TABLE(TUMBLE(TABLE orders, …))`), a quoted identifier or a multi-statement script is read correctly. When a statement cannot be resolved — a table that no longer exists — the graph falls back to a lexical scan and **says so** above the graph, because a missing edge and an absent dependency look identical.
+- **Resolved by Flink, not guessed**: Dependencies come from Flink's own parser walking the resolved operation tree, so a windowed source (`FROM TABLE(TUMBLE(TABLE orders, …))`), a quoted identifier or a multi-statement script is read correctly. A statement that names a topic rather than its table (`FROM "demo.orders"`) lands on that table's node, including on the lexical fallback. When a statement cannot be resolved — a table that no longer exists — the graph falls back to a lexical scan and **says so** above the graph, because a missing edge and an absent dependency look identical.
 - **Query Runtime**: The lineage service can inspect the in-memory jobs held during synchronous reads. Continuous `INSERT INTO` submission and the dashboard job table are unavailable; see [the INSERT scope](../INSERT-SCOPE.md).
 - **Node Inspector**: Click on any node to view detailed information, such as the table schema or topic type.
 
