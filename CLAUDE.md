@@ -115,6 +115,34 @@ docker compose -f compose/build.yml run --rm shell     # interactive toolchain
 `compose/dev.yml` is the hot-reload stack (Kafka + `spring-boot:run` + Vite).
 See `docs/notes/docker-and-stacks.md` for what is load-bearing in each of them.
 
+### Windows 11
+
+```powershell
+$env:OPENROUTER_API_KEY = 'sk-or-...'
+.\demo.cmd                       # the whole suite, as ./demo.sh
+.\demo.cmd -NoSpectra            # as ./demo.sh --no-spectra
+.\demo.cmd logs explorer         # also: ps, probe, down, reset
+```
+
+`demo.ps1` is `demo.sh`'s twin and `demo.cmd` only runs it with `-ExecutionPolicy Bypass` for that
+process, Windows 11 refusing unsigned scripts by default. Docker Desktop is the only prerequisite.
+Four rules bind:
+
+- **Edit `demo.sh` and `demo.ps1` together.** Same compose files in the same order, same defaults,
+  same precedence (environment > `.env` > `.forecast-stack/.env` > default). Nothing checks that
+  the two agree, so a file or default added on one side only is a stack that differs by platform.
+- **`demo.ps1` stays ASCII.** Windows PowerShell 5.1 reads a BOM-less script as the ANSI code
+  page, so one em dash becomes mojibake in every message that carries it.
+- **What it writes is UTF-8 without a BOM, with LF.** It generates `.forecast-stack/.env` itself
+  (no bash, no openssl for `bin/forecast-stack.sh`), and a BOM glued to the first key makes that
+  key unreadable to Compose and to `demo.sh`. `[IO.File]::WriteAllText` with
+  `UTF8Encoding($false)`, never `Set-Content -Encoding UTF8`, which writes a BOM on 5.1.
+- **An empty default is left unset**, not set to `''`: Windows has no empty environment variable,
+  and the compose files' own `:-` defaults already cover it.
+
+`.gitattributes` checks `*.ps1` and `*.cmd` out as CRLF and the `*.sh` the containers run as LF;
+the seeders' entrypoints also strip `\r`, so a CRLF checkout does not break the stack.
+
 ### Typical local dev workflow
 
 1. `docker compose up -d kafka` — the broker alone (add `schema-registry` when working on Avro).

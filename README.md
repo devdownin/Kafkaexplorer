@@ -125,6 +125,21 @@ OPENROUTER_API_KEY=sk-or-... ./demo.sh --no-spectra    # the same without Spectr
 
 Every variable has a default; an exported one or a root `.env` overrides it. The secrets (PostgreSQL, TimesFM, MCP bearer) are generated once into `.forecast-stack/.env`. Without a key the stack still starts: Process Mining answers its counted half and the agent starts `DEGRADED`. The first run builds the Explorer and downloads the TimesFM checkpoint — `DEMO_PUBLISHED_IMAGE=true` pulls the release instead. Also `ps`, `logs [service]`, `probe` (both MCP servers) and `reset`.
 
+#### 🪟 On Windows 11
+
+`demo.cmd` runs the PowerShell twin, `demo.ps1`, with Docker Desktop (WSL 2 backend) as the only prerequisite — no Git Bash, no openssl, no curl. From PowerShell or a `cmd` prompt at the repository root:
+
+```powershell
+$env:OPENROUTER_API_KEY = 'sk-or-...'
+.\demo.cmd                       # build, start, wait, print the endpoints
+.\demo.cmd -NoSpectra            # without SpectraLLM
+.\demo.cmd logs explorer         # also: ps, probe, down, reset
+```
+
+- `demo.cmd` exists only to pass `-ExecutionPolicy Bypass` to that one PowerShell process, since Windows 11 refuses unsigned scripts by default; nothing on the machine is reconfigured.
+- Same services, ports, defaults and precedence as `demo.sh`; both share `.forecast-stack/.env`, so either can start a stack the other prepared.
+- Docker Desktop gives WSL 2 half the machine's memory by default, and TimesFM alone is capped at 8 GB: on a 16 GB PC, raise `memory=` under `[wsl2]` in `%UserProfile%\.wslconfig`, or use `-NoSpectra`.
+
 ## 🧭 Take the tour
 
 | You want to… | Head to… |
