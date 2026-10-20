@@ -121,6 +121,27 @@ class DemoQueryExamplesTest {
         }));
     }
 
+    /**
+     * The screenshot fixtures name tables, not quoted topics, and that is deliberate: the editor
+     * lists them under that name in its schema browser and the documentation's captions repeat it.
+     * What can go wrong is a table no seeder creates — the picture would then show a query that
+     * answers "Object not found" on the stack it documents — so each one is held to the seeders.
+     */
+    @Test
+    void theScreenshotFixturesReadTablesOfSeededTopics() throws Exception {
+        Pattern from = Pattern.compile("(?im)^\\s*(?:FROM|JOIN)\\s+(demo_\\w+)\\s*$");
+        Set<String> tables = new LinkedHashSet<>();
+        for (String file : List.of("fixtures.mjs", "capture.mjs", "layout-probe.mjs")) {
+            Matcher match = from.matcher(Files.readString(ROOT.resolve("docs/screenshots").resolve(file)));
+            while (match.find()) tables.add(match.group(1));
+        }
+        assertTrue(tables.contains("demo_orders_5_shipped"), "the fixtures were not read: " + tables);
+        for (String table : tables) {
+            assertTrue(topics.stream().anyMatch(t -> DdlGeneratorService.toTableName(t).equals(table)),
+                "`" + table + "` is not the table of a topic any demo seeder creates");
+        }
+    }
+
     private static Set<String> seededTopics() throws Exception {
         Set<String> seeded = new LinkedHashSet<>();
         String demo = Files.readString(ROOT.resolve("setup-demo.sh"));
