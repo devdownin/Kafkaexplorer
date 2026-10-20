@@ -8,7 +8,8 @@
 # Explorer and the agent on OpenRouter. See compose/demo.yml for how the files are layered.
 #
 #   OPENROUTER_API_KEY=sk-or-... ./demo.sh          # build, start, wait, print the endpoints
-#   ./demo.sh down | reset | ps | logs [service] | probe
+#   ./demo.sh --no-spectra                           # the same without SpectraLLM (DEMO_SPECTRA=false)
+#   ./demo.sh [--no-spectra] down | reset | ps | logs [service] | probe
 #
 # Precedence: exported variable > .env at the root > .forecast-stack/.env > default below.
 # Requires Docker Compose v2, curl and openssl (credentials are generated on the first run).
@@ -18,9 +19,15 @@ repo_dir=$(cd "$(dirname "$0")" && pwd)
 cd "$repo_dir"
 
 usage() {
-  echo 'Usage: ./demo.sh [up|down|reset|ps|logs [service]|probe]' >&2
+  echo 'Usage: ./demo.sh [--no-spectra] [up|down|reset|ps|logs [service]|probe]' >&2
   exit 2
 }
+
+# Before the env files, so the flag outranks a DEMO_SPECTRA they set.
+if [[ ${1:-} == --no-spectra ]]; then
+  export DEMO_SPECTRA=false
+  shift
+fi
 
 # First value wins: a variable already set (exported by the caller, or by an earlier file) is kept.
 load_env_file() {
@@ -91,12 +98,21 @@ export DEMO_PUBLISHED_IMAGE=${DEMO_PUBLISHED_IMAGE:-false}
 export EXPLORER_IMAGE_NAMESPACE=${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}
 export EXPLORER_IMAGE_TAG=${EXPLORER_IMAGE_TAG:-2.3.2}
 
+# SpectraLLM on by default; false drops its seven services and their ~4.8 GB first download.
+export DEMO_SPECTRA=${DEMO_SPECTRA:-true}
+[[ $DEMO_SPECTRA == true || $DEMO_SPECTRA == false ]] || { echo "DEMO_SPECTRA must be true or false, not '$DEMO_SPECTRA'." >&2; exit 2; }
+
 export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-kafka-explorer-demo}
 
 files=(-f docker-compose.yml -f compose/schema-registry.yml -f compose/mcp.yml -f compose/forecasts.yml)
 [[ $DEMO_PUBLISHED_IMAGE == true ]] && files+=(-f compose/image.yml)
-files+=(-f compose/demo.yml -f compose/spectra-hub.mcp.yml -f compose/spectra-hub.ingest.yml
-  -f compose/ecosystem.yml -f compose/demo-llm.yml)
+if [[ $DEMO_SPECTRA == true ]]; then
+  files+=(-f compose/demo.yml -f compose/spectra-hub.mcp.yml -f compose/spectra-hub.ingest.yml
+    -f compose/ecosystem.yml)
+else
+  files+=(-f compose/demo-no-spectra.yml)
+fi
+files+=(-f compose/demo-llm.yml)
 
 compose() { docker compose "${files[@]}" "$@"; }
 
@@ -120,27 +136,32 @@ up() {
     echo 'WARN: OPENROUTER_API_KEY is empty — Process Mining answers without its LLM half and the' >&2
     echo '      agent starts DEGRADED. Export it (or put it in .env) and rerun ./demo.sh.' >&2
   fi
-  echo 'First run: Maven build of the Explorer, the pinned TimesFM checkpoint and ~4.8 GB of'
-  echo "SpectraLLM weights. TimesFM is capped at ${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT}; the 7B chat"
-  echo 'model wants ~16 GB of RAM. Later runs start in seconds.'
+  echo "First run: Maven build of the Explorer and the pinned TimesFM checkpoint (${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT})."
+  [[ $DEMO_SPECTRA != true ]] || echo 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.'
+  echo 'Later runs start in seconds.'
   [[ $DEMO_PUBLISHED_IMAGE != true ]] || compose pull --quiet --ignore-buildable
-  compose up -d --build
+  # --remove-orphans: switching to --no-spectra stops the SpectraLLM containers a previous run left.
+  compose up -d --build --remove-orphans
   wait_for_http 'Kafka Explorer' "http://127.0.0.1:${EXPLORER_PORT}/actuator/health" 900
   wait_for_http 'Kex-anHarness' "http://127.0.0.1:${KEX_AGENT_PORT}/api/agent/mcp/servers" 300 \
     -H "Authorization: Bearer ${KEX_AGENT_API_KEY}" || true
   # spectra-api waits for the embedding model and the demo seed; its chat answers once llm-chat
   # has its weights, which `./demo.sh logs spectra-models llm-chat` follows.
-  wait_for_http 'SpectraLLM API' "http://127.0.0.1:${SPECTRA_API_PORT}/actuator/health/readiness" 600 || true
+  if [[ $DEMO_SPECTRA == true ]]; then
+    wait_for_http 'SpectraLLM API' "http://127.0.0.1:${SPECTRA_API_PORT}/actuator/health/readiness" 600 || true
+  fi
+  local spectra='SpectraLLM ............ off (--no-spectra); the agent reports its MCP connection unreachable'
+  [[ $DEMO_SPECTRA != true ]] || spectra="SpectraLLM UI ......... http://localhost:${SPECTRA_UI_PORT}     (401 while SPECTRA_API_KEY is set)
+SpectraLLM API ........ http://localhost:${SPECTRA_API_PORT}/swagger-ui   (/mcp, X-API-Key ${SPECTRA_API_KEY}) · ${LLM_CHAT_MODEL_NAME} local"
   cat <<EOF
 
 Kafka SQL Explorer .... http://localhost:${EXPLORER_PORT}
   MCP ................. http://localhost:${EXPLORER_PORT}/mcp   (Bearer in .forecast-stack/.env or EXPLORER_MCP_AUTH_TOKEN)
 Kex-anHarness ......... http://localhost:${KEX_AGENT_PORT}     (Bearer ${KEX_AGENT_API_KEY})
-SpectraLLM UI ......... http://localhost:${SPECTRA_UI_PORT}     (401 while SPECTRA_API_KEY is set)
-SpectraLLM API ........ http://localhost:${SPECTRA_API_PORT}/swagger-ui   (/mcp, X-API-Key ${SPECTRA_API_KEY})
+${spectra}
 Schema Registry ....... http://localhost:${SCHEMA_REGISTRY_PORT}
 Kafka ................. localhost:${KAFKA_PORT}
-LLM ................... OpenRouter ${OPENROUTER_MODEL} (Explorer, agent) · ${LLM_CHAT_MODEL_NAME} local (SpectraLLM)
+LLM ................... OpenRouter ${OPENROUTER_MODEL} (Explorer, agent)
 
 Demo topics (JSON + Avro) are seeded in the background: ./demo.sh logs demo-setup
 Forecast: Metrics → "Prepare a forecast" on a metric card.
@@ -149,11 +170,14 @@ EOF
 
 case ${1:-up} in
   up) [[ $# -le 1 ]] || usage; up ;;
-  down) compose down ;;
+  down) compose down --remove-orphans ;;
   # Volumes included: topics, forecast history, agent state, downloaded models. Credentials stay.
-  reset) compose down -v ;;
+  reset) compose down -v --remove-orphans ;;
   ps) compose ps ;;
   logs) shift; compose logs -f --tail 200 "$@" ;;
-  probe) compose --profile probe run --rm mcp-probe && compose --profile probe run --rm spectra-mcp-probe ;;
+  probe)
+    compose --profile probe run --rm mcp-probe
+    [[ $DEMO_SPECTRA != true ]] || compose --profile probe run --rm spectra-mcp-probe
+    ;;
   *) usage ;;
 esac

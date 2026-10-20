@@ -222,6 +222,12 @@ file wires the pair. There were two, and the deletion of the other is the point:
   `OPENROUTER_API_KEY` and would send SpectraLLM's key to OpenRouter. Schema Registry moves to
   8085, 8081 being the agent's. The script reuses `bin/forecast-stack.sh --prepare-only` for the
   generated credentials, so the MCP bearer the agent presents is the one the Explorer checks.
+  `./demo.sh --no-spectra` (or `DEMO_SPECTRA=false`) swaps the four SpectraLLM files for
+  `compose/demo-no-spectra.yml`, which extends the agent from `ecosystem.yml` and replaces only its
+  `depends_on` with `!override` — `extends` carries the dependency on `spectra-api`, and Compose
+  refuses a project that lacks it. The agent then reports the SpectraLLM connection unreachable,
+  as `ecosystem-stack` asserts. `up` and `down` pass `--remove-orphans`, so switching modes on
+  the one project does not leave SpectraLLM's containers running.
 
   `compose/spectra-hub.ingest.yml` is the one that makes the pair more than a shared
   model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
