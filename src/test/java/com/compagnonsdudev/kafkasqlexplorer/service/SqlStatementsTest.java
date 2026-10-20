@@ -188,4 +188,26 @@ class SqlStatementsTest {
         assertFalse(scan.contains("FROM"), scan);
         assertEquals(null, SqlStatements.outsideLiterals(null));
     }
+
+    @Test
+    void aQuotedIdentifierIsReplacedAsAWholeToken() {
+        assertEquals("SELECT `demo_orders`.id FROM `demo_orders` JOIN `demo.orders_v2` v ON true",
+            SqlStatements.replaceQuotedIdentifier(
+                "SELECT `demo.orders`.id FROM `demo.orders` JOIN `demo.orders_v2` v ON true",
+                "demo.orders", "demo_orders"));
+    }
+
+    @Test
+    void aLiteralOrABareNameIsNotReplaced() {
+        String sql = "SELECT * FROM demo.orders WHERE note = '`demo.orders`'";
+
+        assertEquals(sql, SqlStatements.replaceQuotedIdentifier(sql, "demo.orders", "demo_orders"));
+    }
+
+    @Test
+    void anUnterminatedIdentifierIsLeftAsWritten() {
+        String sql = "SELECT * FROM `demo.orders";
+
+        assertEquals(sql, SqlStatements.replaceQuotedIdentifier(sql, "demo.orders", "demo_orders"));
+    }
 }
