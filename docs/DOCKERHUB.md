@@ -121,6 +121,20 @@ variable is documented in
 [`.env.example`](https://github.com/devdownin/Kafkaexplorer/blob/main/.env.example),
 and the compose file explains each choice it makes.
 
+### Everything at once: `demo.sh`
+
+[`demo.sh`](https://github.com/devdownin/Kafkaexplorer/blob/main/demo.sh) starts the whole
+suite from the same checkout — Avro topics and Schema Registry, the MCP server, TimesFM
+forecasting, SpectraLLM and the Kex-anHarness agent, the Explorer and the agent on OpenRouter:
+
+```bash
+OPENROUTER_API_KEY=sk-or-... ./demo.sh                 # Explorer 8080, agent 8081, SpectraLLM 8088/8089
+OPENROUTER_API_KEY=sk-or-... ./demo.sh --no-spectra    # without SpectraLLM and its ~4.8 GB of weights
+```
+
+Every variable has a default and the secrets are generated on the first run. The Explorer is
+built from the checkout; `DEMO_PUBLISHED_IMAGE=true` pulls this image instead.
+
 ## ✨ What you get
 
 - 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.

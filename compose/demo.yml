@@ -1,0 +1,55 @@
+# Overlay: the complete demo — the Explorer with every module on, SpectraLLM, and the
+# Kex-anHarness agent, the Explorer and the agent on a hosted model through OpenRouter.
+# `./demo.sh` is the way to run it; it layers, in this order:
+#
+#     docker-compose.yml  compose/schema-registry.yml  compose/mcp.yml  compose/forecasts.yml
+#     compose/demo.yml  compose/spectra-hub.mcp.yml  compose/spectra-hub.ingest.yml
+#     compose/ecosystem.yml  compose/demo-llm.yml
+#
+# and prepares the forecast credentials those files need (bin/forecast-stack.sh --prepare-only).
+#
+# Ports — the shared plan, plus the one this stack adds:
+#   Kafka SQL Explorer ...... http://localhost:8080   (UI, REST API, /mcp)
+#   Kex-anHarness ........... http://localhost:8081   (Control Center, /api/agent)
+#   SpectraLLM UI ........... http://localhost:8088
+#   SpectraLLM API .......... http://localhost:8089   (/mcp, Swagger)
+#   Schema Registry ......... http://localhost:8085   (8081 is the agent's — demo.sh moves it)
+#   Kafka (from the host) ... localhost:9092
+#
+# WHY SPECTRALLM IS EXTENDED SERVICE BY SERVICE INSTEAD OF LAYERING compose/spectra-hub.yml.
+# Compose resolves every relative path against ONE project directory, the first file's. That
+# file puts it in compose/ (`../setup-demo.sh`, `../scripts/spectra-hub/…`) while forecasts.yml
+# resolves `compose/timesfm.yml` and `./services/timesfm` from the root, so no
+# `--project-directory` satisfies both. `extends` is the one construct that rebases the extended
+# service's paths onto its own file, so the SpectraLLM half is taken from spectra-hub.yml as it
+# is — no copy to drift — under a project rooted at the repository.
+#
+# SpectraLLM keeps its local llama.cpp model: it is how that project answers, and the first boot
+# downloads ~4.8 GB of weights (LLM_CHAT_MODEL_* in .env.example for the 3B). Nothing else waits
+# on that download except spectra-api, which waits for the embedding model to index the topics.
+services:
+
+  spectra-data-init:
+    extends: { file: compose/spectra-hub.yml, service: spectra-data-init }
+
+  chromadb:
+    extends: { file: compose/spectra-hub.yml, service: chromadb }
+
+  spectra-api:
+    extends: { file: compose/spectra-hub.yml, service: spectra-api }
+
+  llm-chat:
+    extends: { file: compose/spectra-hub.yml, service: llm-chat }
+
+  llm-embed:
+    extends: { file: compose/spectra-hub.yml, service: llm-embed }
+
+  spectra-models:
+    extends: { file: compose/spectra-hub.yml, service: spectra-models }
+
+  frontend:
+    extends: { file: compose/spectra-hub.yml, service: frontend }
+
+volumes:
+  spectra_data:
+  spectra_chroma:

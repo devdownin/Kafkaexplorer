@@ -208,6 +208,27 @@ file wires the pair. There were two, and the deletion of the other is the point:
   without SpectraLLM's half, which `spectra-hub-stack` already covers), and `check-image-pins.py`
   holds the SpectraLLM and agent pins to the same rules as the Explorer's.
 
+  `./demo.sh` is the one-command suite: `docker-compose.yml` with `schema-registry.yml`,
+  `mcp.yml`, `forecasts.yml`, `compose/demo.yml`, `spectra-hub.mcp.yml`, `spectra-hub.ingest.yml`,
+  `ecosystem.yml` and `compose/demo-llm.yml` last — Avro topics, MCP read-only, TimesFM with its
+  PostgreSQL history, SpectraLLM indexing the demo topics, and the Kex-anHarness agent, the
+  Explorer and the agent on OpenRouter. `spectra-hub.yml` cannot be layered beside
+  `forecasts.yml`: Compose resolves every relative path against the first file's directory, and
+  the first puts it in `compose/` (`../setup-demo.sh`) where the second resolves
+  `compose/timesfm.yml` and `./services/timesfm` from the root — no `--project-directory`
+  satisfies both. `demo.yml` therefore takes SpectraLLM's services from it by `extends`, the one
+  construct that rebases a service's paths onto its own file, so nothing is copied. `demo-llm.yml`
+  comes last because `spectra-hub.mcp.yml` hands the Explorer `CLAUDE_API_KEY`, which outranks
+  `OPENROUTER_API_KEY` and would send SpectraLLM's key to OpenRouter. Schema Registry moves to
+  8085, 8081 being the agent's. The script reuses `bin/forecast-stack.sh --prepare-only` for the
+  generated credentials, so the MCP bearer the agent presents is the one the Explorer checks.
+  `./demo.sh --no-spectra` (or `DEMO_SPECTRA=false`) swaps the four SpectraLLM files for
+  `compose/demo-no-spectra.yml`, which extends the agent from `ecosystem.yml` and replaces only its
+  `depends_on` with `!override` — `extends` carries the dependency on `spectra-api`, and Compose
+  refuses a project that lacks it. The agent then reports the SpectraLLM connection unreachable,
+  as `ecosystem-stack` asserts. `up` and `down` pass `--remove-orphans`, so switching modes on
+  the one project does not leave SpectraLLM's containers running.
+
   `compose/spectra-hub.ingest.yml` is the one that makes the pair more than a shared
   model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
   answers questions with cited sources and the Explorer's audits can read it (`EXPLORER_USE_RAG`,

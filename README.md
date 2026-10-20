@@ -105,6 +105,26 @@ The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPO
 
 </details>
 
+### 🎬 The whole suite in one command: `demo.sh`
+
+To try everything at once — Avro topics and Schema Registry, the MCP server, TimesFM forecasting, SpectraLLM and the Kex-anHarness agent, the Explorer and the agent on [OpenRouter](https://openrouter.ai/models):
+
+```bash
+OPENROUTER_API_KEY=sk-or-... ./demo.sh                 # build, start, wait, print the endpoints
+OPENROUTER_API_KEY=sk-or-... ./demo.sh --no-spectra    # the same without SpectraLLM and its ~4.8 GB of weights
+./demo.sh down                                         # stop (reset also drops the volumes)
+```
+
+| Service | Address |
+|---|---|
+| Kafka SQL Explorer (UI, API, `/mcp`) | http://localhost:8080 |
+| Kex-anHarness (Control Center) | http://localhost:8081 |
+| SpectraLLM UI / API | http://localhost:8088 / http://localhost:8089 |
+| Schema Registry | http://localhost:8085 |
+| Kafka | `localhost:9092` |
+
+Every variable has a default; an exported one or a root `.env` overrides it. The secrets (PostgreSQL, TimesFM, MCP bearer) are generated once into `.forecast-stack/.env`. Without a key the stack still starts: Process Mining answers its counted half and the agent starts `DEGRADED`. The first run builds the Explorer and downloads the TimesFM checkpoint — `DEMO_PUBLISHED_IMAGE=true` pulls the release instead. Also `ps`, `logs [service]`, `probe` (both MCP servers) and `reset`.
+
 ## 🧭 Take the tour
 
 | You want to… | Head to… |

@@ -1,0 +1,17 @@
+# Overlay: the demo without SpectraLLM — `./demo.sh --no-spectra` layers it in place of
+# compose/demo.yml, spectra-hub.mcp.yml, spectra-hub.ingest.yml and ecosystem.yml.
+#
+# The agent is taken from compose/ecosystem.yml rather than redefined, so its image pin and its
+# environment stay in one place. Only `depends_on` is replaced: `extends` carries that file's
+# dependency on `spectra-api`, which Compose refuses in a project that does not define it. The
+# SpectraLLM MCP connection stays declared and the agent reports it unreachable — exactly what
+# CI's `ecosystem-stack` job asserts of this same shape.
+services:
+  agent:
+    extends: { file: compose/ecosystem.yml, service: agent }
+    depends_on: !override
+      explorer:
+        condition: service_started
+
+volumes:
+  agent_state:
