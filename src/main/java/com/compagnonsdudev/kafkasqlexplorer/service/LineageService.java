@@ -385,11 +385,11 @@ public class LineageService {
     }
 
     /**
-     * Accepts a token only when it looks like a real SQL identifier:
+     * Accepts a name only when it looks like a real SQL identifier:
      * no parentheses, not a reserved keyword, starts with letter or underscore.
      */
-    private static void addIfValidIdentifier(Set<String> set, String token) {
-        String clean = unquote(token);
+    private static void addIfValidIdentifier(Set<String> set, String identifier) {
+        String clean = unquote(identifier);
         if (clean.isEmpty() || clean.contains("(") || clean.contains(")")) return;
         if (SQL_KEYWORDS.contains(clean.toUpperCase(Locale.ROOT))) return;
         // A topic's own name carries hyphens, quoted or not; this filter used to drop it.
@@ -397,8 +397,8 @@ public class LineageService {
         set.add(clean);
     }
 
-    private static String unquote(String token) {
-        return token.replace("`", "").replace("\"", "").trim();
+    private static String unquote(String identifier) {
+        return identifier.replace("`", "").replace("\"", "").trim();
     }
 
     private String getDdl(String name, String type) {
