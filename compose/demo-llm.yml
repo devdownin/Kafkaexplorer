@@ -1,0 +1,19 @@
+# Overlay: OpenRouter for the Explorer, layered LAST by ./demo.sh (see compose/demo.yml).
+#
+# Last because compose/spectra-hub.mcp.yml hands the Explorer SPECTRA_API_KEY as CLAUDE_API_KEY,
+# and CLAUDE_API_KEY outranks OPENROUTER_API_KEY: left in place, every Process Mining call would
+# reach OpenRouter with SpectraLLM's key and come back 401. The agent's side needs no override —
+# compose/ecosystem.yml reads KEX_AGENT_LLM_PROVIDER, which demo.sh sets to `openai` (OpenRouter).
+#
+# Without a key, Process Mining still answers its counted half (graph, variants, latencies) with
+# `error` naming the missing key, and the agent starts DEGRADED.
+services:
+  explorer:
+    environment:
+      - CLAUDE_PROVIDER=OPENROUTER
+      - CLAUDE_BASE_URL=https://openrouter.ai/api/v1
+      - CLAUDE_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - CLAUDE_MODEL=${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+      # forecasts.yml leaves the bearer empty (503); this is the one the agent presents.
+      - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}

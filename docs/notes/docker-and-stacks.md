@@ -209,17 +209,19 @@ file wires the pair. There were two, and the deletion of the other is the point:
   holds the SpectraLLM and agent pins to the same rules as the Explorer's.
 
   `./demo.sh` is the one-command suite: `docker-compose.yml` with `schema-registry.yml`,
-  `mcp.yml`, `forecasts.yml` and `compose/demo.yml` layered last — Avro topics, MCP read-only,
-  TimesFM with its PostgreSQL history, and the Kex-anHarness agent, both LLM clients on
-  OpenRouter. It is not built on `spectra-hub.yml`, and cannot be: that file puts the project
-  directory in `compose/` (`../setup-demo.sh`), while `forecasts.yml` resolves
-  `compose/timesfm.yml` and `./services/timesfm` from the root, so no `--project-directory`
-  satisfies both. The agent is therefore declared in `demo.yml` rather than extended from
-  `ecosystem.yml`, whose `depends_on: spectra-api` `extends` would carry into a project without
-  it; the SpectraLLM connection stays declared and reported unreachable, as `ecosystem-stack`
-  asserts. Schema Registry moves to 8085, 8081 being the agent's. The script reuses
-  `bin/forecast-stack.sh --prepare-only` for the generated credentials, so the MCP bearer the
-  agent presents is the one the Explorer checks.
+  `mcp.yml`, `forecasts.yml`, `compose/demo.yml`, `spectra-hub.mcp.yml`, `spectra-hub.ingest.yml`,
+  `ecosystem.yml` and `compose/demo-llm.yml` last — Avro topics, MCP read-only, TimesFM with its
+  PostgreSQL history, SpectraLLM indexing the demo topics, and the Kex-anHarness agent, the
+  Explorer and the agent on OpenRouter. `spectra-hub.yml` cannot be layered beside
+  `forecasts.yml`: Compose resolves every relative path against the first file's directory, and
+  the first puts it in `compose/` (`../setup-demo.sh`) where the second resolves
+  `compose/timesfm.yml` and `./services/timesfm` from the root — no `--project-directory`
+  satisfies both. `demo.yml` therefore takes SpectraLLM's services from it by `extends`, the one
+  construct that rebases a service's paths onto its own file, so nothing is copied. `demo-llm.yml`
+  comes last because `spectra-hub.mcp.yml` hands the Explorer `CLAUDE_API_KEY`, which outranks
+  `OPENROUTER_API_KEY` and would send SpectraLLM's key to OpenRouter. Schema Registry moves to
+  8085, 8081 being the agent's. The script reuses `bin/forecast-stack.sh --prepare-only` for the
+  generated credentials, so the MCP bearer the agent presents is the one the Explorer checks.
 
   `compose/spectra-hub.ingest.yml` is the one that makes the pair more than a shared
   model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus

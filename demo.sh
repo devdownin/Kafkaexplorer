@@ -3,8 +3,9 @@
 # Copyright (C) 2026 Kafka Explorer Contributors
 #
 # The whole suite in one command: Kafka (KRaft) + demo topics, Schema Registry + Avro topics,
-# Kafka Explorer (MCP on, read-only), TimesFM forecasting + PostgreSQL history, and the
-# Kex-anHarness agent — both LLM clients on OpenRouter.
+# Kafka Explorer (MCP on, read-only), TimesFM forecasting + PostgreSQL history, SpectraLLM
+# (local llama.cpp model, MCP on, indexing the demo topics) and the Kex-anHarness agent — the
+# Explorer and the agent on OpenRouter. See compose/demo.yml for how the files are layered.
 #
 #   OPENROUTER_API_KEY=sk-or-... ./demo.sh          # build, start, wait, print the endpoints
 #   ./demo.sh down | reset | ps | logs [service] | probe
@@ -62,7 +63,18 @@ export KEX_AGENT_IMAGE_TAG=${KEX_AGENT_IMAGE_TAG:-0.10.0}
 export KEX_AGENT_API_KEY=${KEX_AGENT_API_KEY:-dev-only-agent-key}
 export EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
 export EXPLORER_MCP_READONLY=${EXPLORER_MCP_READONLY:-true}
+
+# SpectraLLM. Its MCP server refuses to run without SPECTRA_API_KEY, and with one set its own UI
+# answers 401 (it sends no key); the agent and the API are unaffected.
 export SPECTRA_API_KEY=${SPECTRA_API_KEY:-dev-only-spectra-key}
+export SPECTRA_IMAGE_NAMESPACE=${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}
+export SPECTRA_IMAGE_TAG=${SPECTRA_IMAGE_TAG:-0.12.3}
+export SPECTRA_UI_PORT=${SPECTRA_UI_PORT:-8088}
+export SPECTRA_API_PORT=${SPECTRA_API_PORT:-8089}
+# The three must agree (.env.example); a laptop wants the 3B named there.
+export LLM_CHAT_MODEL_NAME=${LLM_CHAT_MODEL_NAME:-qwen2.5-7b-instruct}
+export LLM_CHAT_MODEL_FILE=${LLM_CHAT_MODEL_FILE:-Qwen2.5-7B-Instruct-Q4_K_M.gguf}
+export SPECTRA_AUTO_INSTALL_MODELS=${SPECTRA_AUTO_INSTALL_MODELS:-true}
 
 # Forecasting.
 export FORECAST_ENVIRONMENTS=${FORECAST_ENVIRONMENTS:-local}
@@ -83,7 +95,8 @@ export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-kafka-explorer-demo}
 
 files=(-f docker-compose.yml -f compose/schema-registry.yml -f compose/mcp.yml -f compose/forecasts.yml)
 [[ $DEMO_PUBLISHED_IMAGE == true ]] && files+=(-f compose/image.yml)
-files+=(-f compose/demo.yml)
+files+=(-f compose/demo.yml -f compose/spectra-hub.mcp.yml -f compose/spectra-hub.ingest.yml
+  -f compose/ecosystem.yml -f compose/demo-llm.yml)
 
 compose() { docker compose "${files[@]}" "$@"; }
 
@@ -107,21 +120,27 @@ up() {
     echo 'WARN: OPENROUTER_API_KEY is empty — Process Mining answers without its LLM half and the' >&2
     echo '      agent starts DEGRADED. Export it (or put it in .env) and rerun ./demo.sh.' >&2
   fi
-  echo 'First run: Maven build of the Explorer and download of the pinned TimesFM checkpoint;'
-  echo "TimesFM is capped at ${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT}. Later runs start in seconds."
+  echo 'First run: Maven build of the Explorer, the pinned TimesFM checkpoint and ~4.8 GB of'
+  echo "SpectraLLM weights. TimesFM is capped at ${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT}; the 7B chat"
+  echo 'model wants ~16 GB of RAM. Later runs start in seconds.'
   [[ $DEMO_PUBLISHED_IMAGE != true ]] || compose pull --quiet --ignore-buildable
   compose up -d --build
   wait_for_http 'Kafka Explorer' "http://127.0.0.1:${EXPLORER_PORT}/actuator/health" 900
   wait_for_http 'Kex-anHarness' "http://127.0.0.1:${KEX_AGENT_PORT}/api/agent/mcp/servers" 300 \
     -H "Authorization: Bearer ${KEX_AGENT_API_KEY}" || true
+  # spectra-api waits for the embedding model and the demo seed; its chat answers once llm-chat
+  # has its weights, which `./demo.sh logs spectra-models llm-chat` follows.
+  wait_for_http 'SpectraLLM API' "http://127.0.0.1:${SPECTRA_API_PORT}/actuator/health/readiness" 600 || true
   cat <<EOF
 
 Kafka SQL Explorer .... http://localhost:${EXPLORER_PORT}
   MCP ................. http://localhost:${EXPLORER_PORT}/mcp   (Bearer in .forecast-stack/.env or EXPLORER_MCP_AUTH_TOKEN)
 Kex-anHarness ......... http://localhost:${KEX_AGENT_PORT}     (Bearer ${KEX_AGENT_API_KEY})
+SpectraLLM UI ......... http://localhost:${SPECTRA_UI_PORT}     (401 while SPECTRA_API_KEY is set)
+SpectraLLM API ........ http://localhost:${SPECTRA_API_PORT}/swagger-ui   (/mcp, X-API-Key ${SPECTRA_API_KEY})
 Schema Registry ....... http://localhost:${SCHEMA_REGISTRY_PORT}
 Kafka ................. localhost:${KAFKA_PORT}
-LLM ................... OpenRouter, ${OPENROUTER_MODEL}
+LLM ................... OpenRouter ${OPENROUTER_MODEL} (Explorer, agent) · ${LLM_CHAT_MODEL_NAME} local (SpectraLLM)
 
 Demo topics (JSON + Avro) are seeded in the background: ./demo.sh logs demo-setup
 Forecast: Metrics → "Prepare a forecast" on a metric card.
@@ -131,10 +150,10 @@ EOF
 case ${1:-up} in
   up) [[ $# -le 1 ]] || usage; up ;;
   down) compose down ;;
-  # Volumes included: topics, forecast history, agent state, downloaded model. Credentials stay.
+  # Volumes included: topics, forecast history, agent state, downloaded models. Credentials stay.
   reset) compose down -v ;;
   ps) compose ps ;;
   logs) shift; compose logs -f --tail 200 "$@" ;;
-  probe) compose --profile probe run --rm mcp-probe ;;
+  probe) compose --profile probe run --rm mcp-probe && compose --profile probe run --rm spectra-mcp-probe ;;
   *) usage ;;
 esac
