@@ -563,33 +563,61 @@ public class FlinkSqlService {
     }
 
     /**
-     * The statement with each quoted topic name replaced by the table registered for it:
-     * {@code `demo.orders`} becomes {@code `demo_orders`}.
+     * The statement with each topic name replaced by the name of the table auto-registration gives
+     * that topic: {@code demo.orders}, {@code `demo.orders`} and {@code orders-v1} become
+     * {@code demo_orders} and {@code orders_v1}.
      *
-     * <p>Auto-registration matches a source to its topic through {@link DdlGeneratorService#toTableName}
-     * and registers it under that sanitized name, so {@code FROM "demo.orders"} — the topic's real
-     * name, quoted because of its dot, and turned into backticks by {@link #normalizeIdentifierQuotes}
-     * — registered {@code demo_orders} and then sent the planner {@code `demo.orders`}, which it
-     * answered with "Object not found": a user error, so no fallback either.
+     * <p>A topic's table is registered under {@link DdlGeneratorService#toTableName}, but the
+     * statement went to the planner as written. Quoted, {@code `demo.orders`} named a table that
+     * does not exist; bare, {@code demo.orders} is a database and a table, and {@code orders-v1}
+     * a subtraction that fails to parse — refused by the validator before auto-registration ever
+     * ran. All three are the topic's real name, and the only one its user can read in the cluster.
      *
-     * <p>Only a delimited name is rewritten: unquoted, {@code demo.orders} is a database and a table
-     * to the planner, a different statement. And never when the quoted name is itself a table — a
-     * hand-written {@code CREATE TABLE `demo.orders`} is what that statement means.
+     * <p>Done before validation, from the topic list rather than from the catalogue: the parse
+     * error has to be prevented, not reported. Three guards keep a name that means something else
+     * as written: no topic of that name, a table actually carrying the name ({@code CREATE TABLE
+     * `demo.orders`}), and, bare only, a dotted path whose first segment is a catalogue or a
+     * database. Literals are never touched. A broker that cannot be listed leaves the statement
+     * as written — auto-registration reports that failure in its own words.
      */
-    private String withRegisteredTableNames(String sql) {
+    public String withTopicTableNames(String sql) {
+        if (sql == null) return null;
         List<String> sources = new ArrayList<>(extractSourceTables(sql));
         String described = describedObject(sql);
         if (described != null) sources.add(described);
-        Set<String> tables = null;
+        sources.removeIf(source -> source.equals(DdlGeneratorService.toTableName(source)));
+        if (sources.isEmpty()) return sql;
+
+        Set<String> topicTables;
+        Set<String> tables;
+        try {
+            topicTables = kafkaAdminService.listTopics().stream()
+                .map(DdlGeneratorService::toTableName)
+                .collect(Collectors.toSet());
+            tables = Set.copyOf(listTables());
+        } catch (Exception e) {
+            return sql;
+        }
         String rewritten = sql;
         for (String source : sources) {
             String table = DdlGeneratorService.toTableName(source);
-            if (table.equals(source)) continue;
-            if (tables == null) tables = Set.copyOf(listTables());
-            if (tables.contains(source) || !tables.contains(table)) continue;
+            if (!topicTables.contains(table) || tables.contains(source)) continue;
             rewritten = SqlStatements.replaceQuotedIdentifier(rewritten, source, table);
+            if (!startsWithCatalogOrDatabase(source)) {
+                rewritten = SqlStatements.replaceBareIdentifier(rewritten, source, table);
+            }
         }
         return rewritten;
+    }
+
+    /** {@code sales.orders} is that table in database {@code sales} when such a database exists. */
+    private boolean startsWithCatalogOrDatabase(String name) {
+        int dot = name.indexOf('.');
+        if (dot <= 0) return false;
+        String first = name.substring(0, dot);
+        return runtimeCoordinator.runRead("list-catalogs-and-databases", () ->
+            Arrays.asList(tableEnv.listCatalogs()).contains(first)
+                || Arrays.asList(tableEnv.listDatabases()).contains(first));
     }
 
     /** One source table: already registered, matched to a topic and registered, or left to Flink. */
@@ -989,7 +1017,7 @@ public class FlinkSqlService {
 
     private FlinkJobSummary submitJobReserved(QueryRequest request, String queryId) {
         long startedAt = System.currentTimeMillis();
-        String strippedSql = prepareSql(request.sql());
+        String strippedSql = withTopicTableNames(prepareSql(request.sql()));
         String statementType = extractStatementType(strippedSql);
 
         if (!isJobModeStatement(statementType)) {
@@ -1028,12 +1056,11 @@ public class FlinkSqlService {
                   + "with CREATE TABLE, then submit the INSERT.");
             }
 
-            String sqlToSubmit = withRegisteredTableNames(strippedSql);
-            TableResult result = executeMutationSql("submit-job", sqlToSubmit);
+            TableResult result = executeMutationSql("submit-job", strippedSql);
             JobClient client = result.getJobClient()
                 .orElseThrow(() -> new IllegalStateException("Flink did not return a JobClient for the submitted job."));
 
-            JobInfo info = new JobInfo(queryId, sqlToSubmit, statementType, "ASYNC_JOB", client, startedAt);
+            JobInfo info = new JobInfo(queryId, strippedSql, statementType, "ASYNC_JOB", client, startedAt);
             heldJobs.put(queryId, info);
             return buildJobSummary(info);
         } catch (RuntimeException e) {
@@ -1241,6 +1268,8 @@ public class FlinkSqlService {
                     + "it as a Flink job of your own.");
         }
 
+        // Après la whitelist, pour qu'une instruction refusée ne coûte pas une liste des topics.
+        strippedSql = withTopicTableNames(strippedSql);
         try {
             sqlQueryValidator.validate(strippedSql);
         } catch (IllegalArgumentException e) {
@@ -1273,7 +1302,7 @@ public class FlinkSqlService {
                 return new QueryResult(Collections.emptyList(), Collections.emptyList(),
                         System.currentTimeMillis() - startTime, autoReg.error());
             }
-            String sqlToExecute = withRegisteredTableNames(strippedSql);
+            String sqlToExecute = strippedSql;
             String readMode = request.readMode();
             int limit = request.maxRows() != null ? request.maxRows() : explorerConfig.getDefaultMaxRows();
             long timeout = request.timeout() != null ? request.timeout() : explorerConfig.getDefaultQueryTimeoutMs();

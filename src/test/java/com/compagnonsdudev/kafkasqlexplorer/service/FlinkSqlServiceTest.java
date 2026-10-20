@@ -16,6 +16,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.api.TestInstance;
 
 import java.nio.file.Files;
@@ -457,6 +459,86 @@ class FlinkSqlServiceTest {
         )).when(kafkaAdminService).getRecentRecords(eq("quoted-direct.topic"), anyInt());
 
         QueryResult result = execute("SELECT t.id FROM \"quoted-direct.topic\" t WHERE t.state = 'OK'");
+
+        assertNoError(result);
+        assertEquals("KAFKA_DIRECT", result.engine());
+        assertEquals(1, result.rows().size());
+        assertEquals("A", result.rows().get(0).get("id"));
+    }
+
+    /**
+     * Le nom du topic écrit tel quel, sans guillemets. Pour le planner, `bare.reg.topic` est un
+     * catalogue, une base et une table, et `bare-reg-topic` une soustraction : aucun des deux ne
+     * désigne la table `bare_reg_topic` enregistrée pour le topic.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"bare.reg.topic", "bare-reg-topic", "bare.reg-topic"})
+    void aBareTopicNameIsReadThroughTheTableRegisteredForIt(String topic) throws Exception {
+        String table = topic.replace('.', '_').replace('-', '_');
+        doReturn(List.of(topic)).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(topic);
+        doReturn(Map.of("event_id", "STRING", "payload", "STRING"))
+                .when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn("CREATE TABLE IF NOT EXISTS " + table + " (event_id STRING, payload STRING) "
+                + "WITH ('connector'='datagen','number-of-rows'='2')")
+                .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
+
+        QueryResult result = execute(
+                "SELECT " + topic + ".event_id FROM " + topic + " WHERE payload <> 'x'");
+
+        assertNoError(result);
+        assertEquals("FLINK", result.engine());
+        assertEquals(2, result.rows().size());
+        assertTrue(result.warnings().isEmpty(), "got: " + result.warnings());
+    }
+
+    /** Un nom nu dans une valeur ou dans un nom plus long n'est pas le topic. */
+    @Test
+    void aBareTopicNameInsideALiteralOrALongerNameIsLeftAlone() throws Exception {
+        doReturn(List.of("bare.lit.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("bare.lit.topic");
+        doReturn(Map.of("note", "STRING")).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn("CREATE TABLE IF NOT EXISTS bare_lit_topic (note STRING) "
+                + "WITH ('connector'='datagen','number-of-rows'='2')")
+                .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
+
+        QueryResult result = execute(
+                "SELECT note, 'bare.lit.topic' AS label FROM bare.lit.topic t");
+
+        assertNoError(result);
+        assertEquals(2, result.rows().size());
+        assertEquals("bare.lit.topic", result.rows().get(0).get("label"));
+    }
+
+    /**
+     * `default_database.guard` est la table `guard` de la base courante, et cela prime sur un topic
+     * du même nom : réécrire ferait lire une autre table que celle que l'instruction désigne.
+     */
+    @Test
+    void aBareDottedNameStartingWithADatabaseIsLeftAsWritten() throws Exception {
+        doReturn(List.of("default_database.guard", "other.guard")).when(kafkaAdminService).listTopics();
+
+        assertEquals("SELECT * FROM default_database.guard",
+                service.withTopicTableNames("SELECT * FROM default_database.guard"));
+        assertEquals("SELECT * FROM `default_database_guard`",
+                service.withTopicTableNames("SELECT * FROM `default_database.guard`"));
+        assertEquals("SELECT * FROM other_guard",
+                service.withTopicTableNames("SELECT * FROM other.guard"));
+    }
+
+    @Test
+    void aBareTopicNameIsReadByTheDirectReader() throws Exception {
+        doReturn(List.of("bare-direct.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("bare-direct.topic");
+        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "bare-direct.topic", 0, 0L, null, "{\"id\":\"A\",\"state\":\"OK\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "bare-direct.topic", 0, 1L, null, "{\"id\":\"B\",\"state\":\"KO\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("bare-direct.topic"), anyInt());
+
+        QueryResult result = execute("SELECT t.id FROM bare-direct.topic t WHERE t.state = 'OK'");
 
         assertNoError(result);
         assertEquals("KAFKA_DIRECT", result.engine());

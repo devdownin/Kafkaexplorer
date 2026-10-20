@@ -64,6 +64,7 @@ class QueryControllerTest {
     private KafkaAdminService kafkaAdminService;
     private FlinkSqlService flinkSqlService;
     private SqlExplorationService sqlExplorationService;
+    private SqlQueryValidator sqlQueryValidator;
     private ExplorerConfig explorerConfig;
     private MockMvc mockMvc;
 
@@ -74,12 +75,13 @@ class QueryControllerTest {
         kafkaAdminService = Mockito.mock(KafkaAdminService.class);
         flinkSqlService = Mockito.mock(FlinkSqlService.class);
         sqlExplorationService = Mockito.mock(SqlExplorationService.class);
+        sqlQueryValidator = Mockito.mock(SqlQueryValidator.class);
         explorerConfig = new ExplorerConfig();
         QueryController controller = new QueryController(
             flinkSqlService,
             sqlExplorationService,
             kafkaAdminService,
-            Mockito.mock(SqlQueryValidator.class),
+            sqlQueryValidator,
             schemaInferenceService,
             ddlGeneratorService,
             explorerConfig);
@@ -446,5 +448,16 @@ class QueryControllerTest {
                 .param("source", "demo_orders")
                 .param("topic", "demo.orders.out"))
             .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void validationReadsTheStatementWithItsTopicNamesResolved() throws Exception {
+        when(flinkSqlService.withTopicTableNames("SELECT * FROM orders-v1")).thenReturn("SELECT * FROM orders_v1");
+
+        mockMvc.perform(post("/api/query/validate").contentType("application/json")
+                .content("{\"sql\":\"SELECT * FROM orders-v1\"}"))
+            .andExpect(status().isOk());
+
+        verify(sqlQueryValidator).validate("SELECT * FROM orders_v1");
     }
 }

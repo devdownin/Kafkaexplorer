@@ -204,6 +204,41 @@ public final class SqlStatements {
         return out.toString();
     }
 
+    /**
+     * Chaque occurrence nue de {@code name} remplacée par {@code replacement}, hors littéraux et
+     * hors identifiants échappés.
+     *
+     * <p>Une occurrence est un nom entier : ni lettre, chiffre, {@code _}, {@code -}, {@code .} ou
+     * accent grave juste avant, ni lettre, chiffre, {@code _}, {@code -} ou accent grave juste après.
+     * Un point après est admis, parce qu'il qualifie une colonne ({@code demo.orders.id}) et que
+     * cette qualification doit suivre la table. Sensible à la casse, comme l'est un identifiant
+     * pour Flink.
+     */
+    public static String replaceBareIdentifier(String sql, String name, String replacement) {
+        if (sql == null || name == null || name.isEmpty() || replacement == null) return sql;
+        String scan = outsideLiterals(sql);
+        StringBuilder out = new StringBuilder(sql.length());
+        int from = 0;
+        int at = scan.indexOf(name);
+        while (at >= 0) {
+            int after = at + name.length();
+            boolean startsAName = at == 0 || !isNameChar(scan.charAt(at - 1), true);
+            boolean endsAName = after == scan.length() || !isNameChar(scan.charAt(after), false);
+            if (startsAName && endsAName) {
+                out.append(sql, from, at).append(replacement);
+                from = after;
+                at = scan.indexOf(name, after);
+            } else {
+                at = scan.indexOf(name, at + 1);
+            }
+        }
+        return out.append(sql, from, sql.length()).toString();
+    }
+
+    private static boolean isNameChar(char c, boolean before) {
+        return isIdentifierChar(c) || c == '-' || c == '`' || (before && c == '.');
+    }
+
     /** Just past the delimiter closing the one at {@code open} (a doubled one escapes); -1 if none. */
     private static int closingDelimiter(String s, int open, char delimiter) {
         int i = open + 1;
