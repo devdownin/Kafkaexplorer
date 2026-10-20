@@ -1,0 +1,72 @@
+# Overlay: the complete demo — the Explorer with every module on, the Kex-anHarness agent beside
+# it, and both talking to a hosted model through OpenRouter. `./demo.sh` is the way to run it: it
+# layers this file last, on top of
+#
+#     docker-compose.yml  compose/schema-registry.yml  compose/mcp.yml  compose/forecasts.yml
+#
+# and prepares the forecast credentials those files need. Running it by hand works too, as long
+# as FORECAST_POSTGRES_PASSWORD is set (bin/forecast-stack.sh --prepare-only generates it).
+#
+# Ports — the shared plan, plus the one this stack adds:
+#   Kafka SQL Explorer ...... http://localhost:8080   (UI, REST API, /mcp)
+#   Kex-anHarness ........... http://localhost:8081   (Control Center, /api/agent)
+#   Schema Registry ......... http://localhost:8085   (8081 is the agent's — demo.sh moves it)
+#   Kafka (from the host) ... localhost:9092
+#
+# WHY THE AGENT IS DEFINED HERE AND NOT EXTENDED FROM compose/ecosystem.yml. `extends` carries
+# `depends_on`, and that file's agent depends on `spectra-api`, which this stack does not run:
+# Compose refuses the whole project. SpectraLLM stays out on purpose — its half is a local
+# llama.cpp model and a ~4.8 GB first download, the opposite of a hosted model reached with a key.
+# Its MCP connection is still declared, and the agent reports it unreachable, exactly as CI's
+# `ecosystem-stack` job asserts.
+#
+# One OpenRouter key serves both sides. Without one, Process Mining still answers its counted half
+# (graph, variants, latencies) with `error` naming the missing key, and the agent starts DEGRADED.
+services:
+
+  explorer:
+    environment:
+      - CLAUDE_PROVIDER=OPENROUTER
+      - CLAUDE_BASE_URL=https://openrouter.ai/api/v1
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - CLAUDE_MODEL=${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+      # Same bearer as the agent presents; forecasts.yml would otherwise leave it empty (503).
+      - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
+
+  agent:
+    # Same pin as compose/ecosystem.yml: the agent's MCP contract is tested against a given
+    # Explorer release, and docs/check-image-pins.py holds the two to one value.
+    image: ${KEX_AGENT_IMAGE_NAMESPACE:-compagnonsdudev}/kex-agent-ai:${KEX_AGENT_IMAGE_TAG:-0.10.0}
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${KEX_AGENT_PORT:-8081}:8081"
+    # `service_started`: the agent's MCP clients connect lazily, at the first request.
+    depends_on:
+      explorer:
+        condition: service_started
+    environment:
+      # `openai` is the agent's OpenAI-compatible client, pointed at OpenRouter.
+      - KEX_AGENT_LLM_PROVIDER=${KEX_AGENT_LLM_PROVIDER:-openai}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - KEX_AGENT_API_KEY=${KEX_AGENT_API_KEY:-dev-only-agent-key}
+      - KAFKA_EXPLORER_URL=http://explorer:8080
+      - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
+      # Declared, and reported unreachable: SpectraLLM is not part of this stack (see above).
+      - SPECTRALLM_URL=http://spectra-api:8080
+      - SPECTRA_API_KEY=${SPECTRA_API_KEY:-dev-only-spectra-key}
+      - SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_URL=http://spectra-api:8080
+      - SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_ENDPOINT=/mcp
+    volumes:
+      - agent_state:/var/lib/kex
+    healthcheck:
+      # /dev/tcp rather than /actuator/health: the agent's JRE image carries neither curl nor wget.
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8081'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    stop_grace_period: 35s
+    restart: unless-stopped
+
+volumes:
+  agent_state:

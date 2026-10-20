@@ -97,6 +97,7 @@ Zookeeper anywhere). There is **one base file at the repository root** and every
 docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d  # + Schema Registry
 docker compose -f docker-compose.yml -f compose/mcp.yml up -d               # + the MCP server (off elsewhere)
 docker compose up -d                                                       # base: broker + app + demo topics
+OPENROUTER_API_KEY=sk-or-... ./demo.sh                                      # everything: + Avro, MCP, forecasts, agent, OpenRouter
 ./setup-demo.sh localhost:9092                                             # demo data (79 topics)
 ./setup-demo-avro.sh localhost:9092 http://localhost:8081                  # Avro topics (needs Schema Registry)
 ```

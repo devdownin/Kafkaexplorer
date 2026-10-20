@@ -208,6 +208,19 @@ file wires the pair. There were two, and the deletion of the other is the point:
   without SpectraLLM's half, which `spectra-hub-stack` already covers), and `check-image-pins.py`
   holds the SpectraLLM and agent pins to the same rules as the Explorer's.
 
+  `./demo.sh` is the one-command suite: `docker-compose.yml` with `schema-registry.yml`,
+  `mcp.yml`, `forecasts.yml` and `compose/demo.yml` layered last — Avro topics, MCP read-only,
+  TimesFM with its PostgreSQL history, and the Kex-anHarness agent, both LLM clients on
+  OpenRouter. It is not built on `spectra-hub.yml`, and cannot be: that file puts the project
+  directory in `compose/` (`../setup-demo.sh`), while `forecasts.yml` resolves
+  `compose/timesfm.yml` and `./services/timesfm` from the root, so no `--project-directory`
+  satisfies both. The agent is therefore declared in `demo.yml` rather than extended from
+  `ecosystem.yml`, whose `depends_on: spectra-api` `extends` would carry into a project without
+  it; the SpectraLLM connection stays declared and reported unreachable, as `ecosystem-stack`
+  asserts. Schema Registry moves to 8085, 8081 being the agent's. The script reuses
+  `bin/forecast-stack.sh --prepare-only` for the generated credentials, so the MCP bearer the
+  agent presents is the one the Explorer checks.
+
   `compose/spectra-hub.ingest.yml` is the one that makes the pair more than a shared
   model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
   answers questions with cited sources and the Explorer's audits can read it (`EXPLORER_USE_RAG`,
