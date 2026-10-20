@@ -546,6 +546,45 @@ class FlinkSqlServiceTest {
         assertEquals(2.0, ((Number) result.rows().get(0).get("metric_value")).doubleValue());
     }
 
+    /** Une fenêtre ouverte sur le nom du topic, à tiret : `\\w[\\w.]*` s'arrêtait au tiret. */
+    @Test
+    void aWindowOverABareHyphenatedTopicNameIsServed() throws Exception {
+        doReturn(List.of("win-bare.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat(anyString());
+        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "win-bare.topic", 0, 0L, null, "{\"id\":\"a\",\"event_time\":\"2026-01-01T00:00:00Z\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "win-bare.topic", 0, 1L, null, "{\"id\":\"b\",\"event_time\":\"2026-01-01T00:07:00Z\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("win-bare.topic"), anyInt());
+
+        QueryResult result = execute("SELECT window_start, window_end, COUNT(*) AS c FROM TABLE("
+                + "TUMBLE(TABLE win-bare.topic, DESCRIPTOR(event_time), INTERVAL '5' MINUTE)) "
+                + "GROUP BY window_start, window_end");
+
+        assertNoError(result);
+        assertEquals(2, result.rows().size());
+    }
+
+    /**
+     * La cible d'un INSERT écrite sous le nom de son topic va à la table déclarée pour lui, et
+     * seulement si elle existe : une cible n'est jamais auto-enregistrée.
+     */
+    @Test
+    void anInsertTargetNamedAfterItsTopicReachesTheTableDeclaredForIt() throws Exception {
+        tableEnv.executeSql("CREATE TABLE IF NOT EXISTS sink_declared_topic (order_id STRING) "
+                + "WITH ('connector'='blackhole')");
+        doReturn(List.of("sink.declared.topic", "sink.undeclared.topic")).when(kafkaAdminService).listTopics();
+
+        assertEquals("INSERT INTO sink_declared_topic SELECT order_id FROM orders",
+                service.withTopicTableNames("INSERT INTO sink.declared.topic SELECT order_id FROM orders"));
+        assertEquals("INSERT INTO `sink_declared_topic` SELECT order_id FROM orders",
+                service.withTopicTableNames("INSERT INTO `sink.declared.topic` SELECT order_id FROM orders"));
+        assertEquals("INSERT INTO sink.undeclared.topic SELECT order_id FROM orders",
+                service.withTopicTableNames("INSERT INTO sink.undeclared.topic SELECT order_id FROM orders"));
+    }
+
     @Test
     void aBareTopicNameIsReadByTheDirectReader() throws Exception {
         doReturn(List.of("bare-direct.topic")).when(kafkaAdminService).listTopics();

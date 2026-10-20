@@ -152,16 +152,6 @@ public class FlinkSqlService {
     private static final Pattern CLIENT_QUERY_ID = Pattern.compile("[A-Za-z0-9_-]{8,64}");
 
     /**
-     * A windowed table function call. The table may carry a {@code PARTITION BY} (SESSION), and the
-     * trailing group collects every INTERVAL argument: HOP takes (slide, size) and CUMULATE takes
-     * (step, max), so the bucket width is always the last one.
-     */
-    private static final Pattern WINDOW_CALL = Pattern.compile(
-        "(?i)\\b(TUMBLE|HOP|CUMULATE|SESSION)\\s*\\(\\s*TABLE\\s+(\\w[\\w.]*)"
-            + "(?:\\s+PARTITION\\s+BY\\s+[^,]+)?\\s*,\\s*DESCRIPTOR\\s*\\(\\s*(\\w+)\\s*\\)"
-            + "((?:\\s*,\\s*INTERVAL\\s+'\\d+'\\s+\\w+)+)\\s*\\)");
-
-    /**
      * A table name — backticked, double-quoted or bare — delimiters included; {@code TABLE_REF}
      * captures it, and {@link #tableRefAt} reads the capture.
      *
@@ -173,6 +163,18 @@ public class FlinkSqlService {
     private static final String TABLE_NAME =
         "`[^`]*+(?:``[^`]*+)*+`|\"[^\"]*+(?:\"\"[^\"]*+)*+\"|[\\w.\\-]+";
     private static final String TABLE_REF = "(" + TABLE_NAME + ")";
+
+    /**
+     * A windowed table function call. The table may carry a {@code PARTITION BY} (SESSION), and the
+     * trailing group collects every INTERVAL argument: HOP takes (slide, size) and CUMULATE takes
+     * (step, max), so the bucket width is always the last one. The table is a {@link #TABLE_REF},
+     * read with {@link #tableRefAt}: {@code \\w[\\w.]*} stopped at a hyphen, and at the backtick of
+     * a name {@link #withTopicTableNames} had just resolved.
+     */
+    private static final Pattern WINDOW_CALL = Pattern.compile(
+        "(?i)\\b(TUMBLE|HOP|CUMULATE|SESSION)\\s*\\(\\s*TABLE\\s+" + TABLE_REF
+            + "(?:\\s+PARTITION\\s+BY\\s+[^,]+)?\\s*,\\s*DESCRIPTOR\\s*\\(\\s*(\\w+)\\s*\\)"
+            + "((?:\\s*,\\s*INTERVAL\\s+'\\d+'\\s+\\w+)+)\\s*\\)");
 
     /** First table named after FROM. */
     private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\s+" + TABLE_REF);
@@ -424,7 +426,7 @@ public class FlinkSqlService {
             if (!names.isEmpty()) return names.get(0);
         }
         Matcher window = WINDOW_CALL.matcher(sql);
-        if (window.find()) return window.group(2);
+        if (window.find()) return tableRefAt(sql, window, 2);
         Matcher from = FROM_TABLE.matcher(sql);
         return from.find() ? tableRefAt(sql, from) : null;
     }
@@ -434,7 +436,11 @@ public class FlinkSqlService {
      * position and without its delimiters — the match may have been made on the blanked scan.
      */
     private static String tableRefAt(String sql, Matcher m) {
-        String ref = sql.substring(m.start(1), m.end(1));
+        return tableRefAt(sql, m, 1);
+    }
+
+    private static String tableRefAt(String sql, Matcher m, int group) {
+        String ref = sql.substring(m.start(group), m.end(group));
         char first = ref.charAt(0);
         if (ref.length() >= 2 && (first == '`' || first == '"') && ref.charAt(ref.length() - 1) == first) {
             String doubled = String.valueOf(first).repeat(2);
@@ -475,7 +481,7 @@ public class FlinkSqlService {
             names.add(primary);
         }
         Matcher window = WINDOW_CALL.matcher(sql);
-        while (window.find()) names.add(window.group(2));
+        while (window.find()) names.add(tableRefAt(sql, window, 2));
         Matcher source = SOURCE_TABLE.matcher(sql);
         while (source.find()) {
             String name = tableRefAt(sql, source);
@@ -573,6 +579,10 @@ public class FlinkSqlService {
      * a subtraction that fails to parse — refused by the validator before auto-registration ever
      * ran. All three are the topic's real name, and the only one its user can read in the cluster.
      *
+     * <p>An {@code INSERT}'s target too, but only towards a table that exists: a sink is never
+     * auto-registered, so {@code INSERT INTO out.topic} reaches {@code out_topic} when an operator
+     * declared that table, and is otherwise left for the planner to name.
+     *
      * <p>Done before validation, from the topic list rather than from the catalogue: the parse
      * error has to be prevented, not reported. Three guards keep a name that means something else
      * as written: no topic of that name, a table actually carrying the name ({@code CREATE TABLE
@@ -586,7 +596,9 @@ public class FlinkSqlService {
         String described = describedObject(sql);
         if (described != null) sources.add(described);
         sources.removeIf(source -> source.equals(DdlGeneratorService.toTableName(source)));
-        if (sources.isEmpty()) return sql;
+        List<String> targets = insertTargets(sql);
+        targets.removeIf(target -> target.equals(DdlGeneratorService.toTableName(target)));
+        if (sources.isEmpty() && targets.isEmpty()) return sql;
 
         Set<String> topicTables;
         Set<String> tables;
@@ -600,14 +612,39 @@ public class FlinkSqlService {
         }
         String rewritten = sql;
         for (String source : sources) {
-            String table = DdlGeneratorService.toTableName(source);
-            if (!topicTables.contains(table) || tables.contains(source)) continue;
-            rewritten = SqlStatements.replaceQuotedIdentifier(rewritten, source, table);
-            if (!startsWithCatalogOrDatabase(source)) {
-                rewritten = SqlStatements.replaceBareIdentifier(rewritten, source, table);
-            }
+            if (!topicTables.contains(DdlGeneratorService.toTableName(source))) continue;
+            rewritten = toTableName(rewritten, source, tables);
+        }
+        // Une cible n'est jamais auto-enregistrée (voir `autoRegisterTableIfNeeded`) : elle n'est
+        // réécrite que vers une table qui existe, celle qu'un opérateur a déclarée pour ce topic.
+        for (String target : targets) {
+            if (!tables.contains(DdlGeneratorService.toTableName(target))) continue;
+            rewritten = toTableName(rewritten, target, tables);
         }
         return rewritten;
+    }
+
+    private String toTableName(String sql, String name, Set<String> tables) {
+        if (tables.contains(name)) return sql;
+        String table = DdlGeneratorService.toTableName(name);
+        String rewritten = SqlStatements.replaceQuotedIdentifier(sql, name, table);
+        return startsWithCatalogOrDatabase(name)
+            ? rewritten
+            : SqlStatements.replaceBareIdentifier(rewritten, name, table);
+    }
+
+    /** {@code INSERT INTO <t>} / {@code INSERT OVERWRITE <t>}, every one of a STATEMENT SET. */
+    private static final Pattern INSERT_TARGET =
+        Pattern.compile("(?i)\\bINSERT\\s+(?:INTO|OVERWRITE)\\s+(?:TABLE\\s+)?" + TABLE_REF);
+
+    private static List<String> insertTargets(String sql) {
+        List<String> targets = new ArrayList<>();
+        Matcher m = INSERT_TARGET.matcher(SqlStatements.outsideLiterals(sql));
+        while (m.find()) {
+            String target = tableRefAt(sql, m);
+            if (!targets.contains(target)) targets.add(target);
+        }
+        return targets;
     }
 
     /** {@code sales.orders} is that table in database {@code sales} when such a database exists. */
@@ -2992,7 +3029,7 @@ public class FlinkSqlService {
                     + "TABLE(TUMBLE(TABLE <name>, DESCRIPTOR(<time_col>), INTERVAL '<n>' MINUTE))");
         }
         String windowFn    = window.group(1).toUpperCase(Locale.ROOT);
-        String tableName   = window.group(2);
+        String tableName   = tableRefAt(sql, window, 2);
         String timeCol     = window.group(3);
 
         // HOP(slide, size) and CUMULATE(step, max) carry two intervals; the bucket width is the

@@ -297,6 +297,22 @@ class SqlMcpToolsTest {
     }
 
     @Test
+    void a_topic_name_with_a_hyphen_or_quotes_is_resolved_and_checked_like_any_other() throws Exception {
+        // `orders-v1` is a subtraction to the grammar, and `"demo.orders"` a token it does not
+        // read: both were refused as unreadable while the engine now runs them.
+        properties.setAllowedTopicPrefixes(List.of("demo."));
+        given(kafka.listTopics()).willReturn(List.of("demo.orders", "demo.orders-v1", "internal-audit"));
+        given(flink.executeSync(any())).willReturn(new QueryResult(
+                List.of("id"), List.of(Map.of("id", "1")), 3L, null, true, "FLINK"));
+
+        assertThat(tools().sqlQuery("SELECT id FROM demo.orders-v1", null, null, null).data().rows()).hasSize(1);
+        assertThat(tools().sqlQuery("SELECT id FROM \"demo.orders\"", null, null, null).data().rows()).hasSize(1);
+        assertThatThrownBy(() -> tools().sqlQuery("SELECT id FROM internal-audit", null, null, null))
+                .isInstanceOf(McpToolException.class)
+                .satisfies(e -> assertThat(((McpToolException) e).jsonRpcCode()).isEqualTo(-32041));
+    }
+
+    @Test
     void a_source_inside_the_scope_runs_untouched() throws Exception {
         restrictTo("demo.");
         given(flink.executeSync(any())).willReturn(new QueryResult(

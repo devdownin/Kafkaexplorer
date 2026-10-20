@@ -157,14 +157,21 @@ public class LineageService {
             log.debug("Could not enrich lineage with Kafka topics: {}", e.getMessage());
         }
 
-        // 5. Drop edges whose endpoints are not real nodes. Regex source extraction also picks
+        // 5. A dependency named after its topic (`demo.orders`, `orders-v1`) — what the regex scan
+        //    reads off a statement the parser refused — is the table registered for that topic.
+        //    Without this the edge pointed at no node and was dropped just below, so the graph lost
+        //    the very dependency the user wrote in the only spelling the cluster shows.
+        edges.replaceAll(e -> mkEdge(nodeIdFor(e.get("from"), nodesById), nodeIdFor(e.get("to"), nodesById),
+            e.get("label")));
+
+        // 6. Drop edges whose endpoints are not real nodes. Regex source extraction also picks
         //    up CTE names and aliases; such edges are unrenderable and would otherwise inflate
         //    the edge count and keep unrelated nodes alive under connectedOnly.
         edges.removeIf(e -> !nodesById.containsKey(e.get("from")) || !nodesById.containsKey(e.get("to")));
 
         List<Map<String, Object>> nodes = new ArrayList<>(nodesById.values());
 
-        // 6. Connected-only filter: drop nodes that appear in no edge
+        // 7. Connected-only filter: drop nodes that appear in no edge
         if (connectedOnly) {
             Set<String> wired = new HashSet<>();
             edges.forEach(e -> { wired.add(e.get("from")); wired.add(e.get("to")); });
@@ -222,6 +229,13 @@ public class LineageService {
         return false;
     }
 
+    /** The node an endpoint designates: itself, or the table auto-registration gives a topic name. */
+    private static String nodeIdFor(String endpoint, Map<String, Map<String, Object>> nodesById) {
+        if (nodesById.containsKey(endpoint)) return endpoint;
+        String table = DdlGeneratorService.toTableName(endpoint);
+        return nodesById.containsKey(table) ? table : endpoint;
+    }
+
     /** Adds a node unless one with the same id is already present. */
     private static void putNode(Map<String, Map<String, Object>> nodesById, Map<String, Object> node) {
         nodesById.putIfAbsent((String) node.get("id"), node);
@@ -261,8 +275,7 @@ public class LineageService {
      * <p>The regex scan below is a lexical approximation, and it is wrong in ways that matter:
      * {@code FROM TABLE(TUMBLE(TABLE orders, …))} yields the keyword {@code TABLE} and loses
      * {@code orders} entirely — the same trap that once broke auto-registration in
-     * {@link FlinkSqlService} — a quoted identifier carrying a hyphen is dropped by the
-     * identifier filter, and only the first {@code INSERT INTO} of a multi-statement script is
+     * {@link FlinkSqlService} — and only the first {@code INSERT INTO} of a multi-statement script is
      * ever seen. The parser resolves the real operation tree instead, so a source is a source
      * because the planner says it is.
      *
@@ -344,7 +357,7 @@ public class LineageService {
 
     private String extractInsertTarget(String sql) {
         Matcher m = INSERT_PATTERN.matcher(sql);
-        return m.find() ? m.group(1).trim() : null;
+        return m.find() ? unquote(m.group(1)) : null;
     }
 
     private Set<String> extractSources(String sql) {
@@ -376,11 +389,16 @@ public class LineageService {
      * no parentheses, not a reserved keyword, starts with letter or underscore.
      */
     private static void addIfValidIdentifier(Set<String> set, String token) {
-        String clean = token.replace("`", "").trim();
+        String clean = unquote(token);
         if (clean.isEmpty() || clean.contains("(") || clean.contains(")")) return;
         if (SQL_KEYWORDS.contains(clean.toUpperCase(Locale.ROOT))) return;
-        if (!clean.matches("[a-zA-Z_][a-zA-Z0-9_.]*")) return;
+        // A topic's own name carries hyphens, quoted or not; this filter used to drop it.
+        if (!clean.matches("[a-zA-Z_][a-zA-Z0-9_.\\-]*")) return;
         set.add(clean);
+    }
+
+    private static String unquote(String token) {
+        return token.replace("`", "").replace("\"", "").trim();
     }
 
     private String getDdl(String name, String type) {

@@ -17,6 +17,7 @@
 
 import type { MetricConfig } from '../api/types';
 import { describeThresholdDirection, gradeMetric } from './metricAlert';
+import { TABLE_NAME } from './metricScope';
 
 export const PLACEHOLDER_BARS = [35, 58, 24, 71, 46, 88, 30, 62, 41, 77, 19, 54, 66, 28, 83, 37, 49, 74, 22, 60];
 
@@ -276,7 +277,7 @@ export function isSingleTableRead(sql: string): boolean {
   if (!/^select/i.test(body)) return false;
   if (/\bjoin\b/i.test(body)) return false;
   if (body.replace(/\s+/g, '').toUpperCase().includes('(SELECT')) return false;
-  const from = /\bfrom\b\s+(\w[\w.]*)/gi;
+  const from = new RegExp(`\\bfrom\\b\\s+(${TABLE_NAME})`, 'gi');
   const first = from.exec(body);
   if (!first) return false;
   // Une virgule juste après le nom de table est une liste de tables, soit une jointure à l'ancienne.

@@ -136,6 +136,17 @@ describe('les composantes du nombre affiché', () => {
 });
 
 describe('ce que la configuration coûtera', () => {
+  it('compte par les offsets un topic nommé avec un tiret ou entre guillemets', () => {
+    for (const table of ['orders-v1', '"demo.orders"', '`demo.orders`']) {
+      const note = describeRefreshCost('TOPIC_COUNT_DELTA', {
+        leftTopic: 'a', rightTopic: 'b',
+        leftSql: `SELECT COUNT(*) AS metric_value FROM ${table}`,
+        rightSql: 'SELECT COUNT(*) AS metric_value FROM b',
+      });
+      expect(note).toContain('Reads no record');
+    }
+  });
+
   it('dit « aucun enregistrement » quand le compte passe par les offsets', () => {
     const note = describeRefreshCost('TOPIC_COUNT_DELTA', {
       countBy: 'OFFSETS', leftTopic: 'a', rightTopic: 'b',
