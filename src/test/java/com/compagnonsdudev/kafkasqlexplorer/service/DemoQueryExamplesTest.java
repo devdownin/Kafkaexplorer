@@ -87,6 +87,8 @@ class DemoQueryExamplesTest {
         assertTrue(topics.contains("demo.sc.13.carrier.assigned.out"), "got: " + topics);
         assertTrue(topics.contains("demo.avro.orders"), "got: " + topics);
         assertTrue(examples().size() >= 20, "got: " + examples());
+        assertTrue(examples().stream().anyMatch(sql -> sql.contains("\"demo.avro.orders\"") && sql.contains("SHIPPED")),
+            "the Avro seeder's suggestion was not read: " + examples());
         assertTrue(examples().stream().anyMatch(sql -> sql.contains("TUMBLE(TABLE demo_iot_sensors")),
             "the help's lessons were not read: " + examples());
     }
@@ -145,8 +147,10 @@ class DemoQueryExamplesTest {
 
         // Une suggestion tient sur une ligne `echo`, ou sur deux quand la seconde reprend au FROM.
         List<String> lines = new ArrayList<>();
-        Matcher echo = ECHO.matcher(Files.readString(ROOT.resolve("setup-demo.sh")));
-        while (echo.find()) lines.add(echo.group(1).replace("\\\"", "\""));
+        for (String script : List.of("setup-demo.sh", "setup-demo-avro.sh")) {
+            Matcher echo = ECHO.matcher(Files.readString(ROOT.resolve(script)));
+            while (echo.find()) lines.add(echo.group(1).replace("\\\"", "\""));
+        }
         for (int i = 0; i < lines.size(); i++) {
             int select = lines.get(i).indexOf("SELECT ");
             if (select < 0) continue;
