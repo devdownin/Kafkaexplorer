@@ -135,6 +135,19 @@ OPENROUTER_API_KEY=sk-or-... ./demo.sh --no-spectra    # without SpectraLLM and 
 Every variable has a default and the secrets are generated on the first run. The Explorer is
 built from the checkout; `DEMO_PUBLISHED_IMAGE=true` pulls this image instead.
 
+#### On Windows 11
+
+[`demo.cmd`](https://github.com/devdownin/Kafkaexplorer/blob/main/demo.cmd) runs the PowerShell
+twin, [`demo.ps1`](https://github.com/devdownin/Kafkaexplorer/blob/main/demo.ps1), with Docker
+Desktop as the only prerequisite — no Git Bash, no openssl:
+
+```powershell
+$env:OPENROUTER_API_KEY = 'sk-or-...'; .\demo.cmd    # or: .\demo.cmd -NoSpectra · .\demo.cmd down
+```
+
+Docker Desktop gives WSL 2 half the machine's memory by default; on 16 GB, raise `memory=` in
+`%UserProfile%\.wslconfig` or use `-NoSpectra`.
+
 ## ✨ What you get
 
 - 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.
