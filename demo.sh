@@ -96,7 +96,7 @@ export TIMESFM_TIMEOUT=${TIMESFM_TIMEOUT:-35s}
 # Explorer image: built from this checkout by default; DEMO_PUBLISHED_IMAGE=true pulls the release.
 export DEMO_PUBLISHED_IMAGE=${DEMO_PUBLISHED_IMAGE:-false}
 export EXPLORER_IMAGE_NAMESPACE=${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}
-export EXPLORER_IMAGE_TAG=${EXPLORER_IMAGE_TAG:-2.3.2}
+export EXPLORER_IMAGE_TAG=${EXPLORER_IMAGE_TAG:-2.3.3}
 
 # SpectraLLM on by default; false drops its seven services and their ~4.8 GB first download.
 export DEMO_SPECTRA=${DEMO_SPECTRA:-true}
