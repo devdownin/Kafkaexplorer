@@ -134,7 +134,7 @@ jobs:
       # here (CI resolves the real io.confluent jars, the local offline harness uses
       # stubs) was otherwise diagnosable only by scrolling the raw log.
       if: failure()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         name: test-reports
         path: target/surefire-reports/
@@ -144,7 +144,7 @@ jobs:
     - name: Upload JAR
       # Consumed by the `release-image` job below, so Dockerfile.release is exercised on
       # every run rather than for the first time at tag time.
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
         name: jar
         path: target/*.jar
@@ -1426,7 +1426,7 @@ jobs:
           NODE_PATH="$(npm root -g)" node docs/screenshots/graph-gestures.mjs http://127.0.0.1:4175
 
       - name: Upload the fresh captures
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: screenshots
           path: fresh/
