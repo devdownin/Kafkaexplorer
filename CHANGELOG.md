@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.3.4] — 2026-10-20
+
 - **A topic can be queried by its own name.** `SELECT * FROM "demo.orders"` answered "Object not
   found": the topic was registered as the table `demo_orders`, but the statement reached the planner
   as written. Unquoted it fared no better — `demo.orders` was read as table `orders` of database
@@ -2718,7 +2722,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.3...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.4...HEAD
+[2.3.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.3...v2.3.4
 [2.3.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.0...v2.3.1
