@@ -148,6 +148,18 @@ $env:OPENROUTER_API_KEY = 'sk-or-...'; .\demo.cmd    # or: .\demo.cmd -NoSpectra
 Docker Desktop gives WSL 2 half the machine's memory by default; on 16 GB, raise `memory=` in
 `%UserProfile%\.wslconfig` or use `-NoSpectra`.
 
+#### Sous Windows 11 (en français)
+
+`demo.cmd` lance le jumeau PowerShell, `demo.ps1`, avec Docker Desktop pour seul prérequis — ni
+Git Bash, ni openssl :
+
+```powershell
+$env:OPENROUTER_API_KEY = 'sk-or-...'; .\demo.cmd    # ou : .\demo.cmd -NoSpectra · .\demo.cmd down
+```
+
+Docker Desktop donne par défaut à WSL 2 la moitié de la mémoire de la machine ; sur 16 Go,
+augmentez `memory=` dans `%UserProfile%\.wslconfig` ou utilisez `-NoSpectra`.
+
 ## ✨ What you get
 
 - 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.
