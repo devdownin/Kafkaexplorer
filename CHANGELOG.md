@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.3.3] — 2026-10-20
+
 - **Typing a topic no longer empties the selected labels.** The selection was dropped on every
   keystroke that changed the topic text — one character typed and deleted lost it, with no way
   back. It is now kept while the topic is typed and settled by the preview of the topic finally
@@ -2692,7 +2696,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.2...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.3...HEAD
+[2.3.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.2.5...v2.3.0
