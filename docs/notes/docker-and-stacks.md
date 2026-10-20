@@ -229,15 +229,7 @@ file wires the pair. There were two, and the deletion of the other is the point:
   as `ecosystem-stack` asserts. `up` and `down` pass `--remove-orphans`, so switching modes on
   the one project does not leave SpectraLLM's containers running.
 
-  `demo.ps1` is its Windows 11 twin, run through `demo.cmd` because the default execution policy
-  refuses an unsigned script (`-ExecutionPolicy Bypass` for that process only). Same file list,
-  same defaults, same precedence; **edit the two together**. It does not call
-  `bin/forecast-stack.sh` — that needs bash and openssl — but writes the same
-  `.forecast-stack/.env` itself (UTF-8 **without** a BOM, LF: a BOM glued to the first key makes it
-  unreadable to Compose and to `demo.sh`), so either script starts a stack the other prepared. It
-  is ASCII on purpose: Windows PowerShell 5.1 reads a BOM-less script as the ANSI code page. An
-  empty default such as `OPENROUTER_API_KEY` is left unset rather than set empty, Windows having
-  no empty environment variable; the compose files' own `:-` defaults cover it.
+  `demo.ps1` is its Windows 11 twin; see [Windows 11: `demo.ps1` and `demo.cmd`](#windows-11-demops1-and-democmd).
 
   `compose/spectra-hub.ingest.yml` is the one that makes the pair more than a shared
   model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
@@ -500,6 +492,70 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   is what would have caught the `X-API-Key` / `Bearer` mismatch this stack documents instead of
   leaving it a paragraph nobody executes.
 - **CI runs the stack, it does not merely build it.** The `docker` job starts `docker-compose.yml` over the image it just built (`compose/ci.yml` supplies it) and asserts the deployment contract: the container reaches `healthy`, both probes answer UP, `/api/dashboard` responds, the process runs as uid 10001, `/app/logs/kafkaexplorer.log` is non-empty, a second seeding run skips, and the app's exit code after `stop` is not 137 (SIGKILL). Each assertion corresponds to a bug that lived here for months precisely because nothing ever ran these files. A second job, `release-image`, builds `Dockerfile.release` from the `build` job's JAR and boots it with no broker — that file used to be exercised for the first time by the release itself. **That job is also where the startup audit's findings are guarded**, because it is the one place in CI that runs the app with *no broker* — the `docker` job's stack has a healthy one, so the failure mode measured there cannot occur in it. After liveness it holds the container for a fixed 30 s window and asserts three things: the log stays under **5 000 lines** (the flood was ~2 300 lines a second from a single class, so a return of it is ~70 000 in that window — the ceiling sits more than tenfold from both, deliberately, because a gate that flakes is a gate people learn to ignore); the startup summary names the broker that did not answer; and each of the two state restores reports itself, naming its topic, since both used to fail at DEBUG and therefore silently.
+
+## Windows 11: `demo.ps1` and `demo.cmd`
+
+`demo.ps1` is the PowerShell twin of `demo.sh`, so that the one-command suite needs nothing on
+Windows 11 but Docker Desktop on its WSL 2 backend — no Git Bash, no openssl, no curl. It layers
+the same compose files in the same order, sets the same defaults, and resolves them with the same
+precedence: process environment, then `.env` at the root, then `.forecast-stack/.env`, then the
+script's own value, the first one found winning. The subcommands are the same; the one spelling
+that differs is `-NoSpectra` for `--no-spectra`, a PowerShell switch rather than a parsed string.
+
+**Nothing checks that the two scripts agree**, so they are edited together. A compose file added
+to one list, or a default moved on one side, is a stack that silently differs by platform — and
+the Windows half is the one CI never runs. What has to match: the `files` list and its two
+branches, every default, the `DEMO_SPECTRA` validation, the three waits and their budgets, and the
+`--remove-orphans` on `up`, `down` and `reset`.
+
+**`demo.cmd` exists for the execution policy.** Windows 11 client editions refuse to run an
+unsigned script by default, so `.\demo.ps1` fails before its first line on a fresh machine.
+`demo.cmd` calls `powershell.exe -NoProfile -ExecutionPolicy Bypass -File demo.ps1 %*`: the bypass
+is scoped to that one process, nothing in the registry or the user's policy changes, and it runs
+from a `cmd` prompt or a double-click as well as from PowerShell. `-NoProfile` keeps a user's
+profile — aliases, a `docker` function, a changed `$ErrorActionPreference` — out of the run.
+
+**It writes the forecast credentials itself.** `bin/forecast-stack.sh --prepare-only` needs bash
+and openssl, which is exactly what a Windows machine with only Docker Desktop lacks, so
+`Initialize-ForecastStack` does the same job: three 32-byte secrets from
+`RandomNumberGenerator`, hex-encoded like `openssl rand -hex 32`, written once and never
+overwritten, plus the empty `.forecast-stack/config/forecasts.yml`. The format is the contract between the two
+scripts — either can start a stack the other prepared — and it is **UTF-8 without a BOM, with LF**:
+a BOM glued to the first key makes `FORECAST_POSTGRES_PASSWORD` an unknown name to Compose and to
+`demo.sh`'s loader alike, and PostgreSQL then refuses to start with an empty password. Hence
+`[IO.File]::WriteAllText` with `UTF8Encoding($false)`; `Set-Content -Encoding UTF8` writes a BOM on
+Windows PowerShell 5.1. There is no `chmod 600` equivalent: the file sits in the user's checkout,
+under the ACLs of their profile.
+
+**Windows PowerShell 5.1 is the target, not PowerShell 7.** 5.1 ships with Windows 11 and 7 does
+not, so the script avoids what 7 added (`??`, the ternary, `&&` between pipelines) and minds
+three behaviours 5.1 does not share with it:
+
+- It reads a BOM-less script as the ANSI code page, so the script is kept **ASCII**: one em dash
+  would come out as mojibake in every message that carries it.
+- Under `$ErrorActionPreference = 'Stop'`, redirecting a native command's stderr turns each line
+  into an error record and throws. `docker compose` writes its progress to stderr, so its output
+  is never redirected; the one redirect, on `docker compose version`, is a command that writes to
+  stdout.
+- `$env:X = ''` *removes* `X` rather than setting it empty — Windows has no empty environment
+  variable. An empty default such as `OPENROUTER_API_KEY` is therefore left unset, and the compose
+  files' own `${VAR:-}` defaults cover it.
+
+**Line endings are settled by `.gitattributes`, and the stack does not depend on them.** A Windows
+checkout gets `*.ps1` and `*.cmd` as CRLF and every `*.sh` the containers run as LF; the seeders'
+entrypoints strip `\r` anyway, so a checkout made with `core.autocrlf=true` before the attributes
+applied still boots.
+
+**Memory is the usual first failure on Windows.** Docker Desktop gives the WSL 2 VM half of the
+host's memory by default, and TimesFM alone is capped at 8 GB (`TIMESFM_MEM_LIMIT`), with
+SpectraLLM's 7B chat model on top. On a 16 GB machine either raise `memory=` under `[wsl2]` in
+`%UserProfile%\.wslconfig` or run `-NoSpectra`; the script says so before it starts.
+
+What has been verified, and what has not: the script was exercised under PowerShell 7.4 on Linux
+against a stub `docker` — every subcommand's file list compared with `demo.sh`'s in both modes,
+the precedence, the exit codes, the waits against a local HTTP server, and the generated `.env`
+read back by `demo.sh`. **It has not run on Windows 11 or under Windows PowerShell 5.1**; the
+rules above are what keeps it compatible, not a run that proved it.
 
 ## Typical local dev workflow
 
