@@ -601,6 +601,14 @@ Every asynchronous request has cancellation and a timeout, including unmount dur
 Units come from the collector; all field errors are collected and the first invalid field receives
 focus. Existing cluster/collector identities seed the form. No credentials enter browser drafts.
 
+**Preparation reads as a summary, not a diagnostic dump.** `ForecastPreparation` used to print
+all eight checks as `id: STATE — detail` plus a remedy each, so a fresh deployment opened on a wall
+of configuration keys where two things mattered. It now shows one badge per group (ready, not
+tested, to configure), a numbered list of what is left to configure with its remedy, and one line
+naming the dependencies not probed yet; the full list with each check's detail stays under
+`<details>`. `history` is left out of the summary: it is judged per approved series and can only
+ever read "not checked" before one exists. The probe button disappears once nothing is untested.
+
 `ForecastProgress` polls only the selected approved source, keeps failures distinct from missing
 observations, and dates diagnostics. Trend uses the last measured value against the last Q50;
 threshold evaluation must share the persisted result key before it is shown. Preparation progress,

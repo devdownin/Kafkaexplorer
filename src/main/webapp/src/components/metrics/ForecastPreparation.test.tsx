@@ -21,15 +21,27 @@ describe('ForecastPreparation', () => {
     expect(screen.getByText('bin/forecast-stack.sh')).toBeTruthy();
     const details = screen.getByText('All 7 checks').closest('details')!;
     expect(details).not.toHaveAttribute('open');
-    expect(details).toHaveTextContent('tools: CONFIG REQUIRED');
+    expect(details).toHaveTextContent('CONFIG REQUIRED Forecast tools — tools detail');
+    expect(screen.queryByLabelText('Next steps')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Test PostgreSQL and TimesFM' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Configure a forecast' })).toBeTruthy();
   });
-  it('lists every check, and offers the probe, once one dependency is configured', async () => {
+  it('summarises the checks and lists only what remains to configure, once one dependency is configured', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: readiness('NOT_CHECKED', 'CONFIG_REQUIRED') });
     render(<ForecastPreparation />);
-    expect(await screen.findByText('timesfm action')).toBeTruthy();
+    const steps = await screen.findByLabelText('Next steps');
     expect(screen.queryByText('The forecast stack is not running.')).toBeNull();
+    expect(screen.getByLabelText('Readiness summary')).toHaveTextContent('1 ready1 not tested4 to configure');
+    expect(steps).toHaveTextContent('TimesFM inference — timesfm action');
+    expect(steps).not.toHaveTextContent('pilot action');
+    expect(steps).not.toHaveTextContent('history action');
+    expect(screen.getByText('Not tested yet: PostgreSQL history.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Test PostgreSQL and TimesFM' })).toBeTruthy();
+  });
+  it('offers no probe once both dependencies have been tested', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: readiness('READY', 'UNAVAILABLE') });
+    render(<ForecastPreparation />);
+    expect(await screen.findByLabelText('Next steps')).toHaveTextContent('TimesFM inference — timesfm action');
+    expect(screen.queryByRole('button', { name: 'Test PostgreSQL and TimesFM' })).toBeNull();
   });
 });
