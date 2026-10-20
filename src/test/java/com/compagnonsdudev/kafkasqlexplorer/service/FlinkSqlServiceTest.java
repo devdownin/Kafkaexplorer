@@ -526,6 +526,26 @@ class FlinkSqlServiceTest {
                 service.withTopicTableNames("SELECT * FROM other.guard"));
     }
 
+    /** La forme qu'une métrique envoie : un nom de topic nu, suivi de l'option de lecture. */
+    @Test
+    void aMetricReadOfABareTopicNameWithItsScanHintIsServed() throws Exception {
+        doReturn(List.of("metric-hint.topic")).when(kafkaAdminService).listTopics();
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "metric-hint.topic", 0, 0L, null, "{\"id\":\"A\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "metric-hint.topic", 0, 1L, null, "{\"id\":\"B\"}")
+        )).when(kafkaAdminService).getEarliestRecords(eq("metric-hint.topic"), anyInt());
+
+        QueryResult result = service.executeSql(QueryRequest.directSql(
+                "SELECT COUNT(*) AS metric_value FROM metric-hint.topic "
+                        + "/*+ OPTIONS('scan.startup.mode'='earliest-offset') */",
+                1_000, 10_000L, "earliest-offset"));
+
+        assertNoError(result);
+        assertEquals(2.0, ((Number) result.rows().get(0).get("metric_value")).doubleValue());
+    }
+
     @Test
     void aBareTopicNameIsReadByTheDirectReader() throws Exception {
         doReturn(List.of("bare-direct.topic")).when(kafkaAdminService).listTopics();
