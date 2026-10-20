@@ -115,12 +115,6 @@ OPENROUTER_API_KEY=sk-or-... ./demo.sh --no-spectra    # la même chose sans Spe
 ./demo.sh down                                         # arrêt (reset supprime aussi les volumes)
 ```
 
-Sous Windows 11, `demo.cmd` lance le jumeau PowerShell, `demo.ps1`, avec Docker Desktop pour seul prérequis — ni Git Bash, ni openssl :
-
-```powershell
-$env:OPENROUTER_API_KEY = 'sk-or-...'; .\demo.cmd    # ou : .\demo.cmd -NoSpectra · .\demo.cmd down
-```
-
 | Service | Adresse |
 |---|---|
 | Kafka SQL Explorer (UI, API, `/mcp`) | http://localhost:8080 |
@@ -130,6 +124,21 @@ $env:OPENROUTER_API_KEY = 'sk-or-...'; .\demo.cmd    # ou : .\demo.cmd -NoSpectr
 | Kafka | `localhost:9092` |
 
 Chaque variable a une valeur par défaut ; une variable exportée ou un `.env` à la racine la remplace. Les secrets (PostgreSQL, TimesFM, jeton MCP) sont générés une fois dans `.forecast-stack/.env`. Sans clé, la stack démarre quand même : Process Mining répond sa moitié calculée et l'agent démarre `DEGRADED`. Le premier lancement construit l'explorateur et télécharge le checkpoint TimesFM — `DEMO_PUBLISHED_IMAGE=true` tire la release à la place. Aussi `ps`, `logs [service]`, `probe` (les deux serveurs MCP) et `reset`.
+
+#### 🪟 Sous Windows 11
+
+`demo.cmd` lance le jumeau PowerShell, `demo.ps1`, avec Docker Desktop (backend WSL 2) pour seul prérequis — ni Git Bash, ni openssl, ni curl. Depuis PowerShell ou une invite `cmd`, à la racine du dépôt :
+
+```powershell
+$env:OPENROUTER_API_KEY = 'sk-or-...'
+.\demo.cmd                       # build, démarrage, attente, affichage des URLs
+.\demo.cmd -NoSpectra            # sans SpectraLLM
+.\demo.cmd logs explorer         # aussi : ps, probe, down, reset
+```
+
+- `demo.cmd` ne sert qu'à passer `-ExecutionPolicy Bypass` à ce seul processus PowerShell, Windows 11 refusant par défaut les scripts non signés ; rien n'est reconfiguré sur la machine.
+- Mêmes services, ports, valeurs par défaut et précédence que `demo.sh` ; les deux partagent `.forecast-stack/.env`, donc l'un peut démarrer une stack préparée par l'autre.
+- Docker Desktop donne par défaut à WSL 2 la moitié de la mémoire de la machine, et TimesFM seul est plafonné à 8 Go : sur un PC de 16 Go, augmentez `memory=` sous `[wsl2]` dans `%UserProfile%\.wslconfig`, ou utilisez `-NoSpectra`.
 
 ## 🧭 Le tour du propriétaire
 
