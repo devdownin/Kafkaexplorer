@@ -36,7 +36,8 @@ import static org.mockito.Mockito.mock;
  * les affiche en fin de seed : toutes nomment les topics par leur vrai nom entre guillemets
  * ({@code FROM "demo.orders.1.received"}), et cette écriture répondait « Object not found » jusqu'à
  * {@code withTopicTableNames}. Rien ne l'a vu, parce que rien ne lisait ces fichiers. Ce test les
- * lit : chaque topic cité doit être créé par un seeder, et chaque instruction doit sortir de la
+ * lit, avec les leçons de l'aide intégrée ({@code helpContent.ts}), dont Vitest ne peut vérifier que
+ * la forme : chaque topic cité doit être créé par un seeder, et chaque instruction doit sortir de la
  * résolution des noms lisible par la grammaire, chaque source désignant la table d'un topic seedé.
  *
  * <p>Les topics sont pris dans les seeders et non recopiés ici, sur la règle que
@@ -54,6 +55,10 @@ class DemoQueryExamplesTest {
     private static final Pattern SQL_BLOCK = Pattern.compile("(?s)```sql\\n(.*?)```");
     private static final Pattern ECHO = Pattern.compile("(?m)^echo \"(.*)\"\\s*$");
     private static final Pattern QUOTED_NAME = Pattern.compile("\"([^\"]+)\"");
+    /** Le champ {@code sql} d'une leçon : une chaîne entre apostrophes ou un gabarit entre accents graves. */
+    private static final Pattern LESSON_SQL =
+        Pattern.compile("(?s)\\bsql: (?:'((?:[^'\\\\]|\\\\.)*)'|`((?:[^`\\\\]|\\\\.)*)`)");
+    private static final Pattern CTE_NAME = Pattern.compile("(?i)(?:\\bWITH|,)\\s+(\\w+)\\s+AS\\s*\\(");
 
     private Set<String> topics;
     private FlinkSqlService service;
@@ -81,7 +86,9 @@ class DemoQueryExamplesTest {
         assertTrue(topics.contains("demo.orders.1.received"), "got: " + topics);
         assertTrue(topics.contains("demo.sc.13.carrier.assigned.out"), "got: " + topics);
         assertTrue(topics.contains("demo.avro.orders"), "got: " + topics);
-        assertTrue(examples().size() >= 10, "got: " + examples());
+        assertTrue(examples().size() >= 20, "got: " + examples());
+        assertTrue(examples().stream().anyMatch(sql -> sql.contains("TUMBLE(TABLE demo_iot_sensors")),
+            "the help's lessons were not read: " + examples());
     }
 
     @TestFactory
@@ -94,11 +101,18 @@ class DemoQueryExamplesTest {
             }
 
             String resolved = service.withTopicTableNames(FlinkSqlService.prepareSql(sql));
-            Optional<SqlAst.Read> read = SqlAst.read(resolved);
+            // Le nom d'une CTE est une source pour la grammaire et un topic pour personne.
+            Set<String> ctes = new LinkedHashSet<>();
+            Matcher cte = CTE_NAME.matcher(resolved);
+            while (cte.find()) ctes.add(cte.group(1));
+            String body = resolved.replaceFirst("(?i)^EXPLAIN\\s+", "");
+            Optional<SqlAst.Read> read = SqlAst.read(SqlStatements.withoutLeadingCte(body));
             assertTrue(read.isPresent(), "the grammar cannot read the resolved statement: " + resolved);
-            List<String> sources = SqlAst.tableNames(read.get());
+            // Les sources qu'enregistrerait l'auto-enregistrement, sous-requêtes comprises.
+            List<String> sources = service.extractSourceTables(body);
             assertFalse(sources.isEmpty(), "no source read in: " + resolved);
             for (String source : sources) {
+                if (ctes.contains(source)) continue;
                 assertTrue(topics.stream().anyMatch(t -> DdlGeneratorService.toTableName(t).equals(source)),
                     "`" + source + "` is not the table of a seeded topic, in: " + resolved);
             }
@@ -141,6 +155,16 @@ class DemoQueryExamplesTest {
                 statement += " " + lines.get(++i).strip();
             }
             statements.add(statement.replaceFirst("\\s*\\([A-Z]+\\)$", "").strip());
+        }
+
+        // Les leçons qui lisent ; un CREATE TABLE ne lit rien, il déclare.
+        String help = Files.readString(ROOT.resolve("src/main/webapp/src/pages/helpContent.ts"));
+        String lessons = help.substring(help.indexOf("export const LESSONS"), help.indexOf("export const ENGINE_MATRIX"));
+        Matcher lesson = LESSON_SQL.matcher(lessons);
+        while (lesson.find()) {
+            String sql = (lesson.group(1) != null ? lesson.group(1) : lesson.group(2))
+                .replace("\\'", "'").replace("\\`", "`");
+            if (sql.strip().matches("(?is)^(SELECT|WITH|EXPLAIN)\\b.*")) statements.add(sql.strip());
         }
         return statements;
     }
