@@ -119,13 +119,23 @@ describe('lesson content', () => {
     });
   });
 
-  it('names tables in their sanitized form — a dotted name would not resolve', () => {
+  // Un nom pointé nu est accepté par le backend, mais l'aide n'en montre pas : sans guillemets,
+  // `demo.orders` se lit aussi « base demo, table orders », et c'est la forme citée qui dit sans
+  // ambiguïté « ce topic ». D'où deux écritures et deux seulement.
+  it('names each table by its table name or by its topic name in quotes', () => {
+    const names: string[] = [];
     LESSONS.forEach((lesson) => {
-      const references = [...lesson.sql.matchAll(/\bFROM\s+(?:TABLE\s*\(\s*\w+\s*\(\s*TABLE\s+)?([\w.-]+)/gi)];
+      const references = [...lesson.sql.matchAll(/\b(?:FROM|JOIN)\s+(?:TABLE\s*\(\s*\w+\s*\(\s*TABLE\s+)?("[^"]+"|[\w.-]+)/gi)];
       references.forEach(([, name]) => {
-        expect(`${lesson.id}: ${name}`).toBe(`${lesson.id}: ${topicToTable(name)}`);
+        names.push(name);
+        if (name.startsWith('"')) {
+          expect(`${lesson.id}: ${name}`).toMatch(/^[\w]+: "[\w.-]+"$/);
+        } else {
+          expect(`${lesson.id}: ${name}`).toBe(`${lesson.id}: ${topicToTable(name)}`);
+        }
       });
     });
+    expect(names.some((name) => name.startsWith('"'))).toBe(true);
   });
 
   it('explains each lesson and teaches at least one thing per step', () => {

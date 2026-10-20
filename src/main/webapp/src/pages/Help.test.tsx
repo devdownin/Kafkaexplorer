@@ -65,7 +65,7 @@ describe('Help', () => {
     expect(lessonCard('Join two topics')).toBeInTheDocument();
   });
 
-  it('sanitizes whatever topic name is typed into the naming lab', async () => {
+  it('shows the table whatever topic name is typed into the naming lab resolves to', async () => {
     const user = userEvent.setup();
     renderPage();
     const input = screen.getByLabelText(/kafka topic/i);

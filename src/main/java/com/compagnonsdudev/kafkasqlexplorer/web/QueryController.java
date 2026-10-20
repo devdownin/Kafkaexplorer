@@ -270,7 +270,10 @@ public class QueryController {
         acquireQuerySlot();
         try {
             try {
-                sqlQueryValidator.validate(request.sql());
+                // Les noms de topic d'abord, comme à l'exécution : sans cela `FROM orders-v1` était
+                // refusé ici pour une erreur de parse que le Run, lui, ne rencontre plus.
+                sqlQueryValidator.validate(
+                    flinkSqlService.withTopicTableNames(FlinkSqlService.prepareSql(request.sql())));
                 return SqlValidationResponse.accepted();
             } catch (IllegalArgumentException e) {
                 return SqlValidationResponse.rejected(e.getMessage());

@@ -156,10 +156,24 @@ public class MetricService {
      */
     private static final Set<String> COUNT_WINDOWS = Set.of("TOTAL", "SINCE_LAST_REFRESH");
 
+    /**
+     * A table name as a metric's SQL writes it: backticked, double-quoted, or bare — and bare it
+     * may be a topic's own name, dots and hyphens included ({@code orders-v1}), which
+     * {@code FlinkSqlService.withTopicTableNames} resolves to its table downstream.
+     *
+     * <p>The former {@code \\w[\\w.]*} stopped at the hyphen, so the scan hint landed inside the
+     * name ({@code FROM orders /*+ … *}{@code /-v1}), and a quoted name matched nothing at all: no
+     * hint, no direct read, no offset count. A bare name never ends on a hyphen nor holds two in a
+     * row, because this text still carries its comments: {@code FROM orders-- total} is the table
+     * {@code orders}, and a hint glued after {@code orders--} would be commented out.
+     */
+    private static final String TABLE_NAME =
+        "`[^`]*+(?:``[^`]*+)*+`|\"[^\"]*+(?:\"\"[^\"]*+)*+\"|\\w+(?:[.\\-]\\w+)*+";
+
     /** A plain whole-topic count: the shape offsets answer exactly. */
     private static final Pattern WHOLE_TOPIC_COUNT = Pattern.compile(
         "(?is)^\\s*SELECT\\s+COUNT\\s*\\(\\s*\\*\\s*\\)\\s*(?:AS\\s+`?\\w+`?\\s*)?"
-            + "FROM\\s+`?\\w[\\w.]*`?\\s*;?\\s*$");
+            + "FROM\\s+(?:" + TABLE_NAME + ")\\s*;?\\s*$");
 
     /** metricId → the counts the previous refresh saw, for a windowed comparison. */
     private final Map<String, double[]> countDeltaBaselines = new ConcurrentHashMap<>();
@@ -666,7 +680,7 @@ public class MetricService {
      */
     private static final String SCAN_STARTUP_EARLIEST = "'scan.startup.mode'='earliest-offset'";
 
-    private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\b\\s+(\\w[\\w.]*)");
+    private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\b\\s+(" + TABLE_NAME + ")");
 
     private static final Pattern JOIN_KEYWORD = Pattern.compile("(?i)\\bJOIN\\b");
 

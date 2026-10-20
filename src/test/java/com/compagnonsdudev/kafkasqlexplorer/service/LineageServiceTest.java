@@ -218,6 +218,28 @@ class LineageServiceTest {
         assertFalse(edges.stream().anyMatch(e -> "secret_table".equals(e.get("from"))));
     }
 
+    /**
+     * Un job écrit avec les noms des topics — nus, à tiret, entre guillemets — relie les tables
+     * enregistrées pour eux. Le filtre d'identifiants écartait le tiret et le guillemet, et une
+     * arête vers `demo.orders` ne désignait aucun nœud : elle disparaissait du graphe.
+     */
+    @Test
+    void aJobNamingItsTopicsIsWiredToTheirTables() {
+        when(tableEnv.listTables()).thenReturn(new String[]{"demo_orders", "orders_v1", "out_topic"});
+        when(tableEnv.listViews()).thenReturn(new String[]{});
+        mockDdl("SHOW CREATE TABLE demo_orders", "CREATE TABLE demo_orders (...)");
+        mockDdl("SHOW CREATE TABLE orders_v1", "CREATE TABLE orders_v1 (...)");
+        mockDdl("SHOW CREATE TABLE out_topic", "CREATE TABLE out_topic (...)");
+        activeInsertJob("job-1",
+            "INSERT INTO \"out.topic\" SELECT * FROM demo.orders o JOIN orders-v1 v ON o.id = v.id");
+
+        List<Map<String, String>> edges = edgesOf(lineageService.getLineage());
+
+        assertTrue(edges.stream().anyMatch(e -> "demo_orders".equals(e.get("from"))), "got: " + edges);
+        assertTrue(edges.stream().anyMatch(e -> "orders_v1".equals(e.get("from"))), "got: " + edges);
+        assertTrue(edges.stream().anyMatch(e -> "out_topic".equals(e.get("to"))), "got: " + edges);
+    }
+
     /** Sources that are not real nodes (CTE names, aliases) must not leave dangling edges. */
     @Test
     void edgesPointingAtUnknownObjectsAreDropped() {

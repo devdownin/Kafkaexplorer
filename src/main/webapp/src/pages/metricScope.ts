@@ -2,6 +2,13 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 /**
+ * Miroir de `MetricService.TABLE_NAME` : un nom entre backticks, entre guillemets, ou nu avec
+ * points et tirets — le nom d'un topic tel que le cluster l'affiche (`orders-v1`). Jamais terminé
+ * par un tiret, pour qu'un `-- commentaire` collé au nom reste un commentaire.
+ */
+export const TABLE_NAME = '`[^`]*(?:``[^`]*)*`|"[^"]*(?:""[^"]*)*"|\\w+(?:[.\\-]\\w+)*';
+
+/**
  * Ce qu'une métrique a réellement mesuré, en quelques mots sur sa carte.
  *
  * `MetricConfig.lastSummary` portait déjà le taux d'appariement, les décomptes non appariés, le
@@ -336,7 +343,9 @@ export function describeRefreshCost(
     const named = str('leftTopic') !== '' && str('rightTopic') !== '';
     const plainCount = (key: string) => {
       const sql = str(key);
-      return sql === '' || /^select\s+count\s*\(\s*\*\s*\)\s*(?:as\s+`?\w+`?\s*)?from\s+`?\w[\w.]*`?\s*;?$/is.test(sql);
+      return sql === '' || new RegExp(
+        `^select\\s+count\\s*\\(\\s*\\*\\s*\\)\\s*(?:as\\s+\`?\\w+\`?\\s*)?from\\s+(?:${TABLE_NAME})\\s*;?$`, 'is',
+      ).test(sql);
     };
     const byOffsets = countBy === 'OFFSETS'
       || ((countBy === '' || countBy === 'AUTO') && named && plainCount('leftSql') && plainCount('rightSql'));

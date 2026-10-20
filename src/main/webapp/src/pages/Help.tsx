@@ -286,7 +286,8 @@ const Help: React.FC = () => {
         <Card padding="md" className="mt-3">
           <h3 className="text-[13px] font-semibold text-on-surface mb-1">Try the naming rule</h3>
           <p className="text-[12px] text-on-surface-variant leading-relaxed mb-3">
-            Paste any topic name to see the identifier to write in your query.
+            Paste any topic name: your query can name it as it is, and this is the table it resolves to — the
+            name the Schema Browser, the planner&apos;s errors and the lineage use.
           </p>
           <div className="grid gap-3 sm:grid-cols-2 items-end">
             <Field label="Kafka topic" id="help-topic-name">
@@ -301,7 +302,7 @@ const Help: React.FC = () => {
               )}
             </Field>
             <div>
-              <p className="text-[11px] text-on-surface-variant mb-1.5">Write this in your SQL</p>
+              <p className="text-[11px] text-on-surface-variant mb-1.5">Registered as</p>
               <p className="font-mono text-[13px] text-primary bg-primary/10 rounded-lg px-3 h-9 flex items-center overflow-x-auto">
                 {topicSample.trim() ? `SELECT * FROM ${topicToTable(topicSample)}` : '—'}
               </p>

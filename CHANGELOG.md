@@ -20,7 +20,29 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+- **A topic can be queried by its own name.** `SELECT * FROM "demo.orders"` answered "Object not
+  found": the topic was registered as the table `demo_orders`, but the statement reached the planner
+  as written. Unquoted it fared no better — `demo.orders` was read as table `orders` of database
+  `demo`, and `orders-v1` as a subtraction the validator refused before anything was registered. The
+  name a topic has in the cluster, quoted or not, now reaches the table registered for it, in a
+  `SELECT`, a `JOIN`, a window, the target of an `INSERT`, `DESCRIBE`, and the editor's pre-flight
+  check, which used to refuse what Run accepted. A name is left as written when no topic carries it,
+  when a table already does, and — bare and dotted — when its first segment is a catalogue or a
+  database, so `sales.orders` keeps meaning that table. The table name still works everywhere it did.
+  One case is read the other way: an unspaced subtraction whose operands spell exactly a topic's name
+  (`a-b`, with a topic `a-b`) is that topic.
+- **Metrics, the lineage graph and the MCP scope guard read those names too.** A metric on
+  `FROM orders-v1` had its scan option inserted inside the name, and one on `FROM "demo.orders"` got
+  no option, no direct read and no offset count; the lineage graph dropped an edge naming
+  `demo.orders` because it matched no node, and the MCP guard refused both spellings as unreadable
+  while the engine ran them. Each now recognises the name; the lineage edge lands on the table's node
+  and the guard still resolves every source to its topic before checking the allowed prefixes.
+- **The demo's example queries and the help page say what runs.** The help page claimed a dotted
+  name "would not resolve" and that only the first table of a join is registered — both false — and
+  its naming lab offered the underscored name as the only one to type. It now teaches the topic's own
+  name first, shows the table it resolves to, and names the real join pitfall (qualifying a column by
+  the table once an alias exists). `DemoQueryExamplesTest` reads `docs/QUERY-EXAMPLES.md`, the
+  suggestions `setup-demo.sh` prints and the help's lessons, and fails on a topic no seeder creates.
 
 ## [2.3.3] — 2026-10-20
 

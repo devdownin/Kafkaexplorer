@@ -1346,6 +1346,35 @@ class MetricServiceTest {
         return captor.getAllValues();
     }
 
+    /**
+     * Un nom de topic à tiret ou entre guillemets garde son option de lecture entière, derrière le
+     * nom, et reste une lecture d'une seule table. L'option tombait au milieu de `orders-v1`, et
+     * `"demo.orders"` ne la recevait pas du tout.
+     */
+    @Test
+    void aTopicNameWithAHyphenOrQuotesKeepsItsScanHintAfterTheWholeName() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(directCount(12.0), directCount(7.0));
+
+        service.previewMetric(countDelta(Map.of(
+            "leftSql", "SELECT COUNT(*) AS metric_value FROM orders-v1",
+            "rightSql", "SELECT COUNT(*) AS metric_value FROM \"demo.orders\" -- total")));
+
+        List<String> sent = capturedRequests().stream().map(QueryRequest::sql).toList();
+        assertTrue(sent.stream().anyMatch(sql -> sql.contains("FROM orders-v1 /*+ OPTIONS(")), "got: " + sent);
+        assertTrue(sent.stream().anyMatch(sql -> sql.contains("FROM \"demo.orders\" /*+ OPTIONS(")), "got: " + sent);
+        assertTrue(capturedRequests().stream().allMatch(QueryRequest::wantsDirectRead), "got: " + sent);
+    }
+
+    @Test
+    void aTopicNameWithAHyphenOrQuotesIsStillASingleTableAndAWholeTopicCount() {
+        for (String table : List.of("orders-v1", "demo.orders", "\"demo.orders\"", "`demo.orders`")) {
+            String sql = "SELECT COUNT(*) AS metric_value FROM " + table;
+            assertTrue(MetricService.isSingleTableRead(sql), sql);
+            assertTrue(MetricService.isWholeTopicCount(sql), sql);
+        }
+        assertFalse(MetricService.isSingleTableRead("SELECT COUNT(*) AS metric_value FROM orders-v1, b"));
+    }
+
     @Test
     void theScanHintCarriesOnlyWhatThisConnectorCanExpress() {
         Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(directCount(12.0), directCount(7.0));

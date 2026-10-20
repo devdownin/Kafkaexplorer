@@ -57,7 +57,7 @@ Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilot
 ## ✨ Points forts
 
 - 🖱️ **Cliquer, c'est requêter** — cliquez sur une clé JSON ou une balise XML dans l'aperçu d'un message et elle atterrit dans votre `SELECT`/`WHERE`, `JSON_VALUE`/XPath générés pour vous.
-- 🧠 **Schémas sans configuration** — les topics sont échantillonnés, leur structure inférée (JSON, XML, Avro via Schema Registry) et enregistrée comme table Flink en un clic.
+- 🧠 **Schémas sans configuration** — les topics sont échantillonnés, leur structure inférée (JSON, XML, Avro via Schema Registry) et enregistrée comme table Flink dès que vous la nommez — par le nom du topic, tel que le cluster l'affiche : `SELECT * FROM "orders.v2-raw"`.
 - 📝 **Un vrai éditeur SQL** — Monaco (le moteur de VS Code), auto-complétion des topics et tables, historique de requêtes, lecture earliest/latest.
 - 🕸️ **Lignage & traçage** — un graphe interactif topics → tables → jobs actifs, résolu par le parseur de Flink lui-même ; plus le traçage d'un message à travers les topics par clé, header, JSONPath ou XPath, qui affiche ses sauts au fil de la recherche, dit exactement ce qu'il a lu, reprend là où le budget l'a arrêté, et compare deux clés côte à côte.
 - 🗺️ **Un modèle de données que vous n'avez pas eu à dessiner** — choisissez des topics et lisez-les comme des tables, avec les relations entre elles déduites des noms de colonnes clés. Kafka n'a pas de clés étrangères : chaque arête est donc une affirmation, qui porte son grade de confiance, énonce son évidence en toutes lettres, et s'ouvre en `JOIN` prêt à l'emploi — une relation ou tout un sous-graphe.

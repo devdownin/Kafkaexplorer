@@ -210,4 +210,18 @@ class SqlStatementsTest {
 
         assertEquals(sql, SqlStatements.replaceQuotedIdentifier(sql, "demo.orders", "demo_orders"));
     }
+
+    @Test
+    void aBareNameIsReplacedWhereverItIsAWholeName() {
+        assertEquals("SELECT orders_v1.id FROM orders_v1 WHERE note = 'orders-v1'",
+            SqlStatements.replaceBareIdentifier(
+                "SELECT orders-v1.id FROM orders-v1 WHERE note = 'orders-v1'", "orders-v1", "orders_v1"));
+    }
+
+    @Test
+    void aBareNameInsideALongerNameIsNotReplaced() {
+        String sql = "SELECT * FROM x.demo.orders JOIN demo.orders_v2 ON true JOIN `demo.orders` ON true";
+
+        assertEquals(sql, SqlStatements.replaceBareIdentifier(sql, "demo.orders", "demo_orders"));
+    }
 }

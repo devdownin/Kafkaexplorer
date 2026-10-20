@@ -515,6 +515,13 @@ describe('le miroir de isSingleTableRead refuse au plus ce que le serveur refuse
     expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM orders;')).toBe(true);
   });
 
+  it('lit un nom de topic à tiret ou entre guillemets comme une seule table', () => {
+    for (const table of ['orders-v1', 'demo.orders', '"demo.orders"', '`demo.orders`']) {
+      expect(isSingleTableRead(`SELECT COUNT(*) AS metric_value FROM ${table}`)).toBe(true);
+    }
+    expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM orders-v1, b')).toBe(false);
+  });
+
   it('refuse les formes dont le lecteur direct se tromperait en silence', () => {
     expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM a JOIN b ON a.id = b.id')).toBe(false);
     expect(isSingleTableRead('SELECT COUNT(*) AS metric_value FROM a, b')).toBe(false);

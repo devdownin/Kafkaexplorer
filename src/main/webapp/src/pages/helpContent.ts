@@ -9,8 +9,10 @@
  * ordinaire : une fonction pure se teste sans monter la page. La seconde l'est
  * moins — une page d'aide ment vite. Les exemples doivent rester exécutables
  * (statements réellement autorisés par `FlinkSqlService.executeSql`, tables
- * réellement semées par `setup-demo.sh`, noms réellement produits par
- * `DdlGeneratorService.toTableName`), et un test peut vérifier ça ; une suite
+ * réellement semées par `setup-demo.sh`, et nommées soit par le topic tel que le
+ * cluster l'affiche, soit par le nom que `DdlGeneratorService.toTableName` en
+ * tire — `FlinkSqlService.withTopicTableNames` résout le premier vers le second),
+ * et un test peut vérifier ça ; une suite
  * de littéraux JSX, non.
  *
  * Les affirmations sur les moteurs viennent du code, pas de la documentation
@@ -72,10 +74,10 @@ export const LESSONS: Lesson[] = [
     group: 'Read a topic',
     title: 'Read the first messages',
     goal: 'See what a topic actually contains, without knowing its schema.',
-    sql: 'SELECT * FROM demo_orders_1_received LIMIT 20',
+    sql: 'SELECT * FROM "demo.orders.1.received" LIMIT 20',
     reading: [
       'You never create the table: the app samples the topic, infers a schema, and runs the CREATE TABLE for you the first time you name it.',
-      'The table name is the topic name with dots and dashes turned into underscores — demo.orders.1.received becomes demo_orders_1_received.',
+      'Name the topic as the cluster shows it, quoted or not. It reaches the table the app registers for it, whose name has the dots and dashes turned into underscores — demo_orders_1_received, the name the Schema Browser and the next lessons use. Both spellings work.',
       'LIMIT is not decoration. A SELECT runs against a stream, so it stops on the row limit or on the timeout, never on "end of table".',
     ],
     pitfall:
@@ -274,12 +276,12 @@ JOIN demo_customers AS c
   ON o.customer_id = c.customer_id
 LIMIT 20`,
     reading: [
-      'Auto-registration registers one table — the first one named after FROM. Read each side once on its own before joining them, or the second table comes back as "Object not found".',
+      'Both sides are registered on the way: auto-registration reads every table after FROM and after each JOIN, so a topic you have never opened joins like any other.',
       'A streaming join keeps both sides in state, so it is unbounded work: keep a LIMIT on it while exploring.',
       'A cross join is refused by the validator unless the deployment enables it, because a cartesian product over two streams has no end.',
     ],
     pitfall:
-      'Joining a topic you have never opened. Registration happens on a plain SELECT, so run SELECT * FROM demo_customers LIMIT 1 first.',
+      'Qualifying a column with the table name once an alias is declared. After FROM demo_orders_1_received AS o, the table is o: write o.amount, not demo_orders_1_received.amount.',
     engine: 'FLINK',
     keywords: ['join', 'two topics', 'enrich', 'reference data', 'registration'],
   },
@@ -486,7 +488,7 @@ export const ERROR_GUIDE: ErrorGuideEntry[] = [
   {
     message: 'Object \'orders\' not found',
     meaning: 'No registered table and no topic whose sanitized name matches what you typed.',
-    fix: 'Take the exact name from the Schema Browser. Dots and dashes in a topic name become underscores.',
+    fix: 'Check the spelling against the topic list or the Schema Browser. A topic\'s own name works, quoted or not, and so does its table name with dots and dashes turned into underscores.',
   },
   {
     message: 'Column \'orderId\' not found',
@@ -635,8 +637,9 @@ export const SHORTCUTS: Shortcut[] = [
  * Nom de table Flink pour un topic Kafka.
  *
  * Reproduit `DdlGeneratorService.toTableName` : points et tirets deviennent des
- * soulignés. C'est la règle qui explique le plus d'échecs « Object not found »,
- * donc la page la rend manipulable plutôt que de l'énoncer.
+ * soulignés. Une requête peut nommer le topic lui-même, que le backend résout vers
+ * ce nom (`withTopicTableNames`) ; c'est sous ce nom que la table apparaît dans le
+ * Schema Browser, les erreurs du planner et le lineage, donc la page le montre.
  */
 export function topicToTable(topic: string): string {
   return topic.trim().replace(/[.-]/g, '_');

@@ -8,6 +8,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpGuard;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolException;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
 import com.compagnonsdudev.kafkasqlexplorer.service.DdlGeneratorService;
+import com.compagnonsdudev.kafkasqlexplorer.service.FlinkSqlService;
 import com.compagnonsdudev.kafkasqlexplorer.service.KafkaAdminService;
 import com.compagnonsdudev.kafkasqlexplorer.service.SqlAst;
 import com.compagnonsdudev.kafkasqlexplorer.service.SqlStatements;
@@ -158,6 +159,45 @@ class SqlSourceScope {
                 return List.of();
             }
         }
+        /*
+         * Prepared like the engine prepares it — a double-quoted name becomes the backticked one
+         * the parser reads — and, when the parser still refuses it, read again with every topic
+         * name resolved to its table: `FROM orders-v1` is a subtraction to the grammar, so the
+         * topic's own name, which the engine now accepts, was refused here as unreadable.
+         */
+        String readable = FlinkSqlService.prepareSql(sql);
+        List<String> names = sourcesOf(readable);
+        if (names.isEmpty()) {
+            readable = withTopicNamesResolved(readable);
+            names = sourcesOf(readable);
+        }
+        if (names.isEmpty()) {
+            throw new McpToolException(McpErrorCode.OUT_OF_SCOPE, McpGuard.SCOPE,
+                    ("this server restricts reads to %s, and it could not determine which tables "
+                            + "this statement reads, so it cannot be shown to stay inside them. "
+                            + "Write the sources as plain table names in the FROM and the JOINs.")
+                            .formatted(String.join(", ", guard.properties().getAllowedTopicPrefixes())));
+        }
+        // A CTE name is a source to the parser and a topic to nobody, so it is dropped here rather
+        // than refused as unresolvable below.
+        Set<String> ctes = cteNames(readable);
+        return names.stream()
+                .filter(name -> !ctes.contains(name.toLowerCase(Locale.ROOT)))
+                .toList();
+    }
+
+    /** The statement with each topic name that is not already a table name written as its table. */
+    private String withTopicNamesResolved(String sql) {
+        String resolved = sql;
+        for (String topic : topics()) {
+            String table = DdlGeneratorService.toTableName(topic);
+            if (!table.equals(topic)) resolved = SqlStatements.replaceBareIdentifier(resolved, topic, table);
+        }
+        return resolved;
+    }
+
+    /** What the parser reads as sources, CTE bodies included; empty when it reads nothing. */
+    private static List<String> sourcesOf(String sql) {
         Optional<SqlAst.Read> ast = SqlAst.read(SqlStatements.withoutLeadingCte(sql));
         List<String> names = new ArrayList<>(ast.map(SqlAst::tableNames).orElse(List.of()));
         // A CTE body reads topics too, and `withoutLeadingCte` has just removed it from what the
@@ -176,19 +216,7 @@ class SqlSourceScope {
                 }
             });
         }
-        if (names.isEmpty()) {
-            throw new McpToolException(McpErrorCode.OUT_OF_SCOPE, McpGuard.SCOPE,
-                    ("this server restricts reads to %s, and it could not determine which tables "
-                            + "this statement reads, so it cannot be shown to stay inside them. "
-                            + "Write the sources as plain table names in the FROM and the JOINs.")
-                            .formatted(String.join(", ", guard.properties().getAllowedTopicPrefixes())));
-        }
-        // A CTE name is a source to the parser and a topic to nobody, so it is dropped here rather
-        // than refused as unresolvable below.
-        Set<String> ctes = cteNames(sql);
-        return names.stream()
-                .filter(name -> !ctes.contains(name.toLowerCase(Locale.ROOT)))
-                .toList();
+        return names;
     }
 
     /** Every {@code 'topic' = '…'} the statement declares, outside its string literals' contents. */
