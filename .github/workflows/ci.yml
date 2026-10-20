@@ -336,6 +336,29 @@ jobs:
             exit 1
           }
 
+      - name: Assert a topic can be queried by its own name
+        run: |
+          set -euo pipefail
+          # The step above reads the *table* name, which is what always worked. What a user
+          # types is the topic as the cluster shows it — quoted, or bare — and both answered
+          # "Object not found" or a parse error until `withTopicTableNames` resolved them
+          # before validation. This is the one place that runs it the way it ships, against a
+          # real broker and the seeded demo topics, so the engine is asserted, as above: an
+          # answer from KAFKA_DIRECT would mean the planner was never reached by that spelling.
+          topic=demo.orders.1.received
+          for from in "\"$topic\"" "$topic"; do
+            body=$(python3 -c 'import json,sys; print(json.dumps({"sql": "SELECT * FROM " + sys.argv[1], "maxRows": 3, "timeout": 45000, "readMode": "earliest-offset"}))' "$from")
+            out=$(curl -sS -m 90 -X POST http://localhost:8080/api/query/run-sync -H 'Content-Type: application/json' -d "$body" || true)
+            echo "$from -> $(printf '%s' "$out" | head -c 300)"
+            engine=$(printf '%s' "$out" | python3 -c 'import json,sys; print((json.load(sys.stdin) or {}).get("engine") or "")' 2>/dev/null || true)
+            error=$(printf '%s' "$out" | python3 -c 'import json,sys; print((json.load(sys.stdin) or {}).get("error") or "")' 2>/dev/null || true)
+            [ -z "$error" ] || { echo "::error::FROM $from was refused: $error"; exit 1; }
+            [ "$engine" = "FLINK" ] || {
+              echo "::error::FROM $from was answered by '$engine', not the Flink planner — a topic named by its own name is not resolved to its table"
+              exit 1
+            }
+          done
+
       - name: Stop the stack and assert a clean shutdown
         run: |
           set -euo pipefail

@@ -428,6 +428,29 @@ class KafkaClusterIntegrationTest {
         assertEquals(3, result.rows().size());
     }
 
+    /**
+     * The topic's own name — quoted, or bare — reaches the table registered for it.
+     *
+     * <p>Against a mock this proves a string was rewritten; here the planner has to read the
+     * records, so a rewrite that produced a name the catalogue does not hold would come back as a
+     * fallback to the direct reader, which {@code engine} gives away. The bare dotted form is the
+     * one with a second meaning (database {@code it}, table {@code orders}), and none exists here.
+     */
+    @Test
+    void aTopicNamedByItsOwnNameIsReadByThePlanner() throws Exception {
+        FlinkSqlService flink = flinkService();
+
+        for (String from : List.of("\"" + TOPIC + "\"", TOPIC)) {
+            QueryResult result = flink.executeSql(QueryRequest.sql(
+                "SELECT id, status FROM " + from, 3, 30_000L, "earliest-offset"));
+
+            assertNull(result.error(), "FROM " + from + ": " + result.error());
+            assertEquals("FLINK", result.engine(),
+                "FROM " + from + " must reach the planner, not fall back to the direct reader");
+            assertEquals(3, result.rows().size(), "FROM " + from);
+        }
+    }
+
     /** A bounded Flink source must read the same fixed Kafka slice as the direct reader. */
     @Test
     void boundedFlinkOffsetPrototypeMatchesDirectSnapshot() throws Exception {
