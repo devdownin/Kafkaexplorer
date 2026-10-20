@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { describe, expect, it } from 'vitest';
-import { buildDdlTemplate, carryTemplateParams, retargetDdl, validateDdlSql } from './metricsEditor';
+import { buildDdlTemplate, carryTemplateParams, keepLabelsPresentIn, retargetDdl, validateDdlSql } from './metricsEditor';
 
 const ddl = (topic: string) => `CREATE TABLE t (id STRING) WITH ('connector' = 'kafka', 'topic' = '${topic}')`;
 
@@ -67,5 +67,16 @@ describe('carryTemplateParams', () => {
   it('keeps everything when a descriptor is unknown rather than guessing', () => {
     expect(carryTemplateParams({ topic: 'orders' }, undefined, lag)).toEqual({ topic: 'orders' });
     expect(carryTemplateParams(null, lag, timeLag)).toEqual({});
+  });
+});
+
+describe('keepLabelsPresentIn', () => {
+  it('keeps the labels the topic just previewed still carries, in the order they were chosen', () => {
+    expect(keepLabelsPresentIn(['tier', 'region', 'gone'], { region: 'eu', tier: 'gold' })).toEqual(['tier', 'region']);
+  });
+
+  it('keeps nothing when the message exposes none of them, and tolerates a field named like an object member', () => {
+    expect(keepLabelsPresentIn(['region'], {})).toEqual([]);
+    expect(keepLabelsPresentIn(['toString', 'constructor'], { region: 'eu' })).toEqual([]);
   });
 });

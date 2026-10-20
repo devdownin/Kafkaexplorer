@@ -51,6 +51,7 @@ import {
   formatPreviewTimestamp,
   getSqlTemplates,
   getStatus,
+  keepLabelsPresentIn,
   retargetDdl,
   topicToTable,
   validateDdlSql,
@@ -197,6 +198,10 @@ const Metrics: React.FC = () => {
   // Latest label-preview request, shared by the debounced load and the manual refresh: a slow
   // answer for the topic that was typed before must not overwrite the one for the topic now shown.
   const labelSeq = useRef(0);
+  // The topic the selected labels were chosen on, learnt from the first preview that read a message
+  // while the editor is open. A preview of another topic settles the selection; see
+  // `keepLabelsPresentIn`.
+  const labelBasis = useRef<string | null>(null);
 
   const monaco = useMonaco();
   /** Échec d'enregistrement, gardé sous les yeux plutôt que dans un toast fugace. */
@@ -295,6 +300,25 @@ const Metrics: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- poll on mount; fetchMetrics/toast are stable
   }, []);
 
+  /** Called with every preview that arrived: drops the labels the new topic's message does not carry. */
+  const reconcileLabelFields = useCallback((preview: MetricLabelPreview) => {
+    // Nothing was read: a partial name typed on the way to a topic looks the same as an empty one.
+    if (!preview.message) return;
+    const previous = labelBasis.current;
+    labelBasis.current = preview.topic;
+    if (previous === null || previous === preview.topic) return;
+    setEditingMetric(m => {
+      const had = m.labelFields ?? [];
+      const kept = keepLabelsPresentIn(had, preview.fields);
+      return kept.length === had.length ? m : { ...m, labelFields: kept };
+    });
+  }, []);
+
+  useEffect(() => {
+    // A new editing session learns its own basis from its first preview.
+    if (!isModalOpen) labelBasis.current = null;
+  }, [isModalOpen]);
+
   useEffect(() => {
     if (!isModalOpen || !selectedTopic) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- prévisualisation demandée au serveur
@@ -312,7 +336,10 @@ const Metrics: React.FC = () => {
       const seq = ++labelSeq.current;
       axios.get<MetricLabelPreview>(`/api/metrics/label-preview?topic=${encodeURIComponent(selectedTopic)}`)
         .then(response => {
-          if (!cancelled && seq === labelSeq.current) setLabelPreview(response.data);
+          if (!cancelled && seq === labelSeq.current) {
+            setLabelPreview(response.data);
+            reconcileLabelFields(response.data);
+          }
         })
         .catch(() => {
           if (!cancelled && seq === labelSeq.current) {
@@ -330,7 +357,7 @@ const Metrics: React.FC = () => {
       clearTimeout(timer);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
-  }, [isModalOpen, selectedTopic]);
+  }, [isModalOpen, selectedTopic, reconcileLabelFields]);
 
   /*
    * Le brouillon ne vit qu'avec le modal : fermer, c'est renoncer, et un modal qui se rouvrirait
@@ -494,9 +521,12 @@ const Metrics: React.FC = () => {
       sql: m.sql ? m.sql.replace(new RegExp(`\\b(FROM|JOIN|TABLE)\\s+${oldTable}\\b`, 'gi'), `$1 ${newTable}`) : m.sql,
       createTableSql: retargetDdl(m.createTableSql, selectedTopic, topic, bootstrapServers),
       labelTopic: topic,
-      labelFields: m.labelTopic === topic ? (m.labelFields ?? []) : [],
+      // Kept while the topic is being typed: a partial name previews nothing, and the selection is
+      // settled by the preview of the topic that is finally chosen (`reconcileLabelFields`).
+      labelFields: m.labelFields ?? [],
     }));
   };
+
 
   const toggleLabelField = (field: string) => {
     setEditingMetric(m => {
@@ -585,6 +615,14 @@ const Metrics: React.FC = () => {
     [suggestions, priorityRoute]);
   const hasBlockingErrors = [...nameValidation, ...sqlValidation, ...templateValidation, ...ddlValidation, ...thresholdValidation]
     .some(m => m.level === 'error');
+  // Where the refusal is written. The name and the thresholds sit beside the tabs and are always in
+  // view; the SQL (or parameters) and the DDL are each on their own tab, so a message that says only
+  // "Fix errors before saving" leaves the operator hunting through the one that is not open.
+  const hasError = (messages: ValidationMsg[]) => messages.some(m => m.level === 'error');
+  const hiddenErrorTabs = ([
+    { tab: 'metric', label: isTemplate ? 'the parameters' : 'the metric SQL', failing: hasError([...sqlValidation, ...templateValidation]) },
+    { tab: 'ddl', label: 'the table DDL', failing: hasError(ddlValidation) },
+  ] as const).filter(entry => entry.failing && entry.tab !== editorTab);
 
   // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = async () => {
@@ -1039,7 +1077,11 @@ const Metrics: React.FC = () => {
                             const seq = ++labelSeq.current;
                             setLabelPreviewLoading(true);
                             axios.get<MetricLabelPreview>(`/api/metrics/label-preview?topic=${encodeURIComponent(selectedTopic)}`)
-                              .then(response => { if (seq === labelSeq.current) setLabelPreview(response.data); })
+                              .then(response => {
+                                if (seq !== labelSeq.current) return;
+                                setLabelPreview(response.data);
+                                reconcileLabelFields(response.data);
+                              })
                               .catch(() => { if (seq === labelSeq.current) toast('Failed to refresh latest message', 'error'); })
                               .finally(() => { if (seq === labelSeq.current) setLabelPreviewLoading(false); });
                           }}
@@ -1353,10 +1395,18 @@ const Metrics: React.FC = () => {
               {/* Modal footer */}
               <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-outline-variant/60 bg-surface-container-low/60">
                 {hasBlockingErrors && (
-                  <span className="flex items-center gap-1 text-[12px] text-error mr-auto">
-                    <span className="material-symbols-outlined text-[16px]">error</span>
-                    Fix errors before saving
-                  </span>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mr-auto">
+                    <span className="flex items-center gap-1 text-[12px] text-error">
+                      <span className="material-symbols-outlined text-[16px]">error</span>
+                      Fix errors before saving
+                    </span>
+                    {hiddenErrorTabs.map(entry => (
+                      <button key={entry.tab} type="button" onClick={() => setEditorTab(entry.tab)}
+                        className="min-h-6 text-[12px] text-primary underline underline-offset-2 hover:text-primary/80">
+                        Show the error in {entry.label}
+                      </button>
+                    ))}
+                  </div>
                 )}
                 <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
                 <Button type="submit" variant="primary" icon={saving ? undefined : 'save'} loading={saving}
