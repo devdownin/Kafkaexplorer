@@ -399,6 +399,71 @@ class FlinkSqlServiceTest {
         verify(ddlGeneratorService).generateDdl(anyString(), any(), any());
     }
 
+    /**
+     * Un topic nommé entre guillemets doubles — son vrai nom, cité à cause du point — est lu dans
+     * la table enregistrée pour lui. La table s'appelle `quoted_reg_topic` ; envoyer au planner
+     * `` `quoted.reg.topic` `` lui faisait répondre « Object not found », une erreur utilisateur,
+     * donc sans repli.
+     */
+    @Test
+    void aDoubleQuotedTopicNameIsReadThroughTheTableRegisteredForIt() throws Exception {
+        doReturn(List.of("quoted.reg.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("quoted.reg.topic");
+        doReturn(Map.of("event_id", "STRING", "payload", "STRING"))
+                .when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn("CREATE TABLE quoted_reg_topic (event_id STRING, payload STRING) "
+                + "WITH ('connector'='datagen','number-of-rows'='2')")
+                .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
+
+        QueryResult result = execute(
+                "SELECT \"quoted.reg.topic\".event_id FROM \"quoted.reg.topic\" WHERE payload <> 'x'");
+
+        assertNoError(result);
+        assertEquals("FLINK", result.engine());
+        assertEquals(2, result.rows().size());
+        assertTrue(result.warnings().isEmpty(), "got: " + result.warnings());
+    }
+
+    @Test
+    void aDoubleQuotedTopicNameIsDescribedThroughTheTableRegisteredForIt() throws Exception {
+        doReturn(List.of("quoted.desc.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("quoted.desc.topic");
+        doReturn(Map.of("event_id", "STRING")).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn("CREATE TABLE quoted_desc_topic (event_id STRING) "
+                + "WITH ('connector'='datagen','number-of-rows'='1')")
+                .when(ddlGeneratorService).generateDdl(anyString(), any(), any());
+
+        QueryResult result = execute("DESCRIBE \"quoted.desc.topic\"");
+
+        assertNoError(result);
+        assertFalse(result.rows().isEmpty());
+    }
+
+    /**
+     * Le même nom cité, sur un topic sans schéma : la requête part au lecteur direct, qui devait
+     * lire un nom entre délimiteurs sur le texte dont ce contenu est neutralisé — il n'y trouvait
+     * rien et répondait « Cannot parse table name from SQL ».
+     */
+    @Test
+    void aDoubleQuotedTopicNameIsReadByTheDirectReader() throws Exception {
+        doReturn(List.of("quoted-direct.topic")).when(kafkaAdminService).listTopics();
+        doReturn(MessageFormat.JSON).when(schemaInferenceService).detectFormat("quoted-direct.topic");
+        doReturn(Map.<String, String>of()).when(schemaInferenceService).inferSchema(anyString(), any());
+        doReturn(List.of(
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "quoted-direct.topic", 0, 0L, null, "{\"id\":\"A\",\"state\":\"OK\"}"),
+                new org.apache.kafka.clients.consumer.ConsumerRecord<>(
+                        "quoted-direct.topic", 0, 1L, null, "{\"id\":\"B\",\"state\":\"KO\"}")
+        )).when(kafkaAdminService).getRecentRecords(eq("quoted-direct.topic"), anyInt());
+
+        QueryResult result = execute("SELECT t.id FROM \"quoted-direct.topic\" t WHERE t.state = 'OK'");
+
+        assertNoError(result);
+        assertEquals("KAFKA_DIRECT", result.engine());
+        assertEquals(1, result.rows().size());
+        assertEquals("A", result.rows().get(0).get("id"));
+    }
+
     @Test
     void selectResolvesTableAlreadyInFlinkCatalog() throws Exception {
         // 'orders' was registered in @BeforeAll as a Flink temporary view (not a Kafka topic).

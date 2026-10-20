@@ -161,12 +161,24 @@ public class FlinkSqlService {
             + "(?:\\s+PARTITION\\s+BY\\s+[^,]+)?\\s*,\\s*DESCRIPTOR\\s*\\(\\s*(\\w+)\\s*\\)"
             + "((?:\\s*,\\s*INTERVAL\\s+'\\d+'\\s+\\w+)+)\\s*\\)");
 
-    /** First table named after FROM — backticked, quoted or bare. */
-    private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\s+[`\"]?([\\w.\\-]+)[`\"]?");
+    /**
+     * A table name — backticked, double-quoted or bare — delimiters included; {@code TABLE_REF}
+     * captures it, and {@link #tableRefAt} reads the capture.
+     *
+     * <p>A delimited name is matched by its delimiters, not by what it contains, so the pattern
+     * also matches on {@link SqlStatements#outsideLiterals}, which blanks that content: the former
+     * {@code [`"]?([\\w.\\-]+)} found nothing there, and the direct reader answered "Cannot parse
+     * table name from SQL" to every {@code FROM "demo.orders"}.
+     */
+    private static final String TABLE_NAME =
+        "`[^`]*+(?:``[^`]*+)*+`|\"[^\"]*+(?:\"\"[^\"]*+)*+\"|[\\w.\\-]+";
+    private static final String TABLE_REF = "(" + TABLE_NAME + ")";
+
+    /** First table named after FROM. */
+    private static final Pattern FROM_TABLE = Pattern.compile("(?i)\\bFROM\\s+" + TABLE_REF);
 
     /** Every table a statement reads: after FROM, and after each JOIN. */
-    private static final Pattern SOURCE_TABLE = Pattern.compile(
-        "(?i)\\b(?:FROM|JOIN)\\s+[`\"]?([\\w.\\-]+)[`\"]?");
+    private static final Pattern SOURCE_TABLE = Pattern.compile("(?i)\\b(?:FROM|JOIN)\\s+" + TABLE_REF);
 
     /**
      * Names the pattern above can match that are keywords rather than tables.
@@ -414,7 +426,21 @@ public class FlinkSqlService {
         Matcher window = WINDOW_CALL.matcher(sql);
         if (window.find()) return window.group(2);
         Matcher from = FROM_TABLE.matcher(sql);
-        return from.find() ? from.group(1) : null;
+        return from.find() ? tableRefAt(sql, from) : null;
+    }
+
+    /**
+     * The name a {@link #TABLE_REF} group designates, read from {@code sql} at the group's
+     * position and without its delimiters — the match may have been made on the blanked scan.
+     */
+    private static String tableRefAt(String sql, Matcher m) {
+        String ref = sql.substring(m.start(1), m.end(1));
+        char first = ref.charAt(0);
+        if (ref.length() >= 2 && (first == '`' || first == '"') && ref.charAt(ref.length() - 1) == first) {
+            String doubled = String.valueOf(first).repeat(2);
+            return ref.substring(1, ref.length() - 1).replace(doubled, String.valueOf(first));
+        }
+        return ref;
     }
 
     /**
@@ -452,7 +478,7 @@ public class FlinkSqlService {
         while (window.find()) names.add(window.group(2));
         Matcher source = SOURCE_TABLE.matcher(sql);
         while (source.find()) {
-            String name = source.group(1);
+            String name = tableRefAt(sql, source);
             if (!NOT_A_TABLE_NAME.contains(name.toUpperCase(Locale.ROOT))) names.add(name);
         }
         return List.copyOf(names);
@@ -534,6 +560,36 @@ public class FlinkSqlService {
         if (sql == null) return null;
         Matcher m = DESCRIBE_TARGET.matcher(SqlStatements.withoutLeadingCte(sql).trim());
         return m.matches() ? m.group(1) : null;
+    }
+
+    /**
+     * The statement with each quoted topic name replaced by the table registered for it:
+     * {@code `demo.orders`} becomes {@code `demo_orders`}.
+     *
+     * <p>Auto-registration matches a source to its topic through {@link DdlGeneratorService#toTableName}
+     * and registers it under that sanitized name, so {@code FROM "demo.orders"} — the topic's real
+     * name, quoted because of its dot, and turned into backticks by {@link #normalizeIdentifierQuotes}
+     * — registered {@code demo_orders} and then sent the planner {@code `demo.orders`}, which it
+     * answered with "Object not found": a user error, so no fallback either.
+     *
+     * <p>Only a delimited name is rewritten: unquoted, {@code demo.orders} is a database and a table
+     * to the planner, a different statement. And never when the quoted name is itself a table — a
+     * hand-written {@code CREATE TABLE `demo.orders`} is what that statement means.
+     */
+    private String withRegisteredTableNames(String sql) {
+        List<String> sources = new ArrayList<>(extractSourceTables(sql));
+        String described = describedObject(sql);
+        if (described != null) sources.add(described);
+        Set<String> tables = null;
+        String rewritten = sql;
+        for (String source : sources) {
+            String table = DdlGeneratorService.toTableName(source);
+            if (table.equals(source)) continue;
+            if (tables == null) tables = Set.copyOf(listTables());
+            if (tables.contains(source) || !tables.contains(table)) continue;
+            rewritten = SqlStatements.replaceQuotedIdentifier(rewritten, source, table);
+        }
+        return rewritten;
     }
 
     /** One source table: already registered, matched to a topic and registered, or left to Flink. */
@@ -972,11 +1028,12 @@ public class FlinkSqlService {
                   + "with CREATE TABLE, then submit the INSERT.");
             }
 
-            TableResult result = executeMutationSql("submit-job", strippedSql);
+            String sqlToSubmit = withRegisteredTableNames(strippedSql);
+            TableResult result = executeMutationSql("submit-job", sqlToSubmit);
             JobClient client = result.getJobClient()
                 .orElseThrow(() -> new IllegalStateException("Flink did not return a JobClient for the submitted job."));
 
-            JobInfo info = new JobInfo(queryId, strippedSql, statementType, "ASYNC_JOB", client, startedAt);
+            JobInfo info = new JobInfo(queryId, sqlToSubmit, statementType, "ASYNC_JOB", client, startedAt);
             heldJobs.put(queryId, info);
             return buildJobSummary(info);
         } catch (RuntimeException e) {
@@ -1216,7 +1273,7 @@ public class FlinkSqlService {
                 return new QueryResult(Collections.emptyList(), Collections.emptyList(),
                         System.currentTimeMillis() - startTime, autoReg.error());
             }
-            String sqlToExecute = strippedSql;
+            String sqlToExecute = withRegisteredTableNames(strippedSql);
             String readMode = request.readMode();
             int limit = request.maxRows() != null ? request.maxRows() : explorerConfig.getDefaultMaxRows();
             long timeout = request.timeout() != null ? request.timeout() : explorerConfig.getDefaultQueryTimeoutMs();
@@ -2365,7 +2422,7 @@ public class FlinkSqlService {
      * se qualifie sans alias.
      */
     private static final Pattern FROM_ALIAS = Pattern.compile(
-        "(?i)\\bFROM\\s+[`\"]?[\\w.\\-]+[`\"]?(?:\\s+AS)?\\s+([A-Za-z_]\\w*)");
+        "(?i)\\bFROM\\s+(?:" + TABLE_NAME + ")(?:\\s+AS)?\\s+([A-Za-z_]\\w*)");
 
     /** Ce qui suit une table sans en être l'alias. */
     private static final Set<String> NOT_AN_ALIAS = Set.of(
@@ -2563,7 +2620,7 @@ public class FlinkSqlService {
             return new QueryResult(Collections.emptyList(), Collections.emptyList(),
                 System.currentTimeMillis() - startTime, "Cannot parse table name from SQL");
         }
-        String rawTableRef = fromMatcher.group(1);
+        String rawTableRef = tableRefAt(sql, fromMatcher);
         String flinkTableName = DdlGeneratorService.toTableName(rawTableRef);
         // Le nom de la table et son alias : ce par quoi une colonne peut être qualifiée. Le
         // parseur les donne exactement — y compris `AS` implicite et nom entre accents graves —

@@ -169,6 +169,57 @@ public final class SqlStatements {
         return out.toString();
     }
 
+    /**
+     * Chaque identifiant entre accents graves valant exactement {@code name} remplacé par
+     * {@code replacement}, entre accents graves lui aussi ; les littéraux sont laissés tels quels.
+     *
+     * <p>Un identifiant échappé est un jeton entier, donc le remplacer ne peut pas toucher un nom
+     * voisin qui le contiendrait — ce que ferait un remplacement textuel de {@code demo.orders}
+     * dans {@code demo.orders_v2}. La comparaison est sensible à la casse, comme un identifiant
+     * échappé l'est pour Flink.
+     */
+    public static String replaceQuotedIdentifier(String sql, String name, String replacement) {
+        if (sql == null || name == null || replacement == null || sql.indexOf('`') < 0) return sql;
+        StringBuilder out = new StringBuilder(sql.length());
+        int i = 0;
+        while (i < sql.length()) {
+            char c = sql.charAt(i);
+            if (c == '\'' || c == '`') {
+                int end = closingDelimiter(sql, i, c);
+                if (end < 0) {
+                    out.append(sql, i, sql.length());
+                    break;
+                }
+                if (c == '`' && name.equals(sql.substring(i + 1, end - 1).replace("``", "`"))) {
+                    out.append('`').append(replacement.replace("`", "``")).append('`');
+                } else {
+                    out.append(sql, i, end);
+                }
+                i = end;
+                continue;
+            }
+            out.append(c);
+            i++;
+        }
+        return out.toString();
+    }
+
+    /** Just past the delimiter closing the one at {@code open} (a doubled one escapes); -1 if none. */
+    private static int closingDelimiter(String s, int open, char delimiter) {
+        int i = open + 1;
+        while (i < s.length()) {
+            if (s.charAt(i) == delimiter) {
+                if (i + 1 < s.length() && s.charAt(i + 1) == delimiter) {
+                    i += 2;
+                    continue;
+                }
+                return i + 1;
+            }
+            i++;
+        }
+        return -1;
+    }
+
     /** True when `word` sits at `from` as a whole word, case-insensitively. */
     private static boolean isWordAt(String s, int from, String word) {
         if (from < 0 || from + word.length() > s.length()) return false;
