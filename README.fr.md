@@ -115,6 +115,12 @@ OPENROUTER_API_KEY=sk-or-... ./demo.sh --no-spectra    # la même chose sans Spe
 ./demo.sh down                                         # arrêt (reset supprime aussi les volumes)
 ```
 
+Sous Windows 11, `demo.cmd` lance le jumeau PowerShell, `demo.ps1`, avec Docker Desktop pour seul prérequis — ni Git Bash, ni openssl :
+
+```powershell
+$env:OPENROUTER_API_KEY = 'sk-or-...'; .\demo.cmd    # ou : .\demo.cmd -NoSpectra · .\demo.cmd down
+```
+
 | Service | Adresse |
 |---|---|
 | Kafka SQL Explorer (UI, API, `/mcp`) | http://localhost:8080 |

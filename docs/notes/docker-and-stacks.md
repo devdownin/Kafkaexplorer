@@ -229,6 +229,16 @@ file wires the pair. There were two, and the deletion of the other is the point:
   as `ecosystem-stack` asserts. `up` and `down` pass `--remove-orphans`, so switching modes on
   the one project does not leave SpectraLLM's containers running.
 
+  `demo.ps1` is its Windows 11 twin, run through `demo.cmd` because the default execution policy
+  refuses an unsigned script (`-ExecutionPolicy Bypass` for that process only). Same file list,
+  same defaults, same precedence; **edit the two together**. It does not call
+  `bin/forecast-stack.sh` — that needs bash and openssl — but writes the same
+  `.forecast-stack/.env` itself (UTF-8 **without** a BOM, LF: a BOM glued to the first key makes it
+  unreadable to Compose and to `demo.sh`), so either script starts a stack the other prepared. It
+  is ASCII on purpose: Windows PowerShell 5.1 reads a BOM-less script as the ANSI code page. An
+  empty default such as `OPENROUTER_API_KEY` is left unset rather than set empty, Windows having
+  no empty environment variable; the compose files' own `:-` defaults cover it.
+
   `compose/spectra-hub.ingest.yml` is the one that makes the pair more than a shared
   model — SpectraLLM consumes the topics and indexes what is *in* the messages, so the corpus
   answers questions with cited sources and the Explorer's audits can read it (`EXPLORER_USE_RAG`,
