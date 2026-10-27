@@ -211,7 +211,7 @@ transactions (`DATE_OPERATION` depends on when the seeder ran):
 ```
 `TRN-00000` has an operation no counter declares, `TRN-00001` pays in mode 512 where counter 2
 accepts only 256, `TRN-00002` matches counter 3 as it stands after its update.
-
+```sql
 WITH compteurs AS (
   SELECT ID,
          LAST_VALUE(R_COMPTEUR_TYPEID) AS R_COMPTEUR_TYPEID,
