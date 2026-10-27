@@ -16,8 +16,10 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -40,6 +42,9 @@ import static org.mockito.Mockito.mock;
  * la forme : chaque topic cité doit être créé par un seeder, et chaque instruction doit sortir de la
  * résolution des noms lisible par la grammaire, chaque source désignant la table d'un topic seedé.
  *
+ * <p>Les exemples de migration ksqlDB → Flink lisent les topics péage de {@code setup-demo-peage.sh},
+ * seeder facultatif qu'aucun stack ne lance : ils y sont tenus comme les autres.
+ *
  * <p>Les topics sont pris dans les seeders et non recopiés ici, sur la règle que
  * {@code docs/check-eval-fixture.py} applique déjà : une liste écrite à côté dérive avec eux.
  */
@@ -52,6 +57,9 @@ class DemoQueryExamplesTest {
     private static final Pattern SEEDED_TOPIC = Pattern.compile("(?m)^\\s*\"(demo\\.[\\w.-]+?)(?::[^\"]*)?\"\\s*$");
     private static final Pattern SC_STEP = Pattern.compile("(?m)^\\s*\"(\\d{2}\\.[\\w.]+)\"\\s*$");
     private static final Pattern AVRO_TOPIC = Pattern.compile("--create --topic (demo\\.avro\\.[\\w.-]+)");
+    /** Le seeder péage nomme ses topics dans des variables, puis les passe à {@code create_topic}. */
+    private static final Pattern SHELL_VARIABLE = Pattern.compile("(?m)^([A-Z_]+)=\"([\\w.-]+)\"$");
+    private static final Pattern CREATED_VARIABLE = Pattern.compile("(?m)^create_topic \"\\$([A-Z_]+)\"");
     private static final Pattern SQL_BLOCK = Pattern.compile("(?s)```sql\\n(.*?)```");
     private static final Pattern ECHO = Pattern.compile("(?m)^echo \"(.*)\"\\s*$");
     private static final Pattern QUOTED_NAME = Pattern.compile("\"([^\"]+)\"");
@@ -86,6 +94,7 @@ class DemoQueryExamplesTest {
         assertTrue(topics.contains("demo.orders.1.received"), "got: " + topics);
         assertTrue(topics.contains("demo.sc.13.carrier.assigned.out"), "got: " + topics);
         assertTrue(topics.contains("demo.avro.orders"), "got: " + topics);
+        assertTrue(topics.contains("VA_PEAGE_CLASSIFICATION_FLOWS_EXTEND"), "got: " + topics);
         assertTrue(examples().size() >= 20, "got: " + examples());
         assertTrue(examples().stream().anyMatch(sql -> sql.contains("\"demo.avro.orders\"") && sql.contains("SHIPPED")),
             "the Avro seeder's suggestion was not read: " + examples());
@@ -153,6 +162,12 @@ class DemoQueryExamplesTest {
         }
         Matcher avro = AVRO_TOPIC.matcher(Files.readString(ROOT.resolve("setup-demo-avro.sh")));
         while (avro.find()) seeded.add(avro.group(1));
+        String peage = Files.readString(ROOT.resolve("setup-demo-peage.sh"));
+        Map<String, String> variables = new HashMap<>();
+        Matcher variable = SHELL_VARIABLE.matcher(peage);
+        while (variable.find()) variables.put(variable.group(1), variable.group(2));
+        Matcher created = CREATED_VARIABLE.matcher(peage);
+        while (created.find()) seeded.add(variables.get(created.group(1)));
         return seeded;
     }
 

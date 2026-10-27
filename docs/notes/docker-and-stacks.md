@@ -49,6 +49,10 @@ docker compose up -d
 # Avro topics — needs Schema Registry and the Confluent CLI, so it is a separate
 # script wired only into compose/schema-registry.yml
 ./setup-demo-avro.sh localhost:9092 http://localhost:8081
+
+# Péage topics for the ksqlDB → Flink migration examples — opt-in, never seeded by a stack,
+# so the 79 topics every document counts stay 79
+./setup-demo-peage.sh localhost:9092
 ```
 
 ### The prompt has to fit the model's window
