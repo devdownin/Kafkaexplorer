@@ -20,7 +20,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+- **ksqlDB → Flink migration examples.** `docs/QUERY-EXAMPLES.md` carries the queries of the
+  ksql2flink laboratory — the Lexhistoric projection and its `UNION ALL`, the socle ET referential
+  and its join, the hourly indicator, the classification-quality threshold — rewritten for the
+  embedded engine: no UDF, `LAST_VALUE` for `LATEST_BY_OFFSET`, `JSON_QUERY` for `REDUCE`.
+  `setup-demo-peage.sh` seeds the five topics they read, on demand only, and
+  `DemoQueryExamplesTest` holds them to it like every other demo query.
 
 ## [2.3.4] — 2026-10-20
 

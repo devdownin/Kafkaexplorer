@@ -101,6 +101,7 @@ OPENROUTER_API_KEY=sk-or-... ./demo.sh                                      # ev
 OPENROUTER_API_KEY=sk-or-... ./demo.sh --no-spectra                         # the same without SpectraLLM and its 4.8 GB of weights
 ./setup-demo.sh localhost:9092                                             # demo data (79 topics)
 ./setup-demo-avro.sh localhost:9092 http://localhost:8081                  # Avro topics (needs Schema Registry)
+./setup-demo-peage.sh localhost:9092                                       # ksqlDB → Flink migration examples (5 péage topics, opt-in)
 ```
 
 Building without a local toolchain — always `run --rm`, these are one-shot services, never `up`:
