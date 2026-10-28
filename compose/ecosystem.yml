@@ -42,7 +42,7 @@ services:
   agent:
     # Pinned like every other image here: `latest` would serve whatever was published on the
     # day of the pull, and the agent's MCP contract is tested against a given Explorer release.
-    image: ${KEX_AGENT_IMAGE_NAMESPACE:-compagnonsdudev}/kex-agent-ai:${KEX_AGENT_IMAGE_TAG:-0.10.0}
+    image: ${KEX_AGENT_IMAGE_NAMESPACE:-compagnonsdudev}/kex-agent-ai:${KEX_AGENT_IMAGE_TAG:-0.12.0}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${KEX_AGENT_PORT:-8081}:8081"
     # `service_started`: the agent's MCP clients connect lazily, at the first request, so
