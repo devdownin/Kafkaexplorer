@@ -48,7 +48,7 @@
 			Pinned rather than taken from a BOM: one artifact is imported, so a BOM would add an
 			import block whose only job is to restate this number.
 		-->
-		<spring-ai.version>2.0.1</spring-ai.version>
+		<spring-ai.version>2.0.2</spring-ai.version>
 	</properties>
 	<repositories>
 		<repository>
