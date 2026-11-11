@@ -977,3 +977,17 @@ export const lineage = {
 
 /** GET /api/forecasts — ForecastController.Status with the pilot disabled by default. */
 export const forecastStatus = { enabled: false, state: 'DISABLED', series: [] };
+
+/**
+ * GET /api/assistant/status — AssistantStatus as a default server answers it: the assistant is
+ * off (`explorer.assistant.enabled` ships false), so the pages that ask keep showing what they
+ * showed before it existed and the documentation does not photograph a feature nobody switched on.
+ * `provider`, `model` and `localDeployment` are what `claude.*` resolves to by default.
+ */
+export const assistantStatus = {
+  enabled: false,
+  problem: 'The assistant is off \u2014 set explorer.assistant.enabled=true (EXPLORER_ASSISTANT_ENABLED) to offer it.',
+  provider: 'OpenRouter',
+  model: 'openai/gpt-4o-mini',
+  localDeployment: false,
+};
