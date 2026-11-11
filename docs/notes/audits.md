@@ -536,3 +536,14 @@ code showed the fix keeps the median and the order (F9), a bounded connection po
 before reuse (F10), the quarantine call on a series id removed (F11), forecast tools registered only
 when a series is approved (F12), one purge per refresh and a budget counting approved series (F13). F6 closed the report: returning a series to SHADOW takes no lock, since every read
 recomputes visibility from the control row.
+
+`EMBEDDED-LLM-SCOPE.md` (2026-11) studies a small local model of the Gemma family as an assistant
+for the SQL editor and the Metrics page, the two screens no model serves today. It implemented
+nothing, and its model figures are published ones rather than measurements. Its conclusions: run
+the model beside the JVM (the existing `compose/ollama.yml`, model made a variable) rather than in
+it — a native crash would take Flink and the UI down, off-heap weights escape `MaxRAMPercentage`,
+and the runtime image is musl; start with fixing a refused query, then question-to-SELECT, then a
+metric draft; and gate every output through `SqlAst`, the whitelist and an `EXPLAIN`, with nothing
+run or saved without a gesture. Its lot 0 is an evaluation on the seeded demo topics that may
+conclude "keep `qwen2.5-coder`" or "do not build it"; read it before adding any LLM call outside
+Process Mining.
