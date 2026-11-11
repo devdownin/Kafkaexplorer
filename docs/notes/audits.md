@@ -544,6 +544,9 @@ the model beside the JVM (the existing `compose/ollama.yml`, model made a variab
 it — a native crash would take Flink and the UI down, off-heap weights escape `MaxRAMPercentage`,
 and the runtime image is musl; start with fixing a refused query, then question-to-SELECT, then a
 metric draft; and gate every output through `SqlAst`, the whitelist and an `EXPLAIN`, with nothing
-run or saved without a gesture. Its lot 0 is an evaluation on the seeded demo topics that may
-conclude "keep `qwen2.5-coder`" or "do not build it"; read it before adding any LLM call outside
-Process Mining.
+run or saved without a gesture. Lots 1–3 have since shipped (`/api/assistant/*`, the editor's
+ask bar and "Suggest a fix", the Metrics editor's draft), **off by default** and on in
+`compose/ollama.yml`; the report's status block lists where the shipped code departs from the
+design and why. Lot 0, the evaluation on the seeded demo topics, is still open — so which model,
+and how often an accepted statement answers the wrong question, are not measured. Read it before
+adding any LLM call outside Process Mining.

@@ -322,6 +322,72 @@ public class FlinkSqlService {
     }
 
     /**
+     * The columns of a source, registering it from its topic first when nothing has yet.
+     *
+     * <p>For the SQL assistant (see {@code EMBEDDED-LLM-SCOPE.md}), which has to describe a table to
+     * the model <em>before</em> any query naming it has run — exactly when {@link #getTableSchema}
+     * alone answers an empty map, auto-registration being a side effect of executing a statement.
+     * Same registration as the read path, so the model is shown the columns the planner will check
+     * against, {@code proc_time} and {@code event_time} included. Empty when no topic carries the
+     * name or when no schema could be inferred; the caller reports that rather than guessing.
+     */
+    public Map<String, String> sourceSchema(String rawTableRef) {
+        if (rawTableRef == null || rawTableRef.isBlank()) return new LinkedHashMap<>();
+        AutoRegResult registration = registerSourceTable(rawTableRef);
+        if (registration.error() != null) {
+            log.debug("Source schema for '{}' unavailable: {}", LogSafe.name(rawTableRef),
+                LogSafe.text(registration.error()));
+        }
+        return getTableSchema(DdlGeneratorService.toTableName(rawTableRef));
+    }
+
+    /**
+     * What a dry run of the planner says about a statement — registered sources, then an
+     * {@code EXPLAIN}, and nothing executed.
+     *
+     * @param planned whether the planner produced a plan
+     * @param kind    the classification of the refusal, {@code null} when planned
+     * @param message the planner's sentence with its rule dump stripped, {@code null} when planned
+     */
+    public record PlanCheck(boolean planned, SqlErrorClassifier.Kind kind, String message) {
+        static PlanCheck ok() {
+            return new PlanCheck(true, null, null);
+        }
+    }
+
+    /**
+     * Plans {@code sql} without running it, for the assistant's gate.
+     *
+     * <p>{@code SqlQueryValidator}'s probe deliberately swallows an unresolved table, because it
+     * runs before auto-registration; this one registers the sources first, so "unknown column" and
+     * "unknown table" are both answered — which is the whole point of checking a statement a model
+     * wrote. A source whose schema could not be inferred is reported as such rather than through
+     * the planner's "Object not found", which would name a correct table as the fault.
+     */
+    public PlanCheck planCheck(String sql) {
+        String prepared = withTopicTableNames(prepareSql(sql));
+        if (prepared == null || prepared.isBlank()) {
+            return new PlanCheck(false, SqlErrorClassifier.Kind.USER_ERROR, "The statement is empty.");
+        }
+        AutoRegResult registration = autoRegisterTableIfNeeded(prepared);
+        if (registration.error() != null) {
+            return new PlanCheck(false, SqlErrorClassifier.Kind.ENGINE_ERROR, registration.error());
+        }
+        if (registration.deferredToDirectReader()) {
+            return new PlanCheck(false, SqlErrorClassifier.Kind.ENGINE_ERROR,
+                "No schema could be inferred for the source topic (it may be empty), so no table "
+                    + "was registered and the statement could not be planned.");
+        }
+        try {
+            runtimeCoordinator.runRead("assistant-plan-check", () -> tableEnv.explainSql(prepared));
+            return PlanCheck.ok();
+        } catch (RuntimeException e) {
+            SqlErrorClassifier.Classification c = SqlErrorClassifier.classify(e);
+            return new PlanCheck(false, c.kind(), SqlErrorClassifier.readable(c.message()));
+        }
+    }
+
+    /**
      * @param waitMs how long the caller may wait to get onto the Flink runtime. A synchronous query
      *               passes its own budget: waiting three times the query timeout just to reach the
      *               planner, and only then starting to count, is not what the timeout promises.

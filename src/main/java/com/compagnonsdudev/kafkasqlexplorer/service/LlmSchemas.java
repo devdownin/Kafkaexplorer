@@ -141,6 +141,46 @@ final class LlmSchemas {
             List.of("topics", "unificationProposal", "warnings"));
     }
 
+    /**
+     * The SQL assistant's answer (see {@code EMBEDDED-LLM-SCOPE.md} §5.4).
+     *
+     * <p>No {@code confidence} field, on purpose: a small model's estimate of its own accuracy is
+     * noise presented as a measurement, and the only confidence the page shows is the planner's.
+     * {@code NEEDS_CLARIFICATION} is the honest way out when the table it would need is not in the
+     * context — without it, the model invents a column.
+     */
+    static Map<String, Object> assistantSql() {
+        return object(
+            Map.of(
+                "status", enumeration("OK", "NEEDS_CLARIFICATION", "OUT_OF_SCOPE"),
+                "sql", nullableString("One Flink SQL SELECT statement, or null when status is not OK"),
+                "explanation", string("One or two sentences on what the statement reads and returns"),
+                "missing", nullableString("What is missing to answer, or null when status is OK")
+            ),
+            List.of("status", "sql", "explanation", "missing"));
+    }
+
+    /**
+     * A metric draft: the SQL answer plus what the metric editor's form needs.
+     *
+     * <p>No thresholds: the model has seen no value of this metric, and a plausible threshold out
+     * of nowhere is the precise-looking wrong number this application refuses everywhere else.
+     */
+    static Map<String, Object> assistantMetric() {
+        return object(
+            Map.of(
+                "status", enumeration("OK", "NEEDS_CLARIFICATION", "OUT_OF_SCOPE"),
+                "name", nullableString("A short metric name, lower_snake_case"),
+                "type", enumeration("GAUGE", "COUNTER", "HISTOGRAM", "SUMMARY"),
+                "sql", nullableString("One Flink SQL SELECT whose single numeric column is aliased "
+                    + "AS metric_value, or null when status is not OK"),
+                "description", nullableString("One sentence describing what the metric measures"),
+                "explanation", string("One or two sentences on how the statement computes it"),
+                "missing", nullableString("What is missing to answer, or null when status is OK")
+            ),
+            List.of("status", "name", "type", "sql", "description", "explanation", "missing"));
+    }
+
     private static Map<String, Object> object(Map<String, Object> properties, List<String> required) {
         Map<String, Object> schema = new LinkedHashMap<>();
         schema.put("type", "object");

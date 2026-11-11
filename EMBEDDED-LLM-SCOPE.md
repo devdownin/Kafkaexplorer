@@ -6,11 +6,33 @@ n'en tirent rien. Ce document étudie ce qu'il faudrait pour qu'un petit modèle
 Gemma y aide : où le faire tourner, à quoi l'employer, et comment l'encadrer pour qu'une réponse
 fausse ne passe jamais pour une réponse juste.
 
-> **Statut.** Étude seule : rien n'est implémenté. Les chiffres de taille et de mémoire des modèles
-> viennent de sources publiques citées en fin de document, **pas d'une mesure faite ici** ; le lot 0
-> du plan (section 8) existe précisément pour les remplacer par des mesures avant tout
-> développement. Ce qui est affirmé du code, en revanche, a été lu dans le code et nomme son
-> fichier.
+> **Statut.** **Les lots 1, 2 et 3 sont livrés** (section 8) ; le lot 0 — l'évaluation sur un vrai
+> modèle — ne l'est pas, ce qui veut dire que **le choix du modèle et la qualité des propositions ne
+> sont pas mesurés** : l'assistant est livré éteint, et la porte déterministe est ce qui le rend
+> défendable sans cette mesure, pas un substitut à elle. Les chiffres de taille et de mémoire des
+> modèles viennent de sources publiques citées en fin de document, **pas d'une mesure faite ici**.
+> Ce qui est affirmé du code a été lu dans le code et nomme son fichier.
+>
+> **Écarts entre la conception ci-dessous et ce qui a été livré**, chacun pour une raison :
+>
+> - `GET /api/assistant/status` rend `localDeployment` et non `dataLeavesHost` : c'est
+>   `ClaudeConfig.isLocalDeployment()` lu sur l'adresse *effective* de l'assistant, la règle que
+>   les Réglages appliquent déjà — une seconde définition de « local » aurait fini par diverger.
+> - **La clé d'API ne suit pas une surcharge d'adresse.** Quand `explorer.assistant.provider` ou
+>   `base-url` envoie l'assistant ailleurs que `claude.*`, la clé de `claude.*` n'est pas transmise
+>   (le précédent est `ClaudeConfig.probeCopy`) ; une surcharge hébergée le dit alors par
+>   `configurationProblem()`.
+> - `include-sample-values` n'existe pas : aucune valeur de message n'est jamais envoyée, et un
+>   réglage sans effet serait le bouton inerte que `check-config-yaml.py` traque.
+> - Le mode `EXPLAIN` (U4) n'est pas livré : sans critère de réussite, il n'avait rien à valider.
+> - Une proposition qui n'est pas une lecture (`INSERT`, `DROP`…) n'est **jamais** rendue, même
+>   non validée : `sql` vaut `null` et le statut `OUT_OF_SCOPE`.
+> - Un appel concurrent est refusé en `BUSY` (statut 200) plutôt que mis en file.
+> - Les compteurs `explorer_assistant_requests_total{mode,outcome}` (§6) sont livrés avec le lot 1.
+>
+> Le code : `config/AssistantProperties`, `service/Assistant{Llm,ContextService,Prompts,SqlGate,
+> Service}`, `FlinkSqlService.planCheck` / `sourceSchema`, `web/AssistantController` ; côté SPA
+> `pages/sqlAssistant.ts` et `components/assistant/`.
 
 **La recommandation en quatre lignes.**
 
@@ -364,13 +386,12 @@ explorer:
     max-columns-per-table: 40
     prompt-char-budget: 12000   # à régler AVEC la fenêtre du serveur d'inférence
     repair-rounds: 1
-    include-sample-values: false
 ```
 
 - **Éteint par défaut.** Le défaut livré de `claude.provider` est `OPENROUTER` : allumer
   l'assistant d'office enverrait des noms de topics chez un tiers sans qu'on l'ait demandé.
-  `compose/ollama.yml` (et `demo.sh` / `demo.ps1`, **édités ensemble**) l'allument, parce que là
-  rien ne sort.
+  `compose/ollama.yml` l'allume, parce que là rien ne sort (`EXPLORER_ASSISTANT_ENABLED`
+  ailleurs). `demo.sh` / `demo.ps1` restent au lot 4, **et s'éditent ensemble**.
 - **Surcharges optionnelles** : `LlmClientFactory.create` prend un `ClaudeConfig` et
   `LlmClientProvider` est un singleton câblé sur celui-ci. Le second modèle demande donc une
   seconde instance du fournisseur de client, construite sur une copie dérivée de la
@@ -448,10 +469,10 @@ l'agent MCP.
 
 | Lot | Contenu | Taille | Dépend de |
 |---|---|---|---|
-| **0 — Mesurer** | Fixture de questions, test `assistant-eval`, prototype de prompt, banc des quatre candidats ; `compose/ollama.yml` paramétré par modèle | M | — |
-| **1 — Cœur serveur** | `explorer.assistant.*`, `AssistantContextService`, `AssistantSqlGate`, schéma, `/api/assistant/status` et `/sql` (FIX, GENERATE), tests déterministes | M | 0 concluant |
-| **2 — Éditeur** | Bouton « Proposer une correction », `AskBar`, onglet de résultat avec statut | M | 1 |
-| **3 — Métriques** | `/api/assistant/metric`, entrée dans l'éditeur de métrique | S | 1 |
+| **0 — Mesurer** *(ouvert)* | Fixture de questions, test `assistant-eval`, prototype de prompt, banc des quatre candidats ; `compose/ollama.yml` paramétré par modèle | M | — |
+| **1 — Cœur serveur** *(livré)* | `explorer.assistant.*`, `AssistantContextService`, `AssistantSqlGate`, schéma, `/api/assistant/status` et `/sql` (FIX, GENERATE), tests déterministes | M | 0 concluant |
+| **2 — Éditeur** *(livré)* | Bouton « Proposer une correction », `AskBar`, onglet de résultat avec statut | M | 1 |
+| **3 — Métriques** *(livré)* | `/api/assistant/metric`, entrée dans l'éditeur de métrique | S | 1 |
 | **4 — Livraison** | Overlay/démo (`demo.sh` **et** `demo.ps1`), `.env.example`, `docs/LLM-PROVIDERS.md`, page d'aide, compteurs | S | 2 |
 | 5 — *Optionnel* | Option D (processus fils) pour le JAR nu, ou streaming | L | Un besoin nommé |
 

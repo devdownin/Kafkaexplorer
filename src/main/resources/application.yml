@@ -285,6 +285,30 @@ explorer:
   startup-restore-timeout-ms: 3000
 
   # ---------------------------------------------------------------------------------------------
+  # SQL & metric assistant — EMBEDDED-LLM-SCOPE.md
+  # ---------------------------------------------------------------------------------------------
+  assistant:
+    # Off by default: claude.provider ships as a hosted gateway, so an assistant on by default
+    # would send topic and column names to a third party nobody chose. compose/ollama.yml turns
+    # it on, because there nothing leaves the host. It proposes; it never runs or saves anything.
+    enabled: ${EXPLORER_ASSISTANT_ENABLED:false}
+    # Blank = the same as claude.*; set them to give the assistant a smaller, faster model than
+    # Process Mining's.
+    provider: ${EXPLORER_ASSISTANT_PROVIDER:}
+    base-url: ${EXPLORER_ASSISTANT_BASE_URL:}
+    model: ${EXPLORER_ASSISTANT_MODEL:}
+    # Terminal, not retried: a CPU-served small model answers in seconds to tens of seconds.
+    request-timeout-seconds: 120
+    # What the model is shown of the catalogue: names and types only, never a message value.
+    max-tables: 5
+    max-columns-per-table: 40
+    # About 3 000 tokens. Raise it together with the serving model's context window or not at
+    # all — Ollama truncates the excess silently (see compose/ollama.yml).
+    prompt-char-budget: 12000
+    # A statement the planner refuses is sent back once with the planner's own sentence.
+    repair-rounds: 1
+
+  # ---------------------------------------------------------------------------------------------
   # MCP server — docs/notes/mcp-server.md, SPEC-MCP.md
   # ---------------------------------------------------------------------------------------------
   mcp:

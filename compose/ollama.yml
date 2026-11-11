@@ -82,6 +82,11 @@ services:
       # path — retrying replays the whole prompt on a model that has already shown it needs
       # longer, tripling the load and the wait for the same outcome.
       - CLAUDE_REQUEST_TIMEOUT_SECONDS=${EXPLORER_LLM_TIMEOUT:-300}
+      # The SQL and metric assistant (EMBEDDED-LLM-SCOPE.md) is off by default because the
+      # shipped provider is hosted and it would send table and column names out. Here the model
+      # is on this stack, so nothing leaves it: on. Its prompt is ~12 000 characters, inside the
+      # window set above, and it asks the same model (explorer.assistant.model overrides it).
+      - EXPLORER_ASSISTANT_ENABLED=true
 
 # Merged with the base file's declarations rather than replacing them: `kafka_data`,
 # `explorer_logs` and `explorer_data` are declared there and stay.
