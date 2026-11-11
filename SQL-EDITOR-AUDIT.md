@@ -733,7 +733,15 @@ a newcomer has to understand before pressing Run.
 > fill *and* run; and the toolbar asks one question, **Read: Latest records / From the beginning /
 > Whole topic**, latest by default — sent as a named read mode without forcing an engine, so a JOIN
 > is still answered by Flink. Shared links and history entries keep their old fields and map onto
-> the new control. X4–X10 stay open. Every finding was **observed in the real UI** — the
+> the new control. **X4–X10 are fixed too**: a running panel with its elapsed time, the previous
+> rows kept dimmed until the answer (X4); the editor focused on arrival, `Ctrl+Enter` / `⌘↵` bound
+> on the whole page and printed for the platform (X5); the Window Assistant folded by default — the
+> editor goes from 608 to 856 px at 1440 — and the starter queries as the empty state (X6); Read
+> and Rows count in staleness, and the Latest caveat moved into the tooltip (X7); a filter, Saved
+> Queries first, one row per topic with its columns on the chevron and Drop inside, hand-written
+> tables apart (X8); the engine's own sentence under the error title and no row count on an error
+> (X9); a searchable history, no "Opened in a new tab" toast, 24 px Link / Format (X10). **The
+> whole pass is addressed.** Every finding was **observed in the real UI** — the
 > compiled SPA served by `docs/screenshots/server.mjs` over its frozen fixtures, driven with
 > Playwright at 1440×900 and 1280×720 — and then confirmed in the code named beside it. The
 > fixtures answer every query with the same ten rows, so nothing here is about engine behaviour.

@@ -1312,6 +1312,35 @@ export function pushHistory(
 }
 
 /** `1.2s` sous la seconde près, `340ms` en deçà. */
+/**
+ * Le raccourci tel qu'on le tape sur cette machine (SQL-EDITOR-AUDIT.md, X5). L'écran imprimait
+ * « ⌘↵ » partout, Linux et Windows compris, où la touche est Ctrl.
+ */
+export function runShortcutLabel(platform: string, all = false): string {
+  return /Mac|iPhone|iPad|iPod/i.test(platform)
+    ? (all ? '⌘⇧↵' : '⌘↵')
+    : (all ? 'Ctrl+Shift+Enter' : 'Ctrl+Enter');
+}
+
+/**
+ * La phrase du moteur qui dit ce qui ne va pas (SQL-EDITOR-AUDIT.md, X9). Le panneau montrait la
+ * piste générique (« Check for a typo… near line 1:10 ») et repliait derrière « Show raw error » la
+ * seule ligne précise — `Encountered "FORM" at line 1, column 10`. Première ligne du message brut,
+ * débarrassée du préfixe du validateur et des noms de classes Java, bornée ; `null` quand elle ne
+ * dit rien de plus que le titre ou la piste déjà affichés.
+ */
+export function errorHeadline(raw: string | null | undefined, ...shown: (string | undefined)[]): string | null {
+  const first = (raw ?? '').split('\n').map(l => l.trim()).find(Boolean) ?? '';
+  let line = first.replace(/^SQL Validation Error:\s*/i, '');
+  // « org.apache.flink.table.api.ValidationException: SQL validation failed. … » → la phrase.
+  for (let i = 0; i < 3; i += 1) line = line.replace(/^(?:[a-z_$][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error):\s*/, '');
+  line = line.trim();
+  if (!line) return null;
+  if (line.length > 300) line = `${line.slice(0, 297)}…`;
+  const seen = shown.filter(Boolean).map(s => s!.trim().toLowerCase());
+  return seen.some(s => s === line.toLowerCase() || s.includes(line.toLowerCase())) ? null : line;
+}
+
 export function formatDuration(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
@@ -1476,14 +1505,19 @@ export interface WorkbenchLayout {
   /**
    * L'assistant de fenêtrage prenait 288 px à l'éditeur en permanence, pour un outil occasionnel,
    * et rien ne permettait de le replier. Replié il laisse un rail, et l'état voyage avec le reste
-   * de la disposition. Ouvert par défaut : c'est ainsi qu'il a toujours été, et le replier doit
-   * rester une décision, pas une surprise à la mise à jour.
+   * de la disposition. Replié par défaut depuis SQL-EDITOR-AUDIT.md X6 ; une disposition déjà
+   * enregistrée garde le sien, donc qui l'avait ouvert le retrouve ouvert.
    */
   assistantOpen: boolean;
 }
 
 export const LAYOUT_STORAGE_KEY = 'kse:query-layout';
-export const DEFAULT_LAYOUT: WorkbenchLayout = { splitPercent: 55, sidebarWidth: 288, assistantOpen: true };
+/*
+ * L'assistant de fenêtrage commence **replié** (SQL-EDITOR-AUDIT.md, X6) : ouvert, il prenait 288 px
+ * à l'éditeur pour un outil occasionnel — 608 px d'éditeur sur un écran de 1440, 448 sur 1280. Son
+ * rail reste, et celui qui l'a ouvert le retrouve ouvert : l'état voyage avec la disposition.
+ */
+export const DEFAULT_LAYOUT: WorkbenchLayout = { splitPercent: 55, sidebarWidth: 288, assistantOpen: false };
 export const SPLIT_MIN = 20, SPLIT_MAX = 80;
 export const SIDEBAR_MIN = 200, SIDEBAR_MAX = 480;
 

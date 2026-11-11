@@ -8,7 +8,7 @@ import {
   isResultStale, writeStored, readStored, removeStored,
   readLayout, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT, SPLIT_MIN, SIDEBAR_MAX,
   readSqlParam, readQueryOptions, buildQueryLink,
-  readRequestFor, readOptionsOf, readScopeOf, readScopeFromSearch,
+  readRequestFor, readOptionsOf, readScopeOf, readScopeFromSearch, runShortcutLabel, errorHeadline,
   NARROW_ALTERNATIVES, WIDE_WINDOW_MIN_PX, dismissNarrowNotice, readNarrowNoticeDismissed,
   starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, offsetAt, resolveOrigin,
@@ -844,9 +844,9 @@ describe('readLayout', () => {
     expect(readLayout()).toEqual(DEFAULT_LAYOUT);
   });
 
-  it('reads a layout written before the assistant could fold as open', () => {
+  it('reads a layout that never chose as folded, the default since X6', () => {
     writeStored(LAYOUT_STORAGE_KEY, { splitPercent: 60, sidebarWidth: 300 });
-    expect(readLayout().assistantOpen).toBe(true);
+    expect(readLayout().assistantOpen).toBe(false);
   });
 });
 
@@ -990,5 +990,28 @@ describe('read scope', () => {
   it('describes a history entry by what it read', () => {
     expect(describeHistoryEntry({ sql: 'q', ts: 1, ...readOptionsOf('LATEST') })).toBe('Latest records');
     expect(describeHistoryEntry({ sql: 'q', ts: 1, ...readOptionsOf('SNAPSHOT') })).toBe('Whole topic');
+  });
+});
+
+describe('runShortcutLabel (X5)', () => {
+  it('prints the key this machine has', () => {
+    expect(runShortcutLabel('MacIntel')).toBe('⌘↵');
+    expect(runShortcutLabel('MacIntel', true)).toBe('⌘⇧↵');
+    expect(runShortcutLabel('Linux x86_64')).toBe('Ctrl+Enter');
+    expect(runShortcutLabel('Win32', true)).toBe('Ctrl+Shift+Enter');
+  });
+});
+
+describe('errorHeadline (X9)', () => {
+  it('keeps the engine sentence, without the validator prefix or a Java class name', () => {
+    expect(errorHeadline('SQL Validation Error: SQL parse failed. Encountered "FORM" at line 1, column 10.\nWas expecting …'))
+      .toBe('SQL parse failed. Encountered "FORM" at line 1, column 10.');
+    expect(errorHeadline('org.apache.flink.table.api.ValidationException: Object \'x\' not found'))
+      .toBe("Object 'x' not found");
+  });
+
+  it('says nothing when it would repeat what is shown', () => {
+    expect(errorHeadline('Nothing to run', 'Nothing to run')).toBeNull();
+    expect(errorHeadline('')).toBeNull();
   });
 });
