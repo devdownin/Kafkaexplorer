@@ -653,6 +653,27 @@ class MetricServiceTest {
         assertTrue(past.error().contains("4 label series"), past.error());
     }
 
+    /** METRICS-CREATION-AUDIT.md B6: a preview leaves no table behind, and says when its DDL did not apply. */
+    @Test
+    void aPreviewDropsTheTableItCreatedAndNamesTheOneItCouldNotReplace() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 1.0)), 1L, null));
+
+        var fresh = service.previewMetric(new MetricConfig(null, "m", "GAUGE", "SELECT COUNT(*) AS metric_value FROM fresh_t",
+            null, null, null, null, null, null, List.of(), Map.of(),
+            "CREATE TABLE fresh_t (a STRING) WITH ('connector'='kafka')", null, null, null, null, List.of()));
+        assertNull(fresh.error());
+        Mockito.verify(flinkSqlService).dropTable("fresh_t");
+        assertFalse(fresh.summary().containsKey("ddlNotApplied"));
+
+        var shadowed = service.previewMetric(new MetricConfig(null, "m", "GAUGE", "SELECT COUNT(*) AS metric_value FROM demo_orders_in",
+            null, null, null, null, null, null, List.of(), Map.of(),
+            "CREATE TABLE `demo_orders_in` (b STRING) WITH ('connector'='kafka')", null, null, null, null, List.of()));
+        Mockito.verify(flinkSqlService, Mockito.never()).dropTable("demo_orders_in");
+        assertTrue(String.valueOf(shadowed.summary().get("ddlNotApplied")).contains("demo_orders_in"),
+            String.valueOf(shadowed.summary()));
+    }
+
     /** METRICS-CREATION-AUDIT.md B7: an unknown mode is refused by name, not by a Java class name. */
     @Test
     void anUnknownExecutionModeIsRefusedInTheEditorsWords() {

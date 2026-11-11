@@ -386,6 +386,20 @@ describe('la liste, ses pannes et ses requêtes en vol', () => {
     expect(within(dialog).queryByText(/unknown column x/)).toBeNull();
   });
 
+  // METRICS-CREATION-AUDIT.md O1, O2: columns asked for by the editor, a draft written after a pause.
+  it('asks for the table columns only once the editor opens, and keeps no value history in the draft', async () => {
+    const user = userEvent.setup();
+    stubApi([{ ...templateMetric, templateParams: savableTemplateParams, history: [1, 2, 3] }]);
+    await renderPage();
+    await screen.findByRole('button', { name: 'Edit this metric' });
+    expect(mockedAxios.get).not.toHaveBeenCalledWith('/api/metrics/metadata');
+
+    await user.click(screen.getByRole('button', { name: 'Edit this metric' }));
+    await waitFor(() => expect(mockedAxios.get).toHaveBeenCalledWith('/api/metrics/metadata'));
+    await waitFor(() => expect(localStorage.getItem('kse:draft:metrics:editor')).not.toBeNull());
+    expect(localStorage.getItem('kse:draft:metrics:editor')).not.toContain('"history"');
+  });
+
   // METRICS-CREATION-AUDIT.md U2: say an unpreviewed definition is one, and measure what was saved.
   it('says the definition was never run, and refreshes the metric it saved at once', async () => {
     const user = userEvent.setup();
@@ -422,7 +436,7 @@ describe('la liste, ses pannes et ses requêtes en vol', () => {
     expect(await screen.findByText('Discard this metric?')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Keep editing' }));
     expect(screen.getByRole('dialog', { name: 'Edit Metric' })).toBeInTheDocument();
-    expect(localStorage.getItem('kse:draft:metrics:editor')).not.toBeNull();
+    await waitFor(() => expect(localStorage.getItem('kse:draft:metrics:editor')).not.toBeNull());
 
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     await user.click(await screen.findByRole('button', { name: 'Discard' }));

@@ -218,6 +218,18 @@ export const SCAN_MAX_ROWS_DEFAULT = 10_000;
 export const SCAN_TIMEOUT_MS_DEFAULT = 30_000;
 
 /**
+ * How long the browser waits for a preview. It inherited the global 60 s while a two-query template
+ * may spend `timeoutMs` on each side (up to ten minutes): the browser gave up on a preview the server
+ * was still legitimately computing, and called it a failure. Both sides, plus a margin for the DDL
+ * and the answer; never below the global default.
+ */
+export function previewTimeoutMs(templateType: string, params: Record<string, unknown>, fallbackMs: number): number {
+  if (templateType === RAW_SQL) return fallbackMs;
+  const side = Number(paramStr(params, 'timeoutMs').trim()) || SCAN_TIMEOUT_MS_DEFAULT;
+  return Math.max(fallbackMs, 2 * side + 15_000);
+}
+
+/**
  * Deux instructions qui disent la même chose.
  *
  * La comparaison est sur le texte, espaces réduits et casse ignorée : elle attrape le copier-coller,

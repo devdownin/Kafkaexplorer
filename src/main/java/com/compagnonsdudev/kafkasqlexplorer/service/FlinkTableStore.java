@@ -239,6 +239,13 @@ public class FlinkTableStore {
      * catalogue this application registers everything into, and the store has to key them the same
      * way or a rewrite would be filed as a second table and both replayed.
      */
+    /** The table a {@code CREATE TABLE} names, unquoted, or {@code null} when it is not one. */
+    static String createdTableName(String sql) {
+        if (sql == null) return null;
+        Matcher matcher = CREATE_TABLE.matcher(sql);
+        return matcher.find() ? unquote(matcher.group(3)) : null;
+    }
+
     static String unquote(String identifier) {
         if (identifier == null) return null;
         String name = identifier.trim();

@@ -18,13 +18,17 @@ deux requêtes ont leur propre rapport (`METRICS-TWO-QUERY-AUDIT.md`) et ne sont
 > tourner ; l'éditeur lit au-delà d'un `WITH` de tête, accepte `` `metric_value` `` et cherche
 > l'alias hors des littéraux ; un `CREATE TABLE` qui échoue est la réponse de l'aperçu, et précède
 > l'erreur de la requête au rafraîchissement ; l'aperçu restaure les secrets masqués d'une métrique
-> stockée. **Reste ouvert dans B6** : l'aperçu exécute toujours le DDL, donc enregistre la table
-> (`IF NOT EXISTS` : un DDL modifié après un aperçu n'est pas réappliqué). **U2 et U3 aussi** :
+> stockée ; et l'aperçu ne laisse plus de table derrière lui : celle qu'il a créée est supprimée
+> (de Flink et du magasin rejoué au démarrage), et quand la table existait déjà il dit que son DDL,
+> modifié, n'a pas été appliqué (puce « DDL not applied »). **U2 et U3 aussi** :
 > `POST /api/metrics` rend la métrique enregistrée, que la page rafraîchit aussitôt, et le pied du
 > modal dit « Not previewed » tant que la définition affichée n'a pas été exécutée ; une métrique
 > ne publie pas plus de `explorer.metric-max-series` séries (500, 0 sans plafond) — au-delà elle
 > ne publie rien et sa carte dit pourquoi, et l'aperçu compte les séries et refuse de même.
-> Ouvertes : les optimisations. Chaque constat dit comment il a été établi —
+> **Les optimisations aussi** : les colonnes des tables sont demandées à la première ouverture de
+> l'éditeur et non à chaque visite (O1) ; le brouillon est écrit après 400 ms de pause, sans
+> l'historique des valeurs, et vidé au départ de la page (O2) ; l'aperçu attend les deux côtés d'un
+> gabarit (`2 × timeoutMs + 15 s`) au lieu des 60 s globales. Restent les points plus légers. Chaque constat dit comment il a été établi —
 > **reproduit** (un test l'a montré, jeté ensuite), ou **lu** (déduit du code, fichier nommé).
 > Douze constats, classés ; le premier est une régression introduite par l'assistant (PR #547).
 

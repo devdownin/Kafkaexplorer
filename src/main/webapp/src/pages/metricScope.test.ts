@@ -226,6 +226,8 @@ describe('the series a result makes', () => {
   it('says how many, and warns when a column looks like a key', () => {
     expect(describeMetricScope({ seriesCount: 1 })).toEqual([]);
     expect(describeMetricScope({ seriesCount: 3 })).toEqual([expect.objectContaining({ label: '3 series', tone: 'neutral' })]);
+    expect(describeMetricScope({ ddlNotApplied: 'A table named t is already registered' }))
+      .toEqual([expect.objectContaining({ label: 'DDL not applied', tone: 'warning' })]);
     expect(describeMetricScope({ seriesCount: 400 })).toEqual([expect.objectContaining({ label: '400 series', tone: 'warning' })]);
   });
 });

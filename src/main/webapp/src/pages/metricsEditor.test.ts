@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { describe, expect, it } from 'vitest';
-import { buildDdlTemplate, carryTemplateParams, keepLabelsPresentIn, retargetDdl, sqlOutsideLiterals, validateDdlSql, validateMetricSql } from './metricsEditor';
+import { buildDdlTemplate, carryTemplateParams, previewTimeoutMs, keepLabelsPresentIn, retargetDdl, sqlOutsideLiterals, validateDdlSql, validateMetricSql } from './metricsEditor';
 
 const ddl = (topic: string) => `CREATE TABLE t (id STRING) WITH ('connector' = 'kafka', 'topic' = '${topic}')`;
 
@@ -104,5 +104,15 @@ describe('validateMetricSql', () => {
 
   it('keeps a table-options hint, which is not a comment', () => {
     expect(sqlOutsideLiterals("SELECT 1 FROM t /*+ OPTIONS('a'='b') */ /* c */")).toBe("SELECT 1 FROM t /*+ OPTIONS(''='') */");
+  });
+});
+
+// METRICS-CREATION-AUDIT.md: the preview waited the global 60 s whatever the template's own budget.
+describe('previewTimeoutMs', () => {
+  it('waits for both sides of a template, never less than the global default', () => {
+    expect(previewTimeoutMs('RAW_SQL', {}, 60_000)).toBe(60_000);
+    expect(previewTimeoutMs('TOPIC_COUNT_DELTA', {}, 60_000)).toBe(75_000);
+    expect(previewTimeoutMs('TOPIC_TRANSIT_LATENCY', { timeoutMs: 120_000 }, 60_000)).toBe(255_000);
+    expect(previewTimeoutMs('TOPIC_COUNT_DELTA', { timeoutMs: 1_000 }, 60_000)).toBe(60_000);
   });
 });

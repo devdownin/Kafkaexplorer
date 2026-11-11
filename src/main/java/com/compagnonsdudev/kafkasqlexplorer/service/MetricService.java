@@ -538,41 +538,81 @@ public class MetricService {
                 metric.labelTopic(), metric.labelFields());
             MetricConfig normalized = normalizeMetric(withSecrets);
             validateMetric(normalized);
+
+            // A preview looks; it does not leave a table behind (METRICS-CREATION-AUDIT.md B6). The
+            // DDL is run so the query can read what it defines, and a table this call created is
+            // dropped again afterwards — from Flink and from the store of definitions replayed at
+            // boot, where an abandoned editor's table otherwise came back at every restart.
+            String ddlTable = normalized.createTableSql() == null || normalized.createTableSql().isBlank()
+                ? null : FlinkTableStore.createdTableName(normalized.createTableSql());
+            boolean existedBefore = ddlTable != null && flinkSqlService.listTables().contains(ddlTable);
             String ddlError = executeCreateTableIfPresent(normalized);
             if (ddlError != null) {
                 // A preview is where the definition is checked, so a failing one is the answer,
                 // whatever the query would have read from a table registered some other way.
                 return new MetricPreviewResult(null, List.of(), withDdlFailure(ddlError, null), Map.of());
             }
-
-            MetricComputationResult result = computeMetric(normalized, true);
-            Map<String, Object> summary = new LinkedHashMap<>(result.summary());
-            if (MetricExecutionMode.FLINK_MANAGED_JOB.name().equals(normalized.executionMode())) {
-                summary.put("plannedExecutionMode", MetricExecutionMode.FLINK_MANAGED_JOB.name());
-                summary.put("previewExecutionMode", MetricExecutionMode.TEMPLATE_BOUNDED_SCAN.name());
-                summary.put("managedJobStatus", "PLANNED");
-                summary.put("managedJobNote", "Preview uses a bounded scan until Flink job orchestration is implemented.");
+            try {
+                // Said only when the definition differs from the one stored: an existing metric's own
+                // table is registered by its refreshes, and re-previewing it unchanged is no news.
+                boolean edited = ddlTable != null && (previous == null || !Objects.equals(
+                    normalized.createTableSql().trim(),
+                    previous.createTableSql() == null ? null : previous.createTableSql().trim()));
+                return previewComputed(normalized, existedBefore && edited ? ddlTable : null);
+            } finally {
+                if (ddlTable != null && !existedBefore) dropPreviewTable(ddlTable);
             }
-            // What the refresh would publish, said before it does (U3). Labels configured from a topic
-            // are one value each and add no series, so the rows alone decide the count.
-            if (result.error() == null && !result.rows().isEmpty()) {
-                int series = liveLabelKeys(result.rows(), Map.of()).size();
-                summary.put("seriesCount", series);
-                String overCap = seriesOverCap(series);
-                if (overCap != null) {
-                    return new MetricPreviewResult(result.displayValue(), List.of(), overCap, summary);
-                }
-            }
-            List<Map<String, Object>> previewRows = result.rows().size() > 50
-                ? result.rows().subList(0, 50)
-                : result.rows();
-            return new MetricPreviewResult(result.displayValue(), previewRows, result.error(), summary);
         } catch (IllegalArgumentException e) {
             return new MetricPreviewResult(null, List.of(), e.getMessage(), Map.of());
         } catch (Exception e) {
             return new MetricPreviewResult(null, List.of(),
                 e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), Map.of());
         }
+    }
+
+    private void dropPreviewTable(String table) {
+        try {
+            flinkSqlService.dropTable(table);
+        } catch (Exception e) {
+            // A name this application will not put into a DROP (qualified, quoted) stays registered
+            // for this process, as every preview used to leave it; nothing worse.
+            log.debug("Preview table {} not dropped: {}", LogSafe.name(table), e.getMessage());
+        }
+    }
+
+    /**
+     * @param shadowedTable the table the DDL names when it already existed: {@code IF NOT EXISTS}
+     *                      then applies nothing, so an edited definition is not what the preview
+     *                      read — said rather than left to be discovered after the save.
+     */
+    private MetricPreviewResult previewComputed(MetricConfig normalized, String shadowedTable) {
+        MetricComputationResult result = computeMetric(normalized, true);
+        Map<String, Object> summary = new LinkedHashMap<>(result.summary());
+        if (shadowedTable != null) {
+            summary.put("ddlNotApplied", "A table named " + shadowedTable + " is already registered, so this "
+                + "CREATE TABLE was not applied (IF NOT EXISTS) and the preview read the existing table. "
+                + "To use an edited definition, drop that table first (schema browser).");
+        }
+        if (MetricExecutionMode.FLINK_MANAGED_JOB.name().equals(normalized.executionMode())) {
+            summary.put("plannedExecutionMode", MetricExecutionMode.FLINK_MANAGED_JOB.name());
+            summary.put("previewExecutionMode", MetricExecutionMode.TEMPLATE_BOUNDED_SCAN.name());
+            summary.put("managedJobStatus", "PLANNED");
+            summary.put("managedJobNote", "Preview uses a bounded scan until Flink job orchestration is implemented.");
+        }
+        // What the refresh would publish, said before it does (U3). Labels configured from a topic
+        // are one value each and add no series, so the rows alone decide the count.
+        if (result.error() == null && !result.rows().isEmpty()) {
+            int series = liveLabelKeys(result.rows(), Map.of()).size();
+            summary.put("seriesCount", series);
+            String overCap = seriesOverCap(series);
+            if (overCap != null) {
+                return new MetricPreviewResult(result.displayValue(), List.of(), overCap, summary);
+            }
+        }
+        List<Map<String, Object>> previewRows = result.rows().size() > 50
+            ? result.rows().subList(0, 50)
+            : result.rows();
+        return new MetricPreviewResult(result.displayValue(), previewRows, result.error(), summary);
     }
 
     /** @return the metric as stored, so the caller learns the id a creation was given. */

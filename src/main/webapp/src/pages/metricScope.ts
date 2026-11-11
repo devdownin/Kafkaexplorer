@@ -80,6 +80,11 @@ export function describeMetricScope(
 
   if (!lastSummary) return chips;
 
+  // A preview whose CREATE TABLE was not applied, the table already being there (IF NOT EXISTS).
+  if (typeof lastSummary.ddlNotApplied === 'string') {
+    chips.push({ label: 'DDL not applied', detail: lastSummary.ddlNotApplied, tone: 'warning' });
+  }
+
   // How many label series the result makes (the preview counts them, METRICS-CREATION-AUDIT.md U3):
   // every column besides metric_value is a label, and a key column makes one series per record.
   const series = num(lastSummary, 'seriesCount');

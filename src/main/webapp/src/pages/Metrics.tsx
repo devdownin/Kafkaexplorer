@@ -19,6 +19,7 @@ import {
 } from '../components/ui';
 import { describeQueryError } from './queryError';
 import { clearDraft, readDraft, writeDraft } from '../draftStore';
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../api/requestTimeout';
 // La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
 import type {
@@ -61,6 +62,7 @@ import {
   validateDdlSql,
   validateMetricName,
   validateMetricSql,
+  previewTimeoutMs,
   validateTemplate,
   validateThresholds,
 } from './metricsEditor';
@@ -99,6 +101,7 @@ const ValidationHints: React.FC<{ messages: ValidationMsg[] }> = ({ messages }) 
 
 /** Clé du brouillon de l'éditeur — voir `draftStore.ts`. */
 const EDITOR_DRAFT = 'metrics:editor';
+const DRAFT_WRITE_DELAY_MS = 400;
 
 /** Ce qu'il faut pour rouvrir le modal exactement là où il a été quitté. */
 interface EditorDraft {
@@ -307,7 +310,6 @@ const Metrics: React.FC = () => {
     fetchMetrics();
     void fetchSuggestions();
     void fetchAuditHistory();
-    axios.get<TableMetadata>('/api/metrics/metadata').then(r => setMetadata(r.data)).catch(() => { toast('Failed to load table metadata', 'error'); });
     // `.catch(() => {})` laissait la liste de gabarits vide sans que rien ne le dise.
     axios.get<MetricTemplateDescriptor[]>('/api/metrics/templates')
       .then(r => setTemplates(r.data))
@@ -380,15 +382,45 @@ const Metrics: React.FC = () => {
    * tout seul sur une métrique abandonnée serait une surprise, pas un service. L'enregistrement
    * ferme le modal, donc efface aussi.
    */
+  /*
+   * O2 — written after a pause rather than on every keystroke: Monaco changes `editingMetric` at
+   * each key, and the whole metric was serialised each time, value history included, which a draft
+   * never needs (the server keeps an existing metric's measurements, and a new one has none).
+   * A pending write is flushed when the page goes, so the last pause is not what gets lost.
+   */
+  /*
+   * O1 — the tables' columns feed the editor's completion only, and `/api/metrics/metadata` reads
+   * every table's schema under the Flink runtime's lock: it was fetched at each visit of the page,
+   * editor opened or not. Now at the first opening, once per visit.
+   */
+  const metadataAsked = useRef(false);
   useEffect(() => {
-    if (isModalOpen) {
-      writeDraft(EDITOR_DRAFT, {
-        metric: editingMetric, topic: selectedTopic, tab: editorTab, nameIsAuto,
-      } satisfies EditorDraft);
-    } else {
+    if (!isModalOpen || metadataAsked.current) return;
+    metadataAsked.current = true;
+    axios.get<TableMetadata>('/api/metrics/metadata').then(r => setMetadata(r.data))
+      .catch(() => { toast('Failed to load table metadata', 'error'); });
+  }, [isModalOpen, toast]);
+
+  const pendingDraft = useRef<EditorDraft | null>(null);
+  useEffect(() => {
+    if (!isModalOpen) {
+      pendingDraft.current = null;
       clearDraft(EDITOR_DRAFT);
+      return;
     }
+    const { history: _history, componentHistory: _components, ...metric } = editingMetric;
+    pendingDraft.current = { metric, topic: selectedTopic, tab: editorTab, nameIsAuto };
+    const timer = window.setTimeout(() => {
+      if (pendingDraft.current) writeDraft(EDITOR_DRAFT, pendingDraft.current);
+      pendingDraft.current = null;
+    }, DRAFT_WRITE_DELAY_MS);
+    return () => window.clearTimeout(timer);
   }, [isModalOpen, editingMetric, selectedTopic, editorTab, nameIsAuto]);
+  useEffect(() => {
+    const flush = () => { if (pendingDraft.current) writeDraft(EDITOR_DRAFT, pendingDraft.current); };
+    window.addEventListener('pagehide', flush);
+    return () => { window.removeEventListener('pagehide', flush); flush(); };
+  }, []);
 
   /** Every way out but Save: asks first when closing would throw away the user's work. */
   const requestClose = useCallback(async () => {
@@ -752,7 +784,8 @@ const Metrics: React.FC = () => {
       // (mirrors the scheduled refresh) and the value is computed with the metric's real type
       // (or template semantics — count delta, transit latency).
       const res = await axios.post<MetricTestResponse>(
-        '/api/metrics/preview-template', editingMetric);
+        '/api/metrics/preview-template', editingMetric,
+        { timeout: previewTimeoutMs(templateType, editingMetric.templateParams ?? {}, DEFAULT_REQUEST_TIMEOUT_MS) });
       if (seq === previewSeq.current) {
         setPreviewResult(res.data);
         setPreviewedKey(res.data.error ? null : definitionKey);
