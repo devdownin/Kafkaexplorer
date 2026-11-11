@@ -304,6 +304,9 @@ class LlmAnalysisEvalTest {
             run.put("inputTokens", result.usage() == null ? null : result.usage().inputTokens());
             run.put("outputTokens", result.usage() == null ? null : result.usage().outputTokens());
             run.put("promptChars", result.coverage() == null ? null : result.coverage().promptChars());
+            // What the model said, kept so a fact scored as missed can be checked against the answer
+            // rather than against the matcher — a report that cannot be audited is a verdict.
+            run.put("said", said.toString());
             outcomes.add(run);
             System.out.println("run " + (i + 1) + ": " + run);
         }
