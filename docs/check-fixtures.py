@@ -62,6 +62,7 @@ CONTRACTS = {
     "auditHistory": "AuditHistory",
     "metrics": "MetricConfig",
     "forecastStatus": "ForecastStatus",
+    "assistantStatus": "AssistantStatus",
     "metricSuggestions": "MetricSuggestions",
     "dataModel": "DataModelResponse",
     "dataModelLimits": "DataModelLimits",

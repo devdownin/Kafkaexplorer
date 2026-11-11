@@ -20,6 +20,12 @@ items get cheaper once the first one lands.
 > found a defect in the measured process while being written (see section 6). **W6 and W7 remain
 > open.**
 >
+> **The bilingual-prompt suspicion has been measured (2026-11-11)** and answered by this
+> document's own rule: the shipped prompt held its format 9 times in 9, three runs each on Gemma 4
+> E4B, Qwen3-4B and `qwen2.5-coder:7b` (`EMBEDDED-LLM-SCOPE.md` §7.2). No English variant is built.
+> What the French headings do change is the answer's language, which the eval's fact matcher now
+> reads in both.
+>
 > **A defect W1–W3 introduced, found by measuring rather than by reading, and fixed.** With the
 > aggregate carrying the scope, `messagesAnalysed` counted only the inlined worked examples — so a
 > measured six-topic run over 3 000 records reported *"6 of 3,000 analysed"* and the panel blamed a

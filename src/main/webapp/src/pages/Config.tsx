@@ -17,6 +17,7 @@ import {
 import { describeDataPolicy, type LlmPolicyFacts } from './llmPolicy';
 import { describeTestTimeout, testTimeoutMs } from './llmTimeout';
 import type { LlmModelShortlist, LlmTestResponse } from '../api/types';
+import { AssistantSettings } from '../components/assistant/AssistantSettings';
 import {
   describeKeyStatus, describeModelCheck, describeModelIdentity, hasModelWarning,
 } from './llmModelCheck';
@@ -65,6 +66,9 @@ interface ClusterConfig {
   llmUseRag?: boolean;
   llmCollection?: string;
   llmRequestTimeoutSeconds?: number;
+  /** La fenêtre déclarée du point d'accès et le plafond qu'elle impose à chaque prompt. */
+  llmContextWindowTokens?: number;
+  llmPromptCharCeiling?: number | null;
   llmMaxTokens: number;
   llmSnapshotWindowSize: number;
   llmSnapshotWindowTimeoutSeconds: number;
@@ -1411,6 +1415,10 @@ const Config: React.FC = () => {
               {llmTesting ? 'Testing LLM…' : 'Test LLM'}
             </Button>
           </div>
+
+          {/* Le second consommateur du modèle : ce qu'il appelle réellement, et son propre test. */}
+          <AssistantSettings contextWindowTokens={config.llmContextWindowTokens}
+            promptCharCeiling={config.llmPromptCharCeiling} />
 
           {/*
             * La liste restreinte : les modèles qui savent faire ce travail, le moins cher d'abord.

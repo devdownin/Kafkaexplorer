@@ -536,3 +536,29 @@ code showed the fix keeps the median and the order (F9), a bounded connection po
 before reuse (F10), the quarantine call on a series id removed (F11), forecast tools registered only
 when a series is approved (F12), one purge per refresh and a budget counting approved series (F13). F6 closed the report: returning a series to SHADOW takes no lock, since every read
 recomputes visibility from the control row.
+
+`EMBEDDED-LLM-SCOPE.md` (2026-11) studies a small local model of the Gemma family as an assistant
+for the SQL editor and the Metrics page, the two screens no model serves today. It implemented
+nothing, and its model figures are published ones rather than measurements. Its conclusions: run
+the model beside the JVM (the existing `compose/ollama.yml`, model made a variable) rather than in
+it — a native crash would take Flink and the UI down, off-heap weights escape `MaxRAMPercentage`,
+and the runtime image is musl; start with fixing a refused query, then question-to-SELECT, then a
+metric draft; and gate every output through `SqlAst`, the whitelist and an `EXPLAIN`, with nothing
+run or saved without a gesture. Lots 1–3 have since shipped (`/api/assistant/*`, the editor's
+ask bar and "Suggest a fix", the Metrics editor's draft), **off by default** and on in
+`compose/ollama.yml`; the report's status block lists where the shipped code departs from the
+design and why. Lot 0 has since been measured (§7.1, reports in `docs/benchmarks/assistant-eval/`),
+twice. The first pass found two defects (fixed) and three prompt weaknesses — a rule claiming every
+`event_time` is watermarked, which is false on every demo topic; a window example leaking
+`FROM TABLE x` into small models; an unrepaired `AS count` — which prompt v2 fixed by annotating
+each time column in the catalogue rather than by a rule. On v2, Gemma 4 E4B is 96 % correct, Qwen3-4B 94 % for 2.3 GB less, Gemma 4 E2B 88 % and the only one
+under 30 s p95 on four CPU cores. §7.2 then measured Process Mining on the same models: Gemma 4 E4B
+held its format and drew the pipeline every time and found twice the planted facts
+`qwen2.5-coder:7b` did, so `compose/ollama.yml` now serves one model (`OLLAMA_MODEL`, `gemma4:e4b`)
+to both consumers. The bilingual Process Mining prompt held its format 9 times in 9, so, by
+`PROCESS-MINING-LLM-SCOPE.md`'s own rule, no English variant is built. Two corrections are recorded
+in the report: the first memory figures were inflated by the eval server's logits buffer, and the
+first fact matcher read English only while the models answer in French. The v2 prompt gain is
+measured on the cases that inspired it, so it is an upper bound; and no model finds ORD-102's
+rejection or the truncated payloads, which points at the Process Mining prompt rather than the model. Read it before
+adding any LLM call outside Process Mining.

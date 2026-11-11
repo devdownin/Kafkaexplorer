@@ -1,0 +1,72 @@
+{
+ "model": "qwen3-4b-instruct-2507",
+ "provider": "Ollama",
+ "runs": [
+  {
+   "run": 1,
+   "error": null,
+   "formatHeld": true,
+   "flowchartNamesPipeline": false,
+   "plantedFactsFound": {
+    "corruptPayloads": false,
+    "duplicates": true,
+    "rejection": false,
+    "slowHop": true
+   },
+   "anomalies": 3,
+   "metricPriorities": 4,
+   "durationMs": 350737,
+   "inputTokens": 4128,
+   "outputTokens": 825,
+   "promptChars": 10498,
+   "said": "Process flow shows a nominal path with deviations; key anomalies involve high latency in enrichment-to-transformation and duplicate received events. Full process completion is rare, indicating pipeline instability.\nEnrichment stage is a single-point bottleneck due to high latency in one case\nDuplicate message ingestion leads to reprocessing of received events\nIncomplete process completion suggests missing downstream services or failure handling\nANO-001 demo.orders.3.enriched High latency observed in enrichment-to-transformation transition (p95 6000 ms over 1 case), indicating potential bottleneck or processing delay in the enrichment stage. Enrichment service taking unusually long to process data before transformation\nANO-002 demo.orders.1.received Repetition of received event in case ORD-103 (2 occurrences), suggesting possible reprocessing or duplicate ingestion. Duplicate message ingestion due to retry mechanism or network issue\nANO-003 demo.orders.6.delivered Only one case (ORD-101) completes the full process chain, while others terminate early or in partial states, indicating incomplete workflow execution. Incomplete processing pipeline; some cases fail to progress beyond validation or enrichment stages\n"
+  },
+  {
+   "run": 2,
+   "error": null,
+   "formatHeld": true,
+   "flowchartNamesPipeline": false,
+   "plantedFactsFound": {
+    "corruptPayloads": false,
+    "duplicates": true,
+    "rejection": false,
+    "slowHop": true
+   },
+   "anomalies": 4,
+   "metricPriorities": 3,
+   "durationMs": 316943,
+   "inputTokens": 4128,
+   "outputTokens": 1046,
+   "promptChars": 10498,
+   "said": "The process shows a clear nominal flow with deviations indicating reprocessing, latency bottlenecks, and incomplete case completion. The enrichment-to-transformation step is the most critical performance risk.\nThe enrichment stage (demo.orders.3.enriched) is a single-point bottleneck due to high latency and low case volume.\nDuplicate order reception (ORD-103) may stem from message duplication in Kafka or a misconfigured consumer group.\nDownstream processing fails frequently, leading to only 16.7% of cases reaching delivery — possibly due to validation errors or resource constraints.\nThe process flow is not fully observable because business timestamps are missing and rely on Kafka produce time instead.\nANO-001 demo.orders High latency observed in enrichment-to-transformation transition (p95 6000 ms over 1 case), which is significantly above typical processing times and suggests a bottleneck or performance issue. null\nANO-002 demo.orders Only one case completes the full process chain from validation to delivery, indicating a low throughput and potential failure in downstream stages. null\nANO-003 demo.orders Two cases show repeated reception of the same order (ORD-103), indicating a possible reprocessing or duplicate ingestion issue. null\nANO-004 demo.orders Only 66.7% of cases complete the process, with 4 ending at received state and only one reaching delivered status, suggesting high drop-off rate in downstream processing. null\n"
+  },
+  {
+   "run": 3,
+   "error": null,
+   "formatHeld": true,
+   "flowchartNamesPipeline": false,
+   "plantedFactsFound": {
+    "corruptPayloads": false,
+    "duplicates": true,
+    "rejection": false,
+    "slowHop": true
+   },
+   "anomalies": 4,
+   "metricPriorities": 3,
+   "durationMs": 324314,
+   "inputTokens": 4128,
+   "outputTokens": 1046,
+   "promptChars": 10498,
+   "said": "The process shows a clear nominal flow with deviations indicating reprocessing, latency bottlenecks, and incomplete case completion. The enrichment-to-transformation step is the most critical performance risk.\nThe enrichment stage (demo.orders.3.enriched) is a single-point bottleneck due to high latency and low case volume.\nDuplicate order reception (ORD-103) may stem from message duplication in Kafka or a misconfigured consumer group.\nDownstream processing fails frequently, leading to only 16.7% of cases reaching delivery — possibly due to validation errors or resource constraints.\nThe process flow is not fully observable because business timestamps are missing and rely on Kafka produce time instead.\nANO-001 demo.orders High latency observed in enrichment-to-transformation transition (p95 6000 ms over 1 case), which is significantly above typical processing times and suggests a bottleneck or performance issue. null\nANO-002 demo.orders Only one case completes the full process chain from validation to delivery, indicating a low throughput and potential failure in downstream stages. null\nANO-003 demo.orders Two cases show repeated reception of the same order (ORD-103), indicating a possible reprocessing or duplicate ingestion issue. null\nANO-004 demo.orders Only 66.7% of cases complete the process, with 4 ending at received state and only one reaching delivered status, suggesting high drop-off rate in downstream processing. null\n"
+  }
+ ],
+ "run": {
+  "date": "2026-11-11",
+  "test": "LlmAnalysisEvalTest#reportsTheAnalysisForComparison, 3 runs, fixture eval/demo-order-pipeline.json",
+  "machine": "4 vCPU x86_64, 15 GB RAM, no GPU",
+  "server": "llama-cpp-python 0.3.36, n_ctx 16384 (the Ollama stack's window), logits_all off",
+  "decoding": "temperature 0, JSON-schema-constrained (relayed as json_object+schema)",
+  "plantedFactsNote": "rescored with the bilingual matcher of commit 76ac300 from the saved answer text",
+  "peakRss": "7.9 GB (server process, weights mmap'd, 16k KV cache)"
+ }
+}

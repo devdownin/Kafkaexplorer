@@ -338,6 +338,40 @@ end. If you are developing SpectraLLM itself, point the pins at the image you ju
 than at a second stack: `SPECTRA_IMAGE_TAG` and `EXPLORER_IMAGE_TAG` are already how every image
 here is chosen.
 
+## The SQL & metric assistant (a second consumer of the model)
+
+Process Mining is not the only thing that can call the model configured above. The editor's ask bar,
+its **Suggest a fix** button and the Metrics editor's **Describe the metric** box go through the
+SQL & metric assistant (`explorer.assistant.*`). It is **off by default**, because the default
+provider is hosted and the assistant would otherwise send table and column names to a third party
+nobody chose. It never sends a message value, and it never runs or saves what it proposes.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `explorer.assistant.enabled` (`EXPLORER_ASSISTANT_ENABLED`) | `false` | On in `compose/ollama.yml` and in `./demo.sh` |
+| `provider`, `base-url`, `model` (`EXPLORER_ASSISTANT_*`) | blank | Blank inherits `claude.*`. Naming another endpoint **drops the `claude.*` key**: a key never follows a different host |
+| `request-timeout-seconds` | 0 | 0 inherits `claude.request-timeout-seconds`: one budget for every call. Terminal — a slow model is not retried |
+| `prompt-char-budget` | 12 000 | About 3 000 tokens, capped by `claude.context-window-tokens` when the window is declared |
+
+**One window for both consumers.** `claude.context-window-tokens` (`CLAUDE_CONTEXT_WINDOW_TOKENS`, 0 = not declared) is the serving endpoint's context window. Declared, it caps Process Mining's and the assistant's prompt budgets at `(window − max-tokens) × 3` characters, so neither can outgrow what Ollama will read — Ollama drops the excess silently. `compose/ollama.yml` passes `OLLAMA_CONTEXT_LENGTH` into it, so the server's window and the application's ceiling come from one variable. Settings shows the declared window, the ceiling, and what the assistant really calls, with a **Test the assistant model** button beside the existing **Test LLM**.
+
+**Which model.** `EMBEDDED-LLM-SCOPE.md` §7.1 measured four local models on 50 questions, running
+every accepted statement against the seeder's data, on four CPU cores with no GPU:
+
+| Model (Q4_K_M) | Correct | Accepted but wrong | p95 | Peak memory |
+|---|---|---|---|---|
+| **Gemma 4 E4B** (`gemma4:e4b`) | 96 % | 4 % | 40 s | 8.7 GB |
+| Qwen3-4B-Instruct-2507 | 94 % | 2 % | 37 s | 6.4 GB |
+| Gemma 4 E2B (`gemma4:e2b`) | 88 % | 4 % | 36 s | 5.1 GB |
+
+**One model for both consumers.** Measured on Process Mining's seeded pipeline too (§7.2), Gemma 4
+E4B did at least as well as the previous `qwen2.5-coder:7b` on every count (format, pipeline,
+planted facts found, anomalies), so `compose/ollama.yml` now pulls one model, `OLLAMA_MODEL`
+(default `gemma4:e4b`), for Process Mining and the assistant alike — one pull, one window, one
+timeout. `qwen2.5-coder:7b` was the weakest on the assistant's questions (68 %, v1 prompt). Use `gemma4:e2b` on a small machine. Gemma 4 needs Ollama
+0.20 or newer. The latency is the one thing that depends on your hardware: measure it with
+`bin/llm-eval.sh`, which runs the assistant's 50 cases and Process Mining's seeded pipeline against whichever models you name and prints one line per model.
+
 ## Recommended Lightweight Models
 - **Qwen 2.5-Coder 7B**: Best for JSON extraction and logic.
 - **Llama 3.2 3B**: Fast for real-time (LIVE) analysis.

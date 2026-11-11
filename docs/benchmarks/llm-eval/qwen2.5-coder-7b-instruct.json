@@ -1,0 +1,72 @@
+{
+ "model": "qwen2.5-coder-7b-instruct",
+ "provider": "Ollama",
+ "runs": [
+  {
+   "run": 1,
+   "error": null,
+   "formatHeld": true,
+   "flowchartNamesPipeline": true,
+   "plantedFactsFound": {
+    "corruptPayloads": false,
+    "duplicates": false,
+    "rejection": false,
+    "slowHop": true
+   },
+   "anomalies": 2,
+   "metricPriorities": 2,
+   "durationMs": 440717,
+   "inputTokens": 4126,
+   "outputTokens": 860,
+   "promptChars": 10497,
+   "said": "The process has multiple variants and some anomalies. The most significant anomaly is that the process ends with 'demo.orders.1.received' in 4 cases instead of ending with 'demo.orders.6.delivered'. There is also a high latency between 'demo.orders.3.enriched' and 'demo.orders.4.transformed', which could indicate performance issues.\nThe process is designed to handle multiple variants, but the current implementation does not fully support all possible paths.\nThere may be a bug or misconfiguration in the system that causes some cases to end with 'demo.orders.1.received' instead of 'demo.orders.6.delivered'.\nThe high latency between 'demo.orders.3.enriched' and 'demo.orders.4.transformed' could indicate performance issues, such as bottlenecks or resource contention.\nANO-001 demo.orders The process ends with 'demo.orders.1.received' in 4 cases, which is unusual as it should end with 'demo.orders.6.delivered'. null\npm:hop-latency:demo.orders.3.enriched>demo.orders.4.transformed demo.orders The process has a high latency between 'demo.orders.3.enriched' and 'demo.orders.4.transformed', which could indicate performance issues. null\n"
+  },
+  {
+   "run": 2,
+   "error": null,
+   "formatHeld": true,
+   "flowchartNamesPipeline": true,
+   "plantedFactsFound": {
+    "corruptPayloads": false,
+    "duplicates": false,
+    "rejection": false,
+    "slowHop": true
+   },
+   "anomalies": 2,
+   "metricPriorities": 1,
+   "durationMs": 314256,
+   "inputTokens": 4126,
+   "outputTokens": 850,
+   "promptChars": 10497,
+   "said": "The process ends with 'demo.orders.1.received' in 4 cases, which is unusual as it should end with 'demo.orders.6.delivered'. The high latency between 'demo.orders.3.enriched' and 'demo.orders.4.transformed' could indicate performance issues.\nThe process might have a branching logic where 'demo.orders.1.received' can lead to different paths, including ending with 'demo.orders.1.received' again.\nThere could be a performance issue in the system that causes delays between certain steps.\nANO-001 demo.orders The process ends with 'demo.orders.1.received' in 4 cases, which is unusual as it should end with 'demo.orders.6.delivered'. null\npm:hop-latency:demo.orders.3.enriched>demo.orders.4.transformed demo.orders The process has a high latency between 'demo.orders.3.enriched' and 'demo.orders.4.transformed', which could indicate performance issues. null\n"
+  },
+  {
+   "run": 3,
+   "error": null,
+   "formatHeld": true,
+   "flowchartNamesPipeline": true,
+   "plantedFactsFound": {
+    "corruptPayloads": false,
+    "duplicates": false,
+    "rejection": false,
+    "slowHop": true
+   },
+   "anomalies": 2,
+   "metricPriorities": 1,
+   "durationMs": 322203,
+   "inputTokens": 4126,
+   "outputTokens": 850,
+   "promptChars": 10497,
+   "said": "The process ends with 'demo.orders.1.received' in 4 cases, which is unusual as it should end with 'demo.orders.6.delivered'. The high latency between 'demo.orders.3.enriched' and 'demo.orders.4.transformed' could indicate performance issues.\nThe process might have a branching logic where 'demo.orders.1.received' can lead to different paths, including ending with 'demo.orders.1.received' again.\nThere could be a performance issue in the system that causes delays between certain steps.\nANO-001 demo.orders The process ends with 'demo.orders.1.received' in 4 cases, which is unusual as it should end with 'demo.orders.6.delivered'. null\npm:hop-latency:demo.orders.3.enriched>demo.orders.4.transformed demo.orders The process has a high latency between 'demo.orders.3.enriched' and 'demo.orders.4.transformed', which could indicate performance issues. null\n"
+  }
+ ],
+ "run": {
+  "date": "2026-11-11",
+  "test": "LlmAnalysisEvalTest#reportsTheAnalysisForComparison, 3 runs, fixture eval/demo-order-pipeline.json",
+  "machine": "4 vCPU x86_64, 15 GB RAM, no GPU",
+  "server": "llama-cpp-python 0.3.36, n_ctx 16384 (the Ollama stack's window), logits_all off",
+  "decoding": "temperature 0, JSON-schema-constrained (relayed as json_object+schema)",
+  "plantedFactsNote": "rescored with the bilingual matcher of commit 76ac300 from the saved answer text",
+  "peakRss": "10.5 GB (server process, weights mmap'd, 16k KV cache)"
+ }
+}

@@ -320,7 +320,7 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   |---|---|---|
   | `docker-compose.yml` | base | Kafka 4.3 KRaft + explorer + demo seeder. The one everything layers onto. |
   | `compose/schema-registry.yml` | overlay | Schema Registry + the Avro seeder. Was `docker-compose-kafka4.yml`. |
-  | `compose/ollama.yml` | overlay | A local Ollama model for Process Mining. Was `docker-compose-llm.yml`. |
+  | `compose/ollama.yml` | overlay | One local Ollama model (`OLLAMA_MODEL`, `gemma4:e4b`; needs Ollama 0.20+) for Process Mining **and** the SQL & metric assistant. Was `docker-compose-llm.yml`. |
   | `compose/mcp.yml` | overlay | The MCP server on, its guards as variables, and a smoke probe. |
   | `compose/image.yml` | overlay | Run the published image instead of building. Was `docker-compose.release.yml`. |
   | `compose/limits.yml` | overlay | Opt-in `mem_limit` / `cpus`. |
@@ -629,3 +629,26 @@ Hugging Face’s auxiliary cache (Xet metadata and logs) also needs writable sto
 `HF_HOME=/models` keeps it on the named model volume alongside the checkpoint. Passing
 `cache_dir=/models` to `hf_hub_download` alone does not relocate Xet: its default under
 `/app/.cache` fails when the TimesFM container root filesystem is read-only.
+
+## The SQL & metric assistant in the stacks
+
+`explorer.assistant.enabled` ships **false**, because `claude.provider` ships as a hosted gateway
+and the assistant would send table and column names to a third party nobody chose. Two stacks turn
+it on, for opposite reasons, and each says in the UI which it is (`ClaudeConfig.isLocalDeployment()`
+read off the assistant's *effective* address): `compose/ollama.yml` because there nothing leaves the
+host, and `compose/demo-llm.yml` because the demo already sends Process Mining's digests to
+OpenRouter — there the editor's ask bar says the names leave the host, and with no
+`OPENROUTER_API_KEY` the assistant reports a configuration problem and the editor shows nothing
+(the Help page says why). `EXPLORER_ASSISTANT_ENABLED` (default `true` in the demo, `false` turns it
+off) is exported by `demo.sh` and defaulted by `demo.ps1` — the two edited together, as ever.
+
+`ollama-pull-model` pulls one model, `OLLAMA_MODEL` (default `gemma4:e4b`), and both consumers ask
+it: `CLAUDE_MODEL` reads the same variable and the assistant inherits `claude.*`. It used to pull two
+— `qwen2.5-coder:7b` for Process Mining and Gemma 4 E4B for the assistant — until
+`EMBEDDED-LLM-SCOPE.md` §7.2 measured Gemma on Process Mining as well and found it at least as good
+on every count. One model means one download, one model resident, and one window and one timeout
+for both (`CLAUDE_CONTEXT_WINDOW_TOKENS` from `OLLAMA_CONTEXT_LENGTH`, the assistant inheriting
+`CLAUDE_REQUEST_TIMEOUT_SECONDS`). `setup-llm.sh` / `setup-llm.ps1`, the host-Ollama twins, pull the
+same default. Not exercised against a live Ollama in this repository's CI: the tag `gemma4:e4b` and
+the Ollama 0.20+ requirement come from Ollama's library and the guides that cite it, and the pinned
+`0.32.6` is newer than 0.20.

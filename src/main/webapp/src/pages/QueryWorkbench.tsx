@@ -40,6 +40,10 @@ import { SchemaBrowser, type SchemaInfo, type SavedQuery } from '../components/q
 import { DdlPreviewModal } from '../components/query/DdlPreviewModal';
 import { NarrowWindowNotice } from '../components/query/NarrowWindowNotice';
 import { RowDetail } from '../components/query/RowDetail';
+import { AskBar } from '../components/assistant/AskBar';
+import { FixSuggestion } from '../components/assistant/FixSuggestion';
+import { useAssistantStatus } from '../components/assistant/useAssistantStatus';
+import { assistantAvailability, isFixableError, proposalTabName, proposalTabSql } from './sqlAssistant';
 import { randomId } from '../randomId';
 import { useStableCallback } from '../useStableCallback';
 import { copyText } from '../clipboard';
@@ -49,6 +53,7 @@ import type {
   DdlPreviewResponse,
   SqlValidationResponse,
   QueryCancelResponse,
+  AssistantSqlResponse,
 } from '../api/types';
 
 /** Contrôle segmenté compact (offset de lecture). */
@@ -281,6 +286,15 @@ const QueryWorkbench: React.FC = () => {
     setActiveTabId(t.id);
     return t;
   }, []);
+
+  // L'assistant (EMBEDDED-LLM-SCOPE.md) : absent tant que le serveur ne dit pas qu'il peut
+  // répondre. Une proposition ouvre un nouvel onglet — jamais l'onglet en cours, jamais un Run.
+  const assistantStatus = useAssistantStatus();
+  const assistantReady = assistantAvailability(assistantStatus).available;
+  const openProposal = useCallback((response: AssistantSqlResponse, question: string | null, mode: 'GENERATE' | 'FIX') => {
+    const text = proposalTabSql(response, question);
+    if (text) addTab(text, proposalTabName(mode));
+  }, [addTab]);
 
   /**
    * Ferme un onglet. Le SQL qu'il portait n'est plus nulle part — d'où la confirmation dès qu'il
@@ -1988,6 +2002,10 @@ const QueryWorkbench: React.FC = () => {
                 </div>
               </div>
 
+              {assistantReady && assistantStatus && (
+                <AskBar status={assistantStatus} onOpen={(response, question) => openProposal(response, question, 'GENERATE')} />
+              )}
+
               <div className="flex-1 overflow-hidden" id="kse-editor-pane" role="tabpanel"
                 aria-labelledby={`kse-tab-${activeTabId}`}>
                 <Editor
@@ -2268,6 +2286,11 @@ const QueryWorkbench: React.FC = () => {
                       </div>
                       {showErrorDetails && (
                         <pre className="mt-2 text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{queryError.raw}</pre>
+                      )}
+                      {assistantReady && isFixableError(queryError.raw, ranSql ?? sql) && (
+                        <FixSuggestion key={`${queryError.raw}\u0000${ranSql ?? sql}`}
+                          sql={ranSql ?? sql} error={queryError.raw}
+                          onOpen={response => openProposal(response, null, 'FIX')} />
                       )}
                     </div>
                     <button onClick={() => void copyText(queryError.raw || queryError.title).then(ok =>

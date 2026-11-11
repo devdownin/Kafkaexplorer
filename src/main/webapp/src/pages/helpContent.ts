@@ -543,6 +543,9 @@ export interface EditorTip {
   body: string;
 }
 
+/** Le titre de la fiche de l'assistant : la page y accroche l'état réel du serveur. */
+export const ASSISTANT_TIP_TITLE = 'The assistant proposes, it never runs';
+
 export const EDITOR_TIPS: EditorTip[] = [
   {
     title: 'Run sends one statement',
@@ -571,6 +574,10 @@ export const EDITOR_TIPS: EditorTip[] = [
   {
     title: 'A result is a link and a file',
     body: 'Link copies a replayable URL carrying the SQL. CSV exports what is displayed, in the order it is displayed, quoted per RFC 4180.',
+  },
+  {
+    title: ASSISTANT_TIP_TITLE,
+    body: 'When the server turns it on, the ask bar above the editor turns a sentence into a SELECT, and "Suggest a fix" in the error panel rewrites a statement the planner refused. Either way the answer opens in a new tab, headed by whether the planner accepted it — an accepted statement can still answer another question than yours, so read it before running it. It is shown names and types of up to five tables, never a message value. The Metrics editor has a "Describe the metric" box that fills the form and proposes no threshold.',
   },
 ];
 

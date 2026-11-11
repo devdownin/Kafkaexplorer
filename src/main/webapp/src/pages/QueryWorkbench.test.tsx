@@ -1098,3 +1098,69 @@ describe('QueryWorkbench — bounded scan evidence', () => {
     expect(await screen.findByText(/row cap reached; final updates are not guaranteed/)).toBeInTheDocument();
   });
 });
+
+describe('QueryWorkbench — the assistant', () => {
+  const STATUS = { enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e2b', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0, providerCode: 'OLLAMA', dataRetentionRefused: false };
+  const PROPOSAL = {
+    status: 'OK', sql: 'SELECT status FROM demo_orders LIMIT 100', explanation: 'Lists statuses.',
+    missing: null, validated: true, validationError: null, repairRounds: 0,
+    tablesConsidered: ['demo_orders'], tablesOmitted: [], model: 'gemma4:e2b', usage: null,
+    durationMs: 1200, error: null,
+  };
+  const withStatus = (status: unknown) => get.mockImplementation((url: string) => {
+    if (url === '/api/query/init') return Promise.resolve({ data: CATALOGUE });
+    if (url === '/api/assistant/status') return Promise.resolve({ data: status });
+    return Promise.resolve({ data: {} });
+  });
+  const assistantCall = () => post.mock.calls.find(c => c[0] === '/api/assistant/sql');
+
+  it('is absent while the server does not say it can answer', async () => {
+    withStatus({ ...STATUS, enabled: false, problem: 'The assistant is off' });
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    expect(screen.queryByLabelText('Question for the SQL assistant')).not.toBeInTheDocument();
+  });
+
+  it('opens a proposal in a new tab with its status, and never runs it', async () => {
+    withStatus(STATUS);
+    post.mockImplementation((url: string) => url === '/api/assistant/sql'
+      ? Promise.resolve({ data: PROPOSAL })
+      : Promise.resolve({ data: { valid: true } }));
+    renderPage();
+
+    await userEvent.type(await screen.findByLabelText('Question for the SQL assistant'), 'statuses of orders');
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }));
+
+    expect(await screen.findByText('Accepted by the planner')).toBeInTheDocument();
+    expect(assistantCall()![1]).toMatchObject({ mode: 'GENERATE', question: 'statuses of orders' });
+    await userEvent.click(screen.getByRole('button', { name: /Open in a new tab/ }));
+    await waitFor(() => expect(editor().value).toContain('SELECT status FROM demo_orders LIMIT 100'));
+    expect(editor().value).toContain('-- Asked: statuses of orders');
+    expect(post.mock.calls.some(c => c[0] === '/api/query/run-sync')).toBe(false);
+  });
+
+  it('offers a fix for a refused statement and sends the planner its own message', async () => {
+    withStatus(STATUS);
+    post.mockImplementation((url: string) => {
+      if (url === '/api/query/validate') {
+        return Promise.resolve({ data: { valid: false, error: 'SQL parse failed. Encountered "FROM" at line 1, column 11.' } });
+      }
+      if (url === '/api/assistant/sql') {
+        return Promise.resolve({ data: { ...PROPOSAL, sql: 'SELECT a FROM t', validated: false, validationError: "Object 't' not found" } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT a, FROM t');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+
+    await userEvent.click(await screen.findByRole('button', { name: /Suggest a fix/ }));
+
+    expect(assistantCall()![1]).toMatchObject({ mode: 'FIX', sql: 'SELECT a, FROM t' });
+    expect((assistantCall()![1] as { error: string }).error).toContain('line 1, column 11');
+    expect(await screen.findByText('Not validated')).toBeInTheDocument();
+    expect(screen.getByText("Object 't' not found")).toBeInTheDocument();
+    expect(screen.getByText('Before')).toBeInTheDocument();
+  });
+});

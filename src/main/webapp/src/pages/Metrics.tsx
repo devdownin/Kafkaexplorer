@@ -33,6 +33,10 @@ import { forecastStage } from '../components/metrics/forecastStage';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
 import { TemplateParamsEditor } from '../components/metrics/TemplateParamsEditor';
+import { MetricDraftAssist } from '../components/assistant/MetricDraftAssist';
+import { useAssistantStatus } from '../components/assistant/useAssistantStatus';
+import { assistantAvailability, metricDraftPatch } from './sqlAssistant';
+import type { AssistantMetricResponse } from '../api/types';
 import { readFlowChains } from './flowChains';
 import { latestProcessModel, modelRoute, readMetricPriorities } from './processModelEvidence';
 import { highlightPriorities, newerAuditNote, suggestionToDraft } from './metricSuggestions';
@@ -497,6 +501,19 @@ const Metrics: React.FC = () => {
     openFromUrl();
   }, [searchParams, setSearchParams, clearPreview]);
 
+  // L'assistant (EMBEDDED-LLM-SCOPE.md) : un brouillon pré-remplit le formulaire, l'aperçu tranche,
+  // et l'enregistrement reste un geste. Absent tant que le serveur ne dit pas qu'il peut répondre.
+  const assistantStatus = useAssistantStatus();
+  const assistantReady = assistantAvailability(assistantStatus).available;
+  const applyMetricDraft = (draft: AssistantMetricResponse) => {
+    const patch = metricDraftPatch(draft, RAW_SQL);
+    if (!patch) return;
+    setEditingMetric(m => ({ ...m, ...patch }));
+    if (patch.name) setNameIsAuto(false);
+    setEditorTab('metric');
+    clearPreview();
+  };
+
   const openSuggestion = (suggestion: MetricSuggestion) => {
     const draft = suggestionToDraft(suggestion);
     setEditingMetric({ ...EMPTY_METRIC, ...draft });
@@ -939,6 +956,10 @@ const Metrics: React.FC = () => {
 
                 {/* Left: form */}
                 <div className="w-72 border-r border-outline-variant/60 flex flex-col shrink-0 overflow-y-auto p-5 space-y-4">
+
+                  {assistantReady && assistantStatus && (
+                    <MetricDraftAssist status={assistantStatus} topic={selectedTopic} onApply={applyMetricDraft} />
+                  )}
 
                   {/* Name */}
                   <div className="space-y-1.5">

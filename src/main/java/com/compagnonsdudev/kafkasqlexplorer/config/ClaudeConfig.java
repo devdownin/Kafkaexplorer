@@ -83,6 +83,18 @@ public class ClaudeConfig {
      */
     private int requestTimeoutSeconds = 60;
     /**
+     * The serving endpoint's context window, in tokens; 0 when nobody declared it.
+     *
+     * <p>Every consumer of the model sizes its prompt in characters (Process Mining's
+     * {@code process-mining.prompt-char-budget}, the assistant's
+     * {@code explorer.assistant.prompt-char-budget}), and the window that has to hold that prompt
+     * belongs to the endpoint, which nothing here can read. Two budgets set by hand against one
+     * window is how they stopped agreeing — Ollama silently drops what does not fit. Declared once
+     * (compose/ollama.yml passes {@code OLLAMA_CONTEXT_LENGTH} through), it caps both: see
+     * {@link #effectivePromptCharBudget}.
+     */
+    private int contextWindowTokens = 0;
+    /**
      * Only used by the {@link Provider#SPECTRA} provider: when {@code true} the audit
      * question is answered with SpectraLLM's hybrid RAG retrieval over its ingested
      * corpus. Defaults to {@code false} because the Kafka audit prompt already carries
@@ -234,6 +246,38 @@ public class ClaudeConfig {
 
     public void setCollection(String collection) {
         this.collection = collection;
+    }
+
+    public int getContextWindowTokens() {
+        return contextWindowTokens;
+    }
+
+    public void setContextWindowTokens(int contextWindowTokens) {
+        this.contextWindowTokens = Math.max(0, contextWindowTokens);
+    }
+
+    /**
+     * Characters per token assumed when a window caps a budget. Three, not the four
+     * {@code LlmAnswerSignals} uses to read a prompt back: JSON, SQL and identifiers tokenize
+     * denser than prose, and a cap that guesses low only trims a prompt where one that guesses
+     * high is the silent truncation it exists to prevent.
+     */
+    public static final int CEILING_CHARS_PER_TOKEN = 3;
+
+    /**
+     * The most characters a prompt may hold and still leave room for the answer in the declared
+     * window: {@code (window - max-tokens) x 3}. {@link Integer#MAX_VALUE} when no window is
+     * declared, which leaves every budget exactly as configured.
+     */
+    public int promptCharCeiling() {
+        if (contextWindowTokens <= 0) return Integer.MAX_VALUE;
+        long room = (long) contextWindowTokens - Math.max(0, maxTokens);
+        return (int) Math.max(1_000L, Math.min(Integer.MAX_VALUE, room * CEILING_CHARS_PER_TOKEN));
+    }
+
+    /** A consumer's configured budget, capped by the declared window. */
+    public int effectivePromptCharBudget(int configured) {
+        return Math.min(configured, promptCharCeiling());
     }
 
     public int getRequestTimeoutSeconds() {
@@ -542,6 +586,7 @@ public class ClaudeConfig {
         copy.snapshotWindowSize = snapshotWindowSize;
         copy.snapshotWindowTimeoutSeconds = snapshotWindowTimeoutSeconds;
         copy.requestTimeoutSeconds = requestTimeoutSeconds;
+        copy.contextWindowTokens = contextWindowTokens;
         copy.useRag = useRag;
         copy.collection = collection;
         copy.structuredOutput = structuredOutput;

@@ -18,7 +18,14 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 
@@ -92,6 +99,11 @@ class LlmAnalysisEvalTest {
             System.getenv("OPENROUTER_API_KEY"),
             System.getenv("ANTHROPIC_API_KEY"));
         if (key != null) config.setApiKey(key.trim());
+        // The stack's own timeout, read like the stack reads it: compose/ollama.yml sets 300 s for a
+        // CPU-served model, and without this the eval kept the 60 s default and measured a slow
+        // model as a broken one.
+        String timeout = setting("CLAUDE_REQUEST_TIMEOUT_SECONDS", "claude.request-timeout-seconds");
+        if (timeout != null && !timeout.isBlank()) config.setRequestTimeoutSeconds(Integer.parseInt(timeout.trim()));
         return config;
     }
 
@@ -236,5 +248,83 @@ class LlmAnalysisEvalTest {
         assertNotNull(result.usage(), "no usage travelled with the answer");
         assertTrue(result.usage().durationMs() > 0,
             "the call reported no duration, which is measured on this side and cannot be unknown");
+    }
+
+    /**
+     * The facts the seeder planted, which a reading of the measurement — rather than of the topic
+     * names — finds: an order rejected at validation that leaves the flow (ORD-102), two
+     * redeliveries (ORD-103, ORD-105), two truncated payloads (ORD-666, ORD-667), and a 3 → 4 hop
+     * three times slower than the others. Matched on the words an answer would use for each, across
+     * the anomalies, the comments and the hypotheses: loose, and a report rather than an assertion.
+     */
+    // In both languages: the prompt's headings are French and the models answer in French as often
+    // as not, so an English-only list scored a French answer that named the fact as having missed
+    // it — measured on Gemma 4 E4B, whose "déduplication" was found by accident and "rejet" would
+    // not have been.
+    private static final Map<String, List<String>> PLANTED = Map.of(
+        "rejection", List.of("ord-102", "reject", "rejet", "refus"),
+        "duplicates", List.of("ord-103", "ord-105", "duplicat", "dupliqu", "doublon", "redeliver",
+            "redélivr", "twice", "deux fois"),
+        "corruptPayloads", List.of("ord-666", "ord-667", "corrupt", "corromp", "malformed", "malformé",
+            "truncat", "tronqu", "unparse", "invalid json", "json invalide", "illisible"),
+        "slowHop", List.of("transform"));
+
+    /**
+     * A comparable report per model, for choosing one — the other tests here say whether a model
+     * fails, this says how it does. {@code -Dllm.eval.runs=N} runs (default 3), each recorded:
+     * whether the format held, whether the flowchart names the pipeline, which planted facts the
+     * answer mentions, how many KPI priorities survived the id check, and what the call cost.
+     * Written to {@code target/llm-eval/<model>.json}; asserts only that it ran, like
+     * {@code AssistantEvalTest}, whose report it mirrors so the two can be read side by side.
+     */
+    @Test
+    void reportsTheAnalysisForComparison() throws Exception {
+        int runs = Math.max(1, Integer.getInteger("llm.eval.runs", 3));
+        List<Map<String, Object>> outcomes = new ArrayList<>();
+        for (int i = 0; i < runs; i++) {
+            ProcessMiningResult result = analyse();
+            Map<String, Object> run = new LinkedHashMap<>();
+            run.put("run", i + 1);
+            run.put("error", result.error());
+            String flowchart = result.flowchart() == null ? "" : result.flowchart();
+            run.put("formatHeld", result.error() == null && !flowchart.isBlank());
+            run.put("flowchartNamesPipeline", EXPECTED_IN_FLOWCHART.stream().allMatch(flowchart::contains)
+                && (flowchart.contains("-->") || flowchart.contains("->")));
+            StringBuilder said = new StringBuilder();
+            if (result.comments() != null) said.append(result.comments()).append('\n');
+            if (result.hypotheses() != null) result.hypotheses().forEach(h -> said.append(h).append('\n'));
+            if (result.anomalies() != null) result.anomalies().forEach(a -> said.append(a.id()).append(' ')
+                .append(a.topic()).append(' ').append(a.description()).append(' ')
+                .append(a.probableCause()).append('\n'));
+            String text = said.toString().toLowerCase(Locale.ROOT);
+            Map<String, Boolean> found = new LinkedHashMap<>();
+            PLANTED.forEach((fact, words) -> found.put(fact,
+                "slowHop".equals(fact)
+                    ? text.contains("transform") && (text.contains("slow") || text.contains("latenc")
+                        || text.contains("delay") || text.contains("lent") || text.contains("goulot"))
+                    : words.stream().anyMatch(text::contains)));
+            run.put("plantedFactsFound", new java.util.TreeMap<>(found));
+            run.put("anomalies", result.anomalies() == null ? 0 : result.anomalies().size());
+            run.put("metricPriorities", result.metricPriorities() == null ? 0 : result.metricPriorities().size());
+            run.put("durationMs", result.usage() == null ? null : result.usage().durationMs());
+            run.put("inputTokens", result.usage() == null ? null : result.usage().inputTokens());
+            run.put("outputTokens", result.usage() == null ? null : result.usage().outputTokens());
+            run.put("promptChars", result.coverage() == null ? null : result.coverage().promptChars());
+            // What the model said, kept so a fact scored as missed can be checked against the answer
+            // rather than against the matcher — a report that cannot be audited is a verdict.
+            run.put("said", said.toString());
+            outcomes.add(run);
+            System.out.println("run " + (i + 1) + ": " + run);
+        }
+        ClaudeConfig config = configFromEnvironment();
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("model", config.getModel());
+        report.put("provider", config.getProviderLabel());
+        report.put("runs", outcomes);
+        Path dir = Path.of("target", "llm-eval");
+        Files.createDirectories(dir);
+        new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT).writeValue(
+            dir.resolve(config.getModel().replaceAll("[^A-Za-z0-9._-]+", "_") + ".json").toFile(), report);
+        assertTrue(!outcomes.isEmpty());
     }
 }

@@ -28,7 +28,8 @@ one of these areas without reading its note is how a correction gets un-correcte
 The audit reports themselves are at the root: `AUDIT-FEATURE-REVIEW.md`, `DOCKER-AUDIT.md`,
 `FLINK-JOBS-AUDIT.md`, `INSERT-SCOPE.md`, `METRICS-TWO-QUERY-AUDIT.md`,
 `MOBILE-LAYOUT-SCOPE.md`, `PROCESS-MINING-LLM-SCOPE.md`, `PROCESS-MINING-LLM-CALLS-AUDIT.md`,
-`SQL-EDITOR-AUDIT.md`, `CODE-SIMPLIFICATION-AUDIT.md`, `MCP-AUDIT.md`, `TIMESFM-FORECAST-AUDIT.md`.
+`SQL-EDITOR-AUDIT.md`, `CODE-SIMPLIFICATION-AUDIT.md`, `MCP-AUDIT.md`, `TIMESFM-FORECAST-AUDIT.md`,
+`EMBEDDED-LLM-SCOPE.md`.
 
 ## Commands
 
@@ -215,6 +216,11 @@ parser/       JSON, XML and Avro (via Confluent Schema Registry) schema inferenc
 - Process Mining **runs without an LLM** for the half that never needed one — the directly-follows graph, the variants and the latencies are counted on this side. `ClaudeConfig.configurationProblem()` (key *and* address) is checked after the read, so a deployment with no model still gets its `ProcessModel`, with `error` naming what is missing. See `docs/notes/backend-services.md`.
 
 
+- `AssistantService` — the SQL and metric assistant behind `/api/assistant/*`, **off by default**
+  (`explorer.assistant.enabled`; on in `compose/ollama.yml`). The model proposes, the planner
+  disposes: every statement passes `AssistantSqlGate` (one `SELECT`, described tables only, the
+  validator, a dry `planCheck`) and nothing is run or saved by it. `EMBEDDED-LLM-SCOPE.md` and
+  `docs/notes/backend-services.md` carry the rules.
 - `SseEmitterManager` — manages `Map<sessionId, SseEmitter>` (5 min timeout, heartbeat every 15s)
 - `ClaudeConfig` — `@ConfigurationProperties(prefix="claude")`; reads `ANTHROPIC_API_KEY` env var via `${ANTHROPIC_API_KEY:}`
 - `MetricService` — bridges Flink SQL to Prometheus metrics via Micrometer. Supports 4 Prometheus types:
