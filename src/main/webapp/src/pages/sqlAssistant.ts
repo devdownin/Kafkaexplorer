@@ -55,6 +55,47 @@ export function privacyNote(status: AssistantStatus | null): string | null {
   return `Table and column names are sent to ${who}, outside this host. Message values are never sent.`;
 }
 
+/** Ce que la page d'aide dit de l'assistant, d'après l'état que le serveur rapporte. */
+export interface AssistantHelp {
+  tone: BadgeTone;
+  label: string;
+  detail: string;
+  /** Le geste qui l'allume, quand il est éteint — dit où l'on tape, pas seulement que c'est possible. */
+  howToEnable: string | null;
+}
+
+export const HOW_TO_ENABLE_ASSISTANT =
+  'Set EXPLORER_ASSISTANT_ENABLED=true (explorer.assistant.enabled), or start the local stack: '
+  + 'docker compose -f docker-compose.yml -f compose/ollama.yml up -d. It uses claude.* unless '
+  + 'EXPLORER_ASSISTANT_PROVIDER / _BASE_URL / _MODEL name another model.';
+
+/**
+ * `null` tant que l'état n'est pas connu — ou que le serveur n'en rapporte aucun : une page d'aide
+ * qui affirmerait « éteint » d'un serveur qui ne connaît pas l'assistant dirait une chose fausse.
+ */
+export function describeAssistantHelp(status: AssistantStatus | null): AssistantHelp | null {
+  if (!status) return null;
+  const model = [status.provider, status.model].filter(Boolean).join(' · ');
+  if (!status.enabled) {
+    return {
+      tone: 'neutral', label: 'Off on this server',
+      detail: 'The editor shows no assistant entry until it is turned on.',
+      howToEnable: HOW_TO_ENABLE_ASSISTANT,
+    };
+  }
+  if (status.problem) {
+    return {
+      tone: 'warning', label: 'On, but it cannot answer',
+      detail: status.problem, howToEnable: null,
+    };
+  }
+  return {
+    tone: 'success', label: 'On',
+    detail: `${model ? `${model}. ` : ''}${privacyNote(status) ?? 'It runs on this host: nothing is sent elsewhere.'}`,
+    howToEnable: null,
+  };
+}
+
 export interface ProposalVerdict {
   tone: BadgeTone;
   label: string;

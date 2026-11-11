@@ -15,5 +15,9 @@ services:
       - CLAUDE_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - CLAUDE_MODEL=${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+      # The SQL & metric assistant, on the model above (explorer.assistant.* inherits claude.*).
+      # Hosted here, so the editor tells the user that table and column names leave the host;
+      # with no key it answers a configuration problem and the editor shows nothing.
+      - EXPLORER_ASSISTANT_ENABLED=${EXPLORER_ASSISTANT_ENABLED:-true}
       # forecasts.yml leaves the bearer empty (503); this is the one the agent presents.
       - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}

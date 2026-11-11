@@ -34,6 +34,14 @@ The assistant transforms the message preview into a query design tool:
 - **XML Extraction**: Use of the custom `XmlExtract` function (based on XPath) to query XML payloads.
 - **One-Click Registration**: "Register Table" button to instantly execute the generated DDL.
 
+### SQL & metric assistant (small local model) — off by default
+A language model drafts Flink SQL, and **never runs or saves anything**: `explorer.assistant.enabled` is off unless you turn it on (`compose/ollama.yml` does, on Gemma 4 E4B). It is shown the names and types of up to five tables — never a message value.
+- **Ask bar**: a sentence becomes a `SELECT`, opened in a **new tab** under a header that says whether the Flink planner accepted it. An accepted statement can still answer another question than yours; read it before running it.
+- **Suggest a fix**: on a statement the planner refused, the error panel offers a correction, shown beside the original.
+- **Describe the metric**: in the Metrics editor, a sentence fills the form (name, type, SQL with `AS metric_value`, description) — no threshold is ever proposed, and the existing preview still decides.
+- **Gated**: one statement, a `SELECT`, over the described tables only, planned in a dry `EXPLAIN` before it is shown; a statement the planner refuses once is sent back to the model once with the planner's own sentence.
+- **Measured**: 50 cases run and executed on four candidate models — see `EMBEDDED-LLM-SCOPE.md` §7.1 and `docs/benchmarks/assistant-eval/`.
+
 ## 4. Professional SQL Editor
 - **Monaco Editor**: High-performance SQL editor (VS Code engine) with SQL syntax highlighting and Cyberpunk theme.
 - **Read Mode Switch**: Toggle between **Earliest** (start from beginning) and **Latest** (new messages only) offsets directly in the UI.

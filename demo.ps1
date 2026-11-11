@@ -129,6 +129,8 @@ Set-Default SCHEMA_REGISTRY_PORT '8085'
 # LLM - OpenRouter on both sides. An empty key stays unset: Windows has no empty variable.
 Set-Default OPENROUTER_MODEL 'openai/gpt-4o-mini'
 Set-Default KEX_AGENT_LLM_PROVIDER 'openai'
+# The SQL & metric assistant, on the same OpenRouter model (false turns it off).
+Set-Default EXPLORER_ASSISTANT_ENABLED 'true'
 
 # Agent and MCP. The MCP token defaults to the generated one from .forecast-stack/.env.
 Set-Default KEX_AGENT_IMAGE_NAMESPACE 'compagnonsdudev'
@@ -222,6 +224,7 @@ $spectra
 Schema Registry ....... http://localhost:$($env:SCHEMA_REGISTRY_PORT)
 Kafka ................. localhost:$($env:KAFKA_PORT)
 LLM ................... OpenRouter $($env:OPENROUTER_MODEL) (Explorer, agent)
+SQL assistant ......... $($env:EXPLORER_ASSISTANT_ENABLED) (editor ask bar, Suggest a fix, Metrics: Describe the metric; table and column names go to OpenRouter)
 
 Demo topics (JSON + Avro) are seeded in the background: .\demo.cmd logs demo-setup
 Forecast: Metrics -> "Prepare a forecast" on a metric card.

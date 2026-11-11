@@ -338,6 +338,36 @@ end. If you are developing SpectraLLM itself, point the pins at the image you ju
 than at a second stack: `SPECTRA_IMAGE_TAG` and `EXPLORER_IMAGE_TAG` are already how every image
 here is chosen.
 
+## The SQL & metric assistant (a second consumer of the model)
+
+Process Mining is not the only thing that can call the model configured above. The editor's ask bar,
+its **Suggest a fix** button and the Metrics editor's **Describe the metric** box go through the
+SQL & metric assistant (`explorer.assistant.*`). It is **off by default**, because the default
+provider is hosted and the assistant would otherwise send table and column names to a third party
+nobody chose. It never sends a message value, and it never runs or saves what it proposes.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `explorer.assistant.enabled` (`EXPLORER_ASSISTANT_ENABLED`) | `false` | On in `compose/ollama.yml` and in `./demo.sh` |
+| `provider`, `base-url`, `model` (`EXPLORER_ASSISTANT_*`) | blank | Blank inherits `claude.*`. Naming another endpoint **drops the `claude.*` key**: a key never follows a different host |
+| `request-timeout-seconds` | 120 | Terminal — a slow model is not retried |
+| `prompt-char-budget` | 12 000 | About 3 000 tokens. Set it with the serving model's window, as for Process Mining |
+
+**Which model.** `EMBEDDED-LLM-SCOPE.md` §7.1 measured four local models on 50 questions, running
+every accepted statement against the seeder's data, on four CPU cores with no GPU:
+
+| Model (Q4_K_M) | Correct | Accepted but wrong | p95 | Peak memory |
+|---|---|---|---|---|
+| **Gemma 4 E4B** (`gemma4:e4b`) | 96 % | 4 % | 40 s | 11.5 GB |
+| Qwen3-4B-Instruct-2507 | 94 % | 2 % | 37 s | 7.9 GB |
+| Gemma 4 E2B (`gemma4:e2b`) | 88 % | 4 % | 36 s | 7.7 GB |
+
+`compose/ollama.yml` pulls `gemma4:e4b` for the assistant and keeps `qwen2.5-coder:7b` for Process
+Mining, which that evaluation did not measure; the weakest result on the assistant's questions was
+`qwen2.5-coder:7b` (68 %, v1 prompt). Use `gemma4:e2b` on a small machine. Gemma 4 needs Ollama
+0.20 or newer. The latency is the one thing that depends on your hardware: measure it with
+`bin/assistant-eval.sh`, which runs the same 50 cases against whichever model you name.
+
 ## Recommended Lightweight Models
 - **Qwen 2.5-Coder 7B**: Best for JSON extraction and logic.
 - **Llama 3.2 3B**: Fast for real-time (LIVE) analysis.

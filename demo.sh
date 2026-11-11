@@ -63,6 +63,8 @@ export OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
 export OPENROUTER_MODEL=${OPENROUTER_MODEL:-openai/gpt-4o-mini}
 export KEX_AGENT_LLM_PROVIDER=${KEX_AGENT_LLM_PROVIDER:-openai}
 export ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+# The SQL & metric assistant, on the same OpenRouter model (false turns it off).
+export EXPLORER_ASSISTANT_ENABLED=${EXPLORER_ASSISTANT_ENABLED:-true}
 
 # Agent and MCP. The MCP token defaults to the generated one from .forecast-stack/.env.
 export KEX_AGENT_IMAGE_NAMESPACE=${KEX_AGENT_IMAGE_NAMESPACE:-compagnonsdudev}
@@ -162,6 +164,7 @@ ${spectra}
 Schema Registry ....... http://localhost:${SCHEMA_REGISTRY_PORT}
 Kafka ................. localhost:${KAFKA_PORT}
 LLM ................... OpenRouter ${OPENROUTER_MODEL} (Explorer, agent)
+SQL assistant ......... ${EXPLORER_ASSISTANT_ENABLED} (editor ask bar, Suggest a fix, Metrics: Describe the metric; table and column names go to OpenRouter)
 
 Demo topics (JSON + Avro) are seeded in the background: ./demo.sh logs demo-setup
 Forecast: Metrics → "Prepare a forecast" on a metric card.

@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AssistantSqlResponse, AssistantStatus } from '../api/types';
 import {
-  assistantAvailability, describeProvenance, describeScope, isFixableError, metricDraftPatch, privacyNote,
+  assistantAvailability, describeAssistantHelp, describeProvenance, describeScope, isFixableError, metricDraftPatch, privacyNote,
   proposalTabSql, proposalVerdict,
 } from './sqlAssistant';
 
@@ -133,5 +133,31 @@ describe('metricDraftPatch', () => {
   it('changes nothing when there is no statement to take', () => {
     expect(metricDraftPatch(draft({ sql: null }), 'RAW_SQL')).toBeNull();
     expect(metricDraftPatch(draft({ status: 'NEEDS_CLARIFICATION' }), 'RAW_SQL')).toBeNull();
+  });
+});
+
+describe('describeAssistantHelp', () => {
+  it('says nothing when the server reported nothing', () => {
+    expect(describeAssistantHelp(null)).toBeNull();
+  });
+
+  it('says how to turn it on, on the page where the question comes up', () => {
+    const help = describeAssistantHelp(status({ enabled: false, problem: 'off' }))!;
+    expect(help.label).toBe('Off on this server');
+    expect(help.howToEnable).toContain('EXPLORER_ASSISTANT_ENABLED=true');
+    expect(help.howToEnable).toContain('compose/ollama.yml');
+  });
+
+  it('reports an assistant that is on but cannot answer, with the reason and no how-to', () => {
+    const help = describeAssistantHelp(status({ problem: 'No API key is configured for OpenRouter' }))!;
+    expect(help.tone).toBe('warning');
+    expect(help.detail).toContain('No API key');
+    expect(help.howToEnable).toBeNull();
+  });
+
+  it('claims nothing leaves the host only for a loopback endpoint', () => {
+    expect(describeAssistantHelp(status())!.detail).toContain('nothing is sent elsewhere');
+    expect(describeAssistantHelp(status({ localDeployment: false, provider: 'OpenRouter', model: 'm' }))!.detail)
+      .toContain('outside this host');
   });
 });
