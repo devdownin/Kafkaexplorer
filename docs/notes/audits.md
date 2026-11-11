@@ -573,5 +573,9 @@ client validator blocks a leading `WITH` and a backticked `metric_value` while a
 written inside a string. **Fixed since: B1, B2, B3, B7 and U1** — the assistant block is a group,
 not a form; `save` writes to Kafka before publishing in memory and a failed write answers 503; a
 rename re-registers the series; an unknown mode is refused by name; and every way out of the editor
-but Save asks first once it holds the user's work. B4–B6, U2, U3 and the optimisations stay open.
+but Save asks first once it holds the user's work. **Then B4–B6**: `save` refuses what the editor
+blocks (on save only, so a stored metric keeps running); the editor reads past a leading CTE,
+accepts a backticked alias and looks for it outside string literals; a failing `CREATE TABLE` is
+the preview's answer and heads the refresh error; the preview restores masked secrets. Still open:
+the preview executes the DDL (so registers the table, `IF NOT EXISTS`), U2, U3, the optimisations.
 Read it before touching `Metrics.tsx`'s editor or `MetricService.save`.

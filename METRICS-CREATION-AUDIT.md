@@ -12,7 +12,15 @@ deux requêtes ont leur propre rapport (`METRICS-TWO-QUERY-AUDIT.md`) et ne sont
 > `metricShapeChanged`, donc un renommage ré-enregistre la série ; un mode inconnu est refusé en
 > nommant les modes admis ; et Échap, le voile, la croix et « Cancel » demandent confirmation dès
 > que l'éditeur contient un geste de l'utilisateur ou un brouillon restauré (`Metrics.test.tsx`).
-> Le reste est ouvert. Chaque constat dit comment il a été établi —
+> **B4, B5 et B6 aussi** : `save` refuse ce que l'éditeur bloque (nom au format Prometheus, type
+> parmi quatre, seuils finis et distincts, SQL qui commence par `SELECT` après un CTE et les
+> commentaires) — à l'enregistrement seulement, pour qu'une métrique déjà stockée continue de
+> tourner ; l'éditeur lit au-delà d'un `WITH` de tête, accepte `` `metric_value` `` et cherche
+> l'alias hors des littéraux ; un `CREATE TABLE` qui échoue est la réponse de l'aperçu, et précède
+> l'erreur de la requête au rafraîchissement ; l'aperçu restaure les secrets masqués d'une métrique
+> stockée. **Reste ouvert dans B6** : l'aperçu exécute toujours le DDL, donc enregistre la table
+> (`IF NOT EXISTS` : un DDL modifié après un aperçu n'est pas réappliqué). Ouverts : U2, U3, les
+> optimisations. Chaque constat dit comment il a été établi —
 > **reproduit** (un test l'a montré, jeté ensuite), ou **lu** (déduit du code, fichier nommé).
 > Douze constats, classés ; le premier est une régression introduite par l'assistant (PR #547).
 

@@ -525,9 +525,25 @@ public class MetricService {
 
     public MetricPreviewResult previewMetric(MetricConfig metric) {
         try {
-            MetricConfig normalized = normalizeMetric(metric);
+            // The browser only ever holds the DDL masked; the preview sent it back as it was, '******'
+            // included, and on a table not yet registered created it with those as its credentials.
+            // save() restores them from the stored version — so does the preview, now.
+            MetricConfig previous = metric.id() != null ? metrics.get(metric.id()) : null;
+            MetricConfig withSecrets = previous == null ? metric : new MetricConfig(
+                metric.id(), metric.name(), metric.type(), metric.sql(), metric.description(),
+                metric.warningThreshold(), metric.criticalThreshold(), metric.lastValue(),
+                metric.lastUpdateTime(), metric.errorMessage(), metric.history(), metric.lastSummary(),
+                DdlGeneratorService.restoreMaskedProperties(metric.createTableSql(), previous.createTableSql()),
+                metric.templateType(), metric.templateParams(), metric.executionMode(),
+                metric.labelTopic(), metric.labelFields());
+            MetricConfig normalized = normalizeMetric(withSecrets);
             validateMetric(normalized);
-            executeCreateTableIfPresent(normalized);
+            String ddlError = executeCreateTableIfPresent(normalized);
+            if (ddlError != null) {
+                // A preview is where the definition is checked, so a failing one is the answer,
+                // whatever the query would have read from a table registered some other way.
+                return new MetricPreviewResult(null, List.of(), withDdlFailure(ddlError, null), Map.of());
+            }
 
             MetricComputationResult result = computeMetric(normalized, true);
             Map<String, Object> summary = new LinkedHashMap<>(result.summary());
@@ -847,9 +863,20 @@ public class MetricService {
         validateMetric(metric, false);
     }
 
+    /**
+     * @param requireName the save path. The rules {@code metricsEditor.ts} blocks on are checked
+     *                    there too (METRICS-CREATION-AUDIT.md B4): they existed only in the browser,
+     *                    while a metric is also created through the API, a suggestion and a restored
+     *                    draft — and what got past them stayed stored and in error for ever. They are
+     *                    checked on save and not on refresh, so a metric stored before them keeps
+     *                    running rather than failing every cycle over a name.
+     */
     private void validateMetric(MetricConfig metric, boolean requireName) {
         if (requireName && (metric.name() == null || metric.name().isBlank())) {
             throw new IllegalArgumentException("Metric name is required");
+        }
+        if (requireName) {
+            validateSavedShape(metric);
         }
         if (metric.labelFields() != null && !metric.labelFields().isEmpty()
             && (metric.labelTopic() == null || metric.labelTopic().isBlank())) {
@@ -1011,19 +1038,95 @@ public class MetricService {
         }
     }
 
-    private void executeCreateTableIfPresent(MetricConfig config) {
-        if (config.createTableSql() == null || config.createTableSql().isBlank()) return;
+    private static final Pattern PROMETHEUS_NAME = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*");
+    private static final Set<String> METRIC_TYPES = Set.of("GAUGE", "COUNTER", "HISTOGRAM", "SUMMARY");
+
+    /** The editor's blocking rules, in the editor's words (`metricsEditor.ts`). */
+    private static void validateSavedShape(MetricConfig metric) {
+        if (!PROMETHEUS_NAME.matcher(metric.name().trim()).matches()) {
+            throw new IllegalArgumentException("Metric name must start with a letter or underscore and contain "
+                + "only letters, digits, and underscores (Prometheus naming rules) (was '" + metric.name() + "').");
+        }
+        String type = metric.type() == null ? "GAUGE" : metric.type().trim().toUpperCase(Locale.ROOT);
+        if (!METRIC_TYPES.contains(type)) {
+            throw new IllegalArgumentException("Metric type must be one of GAUGE, COUNTER, HISTOGRAM, SUMMARY "
+                + "(was '" + metric.type() + "').");
+        }
+        Double warn = metric.warningThreshold();
+        Double crit = metric.criticalThreshold();
+        if ((warn != null && !Double.isFinite(warn)) || (crit != null && !Double.isFinite(crit))) {
+            throw new IllegalArgumentException("Thresholds must be finite numbers.");
+        }
+        if (warn != null && warn.equals(crit)) {
+            throw new IllegalArgumentException("The two thresholds are the same number, so they say nothing "
+                + "about which side the problem is on and would fire together.");
+        }
+        if (MetricTemplateType.fromValue(metric.templateType()) == MetricTemplateType.RAW_SQL
+            && metric.sql() != null && !metric.sql().isBlank()) {
+            String body = SqlStatements.withoutLeadingCte(withoutSqlComments(metric.sql()));
+            if (!body.toUpperCase(Locale.ROOT).startsWith("SELECT")) {
+                throw new IllegalArgumentException("Only SELECT queries are allowed (a leading WITH is accepted).");
+            }
+        }
+    }
+
+    /**
+     * Comments removed, found outside the string literals so a {@code '--'} in a value does not cut
+     * the statement. A hint ({@code /*+ … *}{@code /}) is not a comment and is kept.
+     */
+    static String withoutSqlComments(String sql) {
+        String blanked = SqlStatements.outsideLiterals(sql);
+        StringBuilder out = new StringBuilder(sql.length());
+        int i = 0;
+        while (i < sql.length()) {
+            if (blanked.startsWith("--", i)) {
+                int end = blanked.indexOf('\n', i);
+                i = end < 0 ? sql.length() : end;
+            } else if (blanked.startsWith("/*", i) && !blanked.startsWith("/*+", i)) {
+                int end = blanked.indexOf("*/", i + 2);
+                i = end < 0 ? sql.length() : end + 2;
+                out.append(' ');
+            } else {
+                out.append(sql.charAt(i++));
+            }
+        }
+        return out.toString().trim();
+    }
+
+    /**
+     * The metric's own {@code CREATE TABLE}, when it has one.
+     *
+     * @return the reason it failed, or {@code null}. It was caught and logged at debug, so a mistake
+     *         in the DDL never reached anyone: the query then failed on the table the DDL was meant
+     *         to create, "Object not found" about a name that is correct, and the operator corrected
+     *         the wrong tab (METRICS-CREATION-AUDIT.md B6).
+     */
+    private String executeCreateTableIfPresent(MetricConfig config) {
+        if (config.createTableSql() == null || config.createTableSql().isBlank()) return null;
 
         String ddl = config.createTableSql().trim();
         if (!ddl.toUpperCase(Locale.ROOT).contains("IF NOT EXISTS")) {
             ddl = ddl.replaceFirst("(?i)(CREATE\\s+TABLE\\s+)", "$1IF NOT EXISTS ");
         }
         try {
-            flinkSqlService.executeSql(QueryRequest.ddl(ddl, 10_000L));
-            log.debug("CREATE TABLE DDL executed for metric '{}'", config.name());
+            QueryResult result = flinkSqlService.executeSql(QueryRequest.ddl(ddl, 10_000L));
+            if (result != null && result.error() != null) {
+                log.debug("CREATE TABLE for metric '{}' failed: {}", LogSafe.name(config.name()), result.error());
+                return result.error();
+            }
+            log.debug("CREATE TABLE DDL executed for metric '{}'", LogSafe.name(config.name()));
+            return null;
         } catch (Exception ddlEx) {
-            log.debug("CREATE TABLE for metric '{}' skipped: {}", config.name(), ddlEx.getMessage());
+            log.debug("CREATE TABLE for metric '{}' failed: {}", LogSafe.name(config.name()), ddlEx.getMessage());
+            return ddlEx.getMessage() != null ? ddlEx.getMessage() : ddlEx.getClass().getSimpleName();
         }
+    }
+
+    /** The DDL's failure first when the query failed too: it is usually the cause. */
+    static String withDdlFailure(String ddlError, String queryError) {
+        if (ddlError == null) return queryError;
+        String ddl = "The table definition (CREATE TABLE) failed: " + ddlError;
+        return queryError == null ? ddl : ddl + " — then the query: " + queryError;
     }
 
     /**
@@ -2124,11 +2227,13 @@ public class MetricService {
                 return;
             }
 
-            executeCreateTableIfPresent(normalized);
+            String ddlError = executeCreateTableIfPresent(normalized);
 
             MetricComputationResult result = computeMetric(normalized, false);
             if (result.error() != null) {
-                updateMetricState(id, null, result.error(), result.summary());
+                // A running metric whose query still answers is left alone; one that fails says
+                // the DDL failed first, since that is usually why.
+                updateMetricState(id, null, withDdlFailure(ddlError, result.error()), result.summary());
                 captureObservation(normalized, observedEndpoint, List.of(), Map.of(), result.summary(), true);
             } else if (!result.rows().isEmpty()) {
                 Map<String, String> configuredLabels = resolveConfiguredLabels(normalized);

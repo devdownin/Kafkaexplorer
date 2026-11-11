@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { describe, expect, it } from 'vitest';
-import { buildDdlTemplate, carryTemplateParams, keepLabelsPresentIn, retargetDdl, validateDdlSql } from './metricsEditor';
+import { buildDdlTemplate, carryTemplateParams, keepLabelsPresentIn, retargetDdl, sqlOutsideLiterals, validateDdlSql, validateMetricSql } from './metricsEditor';
 
 const ddl = (topic: string) => `CREATE TABLE t (id STRING) WITH ('connector' = 'kafka', 'topic' = '${topic}')`;
 
@@ -78,5 +78,31 @@ describe('keepLabelsPresentIn', () => {
   it('keeps nothing when the message exposes none of them, and tolerates a field named like an object member', () => {
     expect(keepLabelsPresentIn(['region'], {})).toEqual([]);
     expect(keepLabelsPresentIn(['toString', 'constructor'], { region: 'eu' })).toEqual([]);
+  });
+});
+
+// METRICS-CREATION-AUDIT.md B5: the editor blocked what the engine accepts, and the reverse.
+describe('validateMetricSql', () => {
+  const errors = (sql: string) => validateMetricSql(sql, 'GAUGE').filter(m => m.level === 'error').map(m => m.text);
+
+  it('accepts a leading CTE, a backticked alias and a leading comment', () => {
+    expect(errors('WITH r AS (SELECT * FROM t), s AS (SELECT * FROM r) SELECT COUNT(*) AS metric_value FROM s')).toEqual([]);
+    expect(errors('SELECT COUNT(*) AS `metric_value` FROM t')).toEqual([]);
+    expect(errors('-- a note\nSELECT COUNT(*) AS metric_value FROM t')).toEqual([]);
+  });
+
+  it('does not find the alias, or a comment, inside a string literal', () => {
+    expect(errors("SELECT COUNT(*) AS n FROM t WHERE note = 'x AS metric_value'"))
+      .toEqual([expect.stringMatching(/aliased as metric_value/)]);
+    expect(errors("SELECT COUNT(*) AS metric_value FROM t WHERE note = '--x'")).toEqual([]);
+  });
+
+  it('still refuses what is not a SELECT, CTE or not', () => {
+    expect(errors('DROP TABLE t')).toContainEqual(expect.stringMatching(/Only SELECT/));
+    expect(errors('WITH r AS (SELECT 1) INSERT INTO x SELECT * FROM r')).toContainEqual(expect.stringMatching(/Only SELECT/));
+  });
+
+  it('keeps a table-options hint, which is not a comment', () => {
+    expect(sqlOutsideLiterals("SELECT 1 FROM t /*+ OPTIONS('a'='b') */ /* c */")).toBe("SELECT 1 FROM t /*+ OPTIONS(''='') */");
   });
 });

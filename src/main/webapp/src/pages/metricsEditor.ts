@@ -95,16 +95,50 @@ export interface ValidationMsg {
   text: string;
 }
 
+/**
+ * The statement as the checks below may read it: string literals emptied (their quotes kept), then
+ * comments removed — in that order, so a `--` inside a value does not cut the statement — and a
+ * table-options hint (slash, star, plus) kept, being no comment. METRICS-CREATION-AUDIT.md B5: the alias was found
+ * inside a literal (`WHERE note = 'x AS metric_value'`), so a query without it passed.
+ */
+export function sqlOutsideLiterals(sql: string): string {
+  return sql
+    .replace(/'(?:[^']|'')*'/g, "''")
+    .replace(/--[^\n]*/g, '')
+    .replace(/\/\*(?!\+)[\s\S]*?\*\//g, ' ')
+    .trim();
+}
+
+/** The body after a leading `WITH name AS (…), …` chain, or the statement itself. */
+function withoutLeadingCte(sql: string): string {
+  if (!/^WITH\b/i.test(sql)) return sql;
+  let depth = 0;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i];
+    if (c === '(') depth++;
+    else if (c === ')') {
+      depth--;
+      if (depth === 0) {
+        const rest = sql.slice(i + 1).trimStart();
+        if (rest.startsWith(',')) continue;
+        return rest;
+      }
+    }
+  }
+  return sql;
+}
+
 export function validateMetricSql(sql: string, type: string): ValidationMsg[] {
   if (!sql.trim()) return [];
-  // Strip comments before analysis (mirrors backend SqlQueryValidator behaviour)
-  const stripped = sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  const stripped = sqlOutsideLiterals(sql);
   const msgs: ValidationMsg[] = [];
 
-  if (!/^SELECT\b/i.test(stripped))
+  // A leading CTE is a SELECT to the server (and the assistant writes one): it was blocked here.
+  if (!/^SELECT\b/i.test(withoutLeadingCte(stripped)))
     msgs.push({ level: 'error', text: 'Only SELECT queries are allowed (INSERT / UPDATE / DELETE are rejected by the server).' });
 
-  if (!/\bAS\s+metric_value\b/i.test(stripped))
+  // Backticks are an identifier's quotes in Flink: `metric_value` is the same alias.
+  if (!/\bAS\s+(?:metric_value\b|`metric_value`)/i.test(stripped))
     msgs.push({ level: 'error', text: 'Result column must be aliased as metric_value — e.g. COUNT(*) AS metric_value.' });
 
   if (!/\bFROM\b/i.test(stripped))
