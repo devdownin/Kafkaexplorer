@@ -120,6 +120,21 @@ class AssistantServiceTest {
     }
 
     @Test
+    void costsThatWereNotReportedAreSummedWithoutFailing() {
+        // A local model reports tokens and no cost: the shape every repair round summed on Ollama.
+        com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage local =
+            new com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage(100L, 20L, null, null, null, 1000L, "Ollama", "m");
+        com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage sum = AssistantService.sum(local, local);
+
+        assertNull(sum.costUsd(), "no cost reported is still no cost, not zero");
+        assertEquals(200L, sum.inputTokens());
+        assertEquals(2000L, sum.durationMs());
+        assertEquals(0.3, AssistantService.sum(
+            new com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage(1L, 1L, 0.1, null, null, 1L, "p", "m"),
+            new com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage(1L, 1L, 0.2, null, null, 1L, "p", "m")).costUsd(), 1e-9);
+    }
+
+    @Test
     void aStatementStillRefusedIsShownWithTheRefusalNotWithout() {
         model.answers.add(OK_ANSWER);
         model.answers.add(OK_ANSWER);

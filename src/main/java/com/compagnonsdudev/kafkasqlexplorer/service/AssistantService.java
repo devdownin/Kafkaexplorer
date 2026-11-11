@@ -298,10 +298,22 @@ public class AssistantService {
         if (a == null) return b;
         if (b == null) return a;
         return new LlmUsage(add(a.inputTokens(), b.inputTokens()), add(a.outputTokens(), b.outputTokens()),
-            a.costUsd() == null ? b.costUsd() : b.costUsd() == null ? a.costUsd() : a.costUsd() + b.costUsd(),
+            add(a.costUsd(), b.costUsd()),
             add(a.cachedInputTokens(), b.cachedInputTokens()), add(a.reasoningTokens(), b.reasoningTokens()),
             a.durationMs() + b.durationMs(), b.provider() != null ? b.provider() : a.provider(),
             b.model() != null ? b.model() : a.model());
+    }
+
+    /**
+     * Not a ternary: {@code a == null ? b : a + b} on {@code Double} is typed {@code double} by
+     * numeric promotion, so a {@code null} branch is unboxed and throws. A local model reports no
+     * cost, so that is exactly what every repair round did on Ollama — measured by the eval, eight
+     * of fifty cases ending in a NullPointerException instead of a second answer.
+     */
+    private static Double add(Double a, Double b) {
+        if (a == null) return b;
+        if (b == null) return a;
+        return a + b;
     }
 
     private static Long add(Long a, Long b) {
