@@ -222,6 +222,9 @@ explorer:
   #   lag-metrics-topics: [ "demo.orders", "demo.payments" ]
   lag-metrics-topics: []
   lag-metrics-max-series: 500
+  # Label series one metric may publish: every column besides metric_value is a label. Past it the
+  # metric publishes nothing and says why. 0 removes the cap.
+  metric-max-series: 500
   # Also export the backlog in TIME (kafka_consumer_group_lag_seconds) for those topics: the age
   # of the oldest message each group has not read. Off by default because it is the only lag
   # gauge that reads a record — one per lagging partition, per group, per refresh — where the

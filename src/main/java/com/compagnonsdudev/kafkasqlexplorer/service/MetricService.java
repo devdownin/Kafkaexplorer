@@ -553,6 +553,16 @@ public class MetricService {
                 summary.put("managedJobStatus", "PLANNED");
                 summary.put("managedJobNote", "Preview uses a bounded scan until Flink job orchestration is implemented.");
             }
+            // What the refresh would publish, said before it does (U3). Labels configured from a topic
+            // are one value each and add no series, so the rows alone decide the count.
+            if (result.error() == null && !result.rows().isEmpty()) {
+                int series = liveLabelKeys(result.rows(), Map.of()).size();
+                summary.put("seriesCount", series);
+                String overCap = seriesOverCap(series);
+                if (overCap != null) {
+                    return new MetricPreviewResult(result.displayValue(), List.of(), overCap, summary);
+                }
+            }
             List<Map<String, Object>> previewRows = result.rows().size() > 50
                 ? result.rows().subList(0, 50)
                 : result.rows();
@@ -565,7 +575,8 @@ public class MetricService {
         }
     }
 
-    public void save(MetricConfig metric) {
+    /** @return the metric as stored, so the caller learns the id a creation was given. */
+    public MetricConfig save(MetricConfig metric) {
         String id = (metric.id() == null || metric.id().isEmpty())
             ? UUID.randomUUID().toString() : metric.id();
         MetricConfig previous = metrics.get(id);
@@ -616,6 +627,7 @@ public class MetricService {
         if (shapeChanged) {
             purgeMeters(id);
         }
+        return m;
     }
 
     private static MetricConfig withoutMeasurement(MetricConfig m) {
@@ -2305,6 +2317,13 @@ public class MetricService {
                              Map<String, String> configuredLabels) {
         String type = config.type() == null ? "GAUGE" : config.type().toUpperCase();
 
+        String overCap = seriesOverCap(liveLabelKeys(rows, configuredLabels).size());
+        if (overCap != null) {
+            purgeMeters(metricId);
+            updateMetricState(metricId, null, overCap, summary);
+            return;
+        }
+
         Double primaryValue = (type.equals("HISTOGRAM") || type.equals("SUMMARY"))
             ? recordDistributionRows(metricId, config, rows, configuredLabels,
                                      type.equals("HISTOGRAM"), displayValueOverride)
@@ -2380,6 +2399,15 @@ public class MetricService {
     }
 
     /** The set of label series produced by this cycle's rows (rows without a numeric value are ignored). */
+    /** The refusal when a result would publish more series than one metric may, or null. */
+    private String seriesOverCap(int series) {
+        int cap = explorerConfig.getMetricMaxSeries();
+        if (cap <= 0 || series <= cap) return null;
+        return "This query would publish " + series + " label series, above the " + cap
+            + " one metric may (explorer.metric-max-series): every column besides metric_value becomes a "
+            + "label. Aggregate, or group by fewer columns.";
+    }
+
     private Set<String> liveLabelKeys(List<Map<String, Object>> rows, Map<String, String> configuredLabels) {
         Set<String> keys = new HashSet<>();
         for (Map<String, Object> row : rows) {

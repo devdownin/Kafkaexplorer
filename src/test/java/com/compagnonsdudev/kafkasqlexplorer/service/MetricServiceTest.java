@@ -608,6 +608,51 @@ class MetricServiceTest {
         assertTrue(ddl.getAllValues().stream().noneMatch(r -> r.sql().contains("******")));
     }
 
+    /** METRICS-CREATION-AUDIT.md U2: a creation learns its id. */
+    @Test
+    void saveReturnsTheStoredMetricWithItsId() {
+        MetricConfig stored = service.save(rawSql("created", "GAUGE", "SELECT COUNT(*) AS metric_value FROM t", null, null));
+        assertNotNull(stored.id());
+        assertEquals("created", service.getById(stored.id()).orElseThrow().name());
+    }
+
+    private static QueryResult oneSeriesPerRow(int rows) {
+        List<Map<String, Object>> data = new java.util.ArrayList<>();
+        for (int i = 0; i < rows; i++) data.add(Map.of("id", "o-" + i, "metric_value", (double) i));
+        return new QueryResult(List.of("id", "metric_value"), data, rows, null);
+    }
+
+    /** METRICS-CREATION-AUDIT.md U3: past the cap, nothing is published and the card says why. */
+    @Test
+    void aResultPastTheSeriesCapPublishesNothing() {
+        Mockito.when(explorerConfig.getMetricMaxSeries()).thenReturn(3);
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(oneSeriesPerRow(5));
+        String id = service.save(rawSql("per_order", "GAUGE", "SELECT id, amount AS metric_value FROM t", null, null)).id();
+
+        service.refreshMetrics();
+
+        assertTrue(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().isEmpty());
+        String error = service.getById(id).orElseThrow().errorMessage();
+        assertNotNull(error);
+        assertTrue(error.contains("5 label series") && error.contains("explorer.metric-max-series"), error);
+    }
+
+    @Test
+    void aPreviewCountsTheSeriesAndRefusesPastTheCap() {
+        Mockito.when(explorerConfig.getMetricMaxSeries()).thenReturn(3);
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(oneSeriesPerRow(2));
+        MetricConfig m = rawSql("per_order", "GAUGE", "SELECT id, amount AS metric_value FROM t", null, null);
+
+        var within = service.previewMetric(m);
+        assertNull(within.error());
+        assertEquals(2, within.summary().get("seriesCount"));
+
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(oneSeriesPerRow(4));
+        var past = service.previewMetric(m);
+        assertNotNull(past.error());
+        assertTrue(past.error().contains("4 label series"), past.error());
+    }
+
     /** METRICS-CREATION-AUDIT.md B7: an unknown mode is refused by name, not by a Java class name. */
     @Test
     void anUnknownExecutionModeIsRefusedInTheEditorsWords() {

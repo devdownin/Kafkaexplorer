@@ -412,6 +412,13 @@ public class ExplorerConfig {
      */
     private int lagMetricsMaxSeries = 500;
     /**
+     * How many label series one metric may publish (METRICS-CREATION-AUDIT.md U3). Every column
+     * besides {@code metric_value} becomes a label, so {@code SELECT id, amount AS metric_value}
+     * made one series per order, unbounded. Past it the metric publishes nothing and says why:
+     * a truncated set would be a wrong answer, an absent one is a visible one. 0 removes the cap.
+     */
+    private int metricMaxSeries = 500;
+    /**
      * Also export each watched group's backlog <em>in time</em> ({@code kafka_consumer_group_lag_seconds}).
      *
      * <p>Off by default and separate from {@link #lagMetricsTopics} because of what it costs: the
@@ -809,6 +816,14 @@ public class ExplorerConfig {
 
     public void setLagMetricsMaxSeries(int lagMetricsMaxSeries) {
         this.lagMetricsMaxSeries = lagMetricsMaxSeries;
+    }
+
+    public int getMetricMaxSeries() {
+        return metricMaxSeries;
+    }
+
+    public void setMetricMaxSeries(int metricMaxSeries) {
+        this.metricMaxSeries = metricMaxSeries;
     }
 
     public boolean isFlinkWarmupEnabled() {

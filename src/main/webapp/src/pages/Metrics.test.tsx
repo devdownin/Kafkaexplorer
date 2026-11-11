@@ -386,6 +386,24 @@ describe('la liste, ses pannes et ses requêtes en vol', () => {
     expect(within(dialog).queryByText(/unknown column x/)).toBeNull();
   });
 
+  // METRICS-CREATION-AUDIT.md U2: say an unpreviewed definition is one, and measure what was saved.
+  it('says the definition was never run, and refreshes the metric it saved at once', async () => {
+    const user = userEvent.setup();
+    const saved = { ...templateMetric, templateParams: savableTemplateParams };
+    stubApi([saved]);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, ...rest: unknown[]) =>
+      url === '/api/metrics' ? Promise.resolve({ data: saved })
+        : url === '/api/metrics/m-1/refresh' ? Promise.resolve({ data: { ...saved, lastValue: 42 } })
+          : (post as (u: string, ...r: unknown[]) => Promise<unknown>)(url, ...rest));
+    await renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit this metric' }));
+    expect(await screen.findByText(/Not previewed/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save & Activate' }));
+    await waitFor(() => expect(mockedAxios.post).toHaveBeenCalledWith('/api/metrics/m-1/refresh'));
+  });
+
   // METRICS-CREATION-AUDIT.md U1: Escape, the veil, X and Cancel deleted the work and its draft.
   it('asks before closing an editor the user has written in, and closes an untouched one at once', async () => {
     const user = userEvent.setup();

@@ -84,8 +84,9 @@ public class MetricController {
     @PostMapping
     public ResponseEntity<?> save(@RequestBody MetricConfig metric) {
         try {
-            metricService.save(metric);
-            return ResponseEntity.ok().build();
+            // The stored metric, masked: a creation had no way to learn its id, so the page could
+            // not refresh what it had just made and the card sat "pending" until the next cycle (U2).
+            return ResponseEntity.ok(maskForDisplay(metricService.save(metric)));
         } catch (IllegalArgumentException e) {
             // ApiError.of, et non Map.of("error", e.getMessage()) : `getMessage()` est nul sur une
             // NPE et Map.of refuse un nul, donc ce chemin répondait 500 sans corps exactement

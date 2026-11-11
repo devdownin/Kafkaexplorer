@@ -195,6 +195,10 @@ const Metrics: React.FC = () => {
     [previewResult],
   );
   const previewSummary = previewResult?.summary ?? null;
+  // The definition the last successful preview ran, to say on Save when the one on screen has never
+  // been run (METRICS-CREATION-AUDIT.md U2): "Save & Activate" asks for no preview, and a query that
+  // fails then shows its error on the card, after the modal is gone.
+  const [previewedKey, setPreviewedKey] = useState<string | null>(null);
   const previewChips = useMemo(() => describeMetricScope(previewSummary), [previewSummary]);
   const previewMeasurement = useMemo(() => describeMeasurement(previewSummary), [previewSummary]);
   const previewNote = useMemo(() => scopeNoteOf(previewSummary), [previewSummary]);
@@ -676,6 +680,10 @@ const Metrics: React.FC = () => {
   ] as const).filter(entry => entry.failing && entry.tab !== editorTab);
 
   // ── Save ──────────────────────────────────────────────────────────────────
+  const definitionKey = JSON.stringify([editingMetric.type, isTemplate ? null : editingMetric.sql,
+    editingMetric.templateType, editingMetric.templateParams, editingMetric.createTableSql]);
+  const notPreviewed = previewedKey !== definitionKey;
+
   const handleSave = async () => {
     if (!editingMetric.name?.trim()) { toast('Name is required', 'error'); return; }
     if (!isTemplate && !editingMetric.sql?.trim()) { toast('SQL is required', 'error'); return; }
@@ -689,10 +697,19 @@ const Metrics: React.FC = () => {
     try {
       // A template's parameters ARE its query: the SQL left from the mode it was switched away from
       // would be stored beside them and shown on the card as a query that never runs.
-      await axios.post('/api/metrics', isTemplate ? { ...editingMetric, sql: null } : editingMetric);
+      const res = await axios.post<MetricConfig | ''>('/api/metrics', isTemplate ? { ...editingMetric, sql: null } : editingMetric);
       toast('Metric saved', 'success');
       setIsModalOpen(false);
       fetchMetrics();
+      // Measured now rather than at the next cycle: the card read "pending" for up to a refresh
+      // interval with nothing saying when, and a query that fails said so only then (U2).
+      const savedId = res.data ? res.data.id : null;
+      if (savedId) {
+        void axios.post<MetricConfig>(`/api/metrics/${savedId}/refresh`)
+          .then(r => setMetrics(prev => prev.some(m => m.id === savedId)
+            ? prev.map(m => (m.id === savedId ? r.data : m)) : [...prev, r.data]))
+          .catch(() => { /* the scheduled cycle measures it anyway */ });
+      }
       // Ce qui vient d'être enregistré couvre peut-être une proposition : sans ce rappel, la
       // carte resterait à proposer un KPI désormais en place.
       void fetchSuggestions();
@@ -736,7 +753,10 @@ const Metrics: React.FC = () => {
       // (or template semantics — count delta, transit latency).
       const res = await axios.post<MetricTestResponse>(
         '/api/metrics/preview-template', editingMetric);
-      if (seq === previewSeq.current) setPreviewResult(res.data);
+      if (seq === previewSeq.current) {
+        setPreviewResult(res.data);
+        setPreviewedKey(res.data.error ? null : definitionKey);
+      }
     } catch (err) {
       // The server's reason — which column, which DDL — is the only useful part of a refusal.
       if (seq === previewSeq.current) setPreviewResult({ error: describeApiError(err, 'Preview request failed').raw ?? 'Preview request failed' });
@@ -1464,6 +1484,12 @@ const Metrics: React.FC = () => {
                       </button>
                     ))}
                   </div>
+                )}
+                {!hasBlockingErrors && notPreviewed && (
+                  <span className="mr-auto flex items-center gap-1 text-[12px] text-on-surface-variant">
+                    <span aria-hidden="true" className="material-symbols-outlined text-[16px]">info</span>
+                    Not previewed: this definition has not been run yet.
+                  </span>
                 )}
                 <Button variant="ghost" onClick={() => void requestClose()}>Cancel</Button>
                 <Button type="submit" variant="primary" icon={saving ? undefined : 'save'} loading={saving}

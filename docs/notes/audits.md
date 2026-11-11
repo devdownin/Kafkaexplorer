@@ -577,5 +577,9 @@ but Save asks first once it holds the user's work. **Then B4–B6**: `save` refu
 blocks (on save only, so a stored metric keeps running); the editor reads past a leading CTE,
 accepts a backticked alias and looks for it outside string literals; a failing `CREATE TABLE` is
 the preview's answer and heads the refresh error; the preview restores masked secrets. Still open:
-the preview executes the DDL (so registers the table, `IF NOT EXISTS`), U2, U3, the optimisations.
+the preview executes the DDL (so registers the table, `IF NOT EXISTS`) and the optimisations.
+**U2 and U3 too**: a save answers the stored metric, which the page refreshes at once, and the
+modal says when the definition on screen was never previewed; `explorer.metric-max-series` (500)
+caps one metric's label series — past it nothing is published and the card says why, and the
+preview counts the series first.
 Read it before touching `Metrics.tsx`'s editor or `MetricService.save`.

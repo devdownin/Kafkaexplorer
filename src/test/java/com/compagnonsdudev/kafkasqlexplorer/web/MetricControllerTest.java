@@ -209,4 +209,16 @@ class MetricControllerTest {
             .andExpect(status().isServiceUnavailable())
             .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("was not saved")));
     }
+
+    /** METRICS-CREATION-AUDIT.md U2: the page needs the id of what it just created. */
+    @Test
+    void aSaveAnswersTheStoredMetric() throws Exception {
+        when(metricService.save(any(MetricConfig.class))).thenReturn(new MetricConfig(
+            "new-id", "m", "GAUGE", "SELECT 1 AS metric_value", null, null, null, null, null, null));
+
+        mockMvc.perform(post("/api/metrics").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"m\",\"sql\":\"SELECT 1 AS metric_value\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value("new-id"));
+    }
 }
