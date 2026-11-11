@@ -257,10 +257,16 @@ class LlmAnalysisEvalTest {
      * three times slower than the others. Matched on the words an answer would use for each, across
      * the anomalies, the comments and the hypotheses: loose, and a report rather than an assertion.
      */
+    // In both languages: the prompt's headings are French and the models answer in French as often
+    // as not, so an English-only list scored a French answer that named the fact as having missed
+    // it — measured on Gemma 4 E4B, whose "déduplication" was found by accident and "rejet" would
+    // not have been.
     private static final Map<String, List<String>> PLANTED = Map.of(
-        "rejection", List.of("ord-102", "reject"),
-        "duplicates", List.of("ord-103", "ord-105", "duplicat", "redeliver", "twice"),
-        "corruptPayloads", List.of("ord-666", "ord-667", "corrupt", "malformed", "truncat", "unparse", "invalid json"),
+        "rejection", List.of("ord-102", "reject", "rejet", "refus"),
+        "duplicates", List.of("ord-103", "ord-105", "duplicat", "dupliqu", "doublon", "redeliver",
+            "redélivr", "twice", "deux fois"),
+        "corruptPayloads", List.of("ord-666", "ord-667", "corrupt", "corromp", "malformed", "malformé",
+            "truncat", "tronqu", "unparse", "invalid json", "json invalide", "illisible"),
         "slowHop", List.of("transform"));
 
     /**
@@ -295,7 +301,7 @@ class LlmAnalysisEvalTest {
             PLANTED.forEach((fact, words) -> found.put(fact,
                 "slowHop".equals(fact)
                     ? text.contains("transform") && (text.contains("slow") || text.contains("latenc")
-                        || text.contains("delay") || text.contains("lent"))
+                        || text.contains("delay") || text.contains("lent") || text.contains("goulot"))
                     : words.stream().anyMatch(text::contains)));
             run.put("plantedFactsFound", new java.util.TreeMap<>(found));
             run.put("anomalies", result.anomalies() == null ? 0 : result.anomalies().size());
