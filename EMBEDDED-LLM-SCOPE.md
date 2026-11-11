@@ -465,69 +465,83 @@ l'agent MCP.
 
 ### 7.1 Résultats (2026-11-11)
 
-Mesurés par `AssistantEvalTest` sur les 50 cas de `src/test/resources/eval/assistant/cases.json`,
-une fois par modèle. Conditions : 4 vCPU x86_64 sans GPU, 15 Go de RAM ; llama.cpp
-(`llama-cpp-python` 0.3.36), fenêtre de 8 192 tokens, poids Q4_K_M vérifiés par SHA-256 ;
-température 0 et sortie contrainte par le schéma JSON, comme sur la pile Ollama ; réglages
-`explorer.assistant.*` par défaut. Rapports cas par cas : `docs/benchmarks/assistant-eval/`.
+Mesurés par `AssistantEvalTest` sur les 50 cas de `src/test/resources/eval/assistant/cases.json`.
+Conditions : 4 vCPU x86_64 sans GPU, 15 Go de RAM ; llama.cpp (`llama-cpp-python` 0.3.36),
+fenêtre de 8 192 tokens, poids Q4_K_M vérifiés par SHA-256 ; température 0 et sortie contrainte
+par le schéma JSON, comme sur la pile Ollama ; réglages `explorer.assistant.*` par défaut.
+Rapports cas par cas : `docs/benchmarks/assistant-eval/` (prompt actuel) et son sous-dossier
+`prompt-v1/` (premier passage).
+
+**Prompt actuel (v2)** — après les trois corrections décrites plus bas :
 
 | Modèle (Q4_K_M) | Correctes | Acceptées mais fausses | Non validées | Sans réponse | p50 | p95 | Mémoire de pointe |
 |---|---|---|---|---|---|---|---|
-| **Gemma 4 E4B** | **45 (90 %)** | 2 (4 %) | 3 (6 %) | 0 | 27,9 s | 60,3 s | 11,3 Go |
+| **Gemma 4 E4B** | **48 (96 %)** | 2 (4 %) | 0 | 0 | 25,2 s | 40,5 s | 11,5 Go |
+| Qwen3-4B-Instruct-2507 | 47 (94 %) | 1 (2 %) | 1 (2 %) | 1 (2 %) | 20,2 s | 37,0 s | 7,9 Go |
+| Gemma 4 E2B | 44 (88 %) | 2 (4 %) | 4 (8 %) | 0 | 16,1 s | 35,8 s | 7,7 Go |
+
+**Premier passage (prompt v1)**, pour mémoire :
+
+| Modèle | Correctes | Acceptées mais fausses | Non validées | Sans réponse | p50 | p95 | Mémoire |
+|---|---|---|---|---|---|---|---|
+| Gemma 4 E4B | 45 (90 %) | 2 (4 %) | 3 (6 %) | 0 | 27,9 s | 60,3 s | 11,3 Go |
 | Qwen3-4B-Instruct-2507 | 42 (84 %) | 3 (6 %) | 5 (10 %) | 0 | 20,0 s | 51,0 s | 7,8 Go |
 | Gemma 4 E2B | 36 (72 %) | 1 (2 %) | 13 (26 %) | 0 | 18,9 s | 45,4 s | 7,6 Go |
-| `qwen2.5-coder:7b` (livré aujourd'hui) | 34 (68 %) | 1 (2 %) | 5 (10 %) | 10 (20 %) | 24,8 s | 64,1 s | 11,1 Go |
+| `qwen2.5-coder:7b` | 34 (68 %) | 1 (2 %) | 5 (10 %) | 10 (20 %) | 24,8 s | 64,1 s | 11,1 Go |
 
-La mémoire est le pic du processus serveur : poids, cache KV de 8 192 tokens et serveur Python.
+`qwen2.5-coder:7b` n'a pas été remesuré : il était dernier et ne sert plus l'assistant. La mémoire
+est le pic du processus serveur : poids, cache KV de 8 192 tokens et serveur Python.
 
-**Confrontés aux seuils fixés avant de lancer la mesure :**
+**Confrontés aux seuils fixés avant la mesure (prompt v2) :**
 
-| Seuil | Gemma 4 E4B | Qwen3-4B | Gemma 4 E2B | qwen2.5-coder 7B |
-|---|---|---|---|---|
-| U1 : ≥ 80 % de corrections acceptées | 100 % ✓ | 100 % ✓ | 100 % ✓ | 90 % ✓ |
-| U1 : p95 < 30 s (sur ce CPU) | 48,9 s ✗ | 53,5 s ✗ | **25,3 s ✓** | 43,3 s ✗ |
-| U2 mono-table : ≥ 70 % justes | 95 % ✓ | 86 % ✓ | 73 % ✓ | 68 % ✗ |
-| U2 mono-table : faux < 10 % | 5 % ✓ | 5 % ✓ | 5 % ✓ | 5 % ✓ |
-| Jointures (mêmes seuils) | 100 % / 0 % ✓ | 75 % / 25 % ✗ | 100 % / 0 % ✓ | 38 % ✗ |
+| Seuil | Gemma 4 E4B | Qwen3-4B | Gemma 4 E2B |
+|---|---|---|---|
+| U1 : ≥ 80 % de corrections acceptées | 100 % ✓ | 90 % ✓ | 100 % ✓ |
+| U1 : p95 < 30 s (sur ce CPU) | 45,0 s ✗ | 37,0 s ✗ | **27,7 s ✓** |
+| U2 mono-table : ≥ 70 % justes / < 10 % faux | 100 % / 0 % ✓ | 95 % / 5 % ✓ | 95 % / 5 % ✓ |
+| Jointures (mêmes seuils) | 100 % / 0 % ✓ | 100 % / 0 % ✓ | 88 % / 0 % ✓ |
+| Tranches de temps (4 cas) | 2 / 4 | 3 / 4 | 0 / 4 |
 
 **Décision.**
 
-- **Gemma 4 E4B est le modèle recommandé pour l'assistant** : le seul à passer tous les seuils de
-  qualité, jointures comprises, et le plus bas taux d'erreur parmi les plus justes.
-- **Gemma 4 E2B est l'option des petites machines** : le seul à tenir le p95 de 30 s sur 4 cœurs
-  pour la correction, avec le taux de « faux » le plus bas. Il échoue surtout par une erreur de
-  forme que le prompt induit (ci-dessous).
-- **`qwen2.5-coder:7b` ne doit pas servir l'assistant** : dernier en exactitude, et il s'abstient
-  sur 20 % des cas, dont 5 jointures sur 8. Il reste le modèle de Process Mining, que cette
-  évaluation ne mesure pas.
-- **Le seuil de latence de U1 n'est tenu que par E2B, sur 4 cœurs sans GPU.** Ce n'est pas un
-  échec de l'usage mais une condition matérielle : la latence se mesure sur la machine qui servira,
-  et `bin/assistant-eval.sh` est fait pour ça. Aucun modèle n'est en dessous de 15 s de p50 :
-  l'assistant reste un geste qu'on attend, pas une complétion.
+- **Gemma 4 E4B sert l'assistant** dans `compose/ollama.yml` (`EXPLORER_ASSISTANT_MODEL`) : le plus
+  juste sur les deux passages, aucun refus du planificateur sur le second, et un tag Ollama vérifié
+  (`gemma4:e4b`, Ollama ≥ 0.20, la pile en épingle 0.32.6).
+- **Qwen3-4B-Instruct-2507 est à égalité dans la marge** (94 % contre 96 %, un cas d'écart sur 50)
+  pour 3,6 Go de moins et 20 % plus rapide. C'est le meilleur choix là où la mémoire compte ; son
+  tag Ollama exact n'a pas été vérifié ici, d'où le défaut sur Gemma.
+- **Gemma 4 E2B pour une petite machine** : le seul à tenir le p95 de 30 s sur 4 cœurs pour la
+  correction, mais il ne réussit aucune tranche de temps.
+- **`qwen2.5-coder:7b` ne sert plus l'assistant** ; il reste le modèle de Process Mining.
+- **Aucun modèle ne tient 30 s de p95 en génération sur ce CPU** ; la latence se mesure sur la
+  machine qui servira, avec `bin/assistant-eval.sh`.
 
-**Ce que la mesure a appris sur le produit**, au-delà du choix du modèle :
+**Ce que la mesure a appris sur le produit :**
 
-1. **Deux défauts corrigés avant cette mesure, trouvés par le banc.** En mode `FIX`, une requête
-   qui ne se parse pas ou qui nomme une table absente ne donnait aucune table au modèle (un oracle
-   rendant la référence obtenait 47/50). Et toute réparation plantait sur un fournisseur local, la
-   somme des coûts déballant un `null` : 8 cas sur 50 du premier passage. Les chiffres ci-dessus
-   sont ceux du second passage.
-2. **Les fenêtres sur les topics de démo sont hors de portée du planificateur**, pour tous les
-   modèles (1 sur 4 au mieux). Leur `event_time` est l'epoch en secondes du payload, un `BIGINT`
-   sans watermark, et chaque modèle tente quand même `TUMBLE` ou `TO_TIMESTAMP` dessus. La
-   correction est dans le prompt : dire qu'un `event_time` entier se découpe par division entière.
-3. **L'exemple de fenêtre du prompt déteint sur les petits modèles.** Gemma 4 E2B écrit
-   `FROM TABLE demo_orders_1_received` dans 10 de ses 13 refus, forme copiée de
-   `TABLE(TUMBLE(TABLE orders …))`, et la réparation ne la corrige pas.
-4. **`AS count` est refusé et n'est pas réparé** (Qwen3-4B, qwen2.5-coder) : le mot réservé est cité
-   dans les règles, sans effet. Une règle explicite (« jamais `AS count` ») ou un exemple serait
-   plus sûr.
-5. **Une référence est ambiguë** : J06 (« les commandes des clients VIP ») compte les redélivrances,
-   et Qwen3-4B a mis un `DISTINCT` défendable. Sans ce cas, Qwen3-4B est à 86 % de justes.
+1. **Deux défauts trouvés par le banc et corrigés avant le premier passage chiffré.** En mode `FIX`,
+   une requête qui ne se parse pas ou qui nomme une table absente ne donnait aucune table au
+   modèle (un oracle rendant la référence obtenait 47/50). Et toute réparation plantait sur un
+   fournisseur local, la somme des coûts déballant un `null` (8 cas sur 50).
+2. **Trois faiblesses du prompt, corrigées en v2** :
+   - il affirmait que `event_time` porte toujours un watermark, ce qui est faux sur chaque topic
+     de démo (un `BIGINT` d'epoch du payload), et chaque modèle tentait une fenêtre dessus ; le
+     catalogue annote désormais chaque colonne temporelle avec ce qu'elle est ;
+   - son exemple de fenêtre déteignait : Gemma 4 E2B écrivait `FROM TABLE x` dans 10 de ses 13
+     refus ; l'exemple est un agrégat par tranche horaire et `FROM TABLE t` est interdit par nom ;
+   - `AS count` était refusé et jamais réparé ; les mots réservés sont bannis comme alias par nom.
+   Effet : + 6 à + 16 points de requêtes justes selon le modèle, et les non-validées de E2B
+   passent de 13 à 4.
+3. **Reste ouvert** : les tranches de temps (Gemma 4 E2B groupe par l'alias, ce que Flink refuse ;
+   E4B oublie de remultiplier la tranche ou utilise l'ancienne syntaxe `GROUP BY TUMBLE(...)`) ;
+   F04 (`'rejected'` en minuscules, ou le mauvais champ) est faux pour les trois.
+4. **Une référence est ambiguë** : J06 compte les redélivrances et un `DISTINCT` est défendable.
 
-Limites : un seul passage par modèle, 50 cas (4 à 12 par famille, donc ± une dizaine de points
-par famille), un seul jeu de topics, et un serveur llama.cpp plutôt qu'Ollama ; la contrainte de
-schéma y est la même, sa traduction passant par un relais local.
+**Limites.** Le prompt v2 a été corrigé **après** avoir lu les échecs de ces 50 cas : son gain est
+donc mesuré sur les cas mêmes qui l'ont inspiré, et c'est une borne haute. Les corrections sont
+générales — elles décrivent le catalogue plutôt qu'un cas — mais un jeu de cas tenu à l'écart
+serait la mesure honnête. Un seul passage par modèle, 50 cas (4 à 12 par famille, soit ± une
+dizaine de points par famille), un seul jeu de topics, et un serveur llama.cpp plutôt qu'Ollama,
+la contrainte de schéma y passant par un relais local qui la traduit.
 
 ## 8. Plan par lots
 
