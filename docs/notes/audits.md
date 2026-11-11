@@ -562,3 +562,12 @@ first fact matcher read English only while the models answer in French. The v2 p
 measured on the cases that inspired it, so it is an upper bound; and no model finds ORD-102's
 rejection or the truncated payloads, which points at the Process Mining prompt rather than the model. Read it before
 adding any LLM call outside Process Mining.
+
+`METRICS-CREATION-AUDIT.md` (2026-11) reviews the path from "New metric" to a Prometheus series —
+the editor, the preview and `MetricService.save`. It fixed nothing. Twelve findings, seven of them
+reproduced by a throwaway test: the assistant's "Describe the metric" block is a `<form>` nested in
+the editor's, so **Draft also submits the editor** (a regression from the assistant work); a save
+whose write to Kafka fails still answers "Metric saved"; a rename leaves the `metric_name` tag of
+the registered series unchanged; the server accepts any name, type, threshold or SQL; and the
+client validator blocks a leading `WITH` and a backticked `metric_value` while accepting the alias
+written inside a string. Read it before touching `Metrics.tsx`'s editor or `MetricService.save`.
