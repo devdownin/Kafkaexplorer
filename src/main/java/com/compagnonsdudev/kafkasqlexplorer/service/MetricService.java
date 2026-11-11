@@ -431,7 +431,13 @@ public class MetricService {
                 m.executionMode(),
                 m.labelTopic(),
                 m.labelFields() != null ? List.copyOf(m.labelFields()) : List.of());
-            persistToKafka(updated);
+            try {
+                persistToKafka(updated);
+            } catch (MetricPersistenceException e) {
+                // A start-up migration: the repointed SQL still serves this process, and the next
+                // start migrates it again. Refusing to start over it would cost more than it saves.
+                log.warn("{}", e.getMessage());
+            }
             return updated;
         });
     }
@@ -482,7 +488,7 @@ public class MetricService {
     }
 
     private void seedClusterCount(String name, String measurement, String description) {
-        save(new MetricConfig(UUID.randomUUID().toString(), name, "GAUGE", null, description,
+        saveSeed(new MetricConfig(UUID.randomUUID().toString(), name, "GAUGE", null, description,
             null, null, null, null, null, List.of(), Map.of(), null,
             MetricTemplateType.KAFKA_CLUSTER_COUNT.name(), Map.of("measurement", measurement),
             MetricExecutionMode.TEMPLATE_BOUNDED_SCAN.name(), null, List.of()));
@@ -491,7 +497,16 @@ public class MetricService {
     private void addMetric(String name, String type, String sql, String description,
                            Double warning, Double critical) {
         String id = UUID.randomUUID().toString();
-        save(new MetricConfig(id, name, type, sql, description, warning, critical, null, null, null));
+        saveSeed(new MetricConfig(id, name, type, sql, description, warning, critical, null, null, null));
+    }
+
+    /** An example that cannot be written is skipped, not kept in memory as if it had been. */
+    private void saveSeed(MetricConfig metric) {
+        try {
+            save(metric);
+        } catch (MetricPersistenceException e) {
+            log.warn("Example metric '{}' not seeded: {}", LogSafe.name(metric.name()), e.getMessage());
+        }
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -572,6 +587,10 @@ public class MetricService {
         // reason, so the card reads "pending" exactly while the series is absent. History is kept.
         MetricConfig m = shapeChanged ? withoutMeasurement(edited) : edited;
         validateMetric(m, true);
+        // Written before it is published, and the failure propagates: persistToKafka used to log a
+        // warning and return, so the editor read 200 and said "Metric saved" for a definition that
+        // lived in memory only and was gone at the next restart. Nothing is changed when it fails.
+        persistToKafka(m);
         metrics.put(id, m);
         // When an existing metric's shape changes (type, SQL, labels, template, …),
         // any Micrometer series it already registered would linger forever with stale
@@ -581,7 +600,6 @@ public class MetricService {
         if (shapeChanged) {
             purgeMeters(id);
         }
-        persistToKafka(m);
     }
 
     private static MetricConfig withoutMeasurement(MetricConfig m) {
@@ -631,7 +649,10 @@ public class MetricService {
 
     /** True when a re-saved metric differs in any field that affects its Micrometer series. */
     private boolean metricShapeChanged(MetricConfig a, MetricConfig b) {
-        return !Objects.equals(a.type(), b.type())
+        // The name is in the series as `metric_name`, fixed when the meter is registered: a rename
+        // left Prometheus reporting the old name until the next restart.
+        return !Objects.equals(a.name(), b.name())
+            || !Objects.equals(a.type(), b.type())
             || !Objects.equals(a.sql(), b.sql())
             || !Objects.equals(a.labelTopic(), b.labelTopic())
             || !Objects.equals(a.labelFields(), b.labelFields())
@@ -777,6 +798,19 @@ public class MetricService {
         return normalizeObservationDefinition(metric);
     }
 
+    /**
+     * {@code valueOf} answered an unknown mode with "No enum constant com.compagnonsdudev…" — a Java
+     * class name in the editor's error banner, and no word of what would have been accepted.
+     */
+    static MetricExecutionMode parseExecutionMode(String value) {
+        String key = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+        for (MetricExecutionMode mode : MetricExecutionMode.values()) {
+            if (mode.name().equals(key)) return mode;
+        }
+        throw new IllegalArgumentException("Unknown execution mode '" + value + "'. Expected one of: "
+            + Arrays.stream(MetricExecutionMode.values()).map(Enum::name).collect(java.util.stream.Collectors.joining(", ")) + ".");
+    }
+
     /** Pure collector definition normalization, also used when previewing forecast identities. */
     public static MetricConfig normalizeObservationDefinition(MetricConfig metric) {
         String normalizedType = metric.type() == null || metric.type().isBlank()
@@ -785,7 +819,7 @@ public class MetricService {
         MetricTemplateType templateType = MetricTemplateType.fromValue(metric.templateType());
         MetricExecutionMode executionMode = metric.executionMode() == null || metric.executionMode().isBlank()
             ? (templateType == MetricTemplateType.RAW_SQL ? MetricExecutionMode.SQL : MetricExecutionMode.TEMPLATE_BOUNDED_SCAN)
-            : MetricExecutionMode.valueOf(metric.executionMode().trim().toUpperCase(Locale.ROOT));
+            : parseExecutionMode(metric.executionMode());
 
         return new MetricConfig(
             metric.id(),
@@ -825,7 +859,7 @@ public class MetricService {
         MetricTemplateType templateType = MetricTemplateType.fromValue(metric.templateType());
         String metricType = metric.type() == null ? "GAUGE" : metric.type().toUpperCase(Locale.ROOT);
         Map<String, Object> params = metric.templateParams() != null ? metric.templateParams() : Map.of();
-        MetricExecutionMode executionMode = MetricExecutionMode.valueOf(metric.executionMode().toUpperCase(Locale.ROOT));
+        MetricExecutionMode executionMode = parseExecutionMode(metric.executionMode());
 
         if (executionMode == MetricExecutionMode.FLINK_MANAGED_JOB && templateType == MetricTemplateType.RAW_SQL) {
             throw new IllegalArgumentException("FLINK_MANAGED_JOB is only available for template metrics");
@@ -2706,6 +2740,13 @@ public class MetricService {
         }
     }
 
+    /** A metric definition that could not be written to its topic: saved nowhere, so not saved. */
+    public static class MetricPersistenceException extends RuntimeException {
+        public MetricPersistenceException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
     private void persistToKafka(MetricConfig metric) {
         try {
             configProducer().send(new ProducerRecord<>(
@@ -2713,9 +2754,13 @@ public class MetricService {
                 metric.id(),
                 objectMapper.writeValueAsString(metric))).get();
         } catch (Exception e) {
-            log.warn("Failed to persist metric config: {}", e.getMessage());
             // Drop the producer so the next attempt reconnects with fresh state/config
             closeConfigProducer();
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw new MetricPersistenceException("The metric could not be written to '"
+                + explorerConfig.getMetricsConfigTopic() + "', so it was not saved: "
+                + (cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName()), e);
         }
     }
 

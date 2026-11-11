@@ -486,6 +486,67 @@ class MetricServiceTest {
         assertEquals("PLANNED", preview.summary().get("managedJobStatus"));
     }
 
+    /** METRICS-CREATION-AUDIT.md B3: the name is a tag of the series, so a rename re-registers it. */
+    @Test
+    void renamingAMetricRenamesItsSeries() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 5.0)), 10L, null));
+        service.save(new MetricConfig(
+            null, "before_rename", "GAUGE", "SELECT 5 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "before_rename".equals(m.name())).findFirst().orElseThrow().id();
+        service.refreshMetrics();
+
+        service.save(new MetricConfig(
+            id, "after_rename", "GAUGE", "SELECT 5 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        service.refreshMetrics();
+
+        assertTrue(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id)
+            .tag("metric_name", "before_rename").meters().isEmpty(), "the old name must not survive a rename");
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id)
+            .tag("metric_name", "after_rename").meters().isEmpty());
+    }
+
+    /** METRICS-CREATION-AUDIT.md B2: a definition no topic received is not saved, and says so. */
+    @Test
+    void aSaveThatCannotBeWrittenFailsAndChangesNothing() {
+        MetricConfig kept = new MetricConfig(
+            null, "kept", "GAUGE", "SELECT 1 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of());
+        service.save(kept);
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "kept".equals(m.name())).findFirst().orElseThrow().id();
+        int before = service.getAllMetrics().size();
+        producer.close();
+
+        MetricService.MetricPersistenceException created = assertThrows(MetricService.MetricPersistenceException.class,
+            () -> service.save(new MetricConfig(
+                null, "never_written", "GAUGE", "SELECT 2 AS metric_value", null, null, null,
+                null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of())));
+        assertTrue(created.getMessage().contains("internal.metrics.config"), created.getMessage());
+        assertThrows(MetricService.MetricPersistenceException.class,
+            () -> service.save(new MetricConfig(
+                id, "kept_renamed", "GAUGE", "SELECT 1 AS metric_value", null, null, null,
+                null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of())));
+
+        assertEquals(before, service.getAllMetrics().size());
+        assertEquals("kept", service.getById(id).orElseThrow().name());
+    }
+
+    /** METRICS-CREATION-AUDIT.md B7: an unknown mode is refused by name, not by a Java class name. */
+    @Test
+    void anUnknownExecutionModeIsRefusedInTheEditorsWords() {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> service.save(new MetricConfig(
+                null, "turbo", "GAUGE", "SELECT 1 AS metric_value", null, null, null,
+                null, null, null, List.of(), Map.of(), null, null, null, "TURBO", null, List.of())));
+        assertTrue(e.getMessage().startsWith("Unknown execution mode 'TURBO'"), e.getMessage());
+        assertTrue(e.getMessage().contains("TEMPLATE_BOUNDED_SCAN"), e.getMessage());
+        assertFalse(e.getMessage().contains("com.compagnonsdudev"), e.getMessage());
+    }
+
     @Test
     void editingMetricTypePurgesStaleMeterSeries() {
         // A GAUGE metric that produces one series, then re-saved as a COUNTER.

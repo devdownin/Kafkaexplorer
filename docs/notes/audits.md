@@ -570,4 +570,8 @@ the editor's, so **Draft also submits the editor** (a regression from the assist
 whose write to Kafka fails still answers "Metric saved"; a rename leaves the `metric_name` tag of
 the registered series unchanged; the server accepts any name, type, threshold or SQL; and the
 client validator blocks a leading `WITH` and a backticked `metric_value` while accepting the alias
-written inside a string. Read it before touching `Metrics.tsx`'s editor or `MetricService.save`.
+written inside a string. **Fixed since: B1, B2, B3, B7 and U1** — the assistant block is a group,
+not a form; `save` writes to Kafka before publishing in memory and a failed write answers 503; a
+rename re-registers the series; an unknown mode is refused by name; and every way out of the editor
+but Save asks first once it holds the user's work. B4–B6, U2, U3 and the optimisations stay open.
+Read it before touching `Metrics.tsx`'s editor or `MetricService.save`.

@@ -5,7 +5,14 @@ Périmètre : le parcours qui va de « New metric » à une série Prometheus �
 `POST /api/metrics/preview-template`, `POST /api/metrics` et `MetricService.save`. Les modèles à
 deux requêtes ont leur propre rapport (`METRICS-TWO-QUERY-AUDIT.md`) et ne sont pas repris ici.
 
-> **Statut.** Audit seul : rien n'est corrigé. Chaque constat dit comment il a été établi —
+> **Statut.** **B1, B2, B3, B7 et U1 sont corrigés**, chacun avec le test qui l'aurait montré :
+> le bloc de l'assistant est un groupe et non plus un `<form>` (`MetricDraftAssist.test.tsx`) ;
+> `save` écrit dans le topic *avant* de publier en mémoire et une écriture refusée répond **503**
+> avec la raison (`MetricServiceTest`, `MetricControllerTest`) ; le nom compte dans
+> `metricShapeChanged`, donc un renommage ré-enregistre la série ; un mode inconnu est refusé en
+> nommant les modes admis ; et Échap, le voile, la croix et « Cancel » demandent confirmation dès
+> que l'éditeur contient un geste de l'utilisateur ou un brouillon restauré (`Metrics.test.tsx`).
+> Le reste est ouvert. Chaque constat dit comment il a été établi —
 > **reproduit** (un test l'a montré, jeté ensuite), ou **lu** (déduit du code, fichier nommé).
 > Douze constats, classés ; le premier est une régression introduite par l'assistant (PR #547).
 

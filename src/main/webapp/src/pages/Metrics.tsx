@@ -176,6 +176,14 @@ const Metrics: React.FC = () => {
   // is allowed to write.
   const previewSeq = useRef(0);
   const overlayPressed = useRef(false);
+  // Whether the editor holds work of the user's: a typed field, a picked option, an applied
+  // draft — or a draft restored from a previous visit. Escape, the veil, the X and Cancel all
+  // closed the editor and deleted that work without a word (METRICS-CREATION-AUDIT.md U1).
+  // Set by gestures rather than by comparing the form with its state at opening: the topic and
+  // label effects rewrite the form on their own after it opens, so a comparison would always
+  // find a difference and ask about nothing.
+  const editorTouched = useRef(restoredEditor !== null);
+  const closeAsked = useRef(false);
   const clearPreview = useCallback(() => {
     previewSeq.current += 1;
     setPreviewResult(null);
@@ -378,13 +386,35 @@ const Metrics: React.FC = () => {
     }
   }, [isModalOpen, editingMetric, selectedTopic, editorTab, nameIsAuto]);
 
-  // U9 — close the modal on Escape.
+  /** Every way out but Save: asks first when closing would throw away the user's work. */
+  const requestClose = useCallback(async () => {
+    if (closeAsked.current) return;
+    if (editorTouched.current) {
+      closeAsked.current = true;
+      try {
+        const discard = await confirm({
+          title: 'Discard this metric?',
+          description: 'What was entered in the editor has not been saved and will be lost.',
+          confirmLabel: 'Discard', cancelLabel: 'Keep editing', tone: 'danger', icon: 'delete',
+        });
+        if (!discard) return;
+      } finally {
+        closeAsked.current = false;
+      }
+    }
+    setIsModalOpen(false);
+  }, [confirm]);
+
+  // U9 — close the modal on Escape. An Escape something else already handled — Monaco closing its
+  // suggestion list, the confirmation dialog cancelling itself — is not a request to close.
   useEffect(() => {
     if (!isModalOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsModalOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) void requestClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isModalOpen]);
+  }, [isModalOpen, requestClose]);
 
   // SQL autocomplete
   useEffect(() => {
@@ -447,6 +477,7 @@ const Metrics: React.FC = () => {
     setEditorTab('metric');
     clearPreview();
     setSaveError(null);
+    editorTouched.current = false;
     setIsModalOpen(true);
   };
 
@@ -488,6 +519,7 @@ const Metrics: React.FC = () => {
       setEditorTab('metric');
       clearPreview();
       setSaveError(null);
+      editorTouched.current = false;
       setIsModalOpen(true);
       setSearchParams(params => {
         const next = new URLSearchParams(params);
@@ -509,6 +541,7 @@ const Metrics: React.FC = () => {
     const patch = metricDraftPatch(draft, RAW_SQL);
     if (!patch) return;
     setEditingMetric(m => ({ ...m, ...patch }));
+    editorTouched.current = true;
     if (patch.name) setNameIsAuto(false);
     setEditorTab('metric');
     clearPreview();
@@ -522,6 +555,7 @@ const Metrics: React.FC = () => {
     setEditorTab('metric');
     clearPreview();
     setSaveError(null);
+    editorTouched.current = false;
     setIsModalOpen(true);
   };
 
@@ -914,7 +948,7 @@ const Metrics: React.FC = () => {
           onClick={e => {
             // Selecting text in the editor and releasing outside the dialog is a click on the veil,
             // and it closed the editor and deleted the draft: only a press that began there counts.
-            if (overlayPressed.current && e.target === e.currentTarget) setIsModalOpen(false);
+            if (overlayPressed.current && e.target === e.currentTarget) void requestClose();
             overlayPressed.current = false;
           }}>
           {/* Le dialogue est la carte, pas le voile : `role` sur le conteneur `fixed inset-0`
@@ -926,6 +960,8 @@ const Metrics: React.FC = () => {
           <div
             role="dialog" aria-modal="true" aria-labelledby="metric-editor-title"
             className="bg-surface-container border border-outline-variant rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
+            onInputCapture={() => { editorTouched.current = true; }}
+            onChangeCapture={() => { editorTouched.current = true; }}
             onClick={e => e.stopPropagation()}>
             {/* Un vrai <form> : Entrée depuis les champs du panneau de gauche enregistre.
                 Tous les boutons internes déclarent type="button", seul « Save » soumet. */}
@@ -939,7 +975,7 @@ const Metrics: React.FC = () => {
                 <h2 id="metric-editor-title" className="text-[16px] font-semibold text-on-surface">
                   {editingMetric.id ? 'Edit Metric' : 'New SQL Metric'}
                 </h2>
-                <button type="button" onClick={() => setIsModalOpen(false)} aria-label="Close"
+                <button type="button" onClick={() => void requestClose()} aria-label="Close"
                   className="p-1.5 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors">
                   <span className="material-symbols-outlined text-[20px]">close</span>
                 </button>
@@ -1429,7 +1465,7 @@ const Metrics: React.FC = () => {
                     ))}
                   </div>
                 )}
-                <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+                <Button variant="ghost" onClick={() => void requestClose()}>Cancel</Button>
                 <Button type="submit" variant="primary" icon={saving ? undefined : 'save'} loading={saving}
                   disabled={saving || hasBlockingErrors}>
                   {saving ? 'Saving…' : 'Save & Activate'}

@@ -385,6 +385,31 @@ describe('la liste, ses pannes et ses requêtes en vol', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).queryByText(/unknown column x/)).toBeNull();
   });
+
+  // METRICS-CREATION-AUDIT.md U1: Escape, the veil, X and Cancel deleted the work and its draft.
+  it('asks before closing an editor the user has written in, and closes an untouched one at once', async () => {
+    const user = userEvent.setup();
+    stubApi([{ ...templateMetric, templateParams: savableTemplateParams }]);
+    await renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit this metric' }));
+    await screen.findByRole('dialog', { name: 'Edit Metric' });
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog', { name: 'Edit Metric' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Edit this metric' }));
+    const editor = await screen.findByRole('dialog', { name: 'Edit Metric' });
+    await user.type(within(editor).getAllByRole('textbox')[0], 'x');
+    await user.keyboard('{Escape}');
+    expect(await screen.findByText('Discard this metric?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }));
+    expect(screen.getByRole('dialog', { name: 'Edit Metric' })).toBeInTheDocument();
+    expect(localStorage.getItem('kse:draft:metrics:editor')).not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(await screen.findByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Metric' })).toBeNull());
+  });
 });
 
 describe('la prévisualisation des labels', () => {

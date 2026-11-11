@@ -29,8 +29,7 @@ export const MetricDraftAssist: React.FC<MetricDraftAssistProps> = ({ status, to
   const [draft, setDraft] = useState<AssistantMetricResponse | null>(null);
   const note = privacyLine(status);
 
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const submit = async () => {
     const text = description.trim();
     if (!text || pending) return;
     setPending(true);
@@ -51,7 +50,10 @@ export const MetricDraftAssist: React.FC<MetricDraftAssistProps> = ({ status, to
 
   return (
     <div className="space-y-2 rounded-lg border border-outline-variant/60 p-3">
-      <form onSubmit={submit} className="space-y-2" aria-label="Metric assistant">
+      {/* A group, not a <form>: this panel sits inside the metric editor's own form, and a nested
+          form is no form at all to the parser — its submit button submitted the editor, i.e. saved
+          the metric (METRICS-CREATION-AUDIT.md B1). Ctrl/⌘+Enter keeps a keyboard way to draft. */}
+      <div role="group" className="space-y-2" aria-label="Metric assistant">
         <label htmlFor="metric-assistant-description"
           className="flex items-center gap-1 text-[12px] font-medium text-on-surface-variant">
           <span aria-hidden="true" className="material-symbols-outlined text-[14px] text-primary">smart_toy</span>
@@ -62,14 +64,18 @@ export const MetricDraftAssist: React.FC<MetricDraftAssistProps> = ({ status, to
           rows={2}
           value={description}
           onChange={e => setDescription(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void submit(); }
+          }}
           placeholder="e.g. orders in the CANCELLED state over the last five minutes"
           maxLength={2000}
         />
-        <Button type="submit" size="sm" variant="secondary" loading={pending} disabled={!description.trim() || pending}>
+        <Button size="sm" variant="secondary" loading={pending} disabled={!description.trim() || pending}
+          onClick={() => void submit()}>
           Draft
         </Button>
         {note && <p className="text-[11px] text-outline">{note}</p>}
-      </form>
+      </div>
       {draft && (
         <ProposalCard
           response={draft.proposal}
