@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { describe, expect, it } from 'vitest';
-import { buildDdlTemplate, carryTemplateParams, previewTimeoutMs, keepLabelsPresentIn, retargetDdl, sqlOutsideLiterals, validateDdlSql, validateMetricSql } from './metricsEditor';
+import { buildDdlTemplate, carryTemplateParams, previewTimeoutMs, saveErrorTab, keepLabelsPresentIn, retargetDdl, sqlOutsideLiterals, validateDdlSql, validateMetricSql } from './metricsEditor';
 
 const ddl = (topic: string) => `CREATE TABLE t (id STRING) WITH ('connector' = 'kafka', 'topic' = '${topic}')`;
 
@@ -114,5 +114,14 @@ describe('previewTimeoutMs', () => {
     expect(previewTimeoutMs('TOPIC_COUNT_DELTA', {}, 60_000)).toBe(75_000);
     expect(previewTimeoutMs('TOPIC_TRANSIT_LATENCY', { timeoutMs: 120_000 }, 60_000)).toBe(255_000);
     expect(previewTimeoutMs('TOPIC_COUNT_DELTA', { timeoutMs: 1_000 }, 60_000)).toBe(60_000);
+  });
+});
+
+describe('saveErrorTab', () => {
+  it('sends a refusal about the table definition to the DDL tab, the rest to the SQL', () => {
+    expect(saveErrorTab('The table definition (CREATE TABLE) failed: Unsupported options')).toBe('ddl');
+    expect(saveErrorTab("Missing required option 'connector'")).toBe('ddl');
+    expect(saveErrorTab('Object not found: demo_orders')).toBe('metric');
+    expect(saveErrorTab(null)).toBe('metric');
   });
 });

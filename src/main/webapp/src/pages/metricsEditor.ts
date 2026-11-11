@@ -164,6 +164,17 @@ export function validateMetricSql(sql: string, type: string): ValidationMsg[] {
   return msgs;
 }
 
+/**
+ * The tab a server refusal belongs to. It was written at the top of the modal whichever tab was
+ * open, so a refusal about the DDL was read on the SQL tab with nothing pointing at the other one
+ * (METRICS-CREATION-AUDIT.md, light points). The wording is the server's own — a failed
+ * `CREATE TABLE` is reported as "The table definition (CREATE TABLE) failed" — so this follows it.
+ */
+export function saveErrorTab(raw: string | null | undefined): 'metric' | 'ddl' {
+  return /create\s+table|table definition|\bddl\b|properties\.|'connector'|unsupported options/i.test(raw ?? '')
+    ? 'ddl' : 'metric';
+}
+
 export function validateDdlSql(ddl: string): ValidationMsg[] {
   if (!ddl.trim()) return [];
   const stripped = ddl.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();

@@ -63,6 +63,7 @@ import {
   validateMetricName,
   validateMetricSql,
   previewTimeoutMs,
+  saveErrorTab,
   validateTemplate,
   validateThresholds,
 } from './metricsEditor';
@@ -718,8 +719,11 @@ const Metrics: React.FC = () => {
 
   const handleSave = async () => {
     if (!editingMetric.name?.trim()) { toast('Name is required', 'error'); return; }
-    if (!isTemplate && !editingMetric.sql?.trim()) { toast('SQL is required', 'error'); return; }
+    if (!isTemplate && !editingMetric.sql?.trim()) { setEditorTab('metric'); toast('SQL is required', 'error'); return; }
     if (hasBlockingErrors) {
+      // Reached by Enter only — the button is disabled — and a toast goes behind the modal in
+      // three seconds: open the tab that fails, where the hint is written.
+      if (hiddenErrorTabs.length > 0) setEditorTab(hiddenErrorTabs[0].tab);
       const first = [...nameValidation, ...sqlValidation, ...templateValidation, ...ddlValidation, ...thresholdValidation].find(m => m.level === 'error');
       toast(first!.text, 'error');
       return;
@@ -749,7 +753,9 @@ const Metrics: React.FC = () => {
       // Un toast disparaît derrière le modal en trois secondes, et `catch {}` jetait la seule
       // chose utile : la raison du refus — quelle colonne SQL est inconnue, quelle DDL ne compile
       // pas. Elle reste affichée dans le modal, là où l'on peut corriger.
-      setSaveError(describeApiError(err, 'Failed to save metric.'));
+      const info = describeApiError(err, 'Failed to save metric.');
+      setSaveError(info);
+      setEditorTab(saveErrorTab(info.raw));
     } finally {
       setSaving(false);
     }
@@ -1045,10 +1051,6 @@ const Metrics: React.FC = () => {
 
                 {/* Left: form */}
                 <div className="w-72 border-r border-outline-variant/60 flex flex-col shrink-0 overflow-y-auto p-5 space-y-4">
-
-                  {assistantReady && assistantStatus && (
-                    <MetricDraftAssist status={assistantStatus} topic={selectedTopic} onApply={applyMetricDraft} />
-                  )}
 
                   {/* Name */}
                   <div className="space-y-1.5">
@@ -1386,6 +1388,14 @@ const Metrics: React.FC = () => {
                       </span>
                     )}
                   </div>
+
+                  {/* The assistant drafts the metric's SQL, so it lives on that tab, at the width of the
+                      editor — in the 288 px column its proposal card was cramped. */}
+                  {editorTab === 'metric' && assistantReady && assistantStatus && (
+                    <div className="border-b border-outline-variant/60 p-3 max-h-72 overflow-y-auto shrink-0">
+                      <MetricDraftAssist status={assistantStatus} topic={selectedTopic} onApply={applyMetricDraft} />
+                    </div>
+                  )}
 
                   {/* Editor area */}
                   <div className="flex-1 overflow-hidden">

@@ -576,11 +576,11 @@ rename re-registers the series; an unknown mode is refused by name; and every wa
 but Save asks first once it holds the user's work. **Then B4–B6**: `save` refuses what the editor
 blocks (on save only, so a stored metric keeps running); the editor reads past a leading CTE,
 accepts a backticked alias and looks for it outside string literals; a failing `CREATE TABLE` is
-the preview's answer and heads the refresh error; the preview restores masked secrets. Still open:
-the light points only. The preview drops a table it created, from Flink and from the boot-replay
+the preview's answer and heads the refresh error; the preview restores masked secrets. Nothing is left open:
+the preview drops a table it created, from Flink and from the boot-replay
 store, and says when an edited DDL was not applied because the table already existed; the columns
 are fetched when the editor first opens (O1); the draft is written after a 400 ms pause without the
-value history (O2); and the preview waits for both sides of a template instead of the global 60 s.
+value history (O2); the preview waits for both sides of a template instead of the global 60 s; and the light points: the assistant sits on the SQL tab, a refused save opens the tab it is about, and Enter on a blocking error opens the failing tab.
 **U2 and U3 too**: a save answers the stored metric, which the page refreshes at once, and the
 modal says when the definition on screen was never previewed; `explorer.metric-max-series` (500)
 caps one metric's label series — past it nothing is published and the card says why, and the

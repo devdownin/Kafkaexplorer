@@ -386,6 +386,21 @@ describe('la liste, ses pannes et ses requêtes en vol', () => {
     expect(within(dialog).queryByText(/unknown column x/)).toBeNull();
   });
 
+  // METRICS-CREATION-AUDIT.md, light points: a refusal about the DDL opens the DDL tab.
+  it('opens the table DDL tab when the server refuses the definition of the table', async () => {
+    const user = userEvent.setup();
+    stubApi([{ ...templateMetric, templateParams: savableTemplateParams }]);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, ...rest: unknown[]) =>
+      url === '/api/metrics' ? Promise.reject({ isAxiosError: true, response: { status: 400,
+        data: { error: 'The table definition (CREATE TABLE) failed: Unsupported options found for kafka' } } })
+        : (post as (u: string, ...r: unknown[]) => Promise<unknown>)(url, ...rest));
+    await renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Edit this metric' }));
+    await user.click(await screen.findByRole('button', { name: 'Save & Activate' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Table DDL/ })).toHaveAttribute('aria-selected', 'true'));
+  });
+
   // METRICS-CREATION-AUDIT.md O1, O2: columns asked for by the editor, a draft written after a pause.
   it('asks for the table columns only once the editor opens, and keeps no value history in the draft', async () => {
     const user = userEvent.setup();

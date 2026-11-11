@@ -28,7 +28,10 @@ deux requêtes ont leur propre rapport (`METRICS-TWO-QUERY-AUDIT.md`) et ne sont
 > **Les optimisations aussi** : les colonnes des tables sont demandées à la première ouverture de
 > l'éditeur et non à chaque visite (O1) ; le brouillon est écrit après 400 ms de pause, sans
 > l'historique des valeurs, et vidé au départ de la page (O2) ; l'aperçu attend les deux côtés d'un
-> gabarit (`2 × timeoutMs + 15 s`) au lieu des 60 s globales. Restent les points plus légers. Chaque constat dit comment il a été établi —
+> gabarit (`2 × timeoutMs + 15 s`) au lieu des 60 s globales. **Les points plus légers aussi** :
+> l'assistant est sur l'onglet de la requête, à la largeur de l'éditeur ; un refus du serveur ouvre
+> l'onglet qu'il concerne (`saveErrorTab`) ; et Entrée avec une erreur bloquante ouvre l'onglet qui
+> échoue au lieu d'un toast. **Tout l'audit est traité.** Chaque constat dit comment il a été établi —
 > **reproduit** (un test l'a montré, jeté ensuite), ou **lu** (déduit du code, fichier nommé).
 > Douze constats, classés ; le premier est une régression introduite par l'assistant (PR #547).
 
