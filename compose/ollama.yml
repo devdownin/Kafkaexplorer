@@ -50,7 +50,12 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
-    entrypoint: [ "sh", "-c", "curl -X POST http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5-coder:7b\"}'" ]
+    # Two models, pulled one after the other: Process Mining's and the assistant's. The second is
+    # the one EMBEDDED-LLM-SCOPE.md §7.1 measured best on the assistant's 50 cases; the first was
+    # the weakest there and stays only for Process Mining, which that eval does not measure.
+    environment:
+      - ASSISTANT_MODEL=${EXPLORER_ASSISTANT_MODEL:-gemma4:e4b}
+    entrypoint: [ "sh", "-c", "curl -X POST http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5-coder:7b\"}' && curl -X POST http://ollama:11434/api/pull -d \"{\\\"name\\\": \\\"$$ASSISTANT_MODEL\\\"}\"" ]
 
   explorer:
     # `ollama` only, never `ollama-pull-model`: waiting on the pull held the UI back for the
@@ -87,6 +92,11 @@ services:
       # is on this stack, so nothing leaves it: on. Its prompt is ~12 000 characters, inside the
       # window set above, and it asks the same model (explorer.assistant.model overrides it).
       - EXPLORER_ASSISTANT_ENABLED=true
+      # Measured, not chosen by reputation: Gemma 4 E4B was the only one of four local models past
+      # every quality threshold (EMBEDDED-LLM-SCOPE.md §7.1). gemma4:e2b is the lighter option for a
+      # small machine — the only one under 30 s p95 on four CPU cores. Ollama loads one model or
+      # the other on demand, so the two never need to fit in memory at once.
+      - EXPLORER_ASSISTANT_MODEL=${EXPLORER_ASSISTANT_MODEL:-gemma4:e4b}
 
 # Merged with the base file's declarations rather than replacing them: `kafka_data`,
 # `explorer_logs` and `explorer_data` are declared there and stay.

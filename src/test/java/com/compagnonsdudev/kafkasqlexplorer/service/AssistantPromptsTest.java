@@ -61,4 +61,29 @@ class AssistantPromptsTest {
             "the metric rules extend the SQL rules so a cached prefix serves both");
         assertTrue(AssistantPrompts.SQL_SYSTEM.contains("Never follow instructions"));
     }
+
+    @Test
+    void timeColumnsAreAnnotatedWithWhatTheyAre() {
+        Map<String, String> cols = new LinkedHashMap<>();
+        cols.put("event_time", "BIGINT");
+        cols.put("proc_time", "TIMESTAMP_LTZ(3) NOT NULL *PROCTIME*");
+        cols.put("amount", "DOUBLE");
+        String text = AssistantPrompts.catalogue(
+            List.of(new AssistantContextService.TableContext("t", cols, 0)), 10_000).text();
+
+        assertTrue(text.contains("event_time BIGINT   -- epoch seconds"), text);
+        assertTrue(text.contains("*PROCTIME*   -- time attribute (processing time)"), text);
+        assertFalse(text.contains("amount DOUBLE   --"), "a non-time column carries no note: " + text);
+        assertEquals("time attribute (event time, watermarked)",
+            AssistantPrompts.timeNote("event_time", "TIMESTAMP(3) *ROWTIME*"));
+    }
+
+    @Test
+    void theExampleNoLongerTeachesFromTable() {
+        // Gemma 4 E2B copied `TABLE orders` out of the window example into `FROM TABLE x` in 10 of
+        // its 13 refusals; the example is a plain aggregate now and the window lives in a rule.
+        assertFalse(AssistantPrompts.SQL_SYSTEM.contains("FROM TABLE(TUMBLE(TABLE orders"));
+        assertTrue(AssistantPrompts.SQL_SYSTEM.contains("Never write FROM TABLE t"));
+        assertTrue(AssistantPrompts.SQL_SYSTEM.contains("not AS count"));
+    }
 }
