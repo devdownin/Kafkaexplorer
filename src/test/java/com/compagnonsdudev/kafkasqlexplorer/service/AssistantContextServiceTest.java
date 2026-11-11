@@ -102,6 +102,22 @@ class AssistantContextServiceTest {
     }
 
     @Test
+    void aStatementThatDoesNotParseStillNamesItsTable() {
+        // The commonest statement to fix: the grammar refuses it, so it yields no source.
+        AssistantContextService.Context context = service.build(null, "SELECT id, FROM demo_orders", List.of());
+
+        assertEquals(List.of("demo_orders"), context.tableNames());
+    }
+
+    @Test
+    void aMisspelledTableIsMatchedToTheClosestOne() {
+        AssistantContextService.Context context =
+            service.build(null, "SELECT * FROM demo_payment WHERE amount > 1", List.of());
+
+        assertEquals(List.of("demo_payments"), context.tableNames());
+    }
+
+    @Test
     void anUnreachableBrokerLeavesTheRegisteredTables() throws Exception {
         when(kafka.listTopics()).thenThrow(new java.util.concurrent.TimeoutException("broker down"));
 

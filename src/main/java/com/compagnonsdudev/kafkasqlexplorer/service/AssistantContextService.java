@@ -81,7 +81,13 @@ public class AssistantContextService {
             String prepared = flinkSqlService.withTopicTableNames(FlinkSqlService.prepareSql(sql));
             SqlAst.read(prepared).ifPresent(read -> statementSources.addAll(SqlAst.tableNames(read)));
         }
-        List<String> candidates = candidates(question, statementSources, explicit, known);
+        // The statement's text is read for names too, and not only when the grammar reads it: the
+        // commonest statement to fix is one that does not parse (`SELECT id, FROM t`) or that names
+        // a table which does not exist (`demo_customer`), and on both the grammar returns no
+        // source. Without this, FIX found no table on exactly those and answered "name a table"
+        // without asking the model — measured by the eval, three of its ten FIX cases.
+        String names = (question == null ? "" : question) + (sql == null ? "" : "\n" + sql);
+        List<String> candidates = candidates(names, statementSources, explicit, known);
 
         List<TableContext> described = new ArrayList<>();
         List<String> omitted = new ArrayList<>();
@@ -121,7 +127,14 @@ public class AssistantContextService {
             }
         }
         for (String source : statementSources) {
-            ordered.add(DdlGeneratorService.toTableName(source));
+            if (known.containsKey(key(source))) {
+                ordered.add(DdlGeneratorService.toTableName(known.get(key(source))));
+            } else {
+                // A source no table or topic carries is usually the fault being fixed — a
+                // misspelled name. Describing it is impossible; describing the closest table is
+                // what lets the model correct it.
+                lexicalMatches(source.replace('_', ' '), known).stream().findFirst().ifPresent(ordered::add);
+            }
         }
         String text = question == null ? "" : question;
         Matcher token = NAME_TOKEN.matcher(text);

@@ -41,7 +41,7 @@
 		  model is configured. `mcp-agent-eval` additionally needs the Docker stack up with
 		  MCP on (compose/mcp.yml), which `mvn verify` has no business starting.
 		-->
-		<test.excluded.groups>llm-eval,mcp-agent-eval</test.excluded.groups>
+		<test.excluded.groups>llm-eval,mcp-agent-eval,assistant-eval</test.excluded.groups>
 		<test.groups />
 		<!--
 			Spring AI 2.0.1 is built against Spring Boot 4.1.1 — the exact parent version above.
@@ -312,6 +312,18 @@
 		  gate requires, and letting it guard a pull request would hand a third party's weather a
 		  vote on a merge.
 		-->
+		<!--
+		  Runs the SQL assistant eval (EMBEDDED-LLM-SCOPE.md, lot 0), and only it, on the same
+		  argument as the two above. It needs a model, named by ASSISTANT_EVAL_MODEL, and skips
+		  rather than fails without one; bin/assistant-eval.sh runs it once per candidate model.
+		-->
+		<profile>
+			<id>assistant-eval</id>
+			<properties>
+				<test.excluded.groups />
+				<test.groups>assistant-eval</test.groups>
+			</properties>
+		</profile>
 		<profile>
 			<id>mcp-agent-eval</id>
 			<properties>

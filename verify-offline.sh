@@ -148,7 +148,7 @@ fi
 # The `=` form is the one recognised, which is the form every invocation in this repository uses.
 echo "==> Running tests"
 EXCLUDE_TAGS=""
-for tag in llm-eval mcp-agent-eval; do
+for tag in llm-eval mcp-agent-eval assistant-eval; do
   case " $* " in
     *" --include-tag=$tag "*) echo "==> $tag requested: not excluding it" ;;
     *) EXCLUDE_TAGS="$EXCLUDE_TAGS --exclude-tag=$tag" ;;
