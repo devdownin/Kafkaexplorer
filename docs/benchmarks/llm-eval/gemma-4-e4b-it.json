@@ -1,0 +1,72 @@
+{
+ "model": "gemma-4-e4b-it",
+ "provider": "Ollama",
+ "runs": [
+  {
+   "run": 1,
+   "error": null,
+   "formatHeld": true,
+   "flowchartNamesPipeline": true,
+   "plantedFactsFound": {
+    "corruptPayloads": false,
+    "duplicates": true,
+    "rejection": false,
+    "slowHop": true
+   },
+   "anomalies": 3,
+   "metricPriorities": 3,
+   "durationMs": 392829,
+   "inputTokens": 4160,
+   "outputTokens": 902,
+   "promptChars": 10483,
+   "said": "Le processus montre une forte variabilité dans le cheminement (3 variantes distinctes) et présente des goulots d'étranglement temporels notables, notamment entre l'enrichissement et la transformation.\nLe mécanisme de réessai ou de validation initiale est trop agressif, provoquant des boucles sur l'étape 'received'.\nL'étape d'enrichissement (3 -> 4) dépend d'un service externe lent ou saturé.\nLa distribution des fins de cas suggère que les ordres ne parviennent pas systématiquement à passer la phase initiale de validation/traitement.\nANO-001 demo.orders.1.received Le processus présente une forte proportion de boucles sur l'étape 'demo.orders.1.received' (2 cas sur 2 variantes), indiquant des re-traitements ou des validations initiales répétées. Problème de logique métier ou de mécanisme de déduplication/reprise au niveau du service 'demo.orders.1.received'.\nANO-002 demo.orders.3.enriched La latence entre 'demo.orders.3.enriched' et 'demo.orders.4.transformed' est la plus élevée (p95 à 6s), suggérant un goulot d'étranglement significatif dans cette étape. null\nANO-003 demo.orders.1.received Un nombre significatif de cas (4 sur 6) s'arrêtent à l'étape 'demo.orders.1.received', indiquant que le processus ne progresse pas vers la validation ou la livraison pour ces ordres. null\n"
+  },
+  {
+   "run": 2,
+   "error": null,
+   "formatHeld": true,
+   "flowchartNamesPipeline": true,
+   "plantedFactsFound": {
+    "corruptPayloads": false,
+    "duplicates": true,
+    "rejection": false,
+    "slowHop": true
+   },
+   "anomalies": 3,
+   "metricPriorities": 3,
+   "durationMs": 333189,
+   "inputTokens": 4160,
+   "outputTokens": 928,
+   "promptChars": 10483,
+   "said": "Analyse du flux de commande, révélant des goulots d'étranglement temporels importants et une faible complétion du processus.\nLe service 'demo.orders.3.enriched' pourrait dépendre d'un système externe lent ou subir une surcharge de traitement.\nLa boucle observée sur 'demo.orders.1.received' suggère un mécanisme de retry agressif ou une condition de validation initiale non résolue.\nLes cas qui s'arrêtent prématurément à 'received' pourraient être des erreurs d'ingestion ou des données invalides non traitées par les étapes suivantes.\nANO-001 demo.orders.1.received Le processus présente une forte proportion de boucles sur l'étape 'demo.orders.1.received' (2 cas sur 2 variantes), indiquant des re-traitements ou des validations initiales répétées. Problème de logique métier ou de mécanisme de déduplication/reprise au niveau du service 'demo.orders.1.received'.\nANO-002 demo.orders.3.enriched La latence entre 'demo.orders.3.enriched' et 'demo.orders.4.transformed' est la plus élevée (p95 à 6s), suggérant un goulot d'étranglement significatif dans cette étape. null\nANO-003 demo.orders.1.received Le taux de complétion du processus est faible : seulement 1 cas sur les 6 démarrés atteint l'état 'delivered', et 4 cas s'arrêtent prématurément à 'received'. null\n"
+  },
+  {
+   "run": 3,
+   "error": null,
+   "formatHeld": true,
+   "flowchartNamesPipeline": true,
+   "plantedFactsFound": {
+    "corruptPayloads": false,
+    "duplicates": true,
+    "rejection": false,
+    "slowHop": true
+   },
+   "anomalies": 3,
+   "metricPriorities": 3,
+   "durationMs": 327934,
+   "inputTokens": 4160,
+   "outputTokens": 928,
+   "promptChars": 10483,
+   "said": "Analyse du flux de commande, révélant des goulots d'étranglement temporels importants et une faible complétion du processus.\nLe service 'demo.orders.3.enriched' pourrait dépendre d'un système externe lent ou subir une surcharge de traitement.\nLa boucle observée sur 'demo.orders.1.received' suggère un mécanisme de retry agressif ou une condition de validation initiale non résolue.\nLes cas qui s'arrêtent prématurément à 'received' pourraient être des erreurs d'ingestion ou des données invalides non traitées par les étapes suivantes.\nANO-001 demo.orders.1.received Le processus présente une forte proportion de boucles sur l'étape 'demo.orders.1.received' (2 cas sur 2 variantes), indiquant des re-traitements ou des validations initiales répétées. Problème de logique métier ou de mécanisme de déduplication/reprise au niveau du service 'demo.orders.1.received'.\nANO-002 demo.orders.3.enriched La latence entre 'demo.orders.3.enriched' et 'demo.orders.4.transformed' est la plus élevée (p95 à 6s), suggérant un goulot d'étranglement significatif dans cette étape. null\nANO-003 demo.orders.1.received Le taux de complétion du processus est faible : seulement 1 cas sur les 6 démarrés atteint l'état 'delivered', et 4 cas s'arrêtent prématurément à 'received'. null\n"
+  }
+ ],
+ "run": {
+  "date": "2026-11-11",
+  "test": "LlmAnalysisEvalTest#reportsTheAnalysisForComparison, 3 runs, fixture eval/demo-order-pipeline.json",
+  "machine": "4 vCPU x86_64, 15 GB RAM, no GPU",
+  "server": "llama-cpp-python 0.3.36, n_ctx 16384 (the Ollama stack's window), logits_all off",
+  "decoding": "temperature 0, JSON-schema-constrained (relayed as json_object+schema)",
+  "plantedFactsNote": "rescored with the bilingual matcher of commit 76ac300 from the saved answer text",
+  "peakRss": "9.4 GB (server process, weights mmap'd, 16k KV cache)"
+ }
+}

@@ -1,7 +1,9 @@
 # setup-llm.ps1 - Automate LLM setup for Kafka SQL Explorer (Windows)
-# Recommended model: Qwen 2.5-Coder 7B
+# Recommended model: Gemma 4 E4B - one model for Process Mining and the SQL assistant, the one
+# measured best on both (EMBEDDED-LLM-SCOPE.md 7.1-7.2). gemma4:e2b on a small machine.
+# Needs Ollama 0.20 or newer.
 
-$ModelName = "qwen2.5-coder:7b"
+$ModelName = if ($env:OLLAMA_MODEL) { $env:OLLAMA_MODEL } else { "gemma4:e4b" }
 
 Write-Host "--- LLM Setup for Kafka SQL Explorer (Windows) ---" -ForegroundColor Cyan
 

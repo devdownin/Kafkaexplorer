@@ -942,6 +942,6 @@
   "weights": "Q4_K_M GGUF from Hugging Face (unsloth/*), SHA-256 checked against the published LFS oid",
   "decoding": "temperature 0, JSON-schema-constrained: the client's response_format json_schema relayed as llama-cpp-python's json_object+schema (grammar), which is what Ollama does internally",
   "assistant": "explorer.assistant defaults: max-tables 5, max-columns-per-table 40, prompt-char-budget 12000, repair-rounds 1, request timeout 300 s",
-  "peakRssNote": "VmHWM of the server process: weights (mmap), the 8192-token KV cache and the Python server"
+  "peakRssNote": "SUPERSEDED: this run's server kept logits for every position (llama-cpp-python's logits_all default), an n_ctx x vocabulary float array that is not the model's. Remeasured without it at the same 8192-token window: 5.1 GB peak resident, server included."
  }
 }

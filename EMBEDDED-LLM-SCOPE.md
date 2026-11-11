@@ -476,21 +476,28 @@ Rapports cas par cas : `docs/benchmarks/assistant-eval/` (prompt actuel) et son 
 
 | Modèle (Q4_K_M) | Correctes | Acceptées mais fausses | Non validées | Sans réponse | p50 | p95 | Mémoire de pointe |
 |---|---|---|---|---|---|---|---|
-| **Gemma 4 E4B** | **48 (96 %)** | 2 (4 %) | 0 | 0 | 25,2 s | 40,5 s | 11,5 Go |
-| Qwen3-4B-Instruct-2507 | 47 (94 %) | 1 (2 %) | 1 (2 %) | 1 (2 %) | 20,2 s | 37,0 s | 7,9 Go |
-| Gemma 4 E2B | 44 (88 %) | 2 (4 %) | 4 (8 %) | 0 | 16,1 s | 35,8 s | 7,7 Go |
+| **Gemma 4 E4B** | **48 (96 %)** | 2 (4 %) | 0 | 0 | 25,2 s | 40,5 s | 8,7 Go |
+| Qwen3-4B-Instruct-2507 | 47 (94 %) | 1 (2 %) | 1 (2 %) | 1 (2 %) | 20,2 s | 37,0 s | 6,4 Go |
+| Gemma 4 E2B | 44 (88 %) | 2 (4 %) | 4 (8 %) | 0 | 16,1 s | 35,8 s | 5,1 Go |
 
 **Premier passage (prompt v1)**, pour mémoire :
 
 | Modèle | Correctes | Acceptées mais fausses | Non validées | Sans réponse | p50 | p95 | Mémoire |
 |---|---|---|---|---|---|---|---|
-| Gemma 4 E4B | 45 (90 %) | 2 (4 %) | 3 (6 %) | 0 | 27,9 s | 60,3 s | 11,3 Go |
-| Qwen3-4B-Instruct-2507 | 42 (84 %) | 3 (6 %) | 5 (10 %) | 0 | 20,0 s | 51,0 s | 7,8 Go |
-| Gemma 4 E2B | 36 (72 %) | 1 (2 %) | 13 (26 %) | 0 | 18,9 s | 45,4 s | 7,6 Go |
-| `qwen2.5-coder:7b` | 34 (68 %) | 1 (2 %) | 5 (10 %) | 10 (20 %) | 24,8 s | 64,1 s | 11,1 Go |
+| Gemma 4 E4B | 45 (90 %) | 2 (4 %) | 3 (6 %) | 0 | 27,9 s | 60,3 s | *(faussé)* |
+| Qwen3-4B-Instruct-2507 | 42 (84 %) | 3 (6 %) | 5 (10 %) | 0 | 20,0 s | 51,0 s | *(faussé)* |
+| Gemma 4 E2B | 36 (72 %) | 1 (2 %) | 13 (26 %) | 0 | 18,9 s | 45,4 s | *(faussé)* |
+| `qwen2.5-coder:7b` | 34 (68 %) | 1 (2 %) | 5 (10 %) | 10 (20 %) | 24,8 s | 64,1 s | *(faussé)* |
 
-`qwen2.5-coder:7b` n'a pas été remesuré : il était dernier et ne sert plus l'assistant. La mémoire
-est le pic du processus serveur : poids, cache KV de 8 192 tokens et serveur Python.
+`qwen2.5-coder:7b` n'a pas été remesuré : il était dernier et ne sert plus l'assistant.
+
+**La mémoire a été remesurée, et les chiffres d'abord publiés étaient faux.** Le serveur de ces
+deux passages gardait les logits de chaque position (`logits_all`, actif par défaut dans
+`llama-cpp-python`) : un tableau de fenêtre × vocabulaire en flottants, environ 8 Gio pour Gemma
+(262 144 entrées de vocabulaire) à 8 192 positions, qui n'appartient pas au modèle. Il a été
+trouvé quand il a empêché Gemma de démarrer à 16 384 positions. Le tableau ci-dessus donne le pic
+sans lui, à la même fenêtre, serveur compris ; la colonne du premier passage ci-dessous garde les
+chiffres faussés, barrés par cette note.
 
 **Confrontés aux seuils fixés avant la mesure (prompt v2) :**
 
@@ -504,15 +511,16 @@ est le pic du processus serveur : poids, cache KV de 8 192 tokens et serveur Pyt
 
 **Décision.**
 
-- **Gemma 4 E4B sert l'assistant** dans `compose/ollama.yml` (`EXPLORER_ASSISTANT_MODEL`) : le plus
-  juste sur les deux passages, aucun refus du planificateur sur le second, et un tag Ollama vérifié
-  (`gemma4:e4b`, Ollama ≥ 0.20, la pile en épingle 0.32.6).
+- **Gemma 4 E4B sert l'assistant — et, depuis la §7.2, Process Mining aussi** : un seul modèle dans
+  `compose/ollama.yml` (`OLLAMA_MODEL`). Le plus juste sur les deux passages, aucun refus du
+  planificateur sur le second, et un tag Ollama vérifié (`gemma4:e4b`, Ollama ≥ 0.20, la pile en
+  épingle 0.32.6).
 - **Qwen3-4B-Instruct-2507 est à égalité dans la marge** (94 % contre 96 %, un cas d'écart sur 50)
-  pour 3,6 Go de moins et 20 % plus rapide. C'est le meilleur choix là où la mémoire compte ; son
+  pour 2,3 Go de moins et 20 % plus rapide. C'est le meilleur choix là où la mémoire compte ; son
   tag Ollama exact n'a pas été vérifié ici, d'où le défaut sur Gemma.
 - **Gemma 4 E2B pour une petite machine** : le seul à tenir le p95 de 30 s sur 4 cœurs pour la
   correction, mais il ne réussit aucune tranche de temps.
-- **`qwen2.5-coder:7b` ne sert plus l'assistant** ; il reste le modèle de Process Mining.
+- **`qwen2.5-coder:7b` ne sert plus ni l'assistant ni Process Mining** (§7.2).
 - **Aucun modèle ne tient 30 s de p95 en génération sur ce CPU** ; la latence se mesure sur la
   machine qui servira, avec `bin/llm-eval.sh`.
 
@@ -542,6 +550,45 @@ générales — elles décrivent le catalogue plutôt qu'un cas — mais un jeu 
 serait la mesure honnête. Un seul passage par modèle, 50 cas (4 à 12 par famille, soit ± une
 dizaine de points par famille), un seul jeu de topics, et un serveur llama.cpp plutôt qu'Ollama,
 la contrainte de schéma y passant par un relais local qui la traduit.
+
+### 7.2 Process Mining sur les mêmes modèles (2026-11-11)
+
+La question que pose « un seul modèle » : celui qui sert le mieux l'assistant tient-il Process
+Mining, que la §7.1 ne mesure pas ? Mesuré par `LlmAnalysisEvalTest#reportsTheAnalysisForComparison`
+sur le pipeline semé (`src/test/resources/eval/demo-order-pipeline.json`), trois analyses par
+modèle, à la fenêtre de la pile Ollama (16 384 tokens), même machine. Le rapport cherche dans la
+réponse quatre faits que le seeder a plantés — le rejet d'ORD-102, les redélivrances d'ORD-103 et
+ORD-105, les charges utiles tronquées d'ORD-666 et ORD-667, l'étape 3 → 4 trois fois plus lente —
+en français comme en anglais, et garde le texte de la réponse pour qu'un fait compté manquant se
+vérifie sur ce qu'a dit le modèle. Rapports : `docs/benchmarks/llm-eval/`.
+
+| Modèle | Format tenu | Graphe nommant le pipeline | Faits plantés trouvés | Anomalies | Priorités KPI | Durée médiane | Mémoire de pointe |
+|---|---|---|---|---|---|---|---|
+| **Gemma 4 E4B** | 3/3 | 3/3 | 6/12 (redélivrances, étape lente) | 3 | 3 | 5,6 min | 9,4 Go |
+| Qwen3-4B-Instruct-2507 | 3/3 | **0/3** | 6/12 (les mêmes) | 3–4 | 3–4 | 5,4 min | 7,9 Go |
+| `qwen2.5-coder:7b` (jusqu'ici) | 3/3 | 3/3 | 3/12 (étape lente) | 2 | 1–2 | 5,4 min | 10,5 Go |
+
+**Décision : un seul modèle, Gemma 4 E4B, pour Process Mining comme pour l'assistant.** Il fait au
+moins aussi bien que `qwen2.5-coder:7b` sur chaque colonne, pour une mémoire un peu moindre ; la
+pile Ollama ne tire plus qu'un modèle (`OLLAMA_MODEL`), avec une fenêtre et un délai pour les deux.
+Qwen3-4B, à égalité sur l'assistant, ne dessine le pipeline sous ses noms de topics dans aucune des
+trois analyses — le critère même de `theFlowchartDrawsThePipelineThatWasMeasured`.
+
+**La langue du prompt** : le format a tenu 9 fois sur 9 sur les trois modèles, prompt bilingue
+compris. Selon la règle que `PROCESS-MINING-LLM-SCOPE.md` pose elle-même — ne construire une
+variante anglaise que si une mesure montre des échecs de format —, il n'y a rien à construire. Ce
+que la langue change, c'est la réponse : les modèles répondent en français, et le premier
+détecteur de faits, en anglais seul, les comptait manquants ; il est bilingue depuis.
+
+**Ce qui reste ouvert, et ne dépend pas du modèle** : aucun des trois ne mentionne le rejet d'ORD-102
+ni les charges utiles tronquées. Trois modèles qui manquent les deux mêmes faits désignent ce que le
+prompt leur montre plutôt que leur lecture — à vérifier dans `LlmAnalysisService` avant de changer
+de modèle pour cette raison.
+
+**Limites** : trois analyses par modèle et un seul jeu de données ; des faits comptés par mots-clés,
+vérifiables à la main sur le texte gardé ; un serveur llama.cpp plutôt qu'Ollama. Le premier passage
+de `qwen2.5-coder:7b` (avec le tableau de logits ci-dessus) avait produit une réponse plus courte,
+une anomalie, aucun fait ; il n'est pas retenu, son texte n'ayant pas été gardé.
 
 ## 8. Plan par lots
 

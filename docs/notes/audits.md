@@ -551,8 +551,14 @@ design and why. Lot 0 has since been measured (§7.1, reports in `docs/benchmark
 twice. The first pass found two defects (fixed) and three prompt weaknesses — a rule claiming every
 `event_time` is watermarked, which is false on every demo topic; a window example leaking
 `FROM TABLE x` into small models; an unrepaired `AS count` — which prompt v2 fixed by annotating
-each time column in the catalogue rather than by a rule. On v2, Gemma 4 E4B is 96 % correct (now the
-assistant's model in `compose/ollama.yml`), Qwen3-4B 94 % for 3.6 GB less, Gemma 4 E2B 88 % and the
-only one under 30 s p95 on four CPU cores; `qwen2.5-coder:7b` (68 % on v1) no longer serves the
-assistant. The v2 gain is measured on the cases that inspired it, so it is an upper bound. Read it before
+each time column in the catalogue rather than by a rule. On v2, Gemma 4 E4B is 96 % correct, Qwen3-4B 94 % for 2.3 GB less, Gemma 4 E2B 88 % and the only one
+under 30 s p95 on four CPU cores. §7.2 then measured Process Mining on the same models: Gemma 4 E4B
+held its format and drew the pipeline every time and found twice the planted facts
+`qwen2.5-coder:7b` did, so `compose/ollama.yml` now serves one model (`OLLAMA_MODEL`, `gemma4:e4b`)
+to both consumers. The bilingual Process Mining prompt held its format 9 times in 9, so, by
+`PROCESS-MINING-LLM-SCOPE.md`'s own rule, no English variant is built. Two corrections are recorded
+in the report: the first memory figures were inflated by the eval server's logits buffer, and the
+first fact matcher read English only while the models answer in French. The v2 prompt gain is
+measured on the cases that inspired it, so it is an upper bound; and no model finds ORD-102's
+rejection or the truncated payloads, which points at the Process Mining prompt rather than the model. Read it before
 adding any LLM call outside Process Mining.

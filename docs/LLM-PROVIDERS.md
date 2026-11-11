@@ -360,13 +360,15 @@ every accepted statement against the seeder's data, on four CPU cores with no GP
 
 | Model (Q4_K_M) | Correct | Accepted but wrong | p95 | Peak memory |
 |---|---|---|---|---|
-| **Gemma 4 E4B** (`gemma4:e4b`) | 96 % | 4 % | 40 s | 11.5 GB |
-| Qwen3-4B-Instruct-2507 | 94 % | 2 % | 37 s | 7.9 GB |
-| Gemma 4 E2B (`gemma4:e2b`) | 88 % | 4 % | 36 s | 7.7 GB |
+| **Gemma 4 E4B** (`gemma4:e4b`) | 96 % | 4 % | 40 s | 8.7 GB |
+| Qwen3-4B-Instruct-2507 | 94 % | 2 % | 37 s | 6.4 GB |
+| Gemma 4 E2B (`gemma4:e2b`) | 88 % | 4 % | 36 s | 5.1 GB |
 
-`compose/ollama.yml` pulls `gemma4:e4b` for the assistant and keeps `qwen2.5-coder:7b` for Process
-Mining, which that evaluation did not measure; the weakest result on the assistant's questions was
-`qwen2.5-coder:7b` (68 %, v1 prompt). Use `gemma4:e2b` on a small machine. Gemma 4 needs Ollama
+**One model for both consumers.** Measured on Process Mining's seeded pipeline too (§7.2), Gemma 4
+E4B did at least as well as the previous `qwen2.5-coder:7b` on every count (format, pipeline,
+planted facts found, anomalies), so `compose/ollama.yml` now pulls one model, `OLLAMA_MODEL`
+(default `gemma4:e4b`), for Process Mining and the assistant alike — one pull, one window, one
+timeout. `qwen2.5-coder:7b` was the weakest on the assistant's questions (68 %, v1 prompt). Use `gemma4:e2b` on a small machine. Gemma 4 needs Ollama
 0.20 or newer. The latency is the one thing that depends on your hardware: measure it with
 `bin/llm-eval.sh`, which runs the assistant's 50 cases and Process Mining's seeded pipeline against whichever models you name and prints one line per model.
 

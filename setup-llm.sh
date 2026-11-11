@@ -1,9 +1,11 @@
 #!/bin/bash
 
 # setup-llm.sh - Automate LLM setup for Kafka SQL Explorer
-# Recommended model: Qwen 2.5-Coder 7B
+# Recommended model: Gemma 4 E4B — one model for Process Mining and the SQL assistant, the one
+# measured best on both (EMBEDDED-LLM-SCOPE.md §7.1-7.2). gemma4:e2b on a small machine.
+# Needs Ollama 0.20 or newer.
 
-MODEL_NAME="qwen2.5-coder:7b"
+MODEL_NAME="${OLLAMA_MODEL:-gemma4:e4b}"
 
 echo "--- LLM Setup for Kafka SQL Explorer ---"
 
