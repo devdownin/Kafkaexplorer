@@ -80,6 +80,25 @@ export function describeMetricScope(
 
   if (!lastSummary) return chips;
 
+  // A preview whose CREATE TABLE was not applied, the table already being there (IF NOT EXISTS).
+  if (typeof lastSummary.ddlNotApplied === 'string') {
+    chips.push({ label: 'DDL not applied', detail: lastSummary.ddlNotApplied, tone: 'warning' });
+  }
+
+  // How many label series the result makes (the preview counts them, METRICS-CREATION-AUDIT.md U3):
+  // every column besides metric_value is a label, and a key column makes one series per record.
+  const series = num(lastSummary, 'seriesCount');
+  if (series !== null && series > 1) {
+    chips.push({
+      label: `${series} series`,
+      detail:
+        'Each distinct combination of the non-metric_value columns is its own Prometheus series. ' +
+        'A column with one value per record makes one series per record, which is what ' +
+        'explorer.metric-max-series exists to stop.',
+      tone: series > 50 ? 'warning' : 'neutral',
+    });
+  }
+
   // Comment le compte a été obtenu, et sur quoi il porte : deux mesures différentes sous un même
   // nom de métrique, donc la carte le dit plutôt que de laisser deviner.
   if (lastSummary.countedBy === 'OFFSETS') {

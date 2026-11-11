@@ -562,3 +562,27 @@ first fact matcher read English only while the models answer in French. The v2 p
 measured on the cases that inspired it, so it is an upper bound; and no model finds ORD-102's
 rejection or the truncated payloads, which points at the Process Mining prompt rather than the model. Read it before
 adding any LLM call outside Process Mining.
+
+`METRICS-CREATION-AUDIT.md` (2026-11) reviews the path from "New metric" to a Prometheus series —
+the editor, the preview and `MetricService.save`. It fixed nothing. Twelve findings, seven of them
+reproduced by a throwaway test: the assistant's "Describe the metric" block is a `<form>` nested in
+the editor's, so **Draft also submits the editor** (a regression from the assistant work); a save
+whose write to Kafka fails still answers "Metric saved"; a rename leaves the `metric_name` tag of
+the registered series unchanged; the server accepts any name, type, threshold or SQL; and the
+client validator blocks a leading `WITH` and a backticked `metric_value` while accepting the alias
+written inside a string. **Fixed since: B1, B2, B3, B7 and U1** — the assistant block is a group,
+not a form; `save` writes to Kafka before publishing in memory and a failed write answers 503; a
+rename re-registers the series; an unknown mode is refused by name; and every way out of the editor
+but Save asks first once it holds the user's work. **Then B4–B6**: `save` refuses what the editor
+blocks (on save only, so a stored metric keeps running); the editor reads past a leading CTE,
+accepts a backticked alias and looks for it outside string literals; a failing `CREATE TABLE` is
+the preview's answer and heads the refresh error; the preview restores masked secrets. Nothing is left open:
+the preview drops a table it created, from Flink and from the boot-replay
+store, and says when an edited DDL was not applied because the table already existed; the columns
+are fetched when the editor first opens (O1); the draft is written after a 400 ms pause without the
+value history (O2); the preview waits for both sides of a template instead of the global 60 s; and the light points: the assistant sits on the SQL tab, a refused save opens the tab it is about, and Enter on a blocking error opens the failing tab.
+**U2 and U3 too**: a save answers the stored metric, which the page refreshes at once, and the
+modal says when the definition on screen was never previewed; `explorer.metric-max-series` (500)
+caps one metric's label series — past it nothing is published and the card says why, and the
+preview counts the series first.
+Read it before touching `Metrics.tsx`'s editor or `MetricService.save`.

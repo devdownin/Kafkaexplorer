@@ -50,10 +50,10 @@ class MetricServiceTest {
                 Map.of("metric_value", 3.0, "region", "eu", "metric_name", "source-eu"),
                 Map.of("metric_value", 4.0, "region", "eu", "metric_name", "source-eu"),
                 Map.of("metric_value", 9.0, "region", "us", "metric_name", "source-us")), 1L, null));
-        service.save(new MetricConfig(null, "observed-counter", "COUNTER",
+        service.save(new MetricConfig(null, "observed_counter", "COUNTER",
             "SELECT amount AS metric_value, region FROM t", null, null, null,
             null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
-        String id = service.getAllMetrics().stream().filter(m -> "observed-counter".equals(m.name()))
+        String id = service.getAllMetrics().stream().filter(m -> "observed_counter".equals(m.name()))
             .findFirst().orElseThrow().id();
 
         service.refreshMetric(id);
@@ -263,13 +263,13 @@ class MetricServiceTest {
     void testSaveAndDeleteMetric() {
         service.init();
         int initialSize = service.getAllMetrics().size();
-        MetricConfig newMetric = new MetricConfig(null, "Test Metric", "COUNTER", "SELECT 1 as metric_value", "Test Description", null, null, null, null, null, null);
+        MetricConfig newMetric = new MetricConfig(null, "test_metric", "COUNTER", "SELECT 1 as metric_value", "Test Description", null, null, null, null, null, null);
 
         service.save(newMetric);
         List<MetricConfig> metrics = service.getAllMetrics();
         assertEquals(initialSize + 1, metrics.size());
 
-        MetricConfig saved = metrics.stream().filter(m -> m.name().equals("Test Metric")).findFirst().orElseThrow();
+        MetricConfig saved = metrics.stream().filter(m -> m.name().equals("test_metric")).findFirst().orElseThrow();
         assertNotNull(saved.id());
 
         service.delete(saved.id());
@@ -282,12 +282,12 @@ class MetricServiceTest {
         service.init();
         MetricConfig original = service.getAllMetrics().get(0);
 
-        MetricConfig updated = new MetricConfig(original.id(), "Updated Name", "GAUGE", "SELECT 2 as metric_value", "Updated Desc", 10.0, 50.0, null, null, null, null);
+        MetricConfig updated = new MetricConfig(original.id(), "updated_name", "GAUGE", "SELECT 2 as metric_value", "Updated Desc", 10.0, 50.0, null, null, null, null);
         service.save(updated);
 
         Optional<MetricConfig> found = service.getById(original.id());
         assertTrue(found.isPresent());
-        assertEquals("Updated Name", found.get().name());
+        assertEquals("updated_name", found.get().name());
         assertEquals("GAUGE", found.get().type());
     }
 
@@ -407,7 +407,7 @@ class MetricServiceTest {
         stubBySql(Map.of("left_topic", directCount(10.0), "right_topic", directCount(4.0)));
 
         MetricConfig metric = new MetricConfig(
-            null, "delta-live", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
+            null, "delta_live", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
             "TOPIC_COUNT_DELTA",
             Map.of(
                 "leftSql", "SELECT COUNT(*) AS metric_value FROM left_topic",
@@ -419,7 +419,7 @@ class MetricServiceTest {
 
         service.save(metric);
         MetricConfig saved = service.getAllMetrics().stream()
-            .filter(m -> "delta-live".equals(m.name()))
+            .filter(m -> "delta_live".equals(m.name()))
             .findFirst()
             .orElseThrow();
 
@@ -437,7 +437,7 @@ class MetricServiceTest {
         service.init();
 
         MetricConfig metric = new MetricConfig(
-            null, "delta-managed", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
+            null, "delta_managed", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(), null,
             "TOPIC_COUNT_DELTA",
             Map.of(
                 "leftSql", "SELECT COUNT(*) AS metric_value FROM left_topic",
@@ -449,7 +449,7 @@ class MetricServiceTest {
 
         service.save(metric);
         MetricConfig saved = service.getAllMetrics().stream()
-            .filter(m -> "delta-managed".equals(m.name()))
+            .filter(m -> "delta_managed".equals(m.name()))
             .findFirst()
             .orElseThrow();
 
@@ -484,6 +484,206 @@ class MetricServiceTest {
         assertEquals("FLINK_MANAGED_JOB", preview.summary().get("plannedExecutionMode"));
         assertEquals("TEMPLATE_BOUNDED_SCAN", preview.summary().get("previewExecutionMode"));
         assertEquals("PLANNED", preview.summary().get("managedJobStatus"));
+    }
+
+    /** METRICS-CREATION-AUDIT.md B3: the name is a tag of the series, so a rename re-registers it. */
+    @Test
+    void renamingAMetricRenamesItsSeries() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 5.0)), 10L, null));
+        service.save(new MetricConfig(
+            null, "before_rename", "GAUGE", "SELECT 5 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "before_rename".equals(m.name())).findFirst().orElseThrow().id();
+        service.refreshMetrics();
+
+        service.save(new MetricConfig(
+            id, "after_rename", "GAUGE", "SELECT 5 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
+        service.refreshMetrics();
+
+        assertTrue(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id)
+            .tag("metric_name", "before_rename").meters().isEmpty(), "the old name must not survive a rename");
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id)
+            .tag("metric_name", "after_rename").meters().isEmpty());
+    }
+
+    /** METRICS-CREATION-AUDIT.md B2: a definition no topic received is not saved, and says so. */
+    @Test
+    void aSaveThatCannotBeWrittenFailsAndChangesNothing() {
+        MetricConfig kept = new MetricConfig(
+            null, "kept", "GAUGE", "SELECT 1 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of());
+        service.save(kept);
+        String id = service.getAllMetrics().stream()
+            .filter(m -> "kept".equals(m.name())).findFirst().orElseThrow().id();
+        int before = service.getAllMetrics().size();
+        producer.close();
+
+        MetricService.MetricPersistenceException created = assertThrows(MetricService.MetricPersistenceException.class,
+            () -> service.save(new MetricConfig(
+                null, "never_written", "GAUGE", "SELECT 2 AS metric_value", null, null, null,
+                null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of())));
+        assertTrue(created.getMessage().contains("internal.metrics.config"), created.getMessage());
+        assertThrows(MetricService.MetricPersistenceException.class,
+            () -> service.save(new MetricConfig(
+                id, "kept_renamed", "GAUGE", "SELECT 1 AS metric_value", null, null, null,
+                null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of())));
+
+        assertEquals(before, service.getAllMetrics().size());
+        assertEquals("kept", service.getById(id).orElseThrow().name());
+    }
+
+    private static MetricConfig rawSql(String name, String type, String sql, Double warn, Double crit) {
+        return new MetricConfig(null, name, type, sql, null, warn, crit,
+            null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of());
+    }
+
+    /** METRICS-CREATION-AUDIT.md B4: what the editor blocks, the server refuses on save. */
+    @Test
+    void aSaveIsHeldToTheEditorsBlockingRules() {
+        String ok = "SELECT COUNT(*) AS metric_value FROM t";
+        assertThrows(IllegalArgumentException.class, () -> service.save(rawSql("bad name!{}", "GAUGE", ok, null, null)));
+        assertThrows(IllegalArgumentException.class, () -> service.save(rawSql("m", "FOO", ok, null, null)));
+        assertThrows(IllegalArgumentException.class, () -> service.save(rawSql("m", "GAUGE", "DROP TABLE x", null, null)));
+        assertThrows(IllegalArgumentException.class, () -> service.save(rawSql("m", "GAUGE", ok, Double.NaN, null)));
+        assertThrows(IllegalArgumentException.class, () -> service.save(rawSql("m", "GAUGE", ok, 5.0, 5.0)));
+        // A refusal sent nothing anywhere.
+        assertTrue(producer.history().stream().noneMatch(r -> r.value() != null && r.value().contains("\"name\":\"m\"")));
+
+        // What the engine accepts, the save accepts: a leading CTE, a comment, a descending pair.
+        service.save(rawSql("with_cte", "GAUGE",
+            "-- recent ones\nWITH r AS (SELECT * FROM t) SELECT COUNT(*) AS metric_value FROM r", 0.99, 0.95));
+        service.save(rawSql("hinted", "gauge", "/* c */ SELECT COUNT(*) AS `metric_value` FROM t", null, null));
+        assertTrue(service.getAllMetrics().stream().anyMatch(m -> "with_cte".equals(m.name())));
+        assertTrue(service.getAllMetrics().stream().anyMatch(m -> "hinted".equals(m.name())));
+    }
+
+    @Test
+    void commentsAreRemovedOutsideTheLiteralsOnly() {
+        assertEquals("SELECT '--x' AS a", MetricService.withoutSqlComments("SELECT '--x' AS a -- tail"));
+        assertEquals("SELECT /*+ OPTIONS('a'='b') */ 1",
+            MetricService.withoutSqlComments("/* lead */SELECT /*+ OPTIONS('a'='b') */ 1"));
+    }
+
+    /** METRICS-CREATION-AUDIT.md B6: a failing CREATE TABLE is the preview's answer, by name. */
+    @Test
+    void aPreviewReportsTheTableDefinitionThatFailed() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.argThat(r -> r != null && r.sql().startsWith("CREATE"))))
+            .thenReturn(new QueryResult(List.of(), List.of(), 0L, "Unsupported options found for 'kafka': bogus"));
+        MetricConfig withDdl = new MetricConfig(null, "m", "GAUGE", "SELECT COUNT(*) AS metric_value FROM t", null,
+            null, null, null, null, null, List.of(), Map.of(),
+            "CREATE TABLE t (a STRING) WITH ('connector'='kafka','bogus'='1')",
+            null, null, null, null, List.of());
+
+        var preview = service.previewMetric(withDdl);
+
+        assertNotNull(preview.error());
+        assertTrue(preview.error().startsWith("The table definition (CREATE TABLE) failed: Unsupported options"),
+            preview.error());
+    }
+
+    /** METRICS-CREATION-AUDIT.md B6: the preview restores the secrets the browser only saw masked. */
+    @Test
+    void aPreviewRestoresTheMaskedSecretsOfAStoredMetric() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 1.0)), 1L, null));
+        String real = "CREATE TABLE t (a STRING) WITH ('connector'='kafka',"
+            + "'properties.sasl.jaas.config'='org.apache.kafka.common.security.plain.PlainLoginModule required username=\"u\" password=\"s3cret\";')";
+        service.save(new MetricConfig(null, "secretive", "GAUGE", "SELECT COUNT(*) AS metric_value FROM t", null,
+            null, null, null, null, null, List.of(), Map.of(), real, null, null, null, null, List.of()));
+        MetricConfig stored = service.getAllMetrics().stream()
+            .filter(m -> "secretive".equals(m.name())).findFirst().orElseThrow();
+        String masked = DdlGeneratorService.maskSensitiveProperties(real);
+        assertNotEquals(real, masked);
+        Mockito.clearInvocations(flinkSqlService);
+
+        service.previewMetric(new MetricConfig(stored.id(), "secretive", "GAUGE", stored.sql(), null,
+            null, null, null, null, null, List.of(), Map.of(), masked, null, null, null, null, List.of()));
+
+        var ddl = ArgumentCaptor.forClass(QueryRequest.class);
+        Mockito.verify(flinkSqlService, Mockito.atLeastOnce()).executeSql(ddl.capture());
+        assertTrue(ddl.getAllValues().stream().anyMatch(r -> r.sql().startsWith("CREATE") && r.sql().contains("s3cret")));
+        assertTrue(ddl.getAllValues().stream().noneMatch(r -> r.sql().contains("******")));
+    }
+
+    /** METRICS-CREATION-AUDIT.md U2: a creation learns its id. */
+    @Test
+    void saveReturnsTheStoredMetricWithItsId() {
+        MetricConfig stored = service.save(rawSql("created", "GAUGE", "SELECT COUNT(*) AS metric_value FROM t", null, null));
+        assertNotNull(stored.id());
+        assertEquals("created", service.getById(stored.id()).orElseThrow().name());
+    }
+
+    private static QueryResult oneSeriesPerRow(int rows) {
+        List<Map<String, Object>> data = new java.util.ArrayList<>();
+        for (int i = 0; i < rows; i++) data.add(Map.of("id", "o-" + i, "metric_value", (double) i));
+        return new QueryResult(List.of("id", "metric_value"), data, rows, null);
+    }
+
+    /** METRICS-CREATION-AUDIT.md U3: past the cap, nothing is published and the card says why. */
+    @Test
+    void aResultPastTheSeriesCapPublishesNothing() {
+        Mockito.when(explorerConfig.getMetricMaxSeries()).thenReturn(3);
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(oneSeriesPerRow(5));
+        String id = service.save(rawSql("per_order", "GAUGE", "SELECT id, amount AS metric_value FROM t", null, null)).id();
+
+        service.refreshMetrics();
+
+        assertTrue(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().isEmpty());
+        String error = service.getById(id).orElseThrow().errorMessage();
+        assertNotNull(error);
+        assertTrue(error.contains("5 label series") && error.contains("explorer.metric-max-series"), error);
+    }
+
+    @Test
+    void aPreviewCountsTheSeriesAndRefusesPastTheCap() {
+        Mockito.when(explorerConfig.getMetricMaxSeries()).thenReturn(3);
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(oneSeriesPerRow(2));
+        MetricConfig m = rawSql("per_order", "GAUGE", "SELECT id, amount AS metric_value FROM t", null, null);
+
+        var within = service.previewMetric(m);
+        assertNull(within.error());
+        assertEquals(2, within.summary().get("seriesCount"));
+
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(oneSeriesPerRow(4));
+        var past = service.previewMetric(m);
+        assertNotNull(past.error());
+        assertTrue(past.error().contains("4 label series"), past.error());
+    }
+
+    /** METRICS-CREATION-AUDIT.md B6: a preview leaves no table behind, and says when its DDL did not apply. */
+    @Test
+    void aPreviewDropsTheTableItCreatedAndNamesTheOneItCouldNotReplace() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 1.0)), 1L, null));
+
+        var fresh = service.previewMetric(new MetricConfig(null, "m", "GAUGE", "SELECT COUNT(*) AS metric_value FROM fresh_t",
+            null, null, null, null, null, null, List.of(), Map.of(),
+            "CREATE TABLE fresh_t (a STRING) WITH ('connector'='kafka')", null, null, null, null, List.of()));
+        assertNull(fresh.error());
+        Mockito.verify(flinkSqlService).dropTable("fresh_t");
+        assertFalse(fresh.summary().containsKey("ddlNotApplied"));
+
+        var shadowed = service.previewMetric(new MetricConfig(null, "m", "GAUGE", "SELECT COUNT(*) AS metric_value FROM demo_orders_in",
+            null, null, null, null, null, null, List.of(), Map.of(),
+            "CREATE TABLE `demo_orders_in` (b STRING) WITH ('connector'='kafka')", null, null, null, null, List.of()));
+        Mockito.verify(flinkSqlService, Mockito.never()).dropTable("demo_orders_in");
+        assertTrue(String.valueOf(shadowed.summary().get("ddlNotApplied")).contains("demo_orders_in"),
+            String.valueOf(shadowed.summary()));
+    }
+
+    /** METRICS-CREATION-AUDIT.md B7: an unknown mode is refused by name, not by a Java class name. */
+    @Test
+    void anUnknownExecutionModeIsRefusedInTheEditorsWords() {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> service.save(new MetricConfig(
+                null, "turbo", "GAUGE", "SELECT 1 AS metric_value", null, null, null,
+                null, null, null, List.of(), Map.of(), null, null, null, "TURBO", null, List.of())));
+        assertTrue(e.getMessage().startsWith("Unknown execution mode 'TURBO'"), e.getMessage());
+        assertTrue(e.getMessage().contains("TEMPLATE_BOUNDED_SCAN"), e.getMessage());
+        assertFalse(e.getMessage().contains("com.compagnonsdudev"), e.getMessage());
     }
 
     @Test
@@ -539,7 +739,7 @@ class MetricServiceTest {
             List.of("metric_value"), List.of(Map.of("metric_value", 42.0)), 5L, null, false, "KAFKA_DIRECT"));
 
         service.save(new MetricConfig(
-            null, "raw-count", "GAUGE", "SELECT COUNT(*) AS metric_value FROM demo_orders_in", null,
+            null, "raw_count", "GAUGE", "SELECT COUNT(*) AS metric_value FROM demo_orders_in", null,
             null, null, null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
         service.refreshMetrics();
 
@@ -567,13 +767,13 @@ class MetricServiceTest {
         // Une jointure : la forme qui a réellement besoin du planner, donc celle où un changelog
         // tronqué peut arriver.
         service.save(new MetricConfig(
-            null, "raw-join", "GAUGE",
+            null, "raw_join", "GAUGE",
             "SELECT COUNT(*) AS metric_value FROM a JOIN b ON a.id = b.id", null,
             null, null, null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
         service.refreshMetrics();
 
         MetricConfig stored = service.getAllMetrics().stream()
-            .filter(m -> "raw-join".equals(m.name())).findFirst().orElseThrow();
+            .filter(m -> "raw_join".equals(m.name())).findFirst().orElseThrow();
         assertNull(stored.lastValue(),
             "a partial count must not be published as a value, got: " + stored.lastValue());
         assertNotNull(stored.errorMessage());
@@ -596,13 +796,13 @@ class MetricServiceTest {
             5L, null, false, "FLINK"));
 
         service.save(new MetricConfig(
-            null, "raw-changelog", "GAUGE",
+            null, "raw_changelog", "GAUGE",
             "SELECT COUNT(*) AS metric_value FROM a JOIN b ON a.id = b.id", null,
             null, null, null, null, null, List.of(), Map.of(), null, null, null, null, null, List.of()));
         service.refreshMetrics();
 
         MetricConfig stored = service.getAllMetrics().stream()
-            .filter(m -> "raw-changelog".equals(m.name())).findFirst().orElseThrow();
+            .filter(m -> "raw_changelog".equals(m.name())).findFirst().orElseThrow();
         assertEquals(7.0, stored.lastValue(),
             "the last row of a complete changelog is the aggregate; the first is +I(1)");
     }

@@ -14,6 +14,7 @@ import userEvent from '@testing-library/user-event';
 const post = vi.fn();
 vi.mock('axios', () => ({ default: { post: (...a: unknown[]) => post(...a) } }));
 
+import type React from 'react';
 import { MetricDraftAssist } from './MetricDraftAssist';
 import type { AssistantStatus } from '../../api/types';
 
@@ -58,5 +59,24 @@ describe('MetricDraftAssist', () => {
     expect(screen.getByText(/connection refused/)).toBeInTheDocument();
     expect(post.mock.calls[0][1]).toEqual({ description: 'anything', topic: null });
     expect(screen.queryByRole('button', { name: /Fill the form/ })).not.toBeInTheDocument();
+  });
+
+  // METRICS-CREATION-AUDIT.md B1: the panel lives inside the metric editor's <form>.
+  it('drafts without submitting the editor it sits in', async () => {
+    post.mockResolvedValue({ data: DRAFT });
+    const saved = vi.fn((e: React.FormEvent) => e.preventDefault());
+    const { container } = render(
+      <form onSubmit={saved}>
+        <MetricDraftAssist status={STATUS} topic="" onApply={vi.fn()} />
+      </form>);
+
+    expect(container.querySelectorAll('form')).toHaveLength(1);
+    await userEvent.type(screen.getByLabelText(/Describe the metric/), 'orders count');
+    await userEvent.click(screen.getByRole('button', { name: 'Draft' }));
+    expect(await screen.findByText('Accepted by the planner')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText(/Describe the metric/), '{Control>}{Enter}{/Control}');
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(saved).not.toHaveBeenCalled();
   });
 });

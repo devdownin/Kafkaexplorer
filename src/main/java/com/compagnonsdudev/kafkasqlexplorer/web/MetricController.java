@@ -16,6 +16,7 @@ import com.compagnonsdudev.kafkasqlexplorer.service.MessageFieldExtractorService
 import com.compagnonsdudev.kafkasqlexplorer.service.MessageFormatterService;
 import com.compagnonsdudev.kafkasqlexplorer.service.MetricService;
 import com.compagnonsdudev.kafkasqlexplorer.service.MetricSuggestionService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -83,14 +84,18 @@ public class MetricController {
     @PostMapping
     public ResponseEntity<?> save(@RequestBody MetricConfig metric) {
         try {
-            metricService.save(metric);
-            return ResponseEntity.ok().build();
+            // The stored metric, masked: a creation had no way to learn its id, so the page could
+            // not refresh what it had just made and the card sat "pending" until the next cycle (U2).
+            return ResponseEntity.ok(maskForDisplay(metricService.save(metric)));
         } catch (IllegalArgumentException e) {
             // ApiError.of, et non Map.of("error", e.getMessage()) : `getMessage()` est nul sur une
             // NPE et Map.of refuse un nul, donc ce chemin répondait 500 sans corps exactement
             // quand l'appelant a besoin d'une raison — le défaut corrigé sur `ddl-preview`,
             // resté debout ici. La forme sur le fil est la même, le navigateur lit `error`.
             return ResponseEntity.badRequest().body(ApiError.of(e));
+        } catch (MetricService.MetricPersistenceException e) {
+            // 503, not 200: the definition reached no topic, so it would not survive a restart.
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ApiError.of(e));
         }
     }
 
