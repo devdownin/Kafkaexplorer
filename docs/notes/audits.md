@@ -312,6 +312,12 @@ layout, and two statements of identical text being indistinguishable to `resolve
 the ones a test pins, which is why every one of them carries a test verified to fail against the
 revision it describes.
 
+**A third pass (X1–X10, 2026-11) audits simplicity and fluidity**, observed in the real UI on
+frozen fixtures: results are page-level rather than per tab, a click on a topic fills without
+running and reads the oldest records, the toolbar's first question is the engine, the panel says
+"No results yet" while a query runs, `Ctrl+Enter` works only inside the editor, and the editor gets
+42 % of a 1440 px window. **Nothing in it is fixed.**
+
 **A second pass (S1–S7) sits under it**, and two of its seven items are the first pass's own
 corrections re-opened by work that landed afterwards — which is the reason to read it before
 touching either path again. The pre-flight `POST /api/query/validate` was added *above*
