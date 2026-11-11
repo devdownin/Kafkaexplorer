@@ -146,7 +146,7 @@ def main():
     compose(*kafka[:-1], kafka[-1] + 'kafka-console-consumer.sh', '--bootstrap-server', 'localhost:9092',
             '--topic', 'forecast.ci.orders', '--group', 'forecast-ci', '--from-beginning', '--max-messages', '1',
             '--consumer-property', 'enable.auto.commit=true', '--consumer-property', 'auto.commit.interval.ms=100')
-    api('/api/metrics', {'id': 'forecast-ci-lag', 'name': 'CI consumer time lag', 'type': 'GAUGE',
+    api('/api/metrics', {'id': 'forecast-ci-lag', 'name': 'ci_consumer_time_lag', 'type': 'GAUGE',
                         'templateType': 'CONSUMER_TIME_LAG', 'executionMode': 'TEMPLATE_BOUNDED_SCAN',
                         'templateParams': {'topic': 'forecast.ci.orders', 'group': 'forecast-ci', 'aggregation': 'MAX'}})
     api('/api/metrics/forecast-ci-lag/refresh', {})
