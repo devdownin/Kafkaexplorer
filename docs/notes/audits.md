@@ -547,6 +547,11 @@ metric draft; and gate every output through `SqlAst`, the whitelist and an `EXPL
 run or saved without a gesture. Lots 1–3 have since shipped (`/api/assistant/*`, the editor's
 ask bar and "Suggest a fix", the Metrics editor's draft), **off by default** and on in
 `compose/ollama.yml`; the report's status block lists where the shipped code departs from the
-design and why. Lot 0, the evaluation on the seeded demo topics, is still open — so which model,
-and how often an accepted statement answers the wrong question, are not measured. Read it before
+design and why. Lot 0 has since been measured (§7.1, reports in `docs/benchmarks/assistant-eval/`):
+on 50 cases run and executed, Gemma 4 E4B was the only model past every quality threshold (90 %
+correct, 4 % accepted-but-wrong, joins included), Gemma 4 E2B the only one under the 30 s p95 on four
+CPU cores, and the shipped `qwen2.5-coder:7b` the weakest (68 %, abstaining on a fifth of the cases).
+It also found two defects (fixed) and three prompt weaknesses (open): windows over the demo topics'
+epoch-seconds `event_time`, the window example leaking `FROM TABLE x` into small models, and an
+unrepaired `AS count`. Read it before
 adding any LLM call outside Process Mining.

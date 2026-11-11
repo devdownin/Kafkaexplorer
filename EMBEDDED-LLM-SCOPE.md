@@ -6,12 +6,10 @@ n'en tirent rien. Ce document étudie ce qu'il faudrait pour qu'un petit modèle
 Gemma y aide : où le faire tourner, à quoi l'employer, et comment l'encadrer pour qu'une réponse
 fausse ne passe jamais pour une réponse juste.
 
-> **Statut.** **Les lots 1, 2 et 3 sont livrés** (section 8) ; le lot 0 — l'évaluation sur un vrai
-> modèle — ne l'est pas, ce qui veut dire que **le choix du modèle et la qualité des propositions ne
-> sont pas mesurés** : l'assistant est livré éteint, et la porte déterministe est ce qui le rend
-> défendable sans cette mesure, pas un substitut à elle. Les chiffres de taille et de mémoire des
-> modèles viennent de sources publiques citées en fin de document, **pas d'une mesure faite ici**.
-> Ce qui est affirmé du code a été lu dans le code et nomme son fichier.
+> **Statut.** **Les lots 0 à 3 sont faits** (section 8). Le lot 0 a été **mesuré** le 2026-11-11 sur
+> quatre modèles locaux ; ses résultats et la décision qu'ils emportent sont en section 7.1. Les
+> chiffres de taille et de mémoire de la section 3 viennent de sources publiques ; ceux de la
+> section 7.1 sont mesurés. Ce qui est affirmé du code a été lu dans le code et nomme son fichier.
 >
 > **Écarts entre la conception ci-dessous et ce qui a été livré**, chacun pour une raison :
 >
@@ -465,11 +463,77 @@ l'agent MCP.
 
 ---
 
+### 7.1 Résultats (2026-11-11)
+
+Mesurés par `AssistantEvalTest` sur les 50 cas de `src/test/resources/eval/assistant/cases.json`,
+une fois par modèle. Conditions : 4 vCPU x86_64 sans GPU, 15 Go de RAM ; llama.cpp
+(`llama-cpp-python` 0.3.36), fenêtre de 8 192 tokens, poids Q4_K_M vérifiés par SHA-256 ;
+température 0 et sortie contrainte par le schéma JSON, comme sur la pile Ollama ; réglages
+`explorer.assistant.*` par défaut. Rapports cas par cas : `docs/benchmarks/assistant-eval/`.
+
+| Modèle (Q4_K_M) | Correctes | Acceptées mais fausses | Non validées | Sans réponse | p50 | p95 | Mémoire de pointe |
+|---|---|---|---|---|---|---|---|
+| **Gemma 4 E4B** | **45 (90 %)** | 2 (4 %) | 3 (6 %) | 0 | 27,9 s | 60,3 s | 11,3 Go |
+| Qwen3-4B-Instruct-2507 | 42 (84 %) | 3 (6 %) | 5 (10 %) | 0 | 20,0 s | 51,0 s | 7,8 Go |
+| Gemma 4 E2B | 36 (72 %) | 1 (2 %) | 13 (26 %) | 0 | 18,9 s | 45,4 s | 7,6 Go |
+| `qwen2.5-coder:7b` (livré aujourd'hui) | 34 (68 %) | 1 (2 %) | 5 (10 %) | 10 (20 %) | 24,8 s | 64,1 s | 11,1 Go |
+
+La mémoire est le pic du processus serveur : poids, cache KV de 8 192 tokens et serveur Python.
+
+**Confrontés aux seuils fixés avant de lancer la mesure :**
+
+| Seuil | Gemma 4 E4B | Qwen3-4B | Gemma 4 E2B | qwen2.5-coder 7B |
+|---|---|---|---|---|
+| U1 : ≥ 80 % de corrections acceptées | 100 % ✓ | 100 % ✓ | 100 % ✓ | 90 % ✓ |
+| U1 : p95 < 30 s (sur ce CPU) | 48,9 s ✗ | 53,5 s ✗ | **25,3 s ✓** | 43,3 s ✗ |
+| U2 mono-table : ≥ 70 % justes | 95 % ✓ | 86 % ✓ | 73 % ✓ | 68 % ✗ |
+| U2 mono-table : faux < 10 % | 5 % ✓ | 5 % ✓ | 5 % ✓ | 5 % ✓ |
+| Jointures (mêmes seuils) | 100 % / 0 % ✓ | 75 % / 25 % ✗ | 100 % / 0 % ✓ | 38 % ✗ |
+
+**Décision.**
+
+- **Gemma 4 E4B est le modèle recommandé pour l'assistant** : le seul à passer tous les seuils de
+  qualité, jointures comprises, et le plus bas taux d'erreur parmi les plus justes.
+- **Gemma 4 E2B est l'option des petites machines** : le seul à tenir le p95 de 30 s sur 4 cœurs
+  pour la correction, avec le taux de « faux » le plus bas. Il échoue surtout par une erreur de
+  forme que le prompt induit (ci-dessous).
+- **`qwen2.5-coder:7b` ne doit pas servir l'assistant** : dernier en exactitude, et il s'abstient
+  sur 20 % des cas, dont 5 jointures sur 8. Il reste le modèle de Process Mining, que cette
+  évaluation ne mesure pas.
+- **Le seuil de latence de U1 n'est tenu que par E2B, sur 4 cœurs sans GPU.** Ce n'est pas un
+  échec de l'usage mais une condition matérielle : la latence se mesure sur la machine qui servira,
+  et `bin/assistant-eval.sh` est fait pour ça. Aucun modèle n'est en dessous de 15 s de p50 :
+  l'assistant reste un geste qu'on attend, pas une complétion.
+
+**Ce que la mesure a appris sur le produit**, au-delà du choix du modèle :
+
+1. **Deux défauts corrigés avant cette mesure, trouvés par le banc.** En mode `FIX`, une requête
+   qui ne se parse pas ou qui nomme une table absente ne donnait aucune table au modèle (un oracle
+   rendant la référence obtenait 47/50). Et toute réparation plantait sur un fournisseur local, la
+   somme des coûts déballant un `null` : 8 cas sur 50 du premier passage. Les chiffres ci-dessus
+   sont ceux du second passage.
+2. **Les fenêtres sur les topics de démo sont hors de portée du planificateur**, pour tous les
+   modèles (1 sur 4 au mieux). Leur `event_time` est l'epoch en secondes du payload, un `BIGINT`
+   sans watermark, et chaque modèle tente quand même `TUMBLE` ou `TO_TIMESTAMP` dessus. La
+   correction est dans le prompt : dire qu'un `event_time` entier se découpe par division entière.
+3. **L'exemple de fenêtre du prompt déteint sur les petits modèles.** Gemma 4 E2B écrit
+   `FROM TABLE demo_orders_1_received` dans 10 de ses 13 refus, forme copiée de
+   `TABLE(TUMBLE(TABLE orders …))`, et la réparation ne la corrige pas.
+4. **`AS count` est refusé et n'est pas réparé** (Qwen3-4B, qwen2.5-coder) : le mot réservé est cité
+   dans les règles, sans effet. Une règle explicite (« jamais `AS count` ») ou un exemple serait
+   plus sûr.
+5. **Une référence est ambiguë** : J06 (« les commandes des clients VIP ») compte les redélivrances,
+   et Qwen3-4B a mis un `DISTINCT` défendable. Sans ce cas, Qwen3-4B est à 86 % de justes.
+
+Limites : un seul passage par modèle, 50 cas (4 à 12 par famille, donc ± une dizaine de points
+par famille), un seul jeu de topics, et un serveur llama.cpp plutôt qu'Ollama ; la contrainte de
+schéma y est la même, sa traduction passant par un relais local.
+
 ## 8. Plan par lots
 
 | Lot | Contenu | Taille | Dépend de |
 |---|---|---|---|
-| **0 — Mesurer** *(ouvert)* | Fixture de questions, test `assistant-eval`, prototype de prompt, banc des quatre candidats ; `compose/ollama.yml` paramétré par modèle | M | — |
+| **0 — Mesurer** *(fait, §7.1)* | Fixture de questions, test `assistant-eval`, prototype de prompt, banc des quatre candidats ; `compose/ollama.yml` paramétré par modèle | M | — |
 | **1 — Cœur serveur** *(livré)* | `explorer.assistant.*`, `AssistantContextService`, `AssistantSqlGate`, schéma, `/api/assistant/status` et `/sql` (FIX, GENERATE), tests déterministes | M | 0 concluant |
 | **2 — Éditeur** *(livré)* | Bouton « Proposer une correction », `AskBar`, onglet de résultat avec statut | M | 1 |
 | **3 — Métriques** *(livré)* | `/api/assistant/metric`, entrée dans l'éditeur de métrique | S | 1 |
