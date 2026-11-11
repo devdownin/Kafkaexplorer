@@ -81,8 +81,12 @@ public class AssistantLlm {
         if (!properties.getBaseUrl().isBlank()) copy.setBaseUrl(properties.getBaseUrl());
         if (!Objects.equals(copy.getResolvedBaseUrl(), claudeConfig.getResolvedBaseUrl())) {
             copy.setApiKey("");
+            // The declared window is the claude.* endpoint's; another server has its own.
+            copy.setContextWindowTokens(0);
         }
-        copy.setRequestTimeoutSeconds(properties.getRequestTimeoutSeconds());
+        if (properties.getRequestTimeoutSeconds() > 0) {
+            copy.setRequestTimeoutSeconds(properties.getRequestTimeoutSeconds());
+        }
         return copy;
     }
 

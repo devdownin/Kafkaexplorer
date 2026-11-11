@@ -1819,6 +1819,14 @@ export interface AssistantStatus {
   provider: string | null;
   model: string | null;
   localDeployment: boolean;
+  /** L'adresse réellement appelée. */
+  baseUrl: string | null;
+  /** Le délai effectif : le sien, ou celui de `claude.*` quand il n'en fixe pas. */
+  requestTimeoutSeconds: number;
+  /** Le budget effectif : le sien, plafonné par la fenêtre déclarée. */
+  promptCharBudget: number;
+  /** La fenêtre déclarée du point d'accès, 0 quand personne ne l'a déclarée. */
+  contextWindowTokens: number;
 }
 
 /**

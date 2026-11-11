@@ -10,6 +10,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.AssistantSqlRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AssistantSqlResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AssistantStatus;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmResponse;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmTestResponse;
 import com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -92,9 +93,53 @@ public class AssistantService {
         try {
             ClaudeConfig effective = llm.effectiveConfig();
             return new AssistantStatus(properties.isEnabled(), problem, effective.getProviderLabel(),
-                effective.getModel(), effective.isLocalDeployment());
+                effective.getModel(), effective.isLocalDeployment(), effective.getResolvedBaseUrl(),
+                effective.getRequestTimeoutSeconds(),
+                effective.effectivePromptCharBudget(properties.getPromptCharBudget()),
+                effective.getContextWindowTokens());
         } catch (IllegalArgumentException e) {
-            return new AssistantStatus(properties.isEnabled(), problem, null, null, false);
+            return new AssistantStatus(properties.isEnabled(), problem, null, null, false, null,
+                0, properties.getPromptCharBudget(), 0);
+        }
+    }
+
+    /**
+     * Calls the assistant's own model once, as Settings' "Test LLM" does for {@code claude.*}:
+     * the two consumers can point at two models, and a test of one said nothing about the other.
+     * Reported whether or not the assistant is enabled — testing a model before switching the
+     * assistant on is the order an operator wants.
+     */
+    public LlmTestResponse test() {
+        ClaudeConfig effective;
+        try {
+            effective = llm.effectiveConfig();
+        } catch (IllegalArgumentException e) {
+            return new LlmTestResponse(
+                false, e.getMessage(), null, null, false, null);
+        }
+        String problem = effective.configurationProblem();
+        if (problem != null) {
+            return new LlmTestResponse(
+                false, problem, effective.getProviderLabel(), effective.getModel(), false, null);
+        }
+        if (!permit.tryAcquire()) {
+            return new LlmTestResponse(false,
+                "The assistant is answering another request; test again when it has finished.",
+                effective.getProviderLabel(), effective.getModel(), false, null);
+        }
+        try {
+            String reply = llm.client(effective).generate(
+                "You are a connectivity health check. Answer in one short word.", "Reply with the word OK.");
+            String sample = reply == null ? "" : reply.strip();
+            if (sample.length() > 60) sample = sample.substring(0, 57) + "...";
+            return new LlmTestResponse(true,
+                "Assistant model reachable via " + effective.getResolvedBaseUrl() + ". Sample reply: " + sample,
+                effective.getProviderLabel(), effective.getModel(), false, null);
+        } catch (RuntimeException e) {
+            return new LlmTestResponse(false,
+                SqlErrorClassifier.explain(e), effective.getProviderLabel(), effective.getModel(), false, null);
+        } finally {
+            permit.release();
         }
     }
 
@@ -141,6 +186,15 @@ public class AssistantService {
             text(answer, "description"));
     }
 
+    /** The configured budget, capped by the window the assistant's endpoint declared. */
+    int effectivePromptCharBudget() {
+        try {
+            return llm.effectiveConfig().effectivePromptCharBudget(properties.getPromptCharBudget());
+        } catch (IllegalArgumentException e) {
+            return properties.getPromptCharBudget();
+        }
+    }
+
     // ── the pipeline ─────────────────────────────────────────────────────────────────────────
 
     private record Job(String question, String sql, List<String> tables, String system,
@@ -172,7 +226,7 @@ public class AssistantService {
     private Run answer(Job job, long started) {
         AssistantContextService.Context context = contextService.build(job.question(), job.sql(), job.tables());
         AssistantPrompts.Catalogue catalogue =
-            AssistantPrompts.catalogue(context.tables(), properties.getPromptCharBudget());
+            AssistantPrompts.catalogue(context.tables(), effectivePromptCharBudget());
         List<String> omitted = new ArrayList<>(catalogue.tablesDropped());
         omitted.addAll(context.omitted());
         List<String> shown = catalogue.tablesShown();

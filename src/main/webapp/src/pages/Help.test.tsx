@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 
 describe('Help — the assistant', () => {
-  const STATUS = { enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e4b', localDeployment: true };
+  const STATUS = { enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e4b', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0 };
 
   it('says how to turn it on when the server has it off', async () => {
     get.mockResolvedValue({ data: { ...STATUS, enabled: false, problem: 'off' } });

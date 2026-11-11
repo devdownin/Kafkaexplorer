@@ -28,13 +28,15 @@ public class AssistantProperties {
     /** Blank inherits {@code claude.model}. */
     private String model = "";
     /**
-     * Terminal: a request that runs out is not retried, since replaying the prompt on a model that
-     * has just shown it needs longer triples the wait for the same outcome.
+     * 0 (the default) inherits {@code claude.request-timeout-seconds}, so one setting governs how
+     * long any call to the model may take — the Ollama stack's 300 s reaches both consumers.
+     * Terminal either way: a request that runs out is not retried, since replaying the prompt on a
+     * model that has just shown it needs longer triples the wait for the same outcome.
      */
-    private int requestTimeoutSeconds = 120;
+    private int requestTimeoutSeconds = 0;
     private int maxTables = 5;
     private int maxColumnsPerTable = 40;
-    /** Has to agree with the serving model's context window — nothing here can check that. */
+    /** Capped by {@code claude.context-window-tokens} when the endpoint's window is declared. */
     private int promptCharBudget = 12_000;
     /** How many times a statement the planner refused is sent back with the planner's sentence. */
     private int repairRounds = 1;
@@ -76,7 +78,7 @@ public class AssistantProperties {
     }
 
     public void setRequestTimeoutSeconds(int requestTimeoutSeconds) {
-        this.requestTimeoutSeconds = Math.max(1, requestTimeoutSeconds);
+        this.requestTimeoutSeconds = Math.max(0, requestTimeoutSeconds);
     }
 
     public int getMaxTables() {

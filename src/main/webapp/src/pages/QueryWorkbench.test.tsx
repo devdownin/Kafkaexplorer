@@ -1100,7 +1100,7 @@ describe('QueryWorkbench — bounded scan evidence', () => {
 });
 
 describe('QueryWorkbench — the assistant', () => {
-  const STATUS = { enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e2b', localDeployment: true };
+  const STATUS = { enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e2b', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0 };
   const PROPOSAL = {
     status: 'OK', sql: 'SELECT status FROM demo_orders LIMIT 100', explanation: 'Lists statuses.',
     missing: null, validated: true, validationError: null, repairRounds: 0,

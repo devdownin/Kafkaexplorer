@@ -350,8 +350,10 @@ nobody chose. It never sends a message value, and it never runs or saves what it
 |---|---|---|
 | `explorer.assistant.enabled` (`EXPLORER_ASSISTANT_ENABLED`) | `false` | On in `compose/ollama.yml` and in `./demo.sh` |
 | `provider`, `base-url`, `model` (`EXPLORER_ASSISTANT_*`) | blank | Blank inherits `claude.*`. Naming another endpoint **drops the `claude.*` key**: a key never follows a different host |
-| `request-timeout-seconds` | 120 | Terminal — a slow model is not retried |
-| `prompt-char-budget` | 12 000 | About 3 000 tokens. Set it with the serving model's window, as for Process Mining |
+| `request-timeout-seconds` | 0 | 0 inherits `claude.request-timeout-seconds`: one budget for every call. Terminal — a slow model is not retried |
+| `prompt-char-budget` | 12 000 | About 3 000 tokens, capped by `claude.context-window-tokens` when the window is declared |
+
+**One window for both consumers.** `claude.context-window-tokens` (`CLAUDE_CONTEXT_WINDOW_TOKENS`, 0 = not declared) is the serving endpoint's context window. Declared, it caps Process Mining's and the assistant's prompt budgets at `(window − max-tokens) × 3` characters, so neither can outgrow what Ollama will read — Ollama drops the excess silently. `compose/ollama.yml` passes `OLLAMA_CONTEXT_LENGTH` into it, so the server's window and the application's ceiling come from one variable. Settings shows the declared window, the ceiling, and what the assistant really calls, with a **Test the assistant model** button beside the existing **Test LLM**.
 
 **Which model.** `EMBEDDED-LLM-SCOPE.md` §7.1 measured four local models on 50 questions, running
 every accepted statement against the seeder's data, on four CPU cores with no GPU:

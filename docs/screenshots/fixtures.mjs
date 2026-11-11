@@ -990,4 +990,8 @@ export const assistantStatus = {
   provider: 'OpenRouter',
   model: 'openai/gpt-4o-mini',
   localDeployment: false,
+  baseUrl: 'https://openrouter.ai/api/v1',
+  requestTimeoutSeconds: 60,
+  promptCharBudget: 12000,
+  contextWindowTokens: 0,
 };

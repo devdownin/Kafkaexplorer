@@ -280,5 +280,45 @@ class AssistantServiceTest {
         assertEquals("Ollama", status.provider());
         assertEquals("gemma4:e2b", status.model());
         assertTrue(status.localDeployment(), "localhost:11434 is a loopback address");
+        assertEquals("http://localhost:11434/v1", status.baseUrl());
+        assertEquals(60, status.requestTimeoutSeconds(), "inherited from claude.*");
+        assertEquals(12_000, status.promptCharBudget(), "no window declared: the budget as configured");
+        assertEquals(0, status.contextWindowTokens());
+    }
+
+    @Test
+    void aDeclaredWindowCapsTheAssistantsBudget() {
+        ClaudeConfig claude = new ClaudeConfig();
+        claude.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claude.setMaxTokens(4096);
+        claude.setContextWindowTokens(6_000);
+        AssistantService capped = new AssistantService(properties,
+            new AssistantLlm(claude, properties, c -> model), context, gate, meters);
+
+        // (6 000 - 4 096) x 3 = 5 712 characters, under the 12 000 configured.
+        assertEquals(5_712, capped.status().promptCharBudget());
+        assertEquals(5_712, capped.effectivePromptCharBudget());
+    }
+
+    @Test
+    void theTestCallsTheAssistantsOwnModel() {
+        model.answers.add("OK");
+
+        com.compagnonsdudev.kafkasqlexplorer.domain.LlmTestResponse result = service.test();
+
+        assertTrue(result.ok(), result.message());
+        assertEquals("gemma4:e2b", result.model());
+        assertTrue(result.message().contains("Sample reply: OK"), result.message());
+        assertEquals(List.of("Reply with the word OK."), model.prompts);
+    }
+
+    @Test
+    void theTestReportsAFailedCallAsAFailure() {
+        model.answers.add(new IllegalStateException("connection refused"));
+
+        com.compagnonsdudev.kafkasqlexplorer.domain.LlmTestResponse result = service.test();
+
+        assertFalse(result.ok());
+        assertTrue(result.message().contains("connection refused"), result.message());
     }
 }

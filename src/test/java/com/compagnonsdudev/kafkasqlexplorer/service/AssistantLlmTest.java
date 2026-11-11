@@ -35,7 +35,25 @@ class AssistantLlmTest {
         assertEquals(ClaudeConfig.Provider.OPENROUTER, effective.getProvider());
         assertEquals("openai/gpt-4o-mini", effective.getModel());
         assertEquals("sk-or-secret", effective.getApiKey());
-        assertEquals(120, effective.getRequestTimeoutSeconds(), "the assistant's own timeout applies");
+        assertEquals(60, effective.getRequestTimeoutSeconds(),
+            "with no timeout of its own the assistant inherits claude.*'s: one budget for every call");
+    }
+
+    @Test
+    void itsOwnTimeoutWinsWhenItSetsOne() {
+        properties.setRequestTimeoutSeconds(120);
+
+        assertEquals(120, new AssistantLlm(claude, properties).effectiveConfig().getRequestTimeoutSeconds());
+    }
+
+    @Test
+    void theDeclaredWindowDoesNotFollowAnotherEndpoint() {
+        claude.setContextWindowTokens(16_384);
+        assertEquals(16_384, new AssistantLlm(claude, properties).effectiveConfig().getContextWindowTokens());
+
+        properties.setBaseUrl("http://gpu-box:8080/v1");
+        assertEquals(0, new AssistantLlm(claude, properties).effectiveConfig().getContextWindowTokens(),
+            "the window belongs to claude.*'s server; another server's is unknown");
     }
 
     @Test

@@ -6,6 +6,7 @@ import com.compagnonsdudev.kafkasqlexplorer.domain.ApiError;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AssistantMetricRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AssistantSqlRequest;
 import com.compagnonsdudev.kafkasqlexplorer.domain.AssistantStatus;
+import com.compagnonsdudev.kafkasqlexplorer.domain.LlmTestResponse;
 import com.compagnonsdudev.kafkasqlexplorer.service.AssistantService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,6 +39,12 @@ public class AssistantController {
     @GetMapping("/status")
     public AssistantStatus status() {
         return assistantService.status();
+    }
+
+    /** One call to the assistant's own model — Settings' test for the second consumer. */
+    @PostMapping("/test")
+    public LlmTestResponse test() {
+        return assistantService.test();
     }
 
     @PostMapping("/sql")

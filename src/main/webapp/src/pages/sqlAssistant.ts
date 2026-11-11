@@ -218,6 +218,32 @@ export function metricDraftPatch(draft: AssistantMetricResponse, rawSqlTemplate:
   return patch;
 }
 
+/**
+ * La fenêtre de contexte déclarée, dite une fois pour les deux consommateurs du modèle.
+ *
+ * Non déclarée, aucun budget n'est vérifié contre elle : la phrase le dit plutôt que de laisser
+ * croire que le prompt tient. Déclarée, elle donne le plafond qui s'applique à Process Mining comme
+ * à l'assistant.
+ */
+export function describeContextWindow(windowTokens: number | null | undefined,
+                                      ceilingChars: number | null | undefined): string {
+  if (!windowTokens || windowTokens <= 0) {
+    return 'No context window declared (claude.context-window-tokens): prompt budgets apply as '
+      + 'configured, and nothing checks that they fit the model. Ollama drops what does not fit, silently.';
+  }
+  const ceiling = ceilingChars ? ` — every prompt is capped at ${ceilingChars.toLocaleString('en-US')} characters` : '';
+  return `Context window declared: ${windowTokens.toLocaleString('en-US')} tokens${ceiling}, `
+    + 'for Process Mining and the assistant alike.';
+}
+
+/** Ce que l'assistant utilise réellement, en une ligne : modèle, délai et budget effectifs. */
+export function describeAssistantEffective(status: AssistantStatus): string {
+  const where = [status.provider, status.model].filter(Boolean).join(' · ') || 'no model';
+  const url = status.baseUrl ? ` at ${status.baseUrl}` : '';
+  return `${where}${url} — ${status.requestTimeoutSeconds} s per call, `
+    + `${status.promptCharBudget.toLocaleString('en-US')} characters of prompt.`;
+}
+
 /** Une réponse que le serveur n'a pas pu donner, rendue comme un état de l'assistant. */
 export function failedResponse(error: string): AssistantSqlResponse {
   return {

@@ -297,13 +297,14 @@ explorer:
     provider: ${EXPLORER_ASSISTANT_PROVIDER:}
     base-url: ${EXPLORER_ASSISTANT_BASE_URL:}
     model: ${EXPLORER_ASSISTANT_MODEL:}
-    # Terminal, not retried: a CPU-served small model answers in seconds to tens of seconds.
-    request-timeout-seconds: 120
+    # 0 inherits claude.request-timeout-seconds: one budget for every call to the model (the
+    # Ollama stack's 300 s reaches both consumers). Terminal, not retried.
+    request-timeout-seconds: 0
     # What the model is shown of the catalogue: names and types only, never a message value.
     max-tables: 5
     max-columns-per-table: 40
-    # About 3 000 tokens. Raise it together with the serving model's context window or not at
-    # all — Ollama truncates the excess silently (see compose/ollama.yml).
+    # About 3 000 tokens, capped by claude.context-window-tokens when the window is declared —
+    # Ollama truncates the excess silently (see compose/ollama.yml).
     prompt-char-budget: 12000
     # A statement the planner refuses is sent back once with the planner's own sentence.
     repair-rounds: 1
@@ -562,6 +563,12 @@ claude:
   # Ollama, SpectraLLM). Transient failures (timeout, 5xx, 429) are retried with backoff;
   # 4xx fail fast. Local audit models can be slow, hence the generous default.
   request-timeout-seconds: 60
+  # The serving endpoint's context window in tokens; 0 = not declared, budgets apply as set.
+  # Declared, it caps every consumer's prompt budget (process-mining.prompt-char-budget and
+  # explorer.assistant.prompt-char-budget) to (window - max-tokens) x 3 characters, so the prompt
+  # and the answer fit — the two budgets were otherwise tuned by hand against one window, and
+  # Ollama drops the excess silently. compose/ollama.yml passes OLLAMA_CONTEXT_LENGTH here.
+  context-window-tokens: 0
   # SPECTRA provider only: audit Kafka exchanges via a local SpectraLLM instance
   # (POST <base-url>/api/query). Set provider: SPECTRA and base-url to the SpectraLLM
   # API, e.g. http://localhost:8080 or http://spectra-api:8080 in Docker.

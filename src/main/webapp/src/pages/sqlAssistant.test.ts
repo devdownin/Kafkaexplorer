@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AssistantSqlResponse, AssistantStatus } from '../api/types';
 import {
-  assistantAvailability, describeAssistantHelp, describeProvenance, describeScope, isFixableError, metricDraftPatch, privacyNote,
+  assistantAvailability, describeAssistantEffective, describeAssistantHelp, describeContextWindow, describeProvenance, describeScope, isFixableError, metricDraftPatch, privacyNote,
   proposalTabSql, proposalVerdict,
 } from './sqlAssistant';
 
@@ -26,7 +26,7 @@ const response = (over: Partial<AssistantSqlResponse> = {}): AssistantSqlRespons
 });
 
 const status = (over: Partial<AssistantStatus> = {}): AssistantStatus => ({
-  enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e2b', localDeployment: true, ...over,
+  enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e2b', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0, ...over,
 });
 
 describe('assistantAvailability', () => {
@@ -159,5 +159,24 @@ describe('describeAssistantHelp', () => {
     expect(describeAssistantHelp(status())!.detail).toContain('nothing is sent elsewhere');
     expect(describeAssistantHelp(status({ localDeployment: false, provider: 'OpenRouter', model: 'm' }))!.detail)
       .toContain('outside this host');
+  });
+});
+
+describe('describeContextWindow', () => {
+  it('says that nothing is checked when no window is declared', () => {
+    expect(describeContextWindow(0, null)).toContain('nothing checks that they fit');
+  });
+
+  it('names the window and the ceiling it puts on both consumers', () => {
+    expect(describeContextWindow(16384, 36864))
+      .toBe('Context window declared: 16,384 tokens — every prompt is capped at 36,864 characters, '
+        + 'for Process Mining and the assistant alike.');
+  });
+});
+
+describe('describeAssistantEffective', () => {
+  it('reports the model, the endpoint and the effective budgets', () => {
+    expect(describeAssistantEffective(status({ baseUrl: 'http://ollama:11434/v1', requestTimeoutSeconds: 300 })))
+      .toBe('Ollama · gemma4:e2b at http://ollama:11434/v1 — 300 s per call, 12,000 characters of prompt.');
   });
 });

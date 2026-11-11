@@ -17,7 +17,7 @@ vi.mock('axios', () => ({ default: { post: (...a: unknown[]) => post(...a) } }))
 import { MetricDraftAssist } from './MetricDraftAssist';
 import type { AssistantStatus } from '../../api/types';
 
-const STATUS: AssistantStatus = { enabled: true, problem: null, provider: 'OpenRouter', model: 'm', localDeployment: false };
+const STATUS: AssistantStatus = { enabled: true, problem: null, provider: 'OpenRouter', model: 'm', localDeployment: false, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0 };
 
 const DRAFT = {
   proposal: {

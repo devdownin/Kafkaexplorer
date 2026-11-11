@@ -521,7 +521,7 @@ public class OpenRouterModelCatalog {
      */
     long estimatedPromptTokens() {
         long promptTokens = (long) Math.ceil(
-            processMiningConfig.getPromptCharBudget() / (double) CHARS_PER_TOKEN);
+            claudeConfig.effectivePromptCharBudget(processMiningConfig.getPromptCharBudget()) / (double) CHARS_PER_TOKEN);
         return promptTokens + Math.max(0, claudeConfig.getMaxTokens());
     }
 

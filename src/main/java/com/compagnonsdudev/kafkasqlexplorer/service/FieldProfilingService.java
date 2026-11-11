@@ -207,8 +207,8 @@ quelques valeurs d'exemple. Les chemins sont en notation pointée ; réponds en 
         // pipeline. So the floor still governs what one topic gets, a global remainder governs how
         // many topics get it, and the topics past it are named rather than dropped in silence.
         int perTopicBudget = Math.max(4_000,
-            processMiningConfig.getPromptCharBudget() / Math.max(1, byTopic.size()));
-        int globalRemaining = Math.max(perTopicBudget, processMiningConfig.getPromptCharBudget());
+            claudeConfig.effectivePromptCharBudget(processMiningConfig.getPromptCharBudget()) / Math.max(1, byTopic.size()));
+        int globalRemaining = Math.max(perTopicBudget, claudeConfig.effectivePromptCharBudget(processMiningConfig.getPromptCharBudget()));
         int topicsOmitted = 0;
 
         for (Map.Entry<String, List<PayloadDigest>> entry : byTopic.entrySet()) {

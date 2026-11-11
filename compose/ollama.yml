@@ -87,6 +87,11 @@ services:
       # path — retrying replays the whole prompt on a model that has already shown it needs
       # longer, tripling the load and the wait for the same outcome.
       - CLAUDE_REQUEST_TIMEOUT_SECONDS=${EXPLORER_LLM_TIMEOUT:-300}
+      # The window the ollama service above gives every model, declared once: it caps Process
+      # Mining's and the assistant's prompt budgets so neither can outgrow it, and the assistant
+      # inherits the timeout above. Read from the same variable as OLLAMA_CONTEXT_LENGTH, so the
+      # two cannot disagree.
+      - CLAUDE_CONTEXT_WINDOW_TOKENS=${OLLAMA_CONTEXT_LENGTH:-16384}
       # The SQL and metric assistant (EMBEDDED-LLM-SCOPE.md) is off by default because the
       # shipped provider is hosted and it would send table and column names out. Here the model
       # is on this stack, so nothing leaves it: on. Its prompt is ~12 000 characters, inside the
