@@ -728,7 +728,12 @@ The first two passes asked whether the editor is *right*. This one asks whether 
 fluid to use**: how many gestures a common task takes, what the screen says at each step, and what
 a newcomer has to understand before pressing Run.
 
-> **Status.** Audit only: nothing is fixed. Every finding was **observed in the real UI** — the
+> **Status.** **X1, X2 and X3 are fixed**, each with a test that fails without it: a result is
+> kept per tab (and a run in flight keeps its tab until it ends); a topic click and a starter card
+> fill *and* run; and the toolbar asks one question, **Read: Latest records / From the beginning /
+> Whole topic**, latest by default — sent as a named read mode without forcing an engine, so a JOIN
+> is still answered by Flink. Shared links and history entries keep their old fields and map onto
+> the new control. X4–X10 stay open. Every finding was **observed in the real UI** — the
 > compiled SPA served by `docs/screenshots/server.mjs` over its frozen fixtures, driven with
 > Playwright at 1440×900 and 1280×720 — and then confirmed in the code named beside it. The
 > fixtures answer every query with the same ten rows, so nothing here is about engine behaviour.

@@ -349,6 +349,56 @@ describe('QueryWorkbench — nothing silently replaces the tab you are writing i
   });
 });
 
+// SQL-EDITOR-AUDIT.md, X2: opening a topic is asking to see it, so it runs.
+describe('QueryWorkbench — a topic click and a starter card run what they write', () => {
+  const runs = () => post.mock.calls.filter(c => c[0] === '/api/query/run-sync');
+  beforeEach(() => post.mockImplementation((url: string) => (url === '/api/query/validate'
+    ? Promise.resolve({ data: { valid: true } })
+    : Promise.resolve({ data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT', warnings: [] } }))));
+
+  it('runs the SELECT a topic click writes, in the tab it opened', async () => {
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'SELECT from demo.orders.1.received' }));
+    await waitFor(() => expect(runs()).toHaveLength(1));
+    expect(runs()[0][1]).toMatchObject({ sql: expect.stringContaining('demo_orders_1_received') });
+  });
+
+  it('runs a starter card', async () => {
+    renderPage();
+    await userEvent.click(await screen.findByText('SELECT * FROM demo_orders_1_received LIMIT 50'));
+    await waitFor(() => expect(runs()).toHaveLength(1));
+  });
+});
+
+// SQL-EDITOR-AUDIT.md, X1: each tab keeps its own answer.
+describe('QueryWorkbench — a result belongs to its tab', () => {
+  it('shows nothing in a new tab, an error only in its own tab, and the first tab\'s rows on return', async () => {
+    post.mockImplementation((url: string, body: { sql?: string }) => {
+      if (url === '/api/query/validate') return Promise.resolve({ data: { valid: true } });
+      return Promise.resolve({ data: body.sql?.includes('broken')
+        ? { columns: [], rows: [], error: 'Object not found: broken', engine: null, warnings: [] }
+        : { columns: ['id'], rows: [{ id: 'ROW-ONE' }], error: null, engine: 'FLINK', warnings: [] } });
+    });
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT id FROM t');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findByText('ROW-ONE')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByText('ROW-ONE')).not.toBeInTheDocument());
+
+    await userEvent.type(editor(), 'SELECT * FROM broken');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findAllByText(/broken/)).not.toHaveLength(0);
+
+    await userEvent.click(screen.getAllByRole('tab')[0]);
+    expect(await screen.findByText('ROW-ONE')).toBeInTheDocument();
+    expect(screen.queryByText(/Object not found/)).not.toBeInTheDocument();
+  });
+});
+
 describe('QueryWorkbench — the editor reads, and says so', () => {
   /*
    * Le mode « Flink job » a été retiré : il ne fonctionnait pas. Ce qu'il faut garantir tient en
@@ -396,29 +446,29 @@ describe('QueryWorkbench — what Run sends', () => {
       : Promise.resolve({ data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT' } }));
   });
 
-  it('uses Flink strictly by default and switches to an explicit bounded Kafka scan', async () => {
+  it('reads the latest records by default, and Flink from the beginning or over the whole topic on request', async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
     await userEvent.type(editor(), 'SELECT * FROM orders');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await waitFor(() => expect(runSync()).toBeTruthy());
+    // Par défaut, les derniers enregistrements : un mode nommé, sans imposer de moteur (X3).
+    expect(runSync()![1]).toMatchObject({ flinkOnly: false, directRead: false,
+      boundedSnapshot: false, readMode: 'latest-offset' });
+
+    post.mockClear();
+    await userEvent.click(screen.getByRole('button', { name: 'From the beginning' }));
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     await waitFor(() => expect(runSync()).toBeTruthy());
     expect(runSync()![1]).toMatchObject({ flinkOnly: true, directRead: false,
       boundedSnapshot: false, readMode: null });
 
     post.mockClear();
-    await userEvent.click(screen.getByRole('button', { name: 'Snapshot' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Whole topic' }));
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     await waitFor(() => expect(runSync()).toBeTruthy());
     expect(runSync()![1]).toMatchObject({ flinkOnly: true, directRead: false,
       boundedSnapshot: true, readMode: null });
-
-    post.mockClear();
-    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Latest' }));
-    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
-    await waitFor(() => expect(runSync()).toBeTruthy());
-    expect(runSync()![1]).toMatchObject({ flinkOnly: false, directRead: true, boundedSnapshot: false,
-      readMode: 'latest-offset' });
   });
 
   it('sends the whole tab when it holds one statement', async () => {
@@ -1029,7 +1079,7 @@ describe('QueryWorkbench — the engine badge says why the direct reader answere
   const run = async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
-    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
+    await userEvent.click(screen.getByRole('button', { name: 'From the beginning' }));
     await userEvent.type(editor(), 'SELECT id FROM t');
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     return screen.findByText('KAFKA_DIRECT');
@@ -1039,8 +1089,6 @@ describe('QueryWorkbench — the engine badge says why the direct reader answere
     directResult();
     renderPage();
     await screen.findByText('demo.orders.1.received');
-    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Latest' }));
     await userEvent.type(editor(), 'SELECT id FROM t');
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     await screen.findByText('KAFKA_DIRECT');
@@ -1071,7 +1119,6 @@ describe('QueryWorkbench — bounded scan evidence', () => {
         } } )));
     renderPage();
     await screen.findByText('demo.orders.1.received');
-    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
     await userEvent.type(editor(), 'SELECT COUNT(*) AS n FROM t');
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     expect(await screen.findByText(/Captured slice \(end exclusive\): partition 0: \[4, 7\), next 7/))

@@ -316,7 +316,8 @@ revision it describes.
 frozen fixtures: results are page-level rather than per tab, a click on a topic fills without
 running and reads the oldest records, the toolbar's first question is the engine, the panel says
 "No results yet" while a query runs, `Ctrl+Enter` works only inside the editor, and the editor gets
-42 % of a 1440 px window. **Nothing in it is fixed.**
+42 % of a 1440 px window. **X1–X3 are fixed** (results per tab, a click runs, one "Read" control
+defaulting to the latest records); X4–X10 stay open.
 
 **A second pass (S1–S7) sits under it**, and two of its seven items are the first pass's own
 corrections re-opened by work that landed afterwards — which is the reason to read it before
