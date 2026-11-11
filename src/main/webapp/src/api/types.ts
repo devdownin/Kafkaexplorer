@@ -1827,6 +1827,10 @@ export interface AssistantStatus {
   promptCharBudget: number;
   /** La fenêtre déclarée du point d'accès, 0 quand personne ne l'a déclarée. */
   contextWindowTokens: number;
+  /** Le fournisseur tel que le connaît `claude.provider` (OPENROUTER, OLLAMA…), pour la phrase de confidentialité. */
+  providerCode: string | null;
+  /** Vrai seulement là où le routage a pu être restreint — OpenRouter avec `DENY`. */
+  dataRetentionRefused: boolean;
 }
 
 /**

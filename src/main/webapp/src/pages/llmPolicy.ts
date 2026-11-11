@@ -53,14 +53,37 @@ export interface LlmPolicy {
  * affirmation non vérifiée — la même règle que la pastille de connexion, qui affiche « Connexion… »
  * plutôt qu'un vert optimiste.
  */
-export const describeDataPolicy = (facts: LlmPolicyFacts | null): LlmPolicy | null => {
+/**
+ * Ce qui part, nommé par le consommateur : Process Mining envoie des digests de messages,
+ * l'assistant des noms de tables et de colonnes. Une seule phrase pour les deux, pour qu'un même
+ * déploiement ne dise pas deux choses de l'endroit où partent les données.
+ */
+export interface SentData {
+  /** Sujet de la phrase quand ça part : « Message digests leave this host… ». */
+  leaving: string;
+  /** Ce qui reste sur place quand le point d'accès est local : « …so no message content leaves… ». */
+  staying: string;
+}
+
+export const PROCESS_MINING_SENT: SentData = {
+  leaving: 'Message digests', staying: 'message content',
+};
+
+export const ASSISTANT_SENT: SentData = {
+  leaving: 'Table and column names (never a message value)', staying: 'table or column name',
+};
+
+export const describeDataPolicy = (
+  facts: LlmPolicyFacts | null,
+  sent: SentData = PROCESS_MINING_SENT,
+): LlmPolicy | null => {
   if (!facts) return null;
 
   if (facts.llmLocalDeployment) {
     return {
       tone: 'local',
       label: 'Stays on this host',
-      detail: 'The endpoint is a loopback address, so no message content leaves this machine.',
+      detail: `The endpoint is a loopback address, so no ${sent.staying} leaves this machine.`,
     };
   }
 
@@ -68,7 +91,7 @@ export const describeDataPolicy = (facts: LlmPolicyFacts | null): LlmPolicy | nu
     return {
       tone: 'restricted',
       label: 'No retention',
-      detail: 'Message digests leave this host, and routing is restricted to providers that do not '
+      detail: `${sent.leaving} leave this host, and routing is restricted to providers that do not `
         + 'retain or train on them — OpenRouter enforces that, so a provider which does cannot serve '
         + 'these requests.',
     };
@@ -78,7 +101,7 @@ export const describeDataPolicy = (facts: LlmPolicyFacts | null): LlmPolicy | nu
     return {
       tone: 'open',
       label: 'Retention allowed',
-      detail: 'Message digests leave this host and routing is unrestricted, so whichever provider '
+      detail: `${sent.leaving} leave this host and routing is unrestricted, so whichever provider `
         + 'serves a request may retain what it is sent. Set claude.openrouter-data-collection to '
         + 'DENY to exclude those providers.',
     };
@@ -87,7 +110,7 @@ export const describeDataPolicy = (facts: LlmPolicyFacts | null): LlmPolicy | nu
   return {
     tone: 'unenforceable',
     label: 'Governed by the endpoint',
-    detail: 'Message digests leave this host. What the endpoint does with them is governed by its '
+    detail: `${sent.leaving} leave this host. What the endpoint does with them is governed by its `
       + 'own terms — this application cannot enforce or observe a retention policy here.',
   };
 };

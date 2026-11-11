@@ -68,7 +68,7 @@ over it, which is the product's real situation on the demo topics. `AssistantEva
 `@Tag("assistant-eval")`, excluded like the other two and skipping without `ASSISTANT_EVAL_MODEL`;
 it runs the real `AssistantService` and then **executes** each accepted statement, scoring
 "accepted and wrong" apart from "accepted", the plausible wrong answer being what the gate cannot
-see. `bin/assistant-eval.sh` runs it per candidate through a local Ollama. Before any model was
+see. `bin/llm-eval.sh` runs it per candidate through a local Ollama, beside Process Mining's `LlmAnalysisEvalTest#reportsTheAnalysisForComparison` — both consumers of one model, one summary. Before any model was
 pointed at it, an oracle that answers the reference proved the chain — and scored 47 of 50, the
 three misses being a product defect rather than a harness one: on a `FIX` whose statement did not
 parse, or named a table that does not exist, the context found no table and the assistant answered

@@ -514,7 +514,7 @@ est le pic du processus serveur : poids, cache KV de 8 192 tokens et serveur Pyt
   correction, mais il ne réussit aucune tranche de temps.
 - **`qwen2.5-coder:7b` ne sert plus l'assistant** ; il reste le modèle de Process Mining.
 - **Aucun modèle ne tient 30 s de p95 en génération sur ce CPU** ; la latence se mesure sur la
-  machine qui servira, avec `bin/assistant-eval.sh`.
+  machine qui servira, avec `bin/llm-eval.sh`.
 
 **Ce que la mesure a appris sur le produit :**
 

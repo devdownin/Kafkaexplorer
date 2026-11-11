@@ -368,7 +368,7 @@ every accepted statement against the seeder's data, on four CPU cores with no GP
 Mining, which that evaluation did not measure; the weakest result on the assistant's questions was
 `qwen2.5-coder:7b` (68 %, v1 prompt). Use `gemma4:e2b` on a small machine. Gemma 4 needs Ollama
 0.20 or newer. The latency is the one thing that depends on your hardware: measure it with
-`bin/assistant-eval.sh`, which runs the same 50 cases against whichever model you name.
+`bin/llm-eval.sh`, which runs the assistant's 50 cases and Process Mining's seeded pipeline against whichever models you name and prints one line per model.
 
 ## Recommended Lightweight Models
 - **Qwen 2.5-Coder 7B**: Best for JSON extraction and logic.

@@ -18,6 +18,8 @@ package com.compagnonsdudev.kafkasqlexplorer.domain;
  * @param requestTimeoutSeconds the effective per-call budget — its own, or {@code claude.*}'s
  * @param promptCharBudget     the effective prompt budget — its own, capped by the declared window
  * @param contextWindowTokens  the endpoint's declared window, 0 when nobody declared it
+ * @param providerCode         the provider enum name, for the same privacy sentence Settings shows
+ * @param dataRetentionRefused whether routing excludes retaining providers (OpenRouter with DENY)
  */
 public record AssistantStatus(
     boolean enabled,
@@ -28,6 +30,8 @@ public record AssistantStatus(
     String baseUrl,
     int requestTimeoutSeconds,
     int promptCharBudget,
-    int contextWindowTokens
+    int contextWindowTokens,
+    String providerCode,
+    boolean dataRetentionRefused
 ) {
 }

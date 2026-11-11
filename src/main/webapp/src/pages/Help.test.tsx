@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 
 describe('Help — the assistant', () => {
-  const STATUS = { enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e4b', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0 };
+  const STATUS = { enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e4b', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0, providerCode: 'OLLAMA', dataRetentionRefused: false };
 
   it('says how to turn it on when the server has it off', async () => {
     get.mockResolvedValue({ data: { ...STATUS, enabled: false, problem: 'off' } });
@@ -47,7 +47,7 @@ describe('Help — the assistant', () => {
     renderPage();
     const box = await screen.findByTestId('assistant-help');
     expect(box).toHaveTextContent('Ollama · gemma4:e4b');
-    expect(box).toHaveTextContent('nothing is sent elsewhere');
+    expect(box).toHaveTextContent('no table or column name leaves this machine');
   });
 
   it('shows no state at all when the server does not know the assistant', async () => {

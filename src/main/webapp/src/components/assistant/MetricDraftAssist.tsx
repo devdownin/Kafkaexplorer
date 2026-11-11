@@ -5,7 +5,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import type { AssistantMetricRequest, AssistantMetricResponse, AssistantStatus } from '../../api/types';
 import { Button, Textarea } from '../ui';
-import { ASSISTANT_REQUEST_TIMEOUT_MS, failedResponse, privacyNote } from '../../pages/sqlAssistant';
+import { ASSISTANT_REQUEST_TIMEOUT_MS, failedResponse, privacyLine } from '../../pages/sqlAssistant';
 import { extractApiErrorMessage } from '../../pages/queryError';
 import { ProposalCard } from './ProposalCard';
 
@@ -27,7 +27,7 @@ export const MetricDraftAssist: React.FC<MetricDraftAssistProps> = ({ status, to
   const [description, setDescription] = useState('');
   const [pending, setPending] = useState(false);
   const [draft, setDraft] = useState<AssistantMetricResponse | null>(null);
-  const note = privacyNote(status);
+  const note = privacyLine(status);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();

@@ -17,7 +17,7 @@ vi.mock('axios', () => ({ default: { post: (...a: unknown[]) => post(...a) } }))
 import { MetricDraftAssist } from './MetricDraftAssist';
 import type { AssistantStatus } from '../../api/types';
 
-const STATUS: AssistantStatus = { enabled: true, problem: null, provider: 'OpenRouter', model: 'm', localDeployment: false, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0 };
+const STATUS: AssistantStatus = { enabled: true, problem: null, provider: 'OpenRouter', model: 'm', localDeployment: false, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0, providerCode: 'OPENROUTER', dataRetentionRefused: true };
 
 const DRAFT = {
   proposal: {
@@ -36,7 +36,7 @@ describe('MetricDraftAssist', () => {
     const onApply = vi.fn();
     render(<MetricDraftAssist status={STATUS} topic="demo.orders" onApply={onApply} />);
 
-    expect(screen.getByText(/outside this host/)).toBeInTheDocument();
+    expect(screen.getByText(/No retention: Table and column names/)).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText(/Describe the metric/), 'orders count');
     await userEvent.click(screen.getByRole('button', { name: 'Draft' }));
 

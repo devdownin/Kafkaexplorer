@@ -19,6 +19,8 @@
 
 import type { AssistantMetricResponse, AssistantSqlResponse, AssistantStatus, MetricConfig } from '../api/types';
 import type { BadgeTone } from '../components/ui';
+import { ASSISTANT_SENT, describeDataPolicy, type LlmPolicy } from './llmPolicy';
+import { describeDuration, describeUsage } from './llmUsage';
 
 /**
  * Le délai côté navigateur. Le serveur borne chaque appel au modèle
@@ -46,13 +48,25 @@ export function assistantAvailability(status: AssistantStatus | null): Assistant
 }
 
 /**
- * Ce qui part, dit là où l'on tape — la même règle que le bandeau des Réglages : l'affirmation
- * « reste sur cette machine » n'est faite que sur une adresse de bouclage.
+ * Ce qui part, et ce qu'il en advient, dit là où l'on tape — la phrase de Réglages et de Process
+ * Mining (`describeDataPolicy`), avec ce que l'assistant envoie à la place des digests. Une seule
+ * source : l'assistant avait sa propre phrase, qui ignorait la restriction de rétention
+ * d'OpenRouter que les deux autres pages annonçaient.
  */
-export function privacyNote(status: AssistantStatus | null): string | null {
-  if (!status || status.localDeployment) return null;
-  const who = status.provider ? `${status.provider}${status.model ? ` (${status.model})` : ''}` : 'the model';
-  return `Table and column names are sent to ${who}, outside this host. Message values are never sent.`;
+export function assistantPolicy(status: AssistantStatus | null): LlmPolicy | null {
+  if (!status) return null;
+  return describeDataPolicy({
+    llmProvider: status.providerCode ?? undefined,
+    llmLocalDeployment: status.localDeployment,
+    llmDataRetentionRefused: status.dataRetentionRefused,
+  }, ASSISTANT_SENT);
+}
+
+/** La phrase affichée sous une saisie, ou rien quand rien ne quitte la machine. */
+export function privacyLine(status: AssistantStatus | null): string | null {
+  const policy = assistantPolicy(status);
+  if (!policy || policy.tone === 'local') return null;
+  return `${policy.label}: ${policy.detail}`;
 }
 
 /** Ce que la page d'aide dit de l'assistant, d'après l'état que le serveur rapporte. */
@@ -91,7 +105,7 @@ export function describeAssistantHelp(status: AssistantStatus | null): Assistant
   }
   return {
     tone: 'success', label: 'On',
-    detail: `${model ? `${model}. ` : ''}${privacyNote(status) ?? 'It runs on this host: nothing is sent elsewhere.'}`,
+    detail: `${model ? `${model}. ` : ''}${assistantPolicy(status)?.detail ?? ''}`,
     howToEnable: null,
   };
 }
@@ -156,10 +170,18 @@ export function describeScope(response: AssistantSqlResponse): string | null {
 
 /** « gemma4:e2b · 8.4 s » — ce qui a répondu et combien de temps cela a pris. */
 export function describeProvenance(response: AssistantSqlResponse): string | null {
+  // Le formateur de Process Mining quand l'appel a rapporté son usage : un même modèle, une même
+  // ligne (tokens, coût à six décimales sous le centime, durée), au lieu d'un format à soi qui
+  // arrondissait le coût à quatre décimales. La durée affichée reste celle de toute la demande —
+  // porte et réparation comprises — puisque c'est ce que l'utilisateur a attendu.
+  if (response.usage) {
+    const usage = { ...response.usage, model: response.usage.model ?? response.model ?? 'model',
+      durationMs: response.durationMs > 0 ? response.durationMs : response.usage.durationMs };
+    return describeUsage(usage);
+  }
   const bits: string[] = [];
   if (response.model) bits.push(response.model);
-  if (response.durationMs > 0) bits.push(`${(response.durationMs / 1000).toFixed(1)} s`);
-  if (response.usage?.costUsd != null) bits.push(`$${response.usage.costUsd.toFixed(4)}`);
+  if (response.durationMs > 0) bits.push(describeDuration(response.durationMs));
   return bits.length ? bits.join(' · ') : null;
 }
 

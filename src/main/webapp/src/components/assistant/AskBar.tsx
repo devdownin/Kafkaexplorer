@@ -5,7 +5,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import type { AssistantSqlRequest, AssistantSqlResponse, AssistantStatus } from '../../api/types';
 import { Button, Input } from '../ui';
-import { ASSISTANT_REQUEST_TIMEOUT_MS, failedResponse, privacyNote } from '../../pages/sqlAssistant';
+import { ASSISTANT_REQUEST_TIMEOUT_MS, failedResponse, privacyLine } from '../../pages/sqlAssistant';
 import { extractApiErrorMessage } from '../../pages/queryError';
 import { ProposalCard } from './ProposalCard';
 
@@ -27,7 +27,7 @@ export const AskBar: React.FC<AskBarProps> = ({ status, onOpen }) => {
   const [asked, setAsked] = useState('');
   const [pending, setPending] = useState(false);
   const [response, setResponse] = useState<AssistantSqlResponse | null>(null);
-  const note = privacyNote(status);
+  const note = privacyLine(status);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();

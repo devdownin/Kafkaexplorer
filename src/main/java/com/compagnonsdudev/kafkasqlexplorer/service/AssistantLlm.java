@@ -4,9 +4,8 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.AssistantProperties;
 import com.compagnonsdudev.kafkasqlexplorer.config.ClaudeConfig;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -37,25 +36,35 @@ import java.util.function.Function;
 @EnableConfigurationProperties(AssistantProperties.class)
 public class AssistantLlm {
 
-    private static final Logger log = LoggerFactory.getLogger(AssistantLlm.class);
-
     private final ClaudeConfig claudeConfig;
     private final AssistantProperties properties;
-    private final Function<ClaudeConfig, LlmClient> factory;
 
-    private String fingerprint;
-    private LlmClient client;
+    /**
+     * Shared rebuild rule; the model is in this fingerprint because, unlike {@code claude.*}'s
+     * client, this one holds a copy of the configuration rather than reading the shared bean.
+     */
+    private final LlmClientCache cache;
 
-    @Autowired
+    /** The consumer label on {@code explorer_llm_requests_total} for every call made through here. */
+    static final String CONSUMER = "assistant";
+
+    /** Unmetered — for tests and the eval. */
     public AssistantLlm(ClaudeConfig claudeConfig, AssistantProperties properties) {
         this(claudeConfig, properties, LlmClientFactory::create);
+    }
+
+    @Autowired
+    public AssistantLlm(ClaudeConfig claudeConfig, AssistantProperties properties, MeterRegistry meterRegistry) {
+        this(claudeConfig, properties,
+            c -> new MeteredLlmClient(LlmClientFactory.create(c), CONSUMER, meterRegistry));
     }
 
     AssistantLlm(ClaudeConfig claudeConfig, AssistantProperties properties,
                  Function<ClaudeConfig, LlmClient> factory) {
         this.claudeConfig = claudeConfig;
         this.properties = properties;
-        this.factory = factory;
+        this.cache = new LlmClientCache(CONSUMER, factory,
+            c -> LlmClientCache.endpointFingerprint(c) + '|' + c.getModel());
     }
 
     /**
@@ -112,41 +121,12 @@ public class AssistantLlm {
     }
 
     /** The client for the configuration as it stands now, rebuilt if what it carries moved. */
-    public synchronized LlmClient client(ClaudeConfig effective) {
-        String current = fingerprintOf(effective);
-        if (client == null || !current.equals(fingerprint)) {
-            LlmClient outgoing = client;
-            client = factory.apply(effective);
-            fingerprint = current;
-            log.info("Assistant LLM client (re)built for {} at {}, model {}",
-                effective.getProviderLabel(), effective.getResolvedBaseUrl(), effective.getModel());
-            closeQuietly(outgoing);
-        }
-        return client;
+    public LlmClient client(ClaudeConfig effective) {
+        return cache.get(effective);
     }
 
     @PreDestroy
-    public synchronized void shutdown() {
-        closeQuietly(client);
-        client = null;
-        fingerprint = null;
-    }
-
-    private static void closeQuietly(LlmClient outgoing) {
-        if (outgoing == null) return;
-        try {
-            outgoing.close();
-        } catch (Exception e) {
-            log.debug("Retired assistant LLM client did not close cleanly: {}", e.toString());
-        }
-    }
-
-    private static String fingerprintOf(ClaudeConfig config) {
-        String apiKey = config.getApiKey() == null ? "" : config.getApiKey();
-        return config.getProvider().name()
-            + '|' + config.getResolvedBaseUrl()
-            + '|' + Integer.toHexString(apiKey.hashCode())
-            + '|' + config.getRequestTimeoutSeconds()
-            + '|' + config.getModel();
+    public void shutdown() {
+        cache.close();
     }
 }

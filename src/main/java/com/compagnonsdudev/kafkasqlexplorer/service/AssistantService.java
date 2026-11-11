@@ -96,10 +96,11 @@ public class AssistantService {
                 effective.getModel(), effective.isLocalDeployment(), effective.getResolvedBaseUrl(),
                 effective.getRequestTimeoutSeconds(),
                 effective.effectivePromptCharBudget(properties.getPromptCharBudget()),
-                effective.getContextWindowTokens());
+                effective.getContextWindowTokens(), effective.getProvider().name(),
+                effective.isDataRetentionRefused());
         } catch (IllegalArgumentException e) {
             return new AssistantStatus(properties.isEnabled(), problem, null, null, false, null,
-                0, properties.getPromptCharBudget(), 0);
+                0, properties.getPromptCharBudget(), 0, null, false);
         }
     }
 

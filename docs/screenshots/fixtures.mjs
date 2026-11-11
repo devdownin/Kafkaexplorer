@@ -994,4 +994,6 @@ export const assistantStatus = {
   requestTimeoutSeconds: 60,
   promptCharBudget: 12000,
   contextWindowTokens: 0,
+  providerCode: 'OPENROUTER',
+  dataRetentionRefused: true,
 };

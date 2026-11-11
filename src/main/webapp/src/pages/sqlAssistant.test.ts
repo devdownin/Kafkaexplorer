@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AssistantSqlResponse, AssistantStatus } from '../api/types';
 import {
-  assistantAvailability, describeAssistantEffective, describeAssistantHelp, describeContextWindow, describeProvenance, describeScope, isFixableError, metricDraftPatch, privacyNote,
+  assistantAvailability, describeAssistantEffective, describeAssistantHelp, describeContextWindow, describeProvenance, describeScope, isFixableError, metricDraftPatch, privacyLine,
   proposalTabSql, proposalVerdict,
 } from './sqlAssistant';
 
@@ -26,7 +26,7 @@ const response = (over: Partial<AssistantSqlResponse> = {}): AssistantSqlRespons
 });
 
 const status = (over: Partial<AssistantStatus> = {}): AssistantStatus => ({
-  enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e2b', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0, ...over,
+  enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e2b', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0, providerCode: 'OLLAMA', dataRetentionRefused: false, ...over,
 });
 
 describe('assistantAvailability', () => {
@@ -41,11 +41,21 @@ describe('assistantAvailability', () => {
   });
 });
 
-describe('privacyNote', () => {
-  it('claims nothing leaves only on a loopback address', () => {
-    expect(privacyNote(status())).toBeNull();
-    expect(privacyNote(status({ localDeployment: false, provider: 'OpenRouter', model: 'openai/gpt-4o-mini' })))
-      .toContain('OpenRouter (openai/gpt-4o-mini), outside this host');
+describe('privacyLine — the Settings sentence, about what the assistant sends', () => {
+  it('says nothing under the input when nothing leaves the host', () => {
+    expect(privacyLine(status())).toBeNull();
+  });
+
+  it('carries OpenRouter\'s retention restriction, as Settings does', () => {
+    expect(privacyLine(status({ localDeployment: false, providerCode: 'OPENROUTER', dataRetentionRefused: true })))
+      .toBe('No retention: Table and column names (never a message value) leave this host, and routing is '
+        + 'restricted to providers that do not retain or train on them — OpenRouter enforces that, so a '
+        + 'provider which does cannot serve these requests.');
+  });
+
+  it('says retention is the endpoint\'s business where this application cannot enforce it', () => {
+    expect(privacyLine(status({ localDeployment: false, providerCode: 'ANTHROPIC' })))
+      .toContain('Governed by the endpoint: Table and column names');
   });
 });
 
@@ -80,6 +90,13 @@ describe('describeScope and describeProvenance', () => {
 
   it('reports the model and the time, and a cost only when one was reported', () => {
     expect(describeProvenance(response())).toBe('gemma4:e2b · 8.4 s');
+  });
+
+  it('uses the Process Mining formatter when the call reported its usage', () => {
+    const usage = { inputTokens: 1200, outputTokens: 80, costUsd: 0.000123, cachedInputTokens: null,
+      reasoningTokens: null, durationMs: 7000, provider: 'OpenRouter', model: 'openai/gpt-4o-mini' };
+    expect(describeProvenance(response({ usage })))
+      .toBe('openai/gpt-4o-mini · 1,200 in / 80 out · $0.000123 · 8.4 s');
   });
 });
 
@@ -156,9 +173,9 @@ describe('describeAssistantHelp', () => {
   });
 
   it('claims nothing leaves the host only for a loopback endpoint', () => {
-    expect(describeAssistantHelp(status())!.detail).toContain('nothing is sent elsewhere');
-    expect(describeAssistantHelp(status({ localDeployment: false, provider: 'OpenRouter', model: 'm' }))!.detail)
-      .toContain('outside this host');
+    expect(describeAssistantHelp(status())!.detail).toContain('no table or column name leaves this machine');
+    expect(describeAssistantHelp(status({ localDeployment: false, providerCode: 'OPENROUTER', model: 'm' }))!.detail)
+      .toContain('leave this host');
   });
 });
 

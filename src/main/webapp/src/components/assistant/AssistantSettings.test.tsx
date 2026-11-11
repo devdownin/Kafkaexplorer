@@ -19,6 +19,7 @@ import { AssistantSettings } from './AssistantSettings';
 const STATUS = {
   enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e4b', localDeployment: false,
   baseUrl: 'http://ollama:11434/v1', requestTimeoutSeconds: 300, promptCharBudget: 12000, contextWindowTokens: 16384,
+  providerCode: 'OLLAMA', dataRetentionRefused: false,
 };
 
 beforeEach(() => vi.clearAllMocks());

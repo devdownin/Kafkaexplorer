@@ -51,7 +51,7 @@ import static org.mockito.Mockito.mock;
  *
  * <p>Tagged {@code assistant-eval} and excluded from every default build (surefire and
  * {@code verify-offline.sh}); it <b>skips</b> when no model is named. Run it with
- * {@code bin/assistant-eval.sh}, or:
+ * {@code bin/llm-eval.sh} (both consumers of the model, one summary), or:
  *
  * <pre>
  * ASSISTANT_EVAL_MODEL=qwen3:4b-instruct ./mvnw test -P assistant-eval
