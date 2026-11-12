@@ -19,8 +19,8 @@ import {
   type ActivityScale, type ActivityWindow,
 } from './topicActivity';
 import {
-  REFRESH_OPTIONS, REFRESH_OFF, activityIntervalMs, describeRefreshStatus, readRefreshChoice,
-  writeRefreshChoice, type RefreshChoice,
+  ACTIVITY_REFRESH_OPTIONS, REFRESH_OFF, activityIntervalMs, activityRefreshChoice,
+  describeRefreshStatus, readRefreshChoice, writeRefreshChoice, type RefreshChoice,
 } from './dashboardRefresh';
 import {
   assessQueue, describePairing, escalationTargetOf, queueRequestTopics, shareSeries,
@@ -402,9 +402,11 @@ const DeadLetter: React.FC = () => {
   }, []);
 
   const loading = catalogue === null && error === null;
+  /* La cadence effective, celle que le sélecteur et la ligne d'état doivent dire. */
+  const effectiveRefresh = activityRefreshChoice(refresh);
 
   return (
-    <div className="space-y-6">
+    <div className="p-4 md:p-6 space-y-6">
       <PageHeader
         kicker="Observe"
         title="Dead letter & retry"
@@ -424,11 +426,11 @@ const DeadLetter: React.FC = () => {
             </Select>
             <Select
               aria-label="Auto-refresh"
-              value={refresh}
+              value={effectiveRefresh}
               onChange={e => changeRefresh(e.target.value)}
               className="w-[9.5rem]"
             >
-              {REFRESH_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+              {ACTIVITY_REFRESH_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
               <option value={REFRESH_OFF}>Off</option>
             </Select>
             <Button variant="secondary" onClick={toggleScale} title="Vertical scale of the arrivals curve">
@@ -444,7 +446,7 @@ const DeadLetter: React.FC = () => {
       {/* Quand les chiffres ont été lus, et ce que la page fera ensuite. L'un sans l'autre ne
           répond pas : « il y a 4 min » sans la cadence laisse croire à une panne. */}
       <p className="text-[12px] text-on-surface-variant -mt-3">
-        {describeRefreshStatus(refresh, fetchedAt, now)}
+        {describeRefreshStatus(effectiveRefresh, fetchedAt, now)}
       </p>
 
       {error && <ErrorBanner message={error} onRetry={() => setReloadToken(n => n + 1)} />}

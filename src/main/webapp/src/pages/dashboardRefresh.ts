@@ -108,6 +108,26 @@ export function activityIntervalMs(choice: RefreshChoice): number | null {
 }
 
 /**
+ * Les cadences qu'une page « activité » peut réellement tenir. Elle sonde au plus toutes les
+ * `ACTIVITY_FLOOR_MS` ; lui offrir 2, 5 ou 15 s, c'était afficher « every 5 s » au-dessus d'une
+ * page qui interrogeait toutes les 30 s — une phrase d'état fausse, ce que `describeRefreshStatus`
+ * existe pour éviter. Un choix qui ne change rien n'est pas offert.
+ */
+export const ACTIVITY_REFRESH_OPTIONS: RefreshOption[] =
+  REFRESH_OPTIONS.filter(o => o.ms >= ACTIVITY_FLOOR_MS);
+
+/**
+ * Le choix tel qu'une page « activité » l'applique : un choix plus rapide que le plancher (le
+ * réglage est partagé avec le tableau de bord) se lit comme le plancher, et « off » reste « off ».
+ * C'est ce que le sélecteur et la ligne d'état affichent, pour qu'ils disent la période effective.
+ */
+export function activityRefreshChoice(choice: RefreshChoice): RefreshChoice {
+  if (choice === REFRESH_OFF) return REFRESH_OFF;
+  const option = refreshById(choice);
+  return option && option.ms >= ACTIVITY_FLOOR_MS ? option.id : ACTIVITY_REFRESH_OPTIONS[0].id;
+}
+
+/**
  * L'âge de ce qui est à l'écran, en clair.
  *
  * C'est la moitié du réglage qui ne se voit pas : `fetchedAt` existait et ne servait qu'à dater

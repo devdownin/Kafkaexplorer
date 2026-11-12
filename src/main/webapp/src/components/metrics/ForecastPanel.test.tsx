@@ -105,6 +105,13 @@ describe('ForecastPanel', () => {
       .toEqual(['/api/forecasts', `/api/forecasts/${'a'.repeat(64)}`,
         `/api/forecasts/${'a'.repeat(64)}/progress`, `/api/forecasts/${'a'.repeat(64)}/shadow`]);
   });
+  it('never asks for a shadow the list says is not configured', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: String(url).endsWith('/progress') ? {} : { ...seriesWith(ready), shadowEnabled: false } }));
+    render(<ForecastPanel />);
+    await screen.findByRole('button', { name: 'Approve after quality checks' });
+    await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.some(c => String(c[0]).endsWith('/progress'))).toBe(true));
+    expect(vi.mocked(axios.get).mock.calls.some(c => String(c[0]).endsWith('/shadow'))).toBe(false);
+  });
   it('offers the raw result as a copy, not as a page of JSON', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(ready) });
     render(<ForecastPanel />);

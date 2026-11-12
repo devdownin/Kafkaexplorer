@@ -1692,6 +1692,7 @@ export interface ForecastStatus {
   enabled: boolean;
   state: string;
   series: ForecastSeriesView[];
+  shadowEnabled: boolean;
 }
 /** @java ForecastSetupService.Check */
 export interface ForecastPreparationCheck {

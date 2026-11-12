@@ -5,7 +5,19 @@ ce qu'il faut de gestes pour la question ordinaire de chaque page, ce que la pag
 n'est pas vrai, ce qui sort du cadre. `pages/TopicExplorer.tsx`, `pages/DeadLetter.tsx`,
 `pages/StreamFlow.tsx` et ce qu'ils importent (`dashboardRefresh.ts`, `streamFlowLogic.ts`).
 
-> **Statut.** Rapport seul : **rien n'est corrigé ici.** Chaque constat dit comment il a été
+> **Statut.** **Tout est corrigé** (PR suivante), chaque correction avec un test qui échoue sans
+> elle quand elle se teste hors navigateur : Dead Letter prend la marge des pages *Observe* et
+> n'offre plus que 30 s, 1 min et 5 min, la ligne d'état disant « every 30 s » (D1, D2) ; Topic
+> Explorer s'ouvre sur Latest, le mode de lecture vit au-dessus de l'échantillon qu'il gouverne et
+> disparaît pendant une recherche (T1, T2), les deux cases « … too » sont rangées sous « Scan
+> options » et annoncées repliées quand elles quittent le défaut (T3), l'invitation sous la table
+> est une ligne (T4), les outils des résultats forment un groupe insécable (T5) ; Stream Flow
+> propose de restreindre la trace suivante aux topics atteints (S1), ne descend pas sous l'échelle
+> 0,75 à l'arrivée et part de la source (S2), et son exemple tient dans le champ (S3) ;
+> `GET /api/forecasts` dit `shadowEnabled`, et le panneau ne demande plus une comparaison qui
+> n'existe pas (X1). Les captures `topic-explorer`, `stream-flow` et `dead-letter` sont refaites.
+>
+> Le constat initial, ci-dessous, est laissé tel qu'établi. Chaque constat dit comment il a été
 > établi — **observé** (le SPA compilé servi par `docs/screenshots/server.mjs` sur les données
 > figées de `docs/screenshots/fixtures.mjs`, piloté par Playwright à 1440×900), ou **lu** (déduit
 > du code, fichier nommé). Aucun broker n'a tourné : les durées de scan sont celles des fixtures.
@@ -16,7 +28,7 @@ n'est pas vrai, ce qui sort du cadre. `pages/TopicExplorer.tsx`, `pages/DeadLett
 | D2 | « Every 5 s » est affiché, la page interroge toutes les 30 s | Dead Letter | **Haute** | observé + lu |
 | T1 | Le mode de lecture part sur Earliest, l'éditeur SQL sur Latest | Topic Explorer | Moyenne | observé + lu |
 | T2 | Le mode de lecture ne gouverne pas la recherche | Topic Explorer | Moyenne | observé |
-| T3 | Une barre de recherche à 13 contrôles, dont deux qui se recouvrent | Topic Explorer | Moyenne | observé |
+| T3 | Une barre de recherche chargée, dont deux cases qui recouvrent des modes | Topic Explorer | Moyenne | observé |
 | T4 | Un panneau vide sous les résultats | Topic Explorer | Basse | observé + lu |
 | T5 | La ligne d'actions des résultats passe à la ligne | Topic Explorer | Basse | observé |
 | S1 | Par défaut, la trace scanne tout le cluster | Stream Flow | Moyenne | observé |
@@ -69,15 +81,16 @@ un seul s'applique à ce qu'on fait. Rien ne dit lequel.
 **Correction proposée** : placer Read mode dans l'onglet Messages, au-dessus de l'aperçu qu'il
 gouverne, plutôt qu'en tuile d'en-tête qui semble régir toute la page.
 
-### T3 — Une barre de recherche à 13 contrôles *(moyenne, observé)*
+### T3 — Une barre de recherche chargée, dont deux cases qui recouvrent des modes *(moyenne, observé)*
 
-Cinq modes (Text, Regex, Field, Header, Key), un select natif de portée, trois cases, quatre
+Cinq modes (Text, Regex, Field, Header, Key), un select de portée, trois cases, quatre
 boutons d'info, un dépliant « Scan options » — 34 contrôles au-dessus du pli au total. « Search
 keys too », coché par défaut, recouvre le mode Key ; « Search headers too » recouvre le mode
-Header. Le select « Whole topic » est un `<select>` natif hors du design system.
+Header. *(Le select « Whole topic » avait d'abord été noté comme natif : c'est bien le `Select`
+partagé, rectifié à la lecture de `TopicSearchPanel.tsx`.)*
 
-**Correction proposée** : faire des deux cases des options du mode Text (dans « Scan options »),
-remplacer le select natif par `Select`, regrouper les quatre infobulles en une.
+**Correction proposée** : ranger les deux cases sous « Scan options », annoncées repliées quand
+elles quittent le défaut.
 
 ### T4 — Un panneau vide sous les résultats *(basse, observé + lu)*
 

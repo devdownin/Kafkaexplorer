@@ -29,12 +29,17 @@ public class ForecastController {
       /** Why this series could not be read; the other series are answered anyway. */
       String error) {}
 
-  public record Status(boolean enabled, String state, List<SeriesView> series) {}
+  /**
+   * {@code shadowEnabled} says whether {@code GET /{seriesId}/shadow} has anything to answer: without
+   * it the panel asked on every load, got the 404 that means "no shadow configured", and the browser
+   * wrote that 404 into the console of every Metrics page (PAGES-SIMPLICITY-AUDIT.md X1).
+   */
+  public record Status(boolean enabled, String state, List<SeriesView> series, boolean shadowEnabled) {}
 
   @GetMapping
   public ResponseEntity<Status> status() {
     var p = services.getIfAvailable();
-    if (p == null) return ResponseEntity.ok(new Status(false, "DISABLED", List.of()));
+    if (p == null) return ResponseEntity.ok(new Status(false, "DISABLED", List.of(), false));
     try {
       var rows = new java.util.ArrayList<SeriesView>();
       // One series per row, each read on its own (METRICS-FORECAST-UX-AUDIT.md B2): a single record
@@ -43,9 +48,9 @@ public class ForecastController {
       // The list carries no history points (P1): up to 512 per series were sent every 30 s to a
       // page that draws one series, whose detail is GET /{seriesId}.
       for (var s : p.series()) rows.add(view(p, s, false));
-      return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows)));
+      return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows), p.shadowEnabled()));
     } catch (Exception e) {
-      return ResponseEntity.status(503).body(new Status(true, "UNAVAILABLE", List.of()));
+      return ResponseEntity.status(503).body(new Status(true, "UNAVAILABLE", List.of(), p.shadowEnabled()));
     }
   }
 

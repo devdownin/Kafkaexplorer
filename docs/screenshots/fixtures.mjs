@@ -1026,7 +1026,7 @@ export const forecastSeries = {
 
 /** GET /api/forecasts — the list is a summary: the same row without its history points. */
 export const forecastStatus = {
-  enabled: true, state: 'AVAILABLE',
+  enabled: true, state: 'AVAILABLE', shadowEnabled: false,
   series: [{ ...forecastSeries, result: { ...forecastResult, context: { ...forecastContext, points: [] } } }],
 };
 

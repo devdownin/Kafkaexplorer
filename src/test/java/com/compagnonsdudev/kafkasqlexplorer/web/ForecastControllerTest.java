@@ -101,4 +101,14 @@ class ForecastControllerTest {
     when(pilot.resolve("unknown")).thenThrow(new IllegalArgumentException("unknown"));
     assertEquals(404, controller().series("unknown").getStatusCode().value());
   }
+
+  /** PAGES-SIMPLICITY-AUDIT.md X1: the list says whether a shadow exists, so the panel need not ask. */
+  @Test
+  void theListSaysWhetherAShadowIsConfigured() {
+    when(pilot.series()).thenReturn(java.util.List.of());
+    when(pilot.shadowEnabled()).thenReturn(false);
+    org.junit.jupiter.api.Assertions.assertFalse(controller().status().getBody().shadowEnabled());
+    when(pilot.shadowEnabled()).thenReturn(true);
+    org.junit.jupiter.api.Assertions.assertTrue(controller().status().getBody().shadowEnabled());
+  }
 }
