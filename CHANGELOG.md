@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.4.0] — 2026-11-12
+
 - **ksqlDB → Flink migration examples.** `docs/QUERY-EXAMPLES.md` carries the queries of the
   ksql2flink laboratory — the Lexhistoric projection and its `UNION ALL`, the socle ET referential
   and its join, the hourly indicator, the classification-quality threshold — rewritten for the
@@ -2727,7 +2731,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.4...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.4...v2.4.0
 [2.3.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.3...v2.3.4
 [2.3.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.1...v2.3.2
