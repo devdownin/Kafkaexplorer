@@ -164,7 +164,7 @@ augmentez `memory=` dans `%UserProfile%\.wslconfig` ou utilisez `-NoSpectra`.
 
 - 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.
 - 🧠 **Zero-config schemas** — topics are sampled, their structure inferred (JSON, XML, Avro via Schema Registry), and registered as Flink tables in one click.
-- 📝 **A real SQL editor** — Monaco (the VS Code engine), auto-completion scoped to the tables your query actually cites, query history, earliest/latest read modes, windowing assistant.
+- 📝 **A real SQL editor** — Monaco (the VS Code engine), auto-completion scoped to the tables your query actually cites, query history, earliest/latest read modes (latest by default), windowing assistant.
 - 🔎 **Search that says what it scanned** — text, regex, field path, JSONPath, XPath, record key or Kafka header, over the whole topic, with hits, records scanned, why the pass stopped, and a cursor to continue. A search here is never silently partial.
 - 🕸️ **Lineage & tracing** — an interactive graph of topics → tables → live jobs, resolved by Flink's own parser; plus cross-topic message tracing by key, header, JSONPath or XPath, streaming its hops as it finds them and comparing two keys side by side.
 - 🗺️ **A data model you did not have to draw** — read a set of topics as tables, with the relations between them deduced from key-column names. Kafka has no foreign keys, so every edge is graded, states its evidence, and opens as a ready `JOIN` — one relation or a whole subgraph.
@@ -234,6 +234,13 @@ own cluster calls for. Each proposal carries the audit measurement behind it and
 its thresholds are a multiple of that measurement, not a round number someone liked.
 
 ![Metrics: two configured metrics above the KPIs suggested for this cluster, each card carrying the audit measurement it rests on and the multiple its thresholds come from](https://devdownin.github.io/Kafkaexplorer/img/metrics.png)
+
+**Metrics Forecast** — the forecast panel of the same page: one series chosen, its 80 % interval
+and the threshold it is judged against drawn on the chart, the decision and the sentence saying
+where the series stands beside it, then its four steps. A series still collecting history says so
+instead of showing a baseline as a forecast, and approving one states what the approval changes.
+
+![The forecast panel of the Metrics page: one series in observation, its 80 % interval and the threshold it is judged against on the chart, the decision beside the sentence saying where the series stands, then its four steps](https://devdownin.github.io/Kafkaexplorer/img/metrics-forecast.png)
 
 Also there and not pictured here: **Cluster**
 ([screenshot](https://devdownin.github.io/Kafkaexplorer/img/cluster.png)) with the KRaft
