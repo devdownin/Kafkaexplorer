@@ -60,10 +60,9 @@ describe('ForecastSetupWizard', () => {
     expect(screen.queryByRole('button', { name: 'Download forecasts.yml' })).toBeNull();
   });
   it('prefills the requested metric and known sources without approving an export', async () => {
-    const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
-    expect(await screen.findByRole('button', { name: 'Continue to sources' })).toBeEnabled();
-    expect(screen.getByLabelText('Candidate metric')).toHaveValue('lag');
-    await user.click(screen.getByRole('button', { name: 'Continue to sources' }));
+    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+    // Opened for one eligible metric, it starts at its sources (METRICS-FORECAST-UX-AUDIT.md U4).
+    expect(await screen.findByText(/Step 2 of 2/)).toBeTruthy();
     expect(screen.getByRole('list', { name: 'All source topics: selected' })).toHaveTextContent('orders');
     expect(screen.getByRole('list', { name: 'All consumer groups (optional): selected' })).toHaveTextContent('worker');
     expect(screen.getByRole('checkbox')).not.toBeChecked();
@@ -206,5 +205,20 @@ describe('ForecastSetupWizard', () => {
     for (const label of ['Sampling interval', 'Repeating cycle', 'Forecast horizon (points)', 'Optional threshold in forecast output units', 'History cluster ID'])
       expect(details.contains(screen.getByLabelText(label))).toBe(true);
     expect(details.contains(screen.getByLabelText('Environment'))).toBe(false);
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md B6: a metric that already has a series is named, and cannot be chosen.
+  it('marks a metric that is already forecast instead of refusing it after the submit', async () => {
+    render(<ConfirmProvider><ForecastSetupWizard forecastMetricIds={['lag']} /></ConfirmProvider>);
+    const option = await screen.findByRole('option', { name: /Lag · already forecast/ });
+    expect(option).toBeDisabled();
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md B7: the label sits above the chips it titles.
+  it('puts the source chips under their label', async () => {
+    await sources();
+    const label = screen.getByText('All source topics');
+    const chips = screen.getByRole('list', { name: 'All source topics: selected' });
+    expect(label.compareDocumentPosition(chips) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

@@ -248,4 +248,47 @@ describe('ForecastPanel', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('could not be read');
     expect(screen.getAllByRole('option')).toHaveLength(2);
   });
+
+  // METRICS-FORECAST-UX-AUDIT.md B3: collecting history is not a fallback.
+  it('does not call a series without a forecast a baseline fallback', async () => {
+    const status = seriesWith(blocked, 'WARMING_UP');
+    const collecting = { ...status.series[0], result: { ...status.series[0].result, strategy: 'UNAVAILABLE', forecast: null, reason: 'Collecting history' } };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...status, series: [collecting] } : {} }));
+    render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    expect(await screen.findByTitle('UNAVAILABLE')).toHaveTextContent('No forecast yet');
+    expect(screen.queryByText('Baseline fallback')).toBeNull();
+    // Nothing to approve and no interval to qualify without a forecast.
+    expect(screen.queryByRole('button', { name: 'Approve after quality checks' })).toBeNull();
+    expect(screen.queryByText(/80 % interval is nominal/)).toBeNull();
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md U1, U5: the decision sits with the sentence saying where the series stands.
+  it('puts approval and stop together, under the forecast', async () => {
+    const status = seriesWith(blocked);
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts'
+      ? { ...status, series: [{ ...status.series[0], withdrawable: true }] } : {} }));
+    render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    const approve = await screen.findByRole('button', { name: 'Approve after quality checks' });
+    expect(approve.parentElement).toBe(screen.getByRole('button', { name: 'Stop forecasting this series' }).parentElement);
+    expect(approve.parentElement).toHaveTextContent('Observing');
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md P4: the preparation checks are read when their section opens.
+  it('reads the preparation checks only once their section is opened', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? seriesWith(ready)
+      : url === '/api/forecasts/preparation' ? { checkedAt: 1, probed: false, checks: [] } : {} }));
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    await screen.findByLabelText('Forecast status');
+    expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).not.toContain('/api/forecasts/preparation');
+    await user.click(screen.getByText('Preparation and configuration'));
+    await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).toContain('/api/forecasts/preparation'));
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md U6: the confirmation says what approving changes.
+  it('says what approval changes before it is given', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(ready) });
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    await user.click(await screen.findByRole('button', { name: 'Approve after quality checks' }));
+    expect(await screen.findByText(/reported as ACTIVE/)).toBeTruthy();
+  });
 });

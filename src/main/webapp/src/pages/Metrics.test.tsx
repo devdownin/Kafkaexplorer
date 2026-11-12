@@ -194,8 +194,9 @@ describe('Metrics page', () => {
   it('opens the forecast assistant from the matching metric card and aborts it on close', async () => {
     stubApi([templateMetric]); const user = userEvent.setup(); await renderPage();
     await user.click(await screen.findByRole('button', { name: 'Prepare a forecast' }));
-    expect(await screen.findByRole('button', { name: 'Continue to sources' })).toBeEnabled();
-    expect(screen.getByLabelText('Candidate metric')).toHaveValue('m-1');
+    // Opened for that metric, the assistant starts at its sources (METRICS-FORECAST-UX-AUDIT.md U4).
+    expect(await screen.findByText(/Step 2 of 2/)).toBeTruthy();
+    expect(screen.getByRole('list', { name: 'All source topics: selected' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Prepare a forecast' })).toHaveFocus();
     expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/forecasts/configuration', expect.anything(), expect.anything());
     await user.click(screen.getByRole('button', { name: 'Close forecast preparation' }));

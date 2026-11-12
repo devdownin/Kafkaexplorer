@@ -35,4 +35,24 @@ describe('ForecastPanel chart', () => {
     expect(await screen.findByText('80 % interval')).toBeInTheDocument();
     expect(screen.getByText('Median forecast')).toBeInTheDocument();
   });
+
+  // METRICS-FORECAST-UX-AUDIT.md B4: a filled gap is drawn apart from what was measured.
+  it('draws imputed points apart, under their own name', async () => {
+    const withGap = structuredClone(status);
+    withGap.series[0].result.context.points[1].imputed = true;
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? withGap : {} }));
+    render(<ForecastPanel />);
+    expect(await screen.findByText('Imputed (gap filled)')).toBeInTheDocument();
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md B5: the threshold a breach is judged against is on the chart.
+  it('draws the configured threshold', async () => {
+    const progress = { seriesId: id, state: 'READY', reason: 'ok', observedPoints: 3, requiredPoints: 512, missingPoints: 0, imputedPoints: 0,
+      checkedAt: 1, nextScheduledAt: 2, stepMillis: 60000, horizon: 3, topics: ['t'], groups: [], breachState: 'EVALUATED',
+      breach: { resultKey: 'k', threshold: { threshold: 11, direction: 'ABOVE', breached: true } } };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status
+      : String(url).endsWith('/progress') ? progress : {} }));
+    render(<ForecastPanel />);
+    expect(await screen.findByText('Threshold ≥ 11')).toBeInTheDocument();
+  });
 });

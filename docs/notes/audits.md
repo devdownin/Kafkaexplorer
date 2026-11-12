@@ -611,3 +611,7 @@ decision under 914 px of stacked blocks. Read it before changing `ForecastPanel.
 an error row (`SeriesView.error`) rather than a 503; the list drops the history points (4 KB per
 series instead of 44 KB) and `GET /api/forecasts/{seriesId}` serves the shown series in full;
 `/progress` prepares a series once per closed step; choosing a series reads only that series.
+**Then the rest**: no "Baseline fallback" on a series collecting history, imputed points and the
+threshold drawn, an already-forecast metric marked in the assistant, the panel reordered (750 px
+instead of 914, chart at 140 px instead of 500), shared controls, no empty tiles, the assistant
+opened at its sources, and the approval saying what it changes. Nothing is left open.

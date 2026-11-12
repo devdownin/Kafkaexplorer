@@ -26,7 +26,15 @@ function span(millis: number) {
   const minutes = millis / 60000;
   return minutes < 120 ? `${+minutes.toFixed(1)} minutes` : `${+(minutes / 60).toFixed(1)} hours`;
 }
-export function ForecastSetupWizard({ initialMetricId, onApplied }: { initialMetricId?: string; onApplied?: () => void }) {
+export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetricIds = [] }: {
+  initialMetricId?: string; onApplied?: () => void;
+  /**
+   * Metrics that already have a series (METRICS-FORECAST-UX-AUDIT.md B6): offered as configurable,
+   * they were refused only after the attestation and the submit, with a pointer to a deployment
+   * file that a series started from here does not have.
+   */
+  forecastMetricIds?: string[];
+}) {
   const [candidates, setCandidates] = useState<ForecastCandidates | null>(null);
   const [selected, setSelected] = useState<ForecastCandidate | null>(null);
   const [step, setStep] = useState(1);
@@ -65,7 +73,9 @@ export function ForecastSetupWizard({ initialMetricId, onApplied }: { initialMet
           setCandidates(data);
           if (initialMetricId) {
             const candidate = data.metrics.find(m => m.metricId === initialMetricId);
-            if (candidate) take(candidate);
+            // Opened from a card, the metric is chosen already: step 1 only asked to confirm it
+            // (METRICS-FORECAST-UX-AUDIT.md U4). A metric with a blocker stays there, with it.
+            if (candidate) { take(candidate); if (candidate.eligible) setStep(2); }
             else setError('Selected metric is absent from the candidate catalogue. Reload or choose a listed metric.');
           }
           if (data.clusterId) setClusterId(data.clusterId);
@@ -156,7 +166,11 @@ export function ForecastSetupWizard({ initialMetricId, onApplied }: { initialMet
       {candidates && <>
         <p>{candidates.total} metric(s){candidates.truncated ? '; showing the first 100' : ''}. Eligibility describes metadata; history and quality are checked separately.</p>
         <Field label="Candidate metric">{p => <Select {...p} value={selected?.metricId ?? ''} onChange={e => choose(e.target.value)}>
-          <option value="">Choose a metric</option>{candidates.metrics.map(c => <option key={c.metricId} value={c.metricId}>{c.name || c.metricId} · {c.eligible ? 'configurable' : c.blockers[0] ?? 'not configurable'}</option>)}
+          <option value="">Choose a metric</option>{candidates.metrics.map(c => {
+            const forecast = forecastMetricIds.includes(c.metricId);
+            return <option key={c.metricId} value={c.metricId} disabled={forecast}>{c.name || c.metricId} · {forecast
+              ? 'already forecast' : c.eligible ? 'configurable' : c.blockers[0] ?? 'not configurable'}</option>;
+          })}
         </Select>}</Field>
         {selected && <>
           <p>Unit: {selected.unit} · {selected.transformation} · {selected.enrolled ? 'History recorded' : 'History not recorded yet'}</p>

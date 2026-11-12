@@ -216,6 +216,15 @@ class ForecastSetupServiceTest {
     assertThrows(IllegalArgumentException.class, () -> setup.draft(request(true, MetricObservation.definitionVersion(metric), "milliseconds", List.of("orders"), List.of("worker"), 86400000, 30)));
     verifyNoInteractions(history, client, pilot, preparation);
   }
+  /** METRICS-FORECAST-UX-AUDIT.md B6: a series started from the assistant is stopped, not edited in a file. */
+  @Test void aMetricAlreadyForecastFromTheAssistantIsReferredToTheStopButton() {
+    var id = setup.draft(valid()).seriesId();
+    var started = new ForecastPilotProperties.Series(id, "lag", "local", "v1", "milliseconds",
+        List.of("orders"), List.of(), SeriesPreparationProfile.initial(SeriesPreparationProfile.Transformation.GAUGE_MEAN), 30, 1, null, null, .8, 30);
+    root.getPilot().replaceRuntime(List.of(started));
+    var refusal = assertThrows(IllegalArgumentException.class, () -> setup.draft(valid()));
+    assertTrue(refusal.getMessage().contains("stop that series from Metrics Forecast"), refusal.getMessage());
+  }
   @Test void existingIdentityCannotBeChangedAndApprovedSeriesArePreserved() {
     root.getHistory().setEnabled(true); root.getHistory().setClusterId("existing");
     assertThrows(IllegalArgumentException.class, () -> setup.draft(valid()));

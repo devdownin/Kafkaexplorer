@@ -246,7 +246,10 @@ public class ForecastSetupService {
         null, .8, ForecastQualityWindow.blockPoints(r.horizon()));
     var approved = new ArrayList<>(approvedSeries());
     if (approved.stream().anyMatch(existing -> existing.seriesId().equals(id)))
-      throw new IllegalArgumentException("This series is already approved; edit its deployment configuration explicitly");
+      throw new IllegalArgumentException(root.getPilot().isRuntime(id)
+          // Started from the assistant: there is no file to edit, the series is stopped from the page.
+          ? "This metric is already forecast; stop that series from Metrics Forecast to configure it again"
+          : "This series is already approved; edit its deployment configuration explicitly");
     approved.add(spec);
     var validation = new ForecastPilotProperties();
     validation.setMaxSeries(root.getPilot().getMaxSeries());

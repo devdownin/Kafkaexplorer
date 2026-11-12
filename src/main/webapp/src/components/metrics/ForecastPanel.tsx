@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Area, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Badge, Button, useConfirm } from '../ui';
+import { Area, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Badge, Button, Field, Select, Table, TableBody, TableHead, TableRow, Td, Th, useConfirm } from '../ui';
 import { copyText } from '../../clipboard';
 import type { BadgeTone } from '../ui';
 import type {
@@ -14,17 +14,25 @@ import { ForecastProgress } from './ForecastProgress';
 import { ForecastShadowComparison } from './ForecastShadowComparison';
 import { isShadowComparison, type ShadowView } from './shadowModels';
 import { ForecastTimeline } from './ForecastTimeline';
+import { forecastStage } from './forecastStage';
 
 /**
  * READY only says a forecast was produced, not that it can be approved: a green badge beside a
  * disabled Approve button read as a contradiction, so it is neutral, and the quality block says
  * where approval stands. The pilot's own value stays in the tooltip.
  */
-const STATE_TONE: Record<string, BadgeTone> = { READY: 'neutral', DEGRADED: 'error' };
+// Collecting history is the expected first state of every series, not a warning.
+const STATE_TONE: Record<string, BadgeTone> = { READY: 'neutral', WARMING_UP: 'neutral', DEGRADED: 'error' };
 const STATE_LABEL: Record<string, string> = {
   READY: 'Forecasting', STALE: 'Stale', WARMING_UP: 'Collecting history', DEGRADED: 'Degraded',
 };
-const STRATEGY_LABEL: Record<string, string> = { TIMESFM: 'TimesFM' };
+/**
+ * `UNAVAILABLE` is what a series collecting history is written with: there is no forecast, so
+ * there is no fallback either — it read "Baseline fallback" on a yellow badge
+ * (METRICS-FORECAST-UX-AUDIT.md B3).
+ */
+const STRATEGY_LABEL: Record<string, string> = { TIMESFM: 'TimesFM', UNAVAILABLE: 'No forecast yet' };
+const NEUTRAL_STRATEGIES = new Set(['TIMESFM', 'UNAVAILABLE']);
 /** Plain words on the page; the pilot's own term stays in the tooltip and in the API. */
 const VISIBILITY_LABEL: Record<string, string> = { ACTIVE: 'Approved', SHADOW: 'Observing' };
 const POLL_MS = 30000;
@@ -80,6 +88,8 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [revision, setRevision] = useState(0);
+  /** P4: the preparation checks are read when their section is opened, not on every visit. */
+  const [preparationOpen, setPreparationOpen] = useState(false);
   const [detail, setDetail] = useState<ForecastSeriesView | null>(null);
   const confirm = useConfirm();
   /*
@@ -144,11 +154,16 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
   const result = series?.result;
   const seriesProgress = progress?.seriesId === series?.seriesId ? progress : null;
   const chart = [
-    ...(result?.context.points.slice(-60).map(p => ({ at: p.endAt, actual: p.value })) ?? []),
+    // An imputed point is a filled gap, not a measurement: drawn apart, never in "Observed" (B4).
+    ...(result?.context.points.slice(-60).map(p => p.imputed ? { at: p.endAt, imputed: p.value } : { at: p.endAt, actual: p.value }) ?? []),
     ...(result?.forecast?.points.map(p => ({ at: p.at, median: p.q50, floor: p.q10, band: p.q90 - p.q10, q10: p.q10, q90: p.q90 })) ?? []),
   ];
   // Fifteen-minute steps over sixty history and sixty forecast points cover a day and more: a tick
   // that shows only the time then repeats across midnight.
+  const anyImputed = chart.some(p => 'imputed' in p && p.imputed != null);
+  // B5: the threshold the breach is judged against, on the chart it is judged on.
+  const threshold = seriesProgress?.breach?.resultKey === result?.key ? seriesProgress?.breach?.threshold ?? null : null;
+  const stage = series ? forecastStage(series) : null;
   const spanMs = chart.length > 1 ? chart[chart.length - 1].at - chart[0].at : 0;
   const tick = (v: number) => spanMs > 24 * 3600 * 1000
     ? new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -157,7 +172,7 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
     if (!series || busy) return;
     const active = result?.visibility !== 'ACTIVE';
     setAction(null);
-    if (active && !await confirm({ title: 'Approve this forecast?', description: 'Records your approval of its realised quality. It sends no alert and can be returned to observing at any time.', confirmLabel: 'Approve', tone: 'primary' })) return;
+    if (active && !await confirm({ title: 'Approve this forecast?', description: 'Its forecasts and predicted threshold breaches are then reported as ACTIVE — operator-approved — to every reader, the MCP forecast tools included. Nothing is sent or triggered, and it can be returned to observing at any time.', confirmLabel: 'Approve', tone: 'primary' })) return;
     setBusy(true);
     try {
       await axios.put(`/api/forecasts/${encodeURIComponent(series.seriesId)}/activation`, { active, confirmed: active }, { timeout: 10000 });
@@ -185,22 +200,28 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
     if (await copyText(JSON.stringify(result, null, 2))) setCopied(true);
     else setAction({ source: 'copy', text: 'Copy unavailable in this browser. The result is also served by GET /api/forecasts.' });
   }
+  /*
+   * The order is the reader's (METRICS-FORECAST-UX-AUDIT.md U1): which series and where it stands,
+   * the forecast itself, the one decision it asks for, the steps, then everything else folded. The
+   * chart sat 500 px into a 914 px panel, under four tiles, three folds and a destructive button,
+   * and the approval was last.
+   */
   return <section className="card p-5 space-y-4" aria-label="Metrics Forecast">
     <h2 className="text-lg font-semibold">Metrics Forecast</h2>
     {error && <p role="alert">{error}</p>}
     {!status && !error && <p>Loading forecast status…</p>}
     {status && !status.enabled && <p>Forecast pilot disabled by configuration. Enable explorer.forecasting.pilot.enabled to use it.</p>}
-    {(status?.enabled || !status && error) && (!status?.series.length ? <ForecastPreparation onConfigure={onConfigure} /> :
-      <details><summary>Preparation and configuration</summary><ForecastPreparation onConfigure={onConfigure} /></details>)}
+    {(status?.enabled || !status && error) && !status?.series.length && <ForecastPreparation onConfigure={onConfigure} />}
     {status?.enabled && status.series.length === 0 && <p>Forecast pilot enabled. Configure approved series, PostgreSQL history and TimesFM inference to calculate forecasts.</p>}
     {status?.enabled && status.series.length > 0 && <>
-      <div className="flex flex-wrap items-center gap-2">
-        <label>Series <select value={series?.seriesId ?? ''} onChange={e => { setSelected(e.target.value); setCopied(false); setAction(null); }}>
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Series" className="min-w-64">{p => <Select {...p} value={series?.seriesId ?? ''}
+          onChange={e => { setSelected(e.target.value); setCopied(false); setAction(null); }}>
           {status.series.map(s => <option key={s.seriesId} value={s.seriesId}>{s.metricId} · {s.environment}</option>)}
-        </select></label>
-        {result && <span className="flex flex-wrap gap-1" aria-label="Forecast status">
+        </Select>}</Field>
+        {result && <span className="flex flex-wrap gap-1 pb-1.5" aria-label="Forecast status">
           <Badge tone={STATE_TONE[result.state] ?? 'warning'} title={result.state}>{STATE_LABEL[result.state] ?? result.state}</Badge>
-          <Badge tone={result.strategy === 'TIMESFM' ? 'neutral' : 'warning'} title={result.strategy}>
+          <Badge tone={NEUTRAL_STRATEGIES.has(result.strategy) ? 'neutral' : 'warning'} title={result.strategy}>
             {STRATEGY_LABEL[result.strategy] ?? 'Baseline fallback'}</Badge>
           <Badge tone={result.visibility === 'ACTIVE' ? 'primary' : 'neutral'} title={result.visibility}>
             {VISIBILITY_LABEL[result.visibility] ?? result.visibility}</Badge>
@@ -208,14 +229,9 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
         </span>}
       </div>
       {series?.error && <p role="alert">{series.error}</p>}
-      {series && <ForecastTimeline series={series} />}
-      {series && <ForecastProgress progress={seriesProgress} error={progressError} result={result} />}
-      <ForecastShadowComparison view={shadow?.seriesId === series?.seriesId ? shadow?.view ?? null : null} />
-      {series?.withdrawable && <Button variant="ghost" onClick={() => void withdraw()} disabled={busy}>Stop forecasting this series</Button>}
-      {action?.source === 'withdraw' && <p role="alert">{action.text}</p>}
-      {!result ? <p>No persisted forecast yet.</p> : <>
-        <p>{result.reason}</p>
-        {result.forecast && <div style={{ height: 260 }} role="img" aria-label="Measured history and forecast">
+
+      {result?.forecast ? <>
+        <div style={{ height: 260 }} role="img" aria-label="Measured history and forecast">
           <ResponsiveContainer><ComposedChart data={chart}>
             <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={tick} />
             <YAxis />
@@ -232,32 +248,49 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
             {result.strategy === 'TIMESFM' && <Area dataKey="floor" stackId="interval" stroke="none" fill="transparent" tooltipType="none" legendType="none" isAnimationActive={false} />}
             {result.strategy === 'TIMESFM' && <Area dataKey="band" stackId="interval" stroke="none" fill="#64748b" fillOpacity={0.2} name="80 % interval" isAnimationActive={false} />}
             <Line dataKey="actual" stroke="#16a34a" dot={false} name="Observed" isAnimationActive={false} />
+            {anyImputed && <Line dataKey="imputed" stroke="#d97706" strokeDasharray="2 3" dot={{ r: 2, fill: '#d97706', stroke: 'none' }} legendType="circle" name="Imputed (gap filled)" isAnimationActive={false} />}
             <Line dataKey="median" stroke="#6366f1" strokeDasharray="6 3" dot={false} name={result.strategy === 'TIMESFM' ? 'Median forecast' : 'Baseline forecast'} isAnimationActive={false} />
+            {threshold && <ReferenceLine y={threshold.threshold} ifOverflow="extendDomain" stroke="#d97706" strokeDasharray="4 4"
+              label={{ value: `Threshold ${threshold.direction === 'ABOVE' ? '≥' : '≤'} ${threshold.threshold}`, position: 'insideTopRight', fill: '#d97706', fontSize: 11 }} />}
           </ComposedChart></ResponsiveContainer>
-        </div>}
-        <p>The 80 % interval is nominal, not a guarantee. A baseline forecast has no interval. No alert is sent.</p>
-        <details><summary>Quality details and baselines</summary>
+        </div>
+        <p className="text-xs text-on-surface-variant"><span>{result.reason}</span> {result.strategy === 'TIMESFM'
+          ? 'The 80 % interval is nominal, not a guarantee.' : 'A baseline forecast has no interval.'} No alert is sent.</p>
+      </> : <p>{result ? result.reason : series?.error ? null : 'No persisted forecast yet.'}</p>}
+
+      {/* The decision, beside the sentence that says where the series stands (U5: stopping and
+          approving were at the two ends of the panel). */}
+      {series && <div className="flex flex-wrap items-center gap-3 rounded-lg border border-outline-variant p-3">
+        {stage && <p className="text-sm flex-1 min-w-64">{stage.detail.startsWith(stage.label) ? stage.detail
+          : <><span className="font-medium">{stage.label}</span> · {stage.detail}</>}</p>}
+        {result?.forecast && (result.visibility === 'ACTIVE'
+          ? <Button onClick={() => void activation()} disabled={busy}>Return to observing</Button>
+          // The timeline's approval step says what still blocks it; the button points at it.
+          : <Button onClick={() => void activation()} disabled={busy || !series.activation?.eligible}
+            aria-describedby={series.activation?.eligible ? undefined : 'forecast-step-approval'}>Approve after quality checks</Button>)}
+        {series.withdrawable && <Button variant="ghost" onClick={() => void withdraw()} disabled={busy}>Stop forecasting this series</Button>}
+      </div>}
+      {(action?.source === 'approve' || action?.source === 'withdraw') && <p role="alert">{action.text}</p>}
+
+      {series && <ForecastTimeline series={series} />}
+
+      <details><summary>Summary, history and sources</summary>
+        {series && <ForecastProgress progress={seriesProgress} error={progressError} result={result} />}
+      </details>
+      {result && <details><summary>Quality details and baselines</summary>
         {!result.quality ? <p>Realised quality: unmeasured.</p> : <>
           <p>MASE {result.quality.mase?.toPrecision(4) ?? 'unmeasured'} · interval coverage {(100 * result.quality.q10Q90Coverage).toFixed(1)}% · interval width {result.quality.meanIntervalWidth.toPrecision(4)} · pinball loss {result.quality.meanPinballLoss.toPrecision(4)}</p>
-          <table><thead><tr><th>Baseline</th><th>Realised MAE</th></tr></thead><tbody>
-            {Object.entries(result.baselineMae).map(([name, mae]) => <tr key={name}><td>{name}</td><td>{mae.toPrecision(4)}</td></tr>)}
-          </tbody></table>
+          <Table><TableHead><TableRow><Th>Baseline</Th><Th>Realised MAE</Th></TableRow></TableHead><TableBody>
+            {Object.entries(result.baselineMae).map(([name, mae]) => <TableRow key={name}><Td>{name}</Td><Td>{mae.toPrecision(4)}</Td></TableRow>)}
+          </TableBody></Table>
         </>}
         <Button variant="ghost" onClick={() => void copyResult()}>{copied ? 'Raw result copied' : 'Copy raw result (JSON)'}</Button>
         {action?.source === 'copy' && <p role="alert">{action.text}</p>}
-        </details>
-        {result.visibility === 'ACTIVE'
-          ? <div className="space-y-1">
-            <Button onClick={() => void activation()} disabled={busy}>Return to observing</Button>
-            {action?.source === 'approve' && <p role="alert">{action.text}</p>}
-          </div>
-          : <div className="space-y-1">
-            {/* The timeline's approval step says what still blocks it; the button points at it. */}
-            <Button onClick={() => void activation()} disabled={busy || !series?.activation?.eligible}
-              aria-describedby={series?.activation?.eligible ? undefined : 'forecast-step-approval'}>Approve after quality checks</Button>
-            {action?.source === 'approve' && <p role="alert">{action.text}</p>}
-          </div>}
-      </>}
+      </details>}
+      <ForecastShadowComparison view={shadow?.seriesId === series?.seriesId ? shadow?.view ?? null : null} />
+      <details onToggle={e => setPreparationOpen(e.currentTarget.open)}><summary>Preparation and configuration</summary>
+        {preparationOpen && <ForecastPreparation onConfigure={onConfigure} />}
+      </details>
     </>}
   </section>;
 }

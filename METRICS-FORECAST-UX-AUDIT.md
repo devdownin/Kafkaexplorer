@@ -12,7 +12,15 @@ Le moteur lui-même (pilote, dérive, TimesFM, outils MCP) a son rapport : `TIME
 > 503 sans série ; la liste ne porte plus les points d'historique — **4 KB par série au lieu de
 > 44 KB** sur la même série d'essai — et `GET /api/forecasts/{seriesId}` rend l'enregistrement
 > complet de la série affichée ; la préparation de `/progress` est mémoïsée par pas clos ;
-> choisir une série ne lit plus qu'elle. Le reste est ouvert. Chaque constat dit comment il a été établi —
+> choisir une série ne lit plus qu'elle. **Puis tout le reste** : une série en collecte porte « No
+> forecast yet », sans bouton d'approbation ni avertissement d'intervalle (B3) ; les points imputés
+> ont leur propre tracé (B4) ; le seuil est une ligne du graphique (B5) ; l'assistant marque « already
+> forecast » et le refus serveur renvoie au bouton Stop (B6) ; les pastilles passent sous leur
+> libellé (B7) ; la préparation n'est lue qu'à l'ouverture (P4) ; le panneau suit l'ordre série →
+> graphique → verdict et décision → étapes → dépliants, **750 px au lieu de 914, graphique à
+> 140 px au lieu de 500** (U1, U5) ; `Select` et `Table` partagés (U2) ; plus de tuile vide (U3) ;
+> l'assistant ouvert depuis une carte commence à l'étape 2 et défile jusqu'au formulaire (U4) ; la
+> confirmation dit ce que change l'approbation (U6). **Tout l'audit est traité.** Chaque constat dit comment il a été établi —
 > **observé** (l'interface compilée, servie sur les données figées de `docs/screenshots/` avec trois
 > séries inventées — en observation, en collecte, dérivée — et pilotée par Playwright à 1440×900),
 > **reproduit** (un test jeté ensuite) ou **lu** (déduit du code, fichier nommé). Les chiffres
