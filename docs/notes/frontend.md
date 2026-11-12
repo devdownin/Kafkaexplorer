@@ -671,7 +671,9 @@ sources**, where they are detail rather than the headline.
 
 **The shadow comparison sits under the timeline, collapsed.** `ForecastShadowComparison` reads
 `GET /api/forecasts/{id}/shadow` in the panel's own loop, as a third read beside the status and the
-progress, on the same clock. A 404 means no shadow on this deployment and renders nothing. A 204
+progress, on the same clock. **It is not read at all when `GET /api/forecasts` says `shadowEnabled: false`**:
+asked anyway, the 404 below wrote a console error into every Metrics page (`PAGES-SIMPLICITY-AUDIT.md`
+X1). A 404 means no shadow on this deployment and renders nothing. A 204
 is a shadow with nothing scored yet, worded as waiting rather than as unavailable. Its tables put
 TimesFM first, since it is the model being served. `shadowModels.lowestMae` names a leader only
 once every model has a judged block: before that the figures pool a handful of cohorts, and the

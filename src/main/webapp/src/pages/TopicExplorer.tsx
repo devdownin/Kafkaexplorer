@@ -676,7 +676,9 @@ const TopicExplorer: React.FC = () => {
   const { toast } = useToast();
   const [data, setData] = useState<TopicDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [readMode, setReadMode] = useState('earliest-offset');
+  /* Latest, comme l'éditeur SQL : la question qu'on pose en ouvrant un topic est « qu'est-ce qui y
+     arrive », pas « qu'y avait-il au début ». */
+  const [readMode, setReadMode] = useState('latest-offset');
   const [activeTab, setActiveTab] = useState<
     'samples' | 'activity' | 'ddl' | 'schema' | 'partitions' | 'consumers'>('samples');
   const [selectedFields, setSelectedFields] = useState<string[]>([]);
@@ -1188,24 +1190,9 @@ const TopicExplorer: React.FC = () => {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Stat label="Partitions" icon="device_hub" value={data.topic.partitions} />
         <Stat label="Messages (approx)" icon="bolt" tone="primary" value={data.topic.estimatedSize.toLocaleString()} />
-        <div className="bg-surface-container rounded-xl ring-1 ring-white/[0.045] p-5">
-          <p className="text-[11px] font-medium uppercase tracking-[0.05em] text-on-surface-variant mb-2">Read Mode</p>
-          <div className="inline-flex bg-surface-container-low border border-outline-variant rounded-md p-0.5">
-            {['earliest-offset', 'latest-offset'].map(mode => (
-              <button
-                key={mode}
-                onClick={() => setReadMode(mode)}
-                aria-pressed={readMode === mode}
-                className={`px-3 h-7 text-[12px] font-medium rounded transition-colors ${readMode === mode ? 'bg-surface-container-highest text-on-surface' : 'text-on-surface-variant hover:text-on-surface'}`}
-              >
-                {mode === 'earliest-offset' ? 'Earliest' : 'Latest'}
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
 
       {/* Tabs */}
@@ -1360,6 +1347,26 @@ const TopicExplorer: React.FC = () => {
                   {' '}message{displayedMessages.length === 1 ? '' : 's'}
                   {searchActive ? ' matched' : ' sampled'}
                 </span>
+                {/* Le mode de lecture gouverne l'échantillon, et lui seul : la recherche a sa propre
+                    portée. En tuile d'en-tête il semblait régir toute la page, et une recherche
+                    répondait « Newest … scanned » sous un « Earliest » allumé. Il vit donc ici, et
+                    disparaît pendant une recherche. */}
+                {!searchActive && (
+                  <div role="group" aria-label="Read mode" className="inline-flex bg-surface-container border border-outline-variant rounded-md p-0.5">
+                    {['latest-offset', 'earliest-offset'].map(mode => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setReadMode(mode)}
+                        aria-pressed={readMode === mode}
+                        title={mode === 'latest-offset' ? 'The most recent records' : 'The oldest retained records'}
+                        className={`px-3 h-7 text-[12px] font-medium rounded transition-colors ${readMode === mode ? 'bg-surface-container-highest text-on-surface' : 'text-on-surface-variant hover:text-on-surface'}`}
+                      >
+                        {mode === 'earliest-offset' ? 'Earliest' : 'Latest'}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {/* Resserrer sur ce qui est déjà là : instantané, là où relancer une passe coûte
                     dix secondes de scan. */}
                 <div className="relative">
@@ -1446,7 +1453,12 @@ const TopicExplorer: React.FC = () => {
                   onCopyLink={copyRecordLink}
                 />
               ) : displayedMessages.length > 0 ? (
-                <EmptyState icon="touch_app" title="Select a row to read the record" />
+                /* Une ligne, pas un panneau : l'invitation reste dite, sans réserver sous la table
+                   la hauteur d'une carte que rien n'occupe encore. */
+                <p className="flex items-center gap-1.5 px-1 text-[12px] text-on-surface-variant">
+                  <span aria-hidden="true" className="material-symbols-outlined text-[16px]">touch_app</span>
+                  Select a row to read the record
+                </p>
               ) : null}
             {displayedMessages.length === 0 && (
               <EmptyState

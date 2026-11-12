@@ -622,7 +622,14 @@ nothing. Eleven findings: **Dead Letter has no page padding** and overflows the 
 element reaches 1556 px in a 1440 px window), and **its refresh selector offers 2 s / 5 s / 15 s
 while the poll is floored at 30 s** (`ACTIVITY_FLOOR_MS`), so the status line states a cadence the
 page does not keep; Topic Explorer reads Earliest by default where the SQL editor now reads Latest,
-its Read mode does not govern search, and its search bar carries 13 controls, two of them
+its Read mode does not govern search, and its search bar carries two boxes
 overlapping the Key and Header modes; Stream Flow scans the whole cluster by default and its
 fitted graph shrinks six nodes below legibility. Read it before changing `DeadLetter.tsx`,
 `TopicExplorer.tsx`'s search bar or `StreamFlow.tsx`'s form.
+**Fixed since, all eleven**: Dead Letter has the *Observe* pages' padding and offers only the
+cadences it keeps (`ACTIVITY_REFRESH_OPTIONS`, `activityRefreshChoice`); Topic Explorer opens on
+Latest with its read mode beside the sample it governs, hidden during a search, and the two
+"… too" boxes folded under Scan options and announced when off their default; Stream Flow offers
+to narrow the next trace to the topics reached and frames a long chain at a readable scale from
+its source (`readableFitTransform`; `0` still fits all); `GET /api/forecasts` carries
+`shadowEnabled`, so the panel no longer asks for a shadow that answers 404. Nothing is left open.

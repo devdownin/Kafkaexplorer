@@ -18,7 +18,7 @@ import {
   analyzeChain, buildContinuation, buildLayout, buildTopicSearchQuery, buildTraceQuery, centerOn,
   MIN_SCALE, MAX_SCALE, compareFlows, describeChainInsight, describeComparison, describeContinuation,
   describeCoverage, describeProgress, describeSearchScope, expandTopicPatterns, filterHits,
-  fitTransform, formatAbsoluteTime, formatDwell, formatLatency, formatRelativeTime, hitsToRows,
+  fitTransform, readableFitTransform, formatAbsoluteTime, formatDwell, formatLatency, formatRelativeTime, hitsToRows,
   HIT_EXPORT_COLUMNS, isNodeVisible, parseFlowResponse, parseSseBuffer, parseTopicList,
   clampEvidencePct, MAX_EVIDENCE_PCT, MIN_EVIDENCE_PCT,
   isBlankTraceParams, parseTraceParams, progressRatio, pushTraceHistory, readEvidencePct,
@@ -181,10 +181,17 @@ const StreamFlow: React.FC = () => {
 
   // Le graphe est cadré dès son arrivée : un « reset » à translate(40,40) scale(1) laissait
   // la moitié d'une chaîne de sept topics hors écran. Replier le panneau de critères élargit
-  // la vue de 18 rem : sans recadrage, le graphe resterait collé à gauche.
+  // la vue de 18 rem : sans recadrage, le graphe resterait collé à gauche. Mais cadrer ne doit
+  // pas rendre illisible : sous `READABLE_SCALE`, la chaîne part de sa source et se fait
+  // défiler, et `0` ou le bouton de cadrage montrent l'ensemble.
+  const frameView = useCallback(() => {
+    const box = viewport();
+    if (box) setTransform(readableFitTransform(layout, box));
+  }, [layout, viewport, setTransform]);
+
   useEffect(() => {
-    if (nodes.length > 0) fitView();
-  }, [nodes, panelOpen, fitView]);
+    if (nodes.length > 0) frameView();
+  }, [nodes, panelOpen, frameView]);
 
 
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -564,6 +571,8 @@ const StreamFlow: React.FC = () => {
 
   const coverage = describeCoverage(stats);
   const hitByTopic = useMemo(() => new Map(hits.map(h => [h.topic, h])), [hits]);
+  /** Les topics où la dernière trace a trouvé la clé, dans l'ordre de la chaîne. */
+  const reachedTopics = useMemo(() => [...new Set(hits.map(h => h.topic))], [hits]);
   const insight = useMemo(() => analyzeChain(hits), [hits]);
   const insightNotes = useMemo(() => describeChainInsight(insight), [insight]);
   const scopeHint = describeSearchScope(searchPath, searchHeaders, exactKey);
@@ -732,7 +741,7 @@ const StreamFlow: React.FC = () => {
                 value={searchPath}
                 disabled={exactKey}
                 onChange={e => { setSearchPath(e.target.value); clearFieldError('searchPath'); }}
-                placeholder="order.id · $.orderId · /order/id · header:correlation-id"
+                placeholder="e.g. order.id or $.orderId"
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -773,6 +782,18 @@ const StreamFlow: React.FC = () => {
                 ? 'None selected — the whole cluster is scanned, one consumer per topic. Naming the topics is much faster: paste a list, or use a pattern like orders.*'
                 : `${selectedTopics.length} topic(s) will be scanned.`}
             </p>
+            {/* Le défaut lent est le seul qui marche sans rien savoir du cluster ; une fois qu'une
+                trace a dit par où passe la clé, restreindre la suivante à ces topics est un clic,
+                pas un collage. */}
+            {selectedTopics.length === 0 && reachedTopics.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setSelectedTopics(reachedTopics)}
+                className="text-[11px] font-medium text-primary hover:underline"
+              >
+                Scan only the {reachedTopics.length} topic{reachedTopics.length === 1 ? '' : 's'} this trace reached
+              </button>
+            )}
             {selectedTopics.length > 1 && (
               <button
                 type="button"

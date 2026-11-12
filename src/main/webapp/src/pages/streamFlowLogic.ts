@@ -768,6 +768,28 @@ export function fitTransform(layout: FlowLayout, viewport: Viewport, padding = 4
   };
 }
 
+/**
+ * L'échelle sous laquelle un nom de topic ne se lit plus : 11 unités SVG, soit ~8 px à 0,75. Le
+ * cadrage complet d'une chaîne de six topics descendait à 0,38 — des nœuds de 64 px dont le texte
+ * faisait 4 px, qu'il fallait zoomer pour lire ce que la table affichait en clair juste dessous.
+ */
+export const READABLE_SCALE = 0.75;
+
+/**
+ * Le cadrage à l'arrivée d'une trace : tout le graphe quand il tient lisible, sinon l'échelle
+ * lisible ancrée sur la source, à gauche — c'est par là qu'une chaîne se lit, et l'arête qui sort
+ * du cadre dit qu'elle continue. Le bouton « Fit graph to view » (et `0`) garde le cadrage complet.
+ */
+export function readableFitTransform(layout: FlowLayout, viewport: Viewport, padding = 48): Transform {
+  const fit = fitTransform(layout, viewport, padding);
+  if (fit.scale >= READABLE_SCALE || layout.width === 0) return fit;
+  return {
+    x: padding,
+    y: (viewport.height - layout.height * READABLE_SCALE) / 2,
+    scale: READABLE_SCALE,
+  };
+}
+
 /** Zoom ancré sur le pointeur : le point survolé reste sous le curseur. */
 export function zoomAt(current: Transform, factor: number, px: number, py: number): Transform {
   const scale = clampScale(current.scale * factor);

@@ -115,10 +115,13 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onStatus is the page's state setter, stable
   }), [revision, refresh]);
   const seriesId = status?.series.some(s => s.seriesId === selected) ? selected : status?.series[0]?.seriesId;
+  // The list says whether a shadow exists at all: asking each series for one answered a 404 that
+  // the browser wrote into the console of every Metrics page (PAGES-SIMPLICITY-AUDIT.md X1).
+  const shadowConfigured = status?.shadowEnabled !== false;
   useEffect(() => {
     if (!seriesId) return;
     // A series that answered 404 has no shadow configured: asking again every tick answers the same.
-    let noShadow = false;
+    let noShadow = !shadowConfigured;
     const path = `/api/forecasts/${encodeURIComponent(seriesId)}`;
     return poll(async signal => {
       try {
@@ -147,7 +150,7 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
       }
       if (!signal.aborted) setShadow({ seriesId, view });
     });
-  }, [seriesId, revision, refresh]);
+  }, [seriesId, revision, refresh, shadowConfigured]);
   const listed = status?.series.find(s => s.seriesId === seriesId);
   // The detail is the same row with its history: preferred once it is about the series shown.
   const series = listed && detail?.seriesId === listed.seriesId ? detail : listed;

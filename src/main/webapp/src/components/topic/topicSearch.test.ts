@@ -1144,6 +1144,14 @@ describe('describeAdvanced', () => {
     expect(describeAdvanced(criteria({ direction: 'OLDEST', maxScan: 100_000, partitions: [2] })))
       .toEqual(['Oldest first', 'Scan 100 000', 'partition 2 only']);
   });
+
+  /* Les deux cases sont repliées sous « Scan options » : ce qui n'est pas au défaut doit s'y lire. */
+  it('announces a text search that leaves the keys out or reaches the headers', () => {
+    expect(describeAdvanced(criteria({ mode: 'CONTAINS', searchKey: false, searchHeaders: true })))
+      .toEqual(['payload only, not keys', 'headers too']);
+    expect(describeAdvanced(criteria({ mode: 'KEY', searchKey: false, searchHeaders: true })))
+      .toEqual([]);
+  });
 });
 
 describe('suggestWidenings', () => {
