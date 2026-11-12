@@ -596,3 +596,15 @@ modal says when the definition on screen was never previewed; `explorer.metric-m
 caps one metric's label series — past it nothing is published and the card says why, and the
 preview counts the series first.
 Read it before touching `Metrics.tsx`'s editor or `MetricService.save`.
+
+`METRICS-FORECAST-UX-AUDIT.md` (2026-11) reviews the Metrics page's forecast side — the panel, the
+setup assistant, the cards' forecast line and the `/api/forecasts` endpoints behind them — for
+bugs, performance and UX; the forecasting engine itself is `TIMESFM-FORECAST-AUDIT.md`'s. It fixed
+nothing. Seventeen findings, observed on the compiled SPA over invented fixtures, two of them
+reproduced or measured: **the 80 % interval is never drawn** (its two `<Area>` sit in a fragment
+recharts does not see — drawn once they are separate); **one unreadable series turns the whole list
+into a 503** with zero series (reproduced), which also strips every card of its forecast line;
+`GET /api/forecasts` returns the full 512-point record of every series (44 KB measured each, up to
+20 by default) every 30 s although the page shows one; and the panel buries the chart and the one
+decision under 914 px of stacked blocks. Read it before changing `ForecastPanel.tsx` or
+`ForecastController`.
