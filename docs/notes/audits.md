@@ -615,3 +615,14 @@ series instead of 44 KB) and `GET /api/forecasts/{seriesId}` serves the shown se
 threshold drawn, an already-forecast metric marked in the assistant, the panel reordered (750 px
 instead of 914, chart at 140 px instead of 500), shared controls, no empty tiles, the assistant
 opened at its sources, and the approval saying what it changes. Nothing is left open.
+
+`PAGES-SIMPLICITY-AUDIT.md` (2026-11) applies the SQL editor's simplicity lens to Topic Explorer,
+Dead Letter and Stream Flow, observed on the compiled SPA over the screenshot fixtures. It fixed
+nothing. Eleven findings: **Dead Letter has no page padding** and overflows the right edge (an
+element reaches 1556 px in a 1440 px window), and **its refresh selector offers 2 s / 5 s / 15 s
+while the poll is floored at 30 s** (`ACTIVITY_FLOOR_MS`), so the status line states a cadence the
+page does not keep; Topic Explorer reads Earliest by default where the SQL editor now reads Latest,
+its Read mode does not govern search, and its search bar carries 13 controls, two of them
+overlapping the Key and Header modes; Stream Flow scans the whole cluster by default and its
+fitted graph shrinks six nodes below legibility. Read it before changing `DeadLetter.tsx`,
+`TopicExplorer.tsx`'s search bar or `StreamFlow.tsx`'s form.
