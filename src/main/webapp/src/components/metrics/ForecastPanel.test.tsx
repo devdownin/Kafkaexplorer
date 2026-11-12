@@ -92,16 +92,18 @@ describe('ForecastPanel', () => {
     expect(screen.getByRole('heading',{name:'Metrics Forecast'})).toBeTruthy();
     expect(axios.put).not.toHaveBeenCalled();
   });
-  it('polls the selected series progress in the same loop', async () => {
+  it('polls the list, then the selected series on its own: its record, progress and shadow', async () => {
     const progress = { seriesId: 'a'.repeat(64), state: 'WARMING_UP', reason: 'Need more observations', observedPoints: 40, requiredPoints: 512,
       missingPoints: 472, imputedPoints: 0, checkedAt: 1, nextScheduledAt: 100, stepMillis: 60000, horizon: 30,
       topics: ['orders'], groups: [], breach: null, breachState: 'NOT_CONFIGURED' };
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: String(url).endsWith('/progress') ? progress : seriesWith(ready) }));
     render(<ForecastPanel />);
     expect(await screen.findByText(/40 \/ 512 observed points/)).toBeTruthy();
-    // The preparation diagnostic is read once on mount; only these three are polled, in one loop.
+    // The preparation diagnostic is read once on mount; the list carries no history points
+    // (METRICS-FORECAST-UX-AUDIT.md P1), so the series shown is read on its own.
     expect(vi.mocked(axios.get).mock.calls.map(call => call[0]).filter(url => url !== '/api/forecasts/preparation'))
-      .toEqual(['/api/forecasts', `/api/forecasts/${'a'.repeat(64)}/progress`, `/api/forecasts/${'a'.repeat(64)}/shadow`]);
+      .toEqual(['/api/forecasts', `/api/forecasts/${'a'.repeat(64)}`,
+        `/api/forecasts/${'a'.repeat(64)}/progress`, `/api/forecasts/${'a'.repeat(64)}/shadow`]);
   });
   it('offers the raw result as a copy, not as a page of JSON', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(ready) });
@@ -176,7 +178,8 @@ describe('ForecastPanel', () => {
       render(<ForecastPanel />);
       await screen.findByRole('button', { name: 'Approve after quality checks' });
       const shadowCalls = () => vi.mocked(axios.get).mock.calls.filter(c => String(c[0]).endsWith('/shadow')).length;
-      expect(shadowCalls()).toBe(1);
+      // The selected series is read after the list, in its own loop.
+      await vi.waitFor(() => expect(shadowCalls()).toBe(1));
       await vi.advanceTimersByTimeAsync(31_000);
       expect(shadowCalls()).toBe(1);
 
@@ -220,5 +223,29 @@ describe('ForecastPanel', () => {
       expect(screen.getByText(/Timestral with covariates would not qualify yet: The first shared quality block holds 40 of 120/)).toBeTruthy();
       expect(axios.put).not.toHaveBeenCalled();
     });
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md P3: choosing a series reads that series, not the whole list again.
+  it('reads only the chosen series when the selection changes', async () => {
+    const two = seriesWith(ready);
+    const other = { ...two.series[0], seriesId: 'b'.repeat(64), metricId: 'other' };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...two, series: [two.series[0], other] } : {} }));
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    const select = await screen.findByLabelText('Series');
+    vi.mocked(axios.get).mockClear();
+    await user.selectOptions(select, 'b'.repeat(64));
+    await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).toContain(`/api/forecasts/${'b'.repeat(64)}`));
+    expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).not.toContain('/api/forecasts');
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md B2: an unreadable series says so, and the others stay listed.
+  it('names a series the server could not read instead of losing the list', async () => {
+    const status = seriesWith(ready);
+    const broken = { ...status.series[0], seriesId: 'b'.repeat(64), metricId: 'broken', result: null,
+      error: 'The latest result of this series could not be read (IllegalStateException)' };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...status, series: [broken, status.series[0]] } : {} }));
+    render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be read');
+    expect(screen.getAllByRole('option')).toHaveLength(2);
   });
 });

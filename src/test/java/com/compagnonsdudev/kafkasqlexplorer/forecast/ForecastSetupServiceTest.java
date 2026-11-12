@@ -250,6 +250,20 @@ class ForecastSetupServiceTest {
     assertEquals(123L, progress.nextScheduledAt()); assertEquals("NOT_CONFIGURED", progress.breachState());
     verifyNoInteractions(client, history); verify(pilot, never()).breach(anyString());
   }
+  /** METRICS-FORECAST-UX-AUDIT.md P2: the history is read once per step, not once per poll. */
+  @Test void progressReadsTheHistoryOncePerStep() throws Exception {
+    // A day-long step, so two calls a few milliseconds apart cannot straddle a boundary.
+    var profile = new SeriesPreparationProfile(86_400_000L, 512, SeriesPreparationProfile.Transformation.GAUGE_MEAN);
+    var spec = new ForecastPilotProperties.Series("b".repeat(64), "lag", "local", "v1", "milliseconds",
+        List.of("orders"), List.of(), profile, 30, 1, null, null, .8, 30);
+    when(pilot.resolve(spec.seriesId())).thenReturn(spec);
+    when(preparation.prepare(eq(spec.seriesId()), eq("v1"), eq("milliseconds"), anyLong(), eq(profile)))
+        .thenReturn(new PreparedMetricSeries(PreparedMetricSeries.Status.WARMING_UP, "collecting", spec.seriesId(),
+            "v1", "milliseconds", "milliseconds", 0, 1, profile, "p", "i", 9, 503, 0, List.of()));
+    assertEquals(9, setup.progress(spec.seriesId()).observedPoints());
+    assertEquals(9, setup.progress(spec.seriesId()).observedPoints());
+    verify(preparation, times(1)).prepare(anyString(), anyString(), anyString(), anyLong(), any());
+  }
   @Test void progressOutageIsUnavailableRatherThanEmptyHistory() throws Exception {
     var spec = new ForecastPilotProperties.Series("a".repeat(64), "lag", "local", "v1", "milliseconds",
         List.of("orders"), List.of(), SeriesPreparationProfile.initial(SeriesPreparationProfile.Transformation.GAUGE_MEAN), 30, 1, null, null, .8, 30);

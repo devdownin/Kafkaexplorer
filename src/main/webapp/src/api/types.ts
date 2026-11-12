@@ -1631,6 +1631,8 @@ export interface ForecastSeriesView {
   stepMillis: number;
   minimumContextPoints: number;
   withdrawable: boolean;
+  /** Why this series could not be read; `result` is then null and the other series are unaffected. */
+  error?: string | null;
 }
 /** @java ForecastPilotService.ActivationReadiness */
 export interface ForecastActivationReadiness {

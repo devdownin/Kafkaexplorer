@@ -34,6 +34,15 @@ public class ForecastSetupService {
   private final ObjectProvider<ForecastPilotService> pilot;
   private final ObjectProvider<MetricSeriesPreparationService> preparation;
   private volatile Readiness probeCache;
+  /**
+   * The last preparation of each series, by the step it ends on (METRICS-FORECAST-UX-AUDIT.md P2).
+   * `progress` re-read the history from PostgreSQL and rebuilt the 512-point context on every poll
+   * of every open page, while that context only changes when a step closes: its window ends on
+   * {@code profile.endAt(now)} and reads nothing later. One entry per series, replaced each step.
+   */
+  private final java.util.concurrent.ConcurrentHashMap<String, PreparedEntry> preparedByStep =
+      new java.util.concurrent.ConcurrentHashMap<>();
+  private record PreparedEntry(String key, PreparedMetricSeries prepared) {}
 
   public ForecastSetupService(ForecastingProperties root, McpProperties mcp, KafkaConfig kafka,
       MetricService metrics, ObjectProvider<McpCatalogService> catalog,
@@ -366,6 +375,7 @@ public class ForecastSetupService {
     var p = pilot.getIfAvailable();
     if (p == null) throw new IllegalStateException("The forecast pilot is disabled");
     p.withdraw(seriesId);
+    preparedByStep.remove(seriesId);
   }
 
   private static void bounded(String s, String label) {
@@ -394,8 +404,15 @@ public class ForecastSetupService {
     var prep = preparation.getIfAvailable();
     if (prep == null) return progress(s, "UNAVAILABLE", "History preparation unavailable", null, null, null, now, p, null, "UNAVAILABLE");
     PreparedMetricSeries context;
-    try { context = prep.prepare(id, s.definitionVersion(), s.unit(), now, s.profile()); }
-    catch (Exception e) { return progress(s, "UNAVAILABLE", "History read failed; check PostgreSQL connectivity", null, null, null, now, p, null, "UNAVAILABLE"); }
+    String key = s.definitionVersion() + "|" + s.unit() + "|" + s.profile().stepMillis() + "|"
+        + s.profile().contextPoints() + "|" + s.profile().transformation() + "|" + s.profile().endAt(now);
+    var cached = preparedByStep.get(id);
+    if (cached != null && cached.key().equals(key)) context = cached.prepared();
+    else {
+      try { context = prep.prepare(id, s.definitionVersion(), s.unit(), now, s.profile()); }
+      catch (Exception e) { return progress(s, "UNAVAILABLE", "History read failed; check PostgreSQL connectivity", null, null, null, now, p, null, "UNAVAILABLE"); }
+      preparedByStep.put(id, new PreparedEntry(key, context));
+    }
     ForecastPilotService.PredictedBreach breach = null;
     String breachState = s.threshold() == null ? "NOT_CONFIGURED" : "NOT_EVALUATED";
     if (s.threshold() != null) {

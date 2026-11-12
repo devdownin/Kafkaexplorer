@@ -607,4 +607,7 @@ into a 503** with zero series (reproduced), which also strips every card of its 
 `GET /api/forecasts` returns the full 512-point record of every series (44 KB measured each, up to
 20 by default) every 30 s although the page shows one; and the panel buries the chart and the one
 decision under 914 px of stacked blocks. Read it before changing `ForecastPanel.tsx` or
-`ForecastController`.
+`ForecastController`. **Fixed since: B1, B2, P1–P3** — the band is drawn; an unreadable series is
+an error row (`SeriesView.error`) rather than a 503; the list drops the history points (4 KB per
+series instead of 44 KB) and `GET /api/forecasts/{seriesId}` serves the shown series in full;
+`/progress` prepares a series once per closed step; choosing a series reads only that series.

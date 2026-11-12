@@ -6,7 +6,8 @@ import { Badge, Button, useConfirm } from '../ui';
 import { copyText } from '../../clipboard';
 import type { BadgeTone } from '../ui';
 import type {
-  ForecastActivationRefusal, ForecastProgress as Progress, ForecastShadowComparison as Comparison, ForecastStatus,
+  ForecastActivationRefusal, ForecastProgress as Progress, ForecastSeriesView, ForecastShadowComparison as Comparison,
+  ForecastStatus,
 } from '../../api/types';
 import { ForecastPreparation } from './ForecastPreparation';
 import { ForecastProgress } from './ForecastProgress';
@@ -27,6 +28,33 @@ const STRATEGY_LABEL: Record<string, string> = { TIMESFM: 'TimesFM' };
 /** Plain words on the page; the pilot's own term stays in the tooltip and in the API. */
 const VISIBILITY_LABEL: Record<string, string> = { ACTIVE: 'Approved', SHADOW: 'Observing' };
 const POLL_MS = 30000;
+
+/**
+ * One poll on the panel's clock, paused behind a hidden tab and run at once on return. The run
+ * reports its own errors; the signal is aborted when the poll is disposed.
+ */
+function poll(run: (signal: AbortSignal) => Promise<void>): () => void {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout>;
+  let skipped = false;
+  async function tick() {
+    // Behind a hidden tab the requests answer nobody; the listener below reads at once on return.
+    if (document.visibilityState !== 'visible') { skipped = true; timer = setTimeout(tick, POLL_MS); return; }
+    skipped = false;
+    try { await run(controller.signal); } finally {
+      if (!controller.signal.aborted) timer = setTimeout(tick, POLL_MS);
+    }
+  }
+  const onVisible = () => {
+    if (document.visibilityState === 'visible' && skipped) { clearTimeout(timer); void tick(); }
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  void tick();
+  return () => {
+    controller.abort(); clearTimeout(timer);
+    document.removeEventListener('visibilitychange', onVisible);
+  };
+}
 
 function isProgress(data: Progress | undefined, seriesId: string): data is Progress {
   return data?.seriesId === seriesId && (data.state === 'UNAVAILABLE' || Number.isFinite(data.observedPoints))
@@ -52,74 +80,67 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [detail, setDetail] = useState<ForecastSeriesView | null>(null);
   const confirm = useConfirm();
-  // One loop for the catalogue and the selected series' history progress: two independent pollers
-  // meant two loading states, two error messages and two clocks for one panel.
-  useEffect(() => {
-    let disposed = false;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    // A series that answered 404 has no shadow configured: asking again every tick answers the same
-    // until the page is reloaded, and this effect re-runs (resetting it) on a revision or refresh.
-    let noShadowFor: string | null = null;
-    let skipped = false;
-    async function poll() {
-      // Behind a hidden tab the three requests — one of which re-prepares the series from
-      // PostgreSQL — answer nobody; the visibility listener below reads at once on return.
-      if (document.visibilityState !== 'visible') { skipped = true; timer = setTimeout(poll, POLL_MS); return; }
-      skipped = false;
-      try {
-        const { data } = await axios.get<ForecastStatus>('/api/forecasts', { signal: controller.signal, timeout: 10000 });
-        if (!data || typeof data.enabled !== 'boolean' || typeof data.state !== 'string' || !Array.isArray(data.series))
-          throw new Error('Invalid forecast status response');
-        if (disposed) return;
-        setStatus(data); setError(''); onStatus?.(data);
-        const seriesId = data.series.some(s => s.seriesId === selected) ? selected : data.series[0]?.seriesId;
-        if (!seriesId) { setProgress(null); return; }
-        try {
-          const { data: next } = await axios.get<Progress>(`/api/forecasts/${encodeURIComponent(seriesId)}/progress`,
-            { signal: controller.signal, timeout: 10000 });
-          if (!isProgress(next, seriesId)) throw new Error('Invalid progress response');
-          if (!disposed) { setProgress(next); setProgressError(''); }
-        } catch {
-          if (!disposed) setProgressError('History progress unavailable. Previous diagnostics may be stale.');
-        }
-        // Same loop, same clock: a third poller would be a third loading state for one panel.
-        let view: ShadowView;
-        if (noShadowFor === seriesId) {
-          view = { kind: 'OFF' };
-        } else try {
-          const response = await axios.get<Comparison | ''>(`/api/forecasts/${encodeURIComponent(seriesId)}/shadow`,
-            { signal: controller.signal, timeout: 10000, validateStatus: code => code === 200 || code === 204 || code === 404 });
-          if (response.status === 404) noShadowFor = seriesId;
-          view = response.status === 404 ? { kind: 'OFF' } : response.status === 204 ? { kind: 'EMPTY' }
-            : isShadowComparison(response.data) ? { kind: 'READY', comparison: response.data } : { kind: 'ERROR' };
-        } catch {
-          view = { kind: 'ERROR' };
-        }
-        if (!disposed) setShadow({ seriesId, view });
-      } catch {
-        if (!disposed) {
-          setError('Forecast persistence is unavailable. Existing results may be stale.');
-          // The cards would otherwise keep saying "Ready to approve" about a status nobody can read.
-          onStatus?.(null);
-        }
-      } finally {
-        if (!disposed) timer = setTimeout(poll, POLL_MS);
+  /*
+   * Two loops on one clock (METRICS-FORECAST-UX-AUDIT.md P1, P3). The list carries no history
+   * points, so the selected series is read on its own — its whole record, its progress and its
+   * shadow. Choosing another series used to re-run the single loop, the whole list included, to
+   * learn about one series whose summary had just arrived; now only that series is read.
+   */
+  useEffect(() => poll(async signal => {
+    try {
+      const { data } = await axios.get<ForecastStatus>('/api/forecasts', { signal, timeout: 10000 });
+      if (!data || typeof data.enabled !== 'boolean' || typeof data.state !== 'string' || !Array.isArray(data.series))
+        throw new Error('Invalid forecast status response');
+      if (signal.aborted) return;
+      setStatus(data); setError(''); onStatus?.(data);
+    } catch {
+      if (!signal.aborted) {
+        setError('Forecast persistence is unavailable. Existing results may be stale.');
+        // The cards would otherwise keep saying "Ready to approve" about a status nobody can read.
+        onStatus?.(null);
       }
     }
-    const onVisible = () => {
-      if (document.visibilityState === 'visible' && skipped) { clearTimeout(timer); void poll(); }
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    void poll();
-    return () => {
-      disposed = true; controller.abort(); clearTimeout(timer);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onStatus is the page's state setter, stable
-  }, [revision, selected, refresh]);
-  const series = status?.series.find(s => s.seriesId === selected) ?? status?.series[0];
+  }), [revision, refresh]);
+  const seriesId = status?.series.some(s => s.seriesId === selected) ? selected : status?.series[0]?.seriesId;
+  useEffect(() => {
+    if (!seriesId) return;
+    // A series that answered 404 has no shadow configured: asking again every tick answers the same.
+    let noShadow = false;
+    const path = `/api/forecasts/${encodeURIComponent(seriesId)}`;
+    return poll(async signal => {
+      try {
+        const { data } = await axios.get<ForecastSeriesView>(path, { signal, timeout: 10000 });
+        // Anything else keeps the list's summary on screen rather than a blank panel.
+        if (data?.seriesId === seriesId && data.activation && !signal.aborted) setDetail(data);
+      } catch { /* the summary from the list stays */ }
+      try {
+        const { data: next } = await axios.get<Progress>(`${path}/progress`, { signal, timeout: 10000 });
+        if (!isProgress(next, seriesId)) throw new Error('Invalid progress response');
+        if (!signal.aborted) { setProgress(next); setProgressError(''); }
+      } catch {
+        if (!signal.aborted) setProgressError('History progress unavailable. Previous diagnostics may be stale.');
+      }
+      let view: ShadowView;
+      if (noShadow) {
+        view = { kind: 'OFF' };
+      } else try {
+        const response = await axios.get<Comparison | ''>(`${path}/shadow`,
+          { signal, timeout: 10000, validateStatus: code => code === 200 || code === 204 || code === 404 });
+        if (response.status === 404) noShadow = true;
+        view = response.status === 404 ? { kind: 'OFF' } : response.status === 204 ? { kind: 'EMPTY' }
+          : isShadowComparison(response.data) ? { kind: 'READY', comparison: response.data } : { kind: 'ERROR' };
+      } catch {
+        view = { kind: 'ERROR' };
+      }
+      if (!signal.aborted) setShadow({ seriesId, view });
+    });
+  }, [seriesId, revision, refresh]);
+  const listed = status?.series.find(s => s.seriesId === seriesId);
+  // The detail is the same row with its history: preferred once it is about the series shown.
+  const series = listed && detail?.seriesId === listed.seriesId ? detail : listed;
   const result = series?.result;
   const seriesProgress = progress?.seriesId === series?.seriesId ? progress : null;
   const chart = [
@@ -186,6 +207,7 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
           <Badge>{result.context.outputUnit}</Badge>
         </span>}
       </div>
+      {series?.error && <p role="alert">{series.error}</p>}
       {series && <ForecastTimeline series={series} />}
       {series && <ForecastProgress progress={seriesProgress} error={progressError} result={result} />}
       <ForecastShadowComparison view={shadow?.seriesId === series?.seriesId ? shadow?.view ?? null : null} />
@@ -204,8 +226,11 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
                 ? [`${Number(item.payload.q10).toPrecision(4)} – ${Number(item.payload.q90).toPrecision(4)}`, name]
                 : [value, name]} />
             <Legend />
-            {result.strategy === 'TIMESFM' && <><Area dataKey="floor" stackId="interval" stroke="none" fill="transparent" tooltipType="none" legendType="none" isAnimationActive={false} />
-              <Area dataKey="band" stackId="interval" stroke="none" fill="#64748b" fillOpacity={0.2} name="80 % interval" isAnimationActive={false} /></>}
+            {/* Two separate children, never a fragment: recharts 2 does not find a graphical item
+                inside `<>…</>`, so the band and its legend entry were never drawn
+                (METRICS-FORECAST-UX-AUDIT.md B1). */}
+            {result.strategy === 'TIMESFM' && <Area dataKey="floor" stackId="interval" stroke="none" fill="transparent" tooltipType="none" legendType="none" isAnimationActive={false} />}
+            {result.strategy === 'TIMESFM' && <Area dataKey="band" stackId="interval" stroke="none" fill="#64748b" fillOpacity={0.2} name="80 % interval" isAnimationActive={false} />}
             <Line dataKey="actual" stroke="#16a34a" dot={false} name="Observed" isAnimationActive={false} />
             <Line dataKey="median" stroke="#6366f1" strokeDasharray="6 3" dot={false} name={result.strategy === 'TIMESFM' ? 'Median forecast' : 'Baseline forecast'} isAnimationActive={false} />
           </ComposedChart></ResponsiveContainer>

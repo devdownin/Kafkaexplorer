@@ -6,7 +6,13 @@ ligne « Forecast » des cartes — et ce qu'ils appellent : `ForecastController
 `ForecastSetupController`, `ForecastSetupService`, `ForecastPilotService` (chemins de lecture).
 Le moteur lui-même (pilote, dérive, TimesFM, outils MCP) a son rapport : `TIMESFM-FORECAST-AUDIT.md`.
 
-> **Statut.** Audit seul : rien n'est corrigé. Chaque constat dit comment il a été établi —
+> **Statut.** **B1, B2, P1, P2 et P3 sont corrigés**, chacun avec un test qui échoue sans lui :
+> les deux `<Area>` de l'intervalle sont deux enfants séparés, et la bande s'affiche avec sa légende ;
+> une série illisible devient une ligne en erreur (`error`, pastille « Unreadable ») au lieu d'une
+> 503 sans série ; la liste ne porte plus les points d'historique — **4 KB par série au lieu de
+> 44 KB** sur la même série d'essai — et `GET /api/forecasts/{seriesId}` rend l'enregistrement
+> complet de la série affichée ; la préparation de `/progress` est mémoïsée par pas clos ;
+> choisir une série ne lit plus qu'elle. Le reste est ouvert. Chaque constat dit comment il a été établi —
 > **observé** (l'interface compilée, servie sur les données figées de `docs/screenshots/` avec trois
 > séries inventées — en observation, en collecte, dérivée — et pilotée par Playwright à 1440×900),
 > **reproduit** (un test jeté ensuite) ou **lu** (déduit du code, fichier nommé). Les chiffres
@@ -134,7 +140,9 @@ qu'il montre.
 
 ### P2 — Un cycle d'interrogation relit trois fois la même série *(moyenne, observé + lu)*
 
-Observé : **trois requêtes par cycle** (liste, `/progress`, `/shadow`). Lu : la liste fait `get()` ;
+Observé : **trois requêtes par cycle** (liste, `/progress`, `/shadow`). *Corrigé en partie* : la
+préparation est mémoïsée tant que le pas n'a pas changé, donc l'historique est relu une fois par pas
+et par série, quel que soit le nombre de pages ouvertes ; les trois requêtes demeurent. Lu : la liste fait `get()` ;
 `/progress` refait `prep.prepare(...)` — relecture de l'historique PostgreSQL et reconstruction du
 contexte de 512 points — puis `breach(id)`, qui refait `get()` ; `/shadow` ouvre sa propre lecture.
 Les nombres de points observés / manquants / imputés que `/progress` recalcule sont déjà dans
