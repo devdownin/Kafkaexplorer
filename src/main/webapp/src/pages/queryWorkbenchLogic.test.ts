@@ -8,6 +8,7 @@ import {
   isResultStale, writeStored, readStored, removeStored,
   readLayout, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT, SPLIT_MIN, SIDEBAR_MAX,
   readSqlParam, readQueryOptions, buildQueryLink,
+  readRequestFor, readOptionsOf, readScopeOf, readScopeFromSearch, runShortcutLabel, errorHeadline,
   NARROW_ALTERNATIVES, WIDE_WINDOW_MIN_PX, dismissNarrowNotice, readNarrowNoticeDismissed,
   starterTable, starterQueries, pushHistory, describeHistoryEntry, formatDuration,
   splitStatements, statementIndexAt, positionAt, offsetAt, resolveOrigin,
@@ -843,9 +844,9 @@ describe('readLayout', () => {
     expect(readLayout()).toEqual(DEFAULT_LAYOUT);
   });
 
-  it('reads a layout written before the assistant could fold as open', () => {
+  it('reads a layout that never chose as folded, the default since X6', () => {
     writeStored(LAYOUT_STORAGE_KEY, { splitPercent: 60, sidebarWidth: 300 });
-    expect(readLayout().assistantOpen).toBe(true);
+    expect(readLayout().assistantOpen).toBe(false);
   });
 });
 
@@ -958,5 +959,59 @@ describe('le rejet du bandeau', () => {
     expect(readNarrowNoticeDismissed()).toBe(false);
     dismissNarrowNotice();
     expect(readNarrowNoticeDismissed()).toBe(true);
+  });
+});
+
+// SQL-EDITOR-AUDIT.md, X3: one read control, and the links and history that predate it.
+describe('read scope', () => {
+  it('asks for the latest records by default, and keeps what a shared link asked for', () => {
+    expect(readScopeFromSearch('')).toBe('LATEST');
+    expect(readScopeFromSearch('?sql=SELECT%201')).toBe('LATEST');
+    expect(readScopeFromSearch('?engine=FLINK')).toBe('BEGINNING');
+    expect(readScopeFromSearch('?engine=FLINK&snapshot=1')).toBe('SNAPSHOT');
+    expect(readScopeFromSearch('?engine=KAFKA_DIRECT&offset=LATEST')).toBe('LATEST');
+    expect(readScopeFromSearch('?engine=KAFKA_DIRECT&offset=EARLIEST')).toBe('BEGINNING');
+  });
+
+  it('round-trips through the link and history fields', () => {
+    for (const scope of ['LATEST', 'BEGINNING', 'SNAPSHOT'] as const) {
+      expect(readScopeOf(readOptionsOf(scope))).toBe(scope);
+      const link = buildQueryLink('https://host/query', 'SELECT 1', readOptionsOf(scope));
+      expect(readScopeFromSearch(new URL(link).search)).toBe(scope);
+    }
+  });
+
+  it('names a read mode for the latest records without forcing an engine', () => {
+    expect(readRequestFor('LATEST')).toEqual({ readMode: 'latest-offset', flinkOnly: false, directRead: false, boundedSnapshot: false });
+    expect(readRequestFor('BEGINNING')).toEqual({ readMode: null, flinkOnly: true, directRead: false, boundedSnapshot: false });
+    expect(readRequestFor('SNAPSHOT')).toEqual({ readMode: null, flinkOnly: true, directRead: false, boundedSnapshot: true });
+  });
+
+  it('describes a history entry by what it read', () => {
+    expect(describeHistoryEntry({ sql: 'q', ts: 1, ...readOptionsOf('LATEST') })).toBe('Latest records');
+    expect(describeHistoryEntry({ sql: 'q', ts: 1, ...readOptionsOf('SNAPSHOT') })).toBe('Whole topic');
+  });
+});
+
+describe('runShortcutLabel (X5)', () => {
+  it('prints the key this machine has', () => {
+    expect(runShortcutLabel('MacIntel')).toBe('⌘↵');
+    expect(runShortcutLabel('MacIntel', true)).toBe('⌘⇧↵');
+    expect(runShortcutLabel('Linux x86_64')).toBe('Ctrl+Enter');
+    expect(runShortcutLabel('Win32', true)).toBe('Ctrl+Shift+Enter');
+  });
+});
+
+describe('errorHeadline (X9)', () => {
+  it('keeps the engine sentence, without the validator prefix or a Java class name', () => {
+    expect(errorHeadline('SQL Validation Error: SQL parse failed. Encountered "FORM" at line 1, column 10.\nWas expecting …'))
+      .toBe('SQL parse failed. Encountered "FORM" at line 1, column 10.');
+    expect(errorHeadline('org.apache.flink.table.api.ValidationException: Object \'x\' not found'))
+      .toBe("Object 'x' not found");
+  });
+
+  it('says nothing when it would repeat what is shown', () => {
+    expect(errorHeadline('Nothing to run', 'Nothing to run')).toBeNull();
+    expect(errorHeadline('')).toBeNull();
   });
 });

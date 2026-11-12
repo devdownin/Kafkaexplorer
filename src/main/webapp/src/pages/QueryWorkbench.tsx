@@ -9,7 +9,7 @@ import '../monaco-setup';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
 import {
-  Button, Badge, Select, EmptyState, Tooltip, useConfirm, cn,
+  Button, Badge, Input, Select, EmptyState, Tooltip, useConfirm, cn,
   useVirtualRows,
 } from '../components/ui';
 import {
@@ -24,12 +24,15 @@ import {
   readLayout, clamp, LAYOUT_STORAGE_KEY, DEFAULT_LAYOUT,
   SPLIT_MIN, SPLIT_MAX, SIDEBAR_MIN, SIDEBAR_MAX, type WorkbenchLayout,
   starterQueries, pushHistory, describeHistoryEntry, formatDuration, type HistoryEntry,
+  runShortcutLabel, errorHeadline,
+  READ_SCOPES, READ_SCOPE_HELP, readRequestFor, readOptionsOf, readScopeOf, readScopeFromSearch,
+  type ReadScope,
   splitStatements, statementIndexAt, offsetAt, resolveOrigin,
   planRun, detectStatementType, previewStatement, isJobModeStatement,
   forgetOldestResults, summariseBatch, describeStatementRun, MAX_RETAINED_BATCH_ROWS,
   buildCompletionEntries, type CompletionEntry,
   type PlannedStatement, type StatementRun,
-  readSqlParam, readQueryOptions, buildQueryLink,
+  readSqlParam, buildQueryLink,
   sidebarSqlFor, sidebarActionLabel,
   describeChangelog, exportColumns, exportRows, explainPlan,
 } from './queryWorkbenchLogic';
@@ -82,6 +85,7 @@ function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
 
 interface Tab { id: string; name: string; sql: string; }
 
+
 /**
  * Ce qu'une instruction a donné. `executeStatement` le rend, la boucle d'un lot le range dans son
  * entrée : un booléen suffisait pour « faut-il continuer », pas pour « qu'a fait celle-ci ».
@@ -113,6 +117,30 @@ const STATEMENT_ICON: Record<string, string> = {
 /** Choix de plafond de lignes. La valeur part au backend en `maxRows` — voir runQuery. */
 const ROW_LIMITS = [50, 100, 500, 1000, 5000] as const;
 const DEFAULT_LIMIT = 50;
+/** Les raccourcis tels qu'on les tape sur cette machine — voir `runShortcutLabel`. */
+const PLATFORM = typeof navigator === 'undefined' ? '' : (navigator.platform || navigator.userAgent || '');
+const RUN_KEY = runShortcutLabel(PLATFORM);
+const RUN_ALL_KEY = runShortcutLabel(PLATFORM, true);
+
+/** Ce que le panneau de résultats montre pour un onglet — voir `tabViews`. */
+interface TabView {
+  results: QueryResult | null;
+  panelError: QueryErrorInfo | null;
+  ranSql: string | null;
+  ranOffsetMode: 'EARLIEST' | 'LATEST' | null;
+  ranReadScope: ReadScope | null;
+  executionMs: number | null;
+  resultLimit: number;
+  sortCol: string | null;
+  sortDir: 'asc' | 'desc';
+  batch: Run[] | null;
+  selectedRun: number | null;
+}
+
+const EMPTY_TAB_VIEW: TabView = {
+  results: null, panelError: null, ranSql: null, ranOffsetMode: null, ranReadScope: null, executionMs: null,
+  resultLimit: DEFAULT_LIMIT, sortCol: null, sortDir: 'asc', batch: null, selectedRun: null,
+};
 /** Profondeur du retour arrière sur les onglets fermés — un filet, pas un historique. */
 const CLOSED_TAB_CAP = 5;
 const TABS_STORAGE_KEY = 'kse:tabs';
@@ -557,6 +585,18 @@ const QueryWorkbench: React.FC = () => {
   // suivent dans le même tick, et c'est précisément ce qu'il faut refuser.
   const executingRef = useRef(false);
   const [executionMs, setExecutionMs] = useState<number | null>(null);
+  /*
+   * Le temps qui passe pendant une exécution (SQL-EDITOR-AUDIT.md, X4). Rien ne comptait les
+   * secondes, et le panneau affichait « No results yet » à côté de « Execution … ».
+   */
+  const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!executing) return;
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, [executing]);
+  const elapsedMs = executing && runStartedAt !== null ? Math.max(0, now - runStartedAt) : null;
   /** SQL de la requête qui a produit `results` — sert à marquer l'affichage périmé. */
   const [ranSql, setRanSql] = useState<string | null>(null);
   /**
@@ -567,6 +607,8 @@ const QueryWorkbench: React.FC = () => {
    * porte la raison.
    */
   const [ranOffsetMode, setRanOffsetMode] = useState<'EARLIEST' | 'LATEST' | null>(null);
+  /** Le réglage de lecture et le plafond du résultat affiché — voir `staleResults` (X7). */
+  const [ranReadScope, setRanReadScope] = useState<ReadScope | null>(null);
   /**
    * Le lot en cours ou terminé, une entrée par instruction, ou `null` quand la dernière exécution
    * n'en portait qu'une. C'est lui qui garde ce que chaque instruction a donné — voir `runBatch`.
@@ -579,20 +621,10 @@ const QueryWorkbench: React.FC = () => {
    * dans cet intervalle qu'un ⌘↵ lançait une requête concurrente de la boucle.
    */
   const batchRef = useRef(false);
+  /** L'onglet d'une exécution en cours, lot compris, ou `null` — voir `tabViews`. */
+  const [runTabId, setRunTabId] = useState<string | null>(null);
   /** Stop a été demandé pendant un lot — relu par la boucle, qui s'arrête à l'instruction suivante. */
   const batchCancelRef = useRef(false);
-  /**
-   * Le lot décrit les instructions d'un onglet : changer d'onglet le vide, ses numéros ne
-   * désignant plus rien dans le texte affiché. Ajusté pendant le rendu — le motif
-   * documenté pour un état dérivé, et le même que `errorSource` plus bas — plutôt qu'un effet,
-   * qui laisserait le lot de l'onglet précédent visible le temps d'un rendu.
-   */
-  const [batchTabId, setBatchTabId] = useState(activeTabId);
-  if (batchTabId !== activeTabId) {
-    setBatchTabId(activeTabId);
-    setBatch(null);
-    setSelectedRun(null);
-  }
   /** Dernier SQL que le validateur backend a accepté, pour ne pas le lui redemander à l'identique. */
   const validatedSqlRef = useRef<string | null>(null);
   // Plafond de lignes réellement envoyé au backend. Il était figé à 50 côté serveur
@@ -626,12 +658,12 @@ const QueryWorkbench: React.FC = () => {
     () => statementIndexAt(statements, cursorOffset),
     [statements, cursorOffset],
   );
-  const [offsetMode, setOffsetMode] = useState<'EARLIEST' | 'LATEST'>(
-    () => readQueryOptions(location.search).offsetMode);
-  const [engineMode, setEngineMode] = useState<'FLINK' | 'KAFKA_DIRECT'>(
-    () => readQueryOptions(location.search).engineMode);
-  const [boundedSnapshot, setBoundedSnapshot] = useState(
-    () => readQueryOptions(location.search).boundedSnapshot);
+  /**
+   * Un seul réglage de lecture (SQL-EDITOR-AUDIT.md, X3) : « quels enregistrements ? ». Les trois
+   * champs d'avant en sont dérivés, pour les liens partagés et l'historique, qui les gardent.
+   */
+  const [readScope, setReadScope] = useState<ReadScope>(() => readScopeFromSearch(location.search));
+  const { engineMode, offsetMode, boundedSnapshot } = readOptionsOf(readScope);
   const [panelError, setPanelError] = useState<QueryErrorInfo | null>(null);
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
@@ -702,6 +734,33 @@ const QueryWorkbench: React.FC = () => {
     () => (batch ? batch.findIndex(r => r.status === 'running') : -1),
     [batch],
   );
+  /*
+   * Le résultat appartient à son onglet (SQL-EDITOR-AUDIT.md, X1).
+   *
+   * Lignes, erreur, durée, tri et lot étaient des états de la page, le SQL un état de l'onglet : un
+   * onglet vide montrait les lignes du précédent, et l'échec d'une requête dans l'onglet 2 s'affichait
+   * au-dessus du SQL valide de l'onglet 1, dont les lignes étaient perdues. Au changement d'onglet,
+   * l'affichage de l'onglet quitté est rangé sous son id et celui de l'onglet rejoint est restauré.
+   *
+   * **Pas pendant une exécution** : ses réponses s'écrivent dans ces mêmes états, et changer
+   * d'affichage en vol les attribuerait à l'onglet rejoint. L'échange attend la fin — `runTabId`
+   * couvre aussi l'intervalle entre deux instructions d'un lot, où rien n'est en vol. Ajusté pendant
+   * le rendu, comme `errorSource` : un effet laisserait l'autre onglet visible le temps d'un rendu.
+   */
+  const [viewTabId, setViewTabId] = useState(activeTabId);
+  const [tabViews, setTabViews] = useState<Record<string, TabView>>({});
+  if (viewTabId !== activeTabId && !executing && runTabId === null) {
+    const leaving: TabView = { results, panelError, ranSql, ranOffsetMode, ranReadScope, executionMs, resultLimit,
+      sortCol, sortDir, batch, selectedRun };
+    const next = tabViews[activeTabId] ?? EMPTY_TAB_VIEW;
+    setTabViews(prev => ({ ...prev, [viewTabId]: leaving }));
+    setViewTabId(activeTabId);
+    setResults(next.results); setPanelError(next.panelError); setRanSql(next.ranSql);
+    setRanOffsetMode(next.ranOffsetMode); setRanReadScope(next.ranReadScope); setExecutionMs(next.executionMs);
+    setResultLimit(next.resultLimit); setSortCol(next.sortCol); setSortDir(next.sortDir);
+    setBatch(next.batch); setSelectedRun(next.selectedRun); setDetailIndex(null);
+  }
+
   /** L'entrée du lot que la grille montre — c'est elle qui dit si ses lignes existent encore. */
   const shownRun = batch && selectedRun !== null ? batch[selectedRun] ?? null : null;
 
@@ -715,7 +774,15 @@ const QueryWorkbench: React.FC = () => {
    * onglet multi-instructions est *toujours* périmé, le texte exécuté n'étant jamais égal au
    * contenu de l'onglet — et un avertissement permanent ne prévient plus de rien.
    */
-  const staleResults = !executing && !!results && isResultStale(ranSql, sql, statements);
+  /*
+   * Les options de lecture comptent aussi (X7) : passer de « From the beginning » à « Latest
+   * records », ou changer le plafond, laissait la grille affirmer « Complete » sans rien signaler,
+   * alors que Run rendrait maintenant d'autres enregistrements.
+   */
+  const readOptionsChanged = !!results && !results.error
+    && ((ranReadScope !== null && ranReadScope !== readScope) || resultLimit !== maxRows);
+  const staleResults = !executing && !!results
+    && (isResultStale(ranSql, sql, statements) || readOptionsChanged);
 
   // Place le curseur sur la position fautive et la révèle dans l'éditeur.
   const jumpToError = useCallback((loc: QueryErrorLocation) => {
@@ -819,10 +886,16 @@ const QueryWorkbench: React.FC = () => {
 
   // ── History ───────────────────────────────────────────────────────────────────
   const [showHistory, setShowHistory] = useState(false);
+  /** Recherche dans l'historique (X10) : une requête qui vaut d'être retrouvée tient rarement sur une ligne. */
+  const [historyQuery, setHistoryQuery] = useState('');
   const historyRef = useRef<HTMLDivElement>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(
     () => readStored<HistoryEntry[]>(HISTORY_STORAGE_KEY, []),
   );
+  const shownHistory = useMemo(() => {
+    const q = historyQuery.trim().toLowerCase();
+    return q ? history.filter(h => h.sql.toLowerCase().includes(q)) : history;
+  }, [history, historyQuery]);
   /**
    * Une entrée porte maintenant ce que la requête a donné — durée, lignes, moteur, succès. Elle ne
    * portait que le SQL et l'heure, et **les échecs n'y entraient pas** : retrouver « celle qui
@@ -1171,11 +1244,15 @@ const QueryWorkbench: React.FC = () => {
      * requête, au lieu de trouver un écran « en exécution » sans rien à arrêter.
      */
     executingRef.current = true;
-    setExecuting(true); setResults(null); setSortCol(null); setDetailIndex(null);
+    // Les lignes précédentes restent, estompées, jusqu'à la réponse (X4) : les effacer au clic
+    // laissait un écran vide là où il y avait une réponse, et c'était tout ce qu'une relance
+    // lente ou en échec laissait voir.
+    setExecuting(true); setRunStartedAt(start); setNow(start); setSortCol(null); setDetailIndex(null);
     // Ce qui a réellement été exécuté — c'est lui, et non le contenu courant de l'onglet, qui dit
     // si les lignes affichées répondent encore au texte sous les yeux.
     setRanSql(sqlToRun);
     setRanOffsetMode(offsetMode);
+    setRanReadScope(readScope);
     try {
       /*
        * Pré-vol : `/api/query/validate` refuse une faute de syntaxe avant que la requête n'ouvre
@@ -1208,13 +1285,9 @@ const QueryWorkbench: React.FC = () => {
           /* let execution handle it */
         }
       }
-      const readMode = engineMode === 'KAFKA_DIRECT'
-        ? (offsetMode === 'LATEST' ? 'latest-offset' : 'earliest-offset') : null;
       const limit = maxRows;
       const response = await axios.post<QueryResult>('/api/query/run-sync',
-        { sql: sqlToRun, readMode, maxRows: limit, queryId,
-          flinkOnly: engineMode === 'FLINK', directRead: engineMode === 'KAFKA_DIRECT',
-          boundedSnapshot: engineMode === 'FLINK' && boundedSnapshot },
+        { sql: sqlToRun, maxRows: limit, queryId, ...readRequestFor(readScope) },
         { signal: controller.signal, timeout: REQUEST_TIMEOUT_MS });
       const ms = Date.now() - start;
       setExecutionMs(ms);
@@ -1299,6 +1372,19 @@ const QueryWorkbench: React.FC = () => {
    * autres — ni lignes, ni durée, ni moteur, ni la preuve qu'elles avaient tourné.
    */
   const runBatch = async (plan: PlannedStatement[]) => {
+    if (executingRef.current || batchRef.current) {
+      toast('A query is already running — stop it first', 'info');
+      return;
+    }
+    setRunTabId(activeTabId);
+    try {
+      await runPlan(plan);
+    } finally {
+      setRunTabId(null);
+    }
+  };
+
+  const runPlan = async (plan: PlannedStatement[]) => {
     /*
      * Le bouton Run se désactive pendant l'exécution, mais ⌘↵ appelle cette fonction *directement*
      * : deux frappes rapides lançaient deux requêtes. La seconde écrasait `abortRef` et
@@ -1424,6 +1510,24 @@ const QueryWorkbench: React.FC = () => {
 
   // Idem : la ref se met à jour dans un effet, pas au milieu du rendu.
   useEffect(() => { runQueryRef.current = runQuery; runAllRef.current = () => void runAllStatements(); });
+
+  /*
+   * Le raccourci vaut sur toute la page (SQL-EDITOR-AUDIT.md, X5). C'était une commande Monaco :
+   * après un clic sur une ligne de résultat ou dans la barre latérale, il n'envoyait rien, et la
+   * boucle naturelle — lire les lignes, relancer — cassait au premier tour. L'éditeur garde la
+   * sienne ; un champ de saisie ou un dialogue gardent la touche.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey) || e.defaultPrevented) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target?.closest('.monaco-editor, input, textarea, select, [contenteditable="true"], [role="dialog"], [role="alertdialog"]')) return;
+      e.preventDefault();
+      if (e.shiftKey) runAllRef.current(); else runQueryRef.current();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   /**
    * Arrête la requête en cours. Deux effets distincts, et seul le premier est garanti :
@@ -1564,10 +1668,30 @@ const QueryWorkbench: React.FC = () => {
    * est un échec vaut moins que pas de geste — les aides qui n'existaient que pour lui
    * (`pickSinkTable`, `sinkNameRange`) sont parties avec, ne laissant ici que leurs appels.
    */
+  /*
+   * Ouvrir, c'est lancer (SQL-EDITOR-AUDIT.md, X2). Le clic sur un topic et les cartes de départ
+   * écrivaient la requête sans l'exécuter, et le geste le plus courant de la page en demandait
+   * deux — la carte portant pourtant l'icône ▶. L'exécution attend que l'onglet affiche ce texte
+   * (il peut être nouveau, donc pas encore rendu) et qu'aucune requête ne soit en vol.
+   */
+  const pendingRunRef = useRef<string | null>(null);
+  const openAndRun = useCallback((text: string, name?: string) => {
+    const where = openSql(text, name);
+    pendingRunRef.current = text;
+    return where;
+  }, [openSql]);
+  useEffect(() => {
+    const pending = pendingRunRef.current;
+    if (pending === null || executing || runTabId !== null || sql !== pending) return;
+    pendingRunRef.current = null;
+    void runBatch(planRun(pending, 0, null, 'cursor'));
+  });
+
+  // Pas de toast « Opened … in a new tab » (X10) : la barre d'onglets le montre déjà, et le toast
+  // couvrait le coin de la grille où les lignes arrivent.
   const openSelectFor = useCallback((table: string) => {
-    const where = openSql(sidebarSqlFor(table, maxRows), table);
-    if (where === 'new') toast(`Opened ${table} in a new tab`, 'success');
-  }, [openSql, maxRows, toast]);
+    openAndRun(sidebarSqlFor(table, maxRows), table);
+  }, [openAndRun, maxRows]);
 
   /*
    * Les gestionnaires que la barre latérale reçoit, d'identité **stable**.
@@ -1771,29 +1895,12 @@ const QueryWorkbench: React.FC = () => {
               mondes. */}
           <div className="flex items-center gap-4 min-w-0 overflow-x-auto custom-scrollbar">
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-[12px] text-on-surface-variant">Engine</span>
-              <Segmented ariaLabel="Query engine" value={engineMode} onChange={setEngineMode}
-                options={[{ value: 'FLINK', label: 'Flink SQL' }, { value: 'KAFKA_DIRECT', label: 'Kafka Direct' }]} />
-            </div>
-            {engineMode === 'KAFKA_DIRECT' && <div className="flex items-center gap-2 shrink-0">
-              <Tooltip content="Choose which end of the topic to scan. Latest samples a tail of each partition; it does not select the globally newest N messages. Filters and aggregates may be partial.">
-                <span tabIndex={0} className="text-[12px] text-on-surface-variant rounded">Offset</span>
-              </Tooltip>
-              <Segmented
-                ariaLabel="Offset mode"
-                value={offsetMode}
-                onChange={setOffsetMode}
-                options={[{ value: 'EARLIEST', label: 'Earliest' }, { value: 'LATEST', label: 'Latest' }]}
-              />
-            </div>}
-            {engineMode === 'FLINK' && <div className="flex items-center gap-2 shrink-0">
-              <Tooltip content="Snapshot fixes each partition's beginning and end offsets before Flink starts. It reads all retained records of one automatically registered Kafka topic. A row cap may cut off the result; custom tables and joins need their own bounded definitions.">
+              <Tooltip content={READ_SCOPE_HELP}>
                 <span tabIndex={0} className="text-[12px] text-on-surface-variant rounded">Read</span>
               </Tooltip>
-              <Segmented ariaLabel="Flink read scope" value={boundedSnapshot ? 'SNAPSHOT' : 'STREAM'}
-                onChange={value => setBoundedSnapshot(value === 'SNAPSHOT')}
-                options={[{ value: 'STREAM', label: 'Stream' }, { value: 'SNAPSHOT', label: 'Snapshot' }]} />
-            </div>}
+              <Segmented ariaLabel="Records to read" value={readScope} onChange={setReadScope}
+                options={READ_SCOPES.map(o => ({ value: o.value, label: o.label }))} />
+            </div>
             <div className="flex items-center gap-2 shrink-0">
               <label htmlFor="kse-max-rows" className="text-[12px] text-on-surface-variant">Rows</label>
               <Select
@@ -1810,28 +1917,34 @@ const QueryWorkbench: React.FC = () => {
           <div className="flex items-center gap-2 shrink-0">
             <div className="relative" ref={historyRef}>
               <button onClick={() => setShowHistory(h => !h)} aria-label="Query history"
-                aria-expanded={showHistory} aria-haspopup="menu"
+                aria-expanded={showHistory} aria-haspopup="dialog"
                 className="inline-flex items-center gap-1.5 h-9 px-3 text-on-surface-variant hover:text-on-surface border border-outline-variant rounded-md hover:bg-surface-container-high transition-colors" title="Query history">
                 <span className="material-symbols-outlined text-[18px]">history</span>
                 {history.length > 0 && <span className="text-[10px] bg-primary text-on-primary font-semibold px-1.5 rounded-full tabular-nums">{history.length}</span>}
               </button>
               {showHistory && (
-                <div role="menu" className="absolute right-0 top-full mt-1.5 w-96 max-h-64 overflow-y-auto bg-surface-container-high border border-outline-variant rounded-xl shadow-2xl z-30 animate-slide-up">
+                <div role="dialog" aria-label="Query history" className="absolute right-0 top-full mt-1.5 w-[32rem] max-h-96 overflow-y-auto bg-surface-container-high border border-outline-variant rounded-xl shadow-2xl z-30 animate-slide-up">
                   <div className="px-3 py-2 border-b border-outline-variant/60 flex items-center justify-between sticky top-0 bg-surface-container-high">
                     <span className="text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em]">Recent Queries</span>
                     <button onClick={() => { setHistory([]); removeStored(HISTORY_STORAGE_KEY); }} className="text-[11px] text-outline hover:text-error transition-colors">Clear</button>
                   </div>
+                  {history.length > 0 && (
+                    <div className="px-3 py-2 border-b border-outline-variant/60">
+                      <Input type="search" autoFocus aria-label="Search the history" placeholder="Search the history"
+                        value={historyQuery} onChange={e => setHistoryQuery(e.target.value)}
+                        className="h-8 text-[12px]" />
+                    </div>
+                  )}
                   {history.length === 0 ? <p className="p-4 text-[12px] text-outline">No history yet</p>
-                    : history.map(h => (
+                    : shownHistory.length === 0 ? <p className="p-4 text-[12px] text-outline">No query matches “{historyQuery.trim()}”</p>
+                    : shownHistory.map(h => (
                       // Une entrée d'historique est une requête entière : elle remplaçait tout
                       // l'onglet actif au clic, effaçant sans préavis ce qu'on était en train
                       // d'écrire. Elle suit désormais la même règle que les requêtes sauvegardées.
-                      <button key={`${h.ts}-${h.sql}`} role="menuitem"
+                      <button key={`${h.ts}-${h.sql}`} type="button"
                         onClick={() => {
                           openSql(h.sql);
-                          setEngineMode(h.engineMode ?? 'FLINK');
-                          setOffsetMode(h.offsetMode ?? 'EARLIEST');
-                          setBoundedSnapshot(h.boundedSnapshot ?? false);
+                          setReadScope(readScopeOf(h));
                           setShowHistory(false);
                         }}
                         title={h.sql}
@@ -1844,7 +1957,7 @@ const QueryWorkbench: React.FC = () => {
                             h.ok === false ? 'text-error' : h.ok ? 'text-success' : 'text-outline',
                           )}>{h.ok === false ? 'error' : h.ok ? 'check_circle' : 'schedule'}</span>
                           <div className="min-w-0 flex-1">
-                            <p className="font-mono text-[12px] text-on-surface truncate">{h.sql.replace(/\s+/g, ' ')}</p>
+                            <p className="font-mono text-[12px] text-on-surface line-clamp-2 break-all">{h.sql.replace(/\s+/g, ' ')}</p>
                             <p className="text-[11px] text-outline mt-0.5">
                               {new Date(h.ts).toLocaleString()}
                               {describeHistoryEntry(h) && <> · {describeHistoryEntry(h)}</>}
@@ -1857,8 +1970,8 @@ const QueryWorkbench: React.FC = () => {
                 </div>
               )}
             </div>
-            <Tooltip content="Run the query, or just the selection when there is one. Shortcut: ⌘↵ / Ctrl+Enter.">
-              <span tabIndex={0} className="text-[11px] text-outline hidden lg:block font-mono rounded">⌘↵</span>
+            <Tooltip content={`Run the query, or just the selection when there is one. Shortcut: ${RUN_KEY}, anywhere on the page.`}>
+              <span tabIndex={0} className="text-[11px] text-outline hidden lg:block font-mono rounded">{RUN_KEY}</span>
             </Tooltip>
             {(executing || runningStatement >= 0) && (
               <Button variant="secondary" onClick={() => void cancelRunningQuery()} icon="stop_circle">
@@ -1869,7 +1982,7 @@ const QueryWorkbench: React.FC = () => {
                 serait la moitié inquiétante de la fonctionnalité. */}
             {!hasSelection && statements.length > 1 && (
               <>
-                <Tooltip content="This tab holds several statements. ⌘↵ runs the one the cursor is in, ⌘⇧↵ runs them all — select a fragment to run something else.">
+                <Tooltip content={`This tab holds several statements. ${RUN_KEY} runs the one the cursor is in, ${RUN_ALL_KEY} runs them all — select a fragment to run something else.`}>
                   <span tabIndex={0} className="text-[11px] text-on-surface-variant tabular-nums rounded hidden md:block">
                     {runningStatement >= 0 && batch
                       ? `Running ${runningStatement + 1}/${batch.length}`
@@ -1878,7 +1991,7 @@ const QueryWorkbench: React.FC = () => {
                 </Tooltip>
                 {/* Créer une table puis la lire est ce que l'auto-enregistrement encourage, et
                     depuis que Run vise une seule instruction, cela demandait deux gestes. */}
-                <Tooltip content="Runs every statement in this tab, in order, stopping at the first one that fails. Shortcut: ⌘⇧↵.">
+                <Tooltip content={`Runs every statement in this tab, in order, stopping at the first one that fails. Shortcut: ${RUN_ALL_KEY}.`}>
                   <Button variant="secondary" onClick={() => void runAllStatements()}
                     disabled={executing || runningStatement >= 0} icon="playlist_play">
                     Run all
@@ -1898,12 +2011,6 @@ const QueryWorkbench: React.FC = () => {
             </Button>
           </div>
         </header>
-        {engineMode === 'KAFKA_DIRECT' && offsetMode === 'LATEST' && (
-          <p className="px-4 md:px-6 py-1.5 text-xs text-on-surface-variant bg-surface-container-low">
-            Latest scans the tails of each partition up to the row cap; it does not select the globally newest N messages.
-          </p>
-        )}
-
         {/* Split pane */}
         <div ref={containerRef} className="flex-1 flex flex-col min-h-0 overflow-hidden">
 
@@ -1987,14 +2094,14 @@ const QueryWorkbench: React.FC = () => {
                       passait par un copier-coller. */}
                   <Tooltip content="Copies a link that reopens this query in the editor. The tab's whole content travels in the URL.">
                     <button type="button" onClick={copyQueryLink}
-                      className="flex items-center gap-1 text-[12px] text-on-surface-variant hover:text-on-surface transition-colors rounded">
+                      className="min-h-6 px-1.5 flex items-center gap-1 text-[12px] text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors rounded">
                       <span aria-hidden="true" className="material-symbols-outlined text-[16px]">link</span>
                       Link
                     </button>
                   </Tooltip>
                   <Tooltip content="Reformats the SQL in the editor: one clause per line, one select item per line, keywords upper-cased. String literals and comments are left untouched. Shortcut: Shift + Alt + F.">
                   <button type="button" onClick={() => void editorRef.current?.getAction('editor.action.formatDocument')?.run()}
-                    className="flex items-center gap-1 text-[12px] text-on-surface-variant hover:text-on-surface transition-colors rounded">
+                    className="min-h-6 px-1.5 flex items-center gap-1 text-[12px] text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors rounded">
                     <span className="material-symbols-outlined text-[16px]">auto_fix_high</span>
                     Format
                   </button>
@@ -2019,6 +2126,9 @@ const QueryWorkbench: React.FC = () => {
                     // `onMount` reçoit l'API Monaco en second argument : elle est garantie prête
                     // à cet instant, là où `useMonaco()` peut l'être avant ou après le montage.
                     registerEditorCommands(editor, monacoApi);
+                    // Le focus à l'arrivée (X5) : il était sur <body>, à 117 tabulations de
+                    // l'éditeur, et la frappe ne faisait rien tant qu'on n'avait pas cliqué dedans.
+                    if (!document.querySelector('[role="dialog"], [role="alertdialog"]')) editor.focus();
                     // Le bouton doit annoncer ce qu'il va exécuter — tout l'onglet, la sélection,
                     // ou l'instruction sous le curseur.
                     editor.onDidChangeCursorSelection(e => {
@@ -2072,9 +2182,10 @@ const QueryWorkbench: React.FC = () => {
               <div className="flex items-center gap-5 min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[16px] text-on-surface-variant">timer</span>
-                  <span className="text-[11px] text-on-surface-variant">Execution <span className="text-on-surface tabular-nums">{executing ? '…' : executionMs !== null ? formatDuration(executionMs) : '—'}</span></span>
+                  <span className="text-[11px] text-on-surface-variant">Execution <span className="text-on-surface tabular-nums">{executing ? formatDuration(elapsedMs ?? 0) : executionMs !== null ? formatDuration(executionMs) : '—'}</span></span>
                 </div>
-                <div className="flex items-center gap-1.5">
+                {/* « Rows 0 » sur une requête qui n'a pas tourné n'est pas un fait (X9). */}
+                {!queryError && !executing && <div className="flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[16px] text-on-surface-variant">list_alt</span>
                   <span className="text-[11px] text-on-surface-variant">
                     {/* Tronqué = autant de lignes que le plafond *de cette requête*. La constante
@@ -2089,7 +2200,7 @@ const QueryWorkbench: React.FC = () => {
                       </Tooltip>
                     )}
                   </span>
-                </div>
+                </div>}
                 {/* Le moteur qui a répondu — **jamais avant qu'il ait répondu**.
                     La condition était `results?.engine || results || executing` et la valeur
                     `results?.engine ?? 'Kafka Direct'` : pendant l'exécution, et sur un résultat
@@ -2098,9 +2209,9 @@ const QueryWorkbench: React.FC = () => {
                     lequel des deux moteurs a répondu — l'aiguillage se décidant par requête, la
                     réponse n'existe pas avant le résultat. Tant qu'elle n'existe pas, la puce le
                     dit au lieu d'en inventer une. */}
-                {(results?.engine || executing) && (
+                {!queryError && (results?.engine || executing) && (
                   <Tooltip content={
-                    !results?.engine
+                    executing || !results?.engine
                       ? 'The selected engine answers this query. The badge names it once a result is available.'
                       : results.engine === 'KAFKA_DIRECT'
                         ? 'Kafka Direct: a bounded scan over Kafka messages. It supports SELECT, WHERE, aggregates and TUMBLE windows — but no multi-topic JOIN, which is the limit worth knowing before reading these rows.'
@@ -2108,8 +2219,8 @@ const QueryWorkbench: React.FC = () => {
                         : 'Flink: executed by the embedded Flink SQL engine (EXPLAIN / DDL).'
                   }>
                   <span tabIndex={0} className="rounded">
-                    <Badge tone={!results?.engine ? 'neutral' : results.engine === 'KAFKA_DIRECT' ? 'primary' : 'secondary'}>
-                      {results?.engine ?? 'Engine…'}
+                    <Badge tone={executing || !results?.engine ? 'neutral' : results.engine === 'KAFKA_DIRECT' ? 'primary' : 'secondary'}>
+                      {executing ? 'Engine…' : results?.engine}
                     </Badge>
                   </span>
                   </Tooltip>
@@ -2123,7 +2234,7 @@ const QueryWorkbench: React.FC = () => {
                 )}
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                {results && !results.error && results.rows.length > 0 && (
+                {!executing && results && !results.error && results.rows.length > 0 && (
                   <div className="flex items-center gap-1">
                     <button onClick={() => exportResults('csv')} className="flex items-center gap-1 text-[11px] text-on-surface-variant hover:text-on-surface transition-colors"><span className="material-symbols-outlined text-[16px]">download</span>CSV</button>
                     <span className="text-outline">·</span>
@@ -2133,7 +2244,9 @@ const QueryWorkbench: React.FC = () => {
                 {/* La grille gardait les lignes de la requête précédente pendant qu'on écrivait la
                     suivante, sans rien dire. Le bouton relance la requête *affichée*. */}
                 {staleResults && !queryError && (
-                  <Tooltip content="The SQL in the editor has changed since these rows were fetched. Run again to refresh them.">
+                  <Tooltip content={readOptionsChanged && !isResultStale(ranSql, sql, statements)
+                    ? 'Read or Rows has changed since these rows were fetched. Run again to read with the new settings.'
+                    : 'The SQL in the editor has changed since these rows were fetched. Run again to refresh them.'}>
                     <button type="button" onClick={runQuery}
                       className="inline-flex items-center gap-1 text-[11px] font-medium text-warning hover:underline rounded">
                       <span aria-hidden="true" className="material-symbols-outlined text-[14px]">sync_problem</span>
@@ -2259,14 +2372,39 @@ const QueryWorkbench: React.FC = () => {
 
             {/* La grille et le détail se partagent la hauteur restante : le panneau se pose à côté
                 plutôt que par-dessus, pour qu'on garde la ligne dans son contexte. */}
+            {/* Ce qui tourne, depuis combien de temps, et comment l'arrêter (X4). */}
+            {executing && (
+              <div role="status" className="flex items-center gap-3 px-4 py-2 border-b border-outline-variant/60 bg-primary/5 shrink-0">
+                <span aria-hidden="true" className="material-symbols-outlined text-[16px] text-primary animate-spin">progress_activity</span>
+                <span className="text-[12px] text-on-surface shrink-0">
+                  Running <span className="tabular-nums">{formatDuration(elapsedMs ?? 0)}</span>
+                </span>
+                {ranSql && (
+                  <span className="font-mono text-[11px] text-on-surface-variant truncate min-w-0">{ranSql.replace(/\s+/g, ' ')}</span>
+                )}
+              </div>
+            )}
             <div className="flex-1 flex min-h-0 overflow-hidden">
-            <div ref={resultsScrollRef} className="flex-1 min-w-0 overflow-auto custom-scrollbar">
-              {queryError ? (
+            <div ref={resultsScrollRef}
+              className={cn('flex-1 min-w-0 overflow-auto custom-scrollbar transition-opacity',
+                executing && 'opacity-40 pointer-events-none')}
+              aria-busy={executing}>
+              {executing && !results ? (
+                <div className="p-4">
+                  <EmptyState icon="hourglass_top" title="Waiting for the first rows"
+                    description="The query is running. Its rows appear here as soon as the engine answers." />
+                </div>
+              ) : queryError ? (
                 <div className="p-4">
                   <div className="flex items-start gap-3 p-3 rounded-lg border border-error/30 bg-error/10" role="alert">
                     <span className="material-symbols-outlined text-error text-base mt-0.5 shrink-0">error</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-error font-semibold text-sm break-words">{queryError.title}</p>
+                      {errorHeadline(queryError.raw, queryError.title, queryError.hint) && (
+                        <p className="font-mono text-[12px] text-on-surface mt-1 break-words">
+                          {errorHeadline(queryError.raw, queryError.title, queryError.hint)}
+                        </p>
+                      )}
                       {queryError.hint && (
                         <p className="text-on-surface-variant text-[12px] mt-1 leading-relaxed">{queryError.hint}</p>
                       )}
@@ -2336,11 +2474,13 @@ const QueryWorkbench: React.FC = () => {
                 />
               ) : (
                 <div className="p-4">
-                  <EmptyState
+                  {/* Sur un onglet vide, les propositions de départ *sont* l'état vide : elles
+                      commençaient sous le pli, à 844 px d'une fenêtre de 900 (X6). */}
+                  {!(!sql.trim() && starters.length > 0) && <EmptyState
                     icon="terminal"
                     title="No results yet"
-                    description="Run a query with ⌘↵ to see results in this panel."
-                  />
+                    description={`Run a query with ${RUN_KEY} to see results in this panel.`}
+                  />}
                   {/* Propositions de départ, bâties sur le catalogue réellement chargé — donc
                       jamais sur une table absente. L'onglet initial portait à leur place une
                       requête écrite en dur, en syntaxe ksqlDB et sur un `orders_stream` qui
@@ -2351,7 +2491,7 @@ const QueryWorkbench: React.FC = () => {
                       <div className="space-y-1.5">
                         {starters.map(s => (
                           <button key={s.label} type="button"
-                            onClick={() => { openSql(s.sql); editorRef.current?.focus(); }}
+                            onClick={() => { openAndRun(s.sql); editorRef.current?.focus(); }}
                             className="w-full text-left px-3 py-2 rounded-lg border border-outline-variant hover:border-primary/50 hover:bg-primary/5 transition-colors group/starter">
                             <div className="flex items-center gap-2">
                               <span aria-hidden="true" className="material-symbols-outlined text-[16px] text-primary">play_arrow</span>

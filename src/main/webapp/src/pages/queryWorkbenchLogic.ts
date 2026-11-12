@@ -1224,9 +1224,9 @@ export function starterQueries(
   if (!table) return [];
   return [
     {
-      label: 'Read the latest rows',
+      label: 'Read some rows',
       sql: `SELECT * FROM ${table} LIMIT 50`,
-      hint: `Reads ${table} through the direct Kafka reader.`,
+      hint: `Reads up to 50 records of ${table}, from the end chosen in Read above.`,
     },
     {
       label: 'Count the rows',
@@ -1312,6 +1312,35 @@ export function pushHistory(
 }
 
 /** `1.2s` sous la seconde près, `340ms` en deçà. */
+/**
+ * Le raccourci tel qu'on le tape sur cette machine (SQL-EDITOR-AUDIT.md, X5). L'écran imprimait
+ * « ⌘↵ » partout, Linux et Windows compris, où la touche est Ctrl.
+ */
+export function runShortcutLabel(platform: string, all = false): string {
+  return /Mac|iPhone|iPad|iPod/i.test(platform)
+    ? (all ? '⌘⇧↵' : '⌘↵')
+    : (all ? 'Ctrl+Shift+Enter' : 'Ctrl+Enter');
+}
+
+/**
+ * La phrase du moteur qui dit ce qui ne va pas (SQL-EDITOR-AUDIT.md, X9). Le panneau montrait la
+ * piste générique (« Check for a typo… near line 1:10 ») et repliait derrière « Show raw error » la
+ * seule ligne précise — `Encountered "FORM" at line 1, column 10`. Première ligne du message brut,
+ * débarrassée du préfixe du validateur et des noms de classes Java, bornée ; `null` quand elle ne
+ * dit rien de plus que le titre ou la piste déjà affichés.
+ */
+export function errorHeadline(raw: string | null | undefined, ...shown: (string | undefined)[]): string | null {
+  const first = (raw ?? '').split('\n').map(l => l.trim()).find(Boolean) ?? '';
+  let line = first.replace(/^SQL Validation Error:\s*/i, '');
+  // « org.apache.flink.table.api.ValidationException: SQL validation failed. … » → la phrase.
+  for (let i = 0; i < 3; i += 1) line = line.replace(/^(?:[a-z_$][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error):\s*/, '');
+  line = line.trim();
+  if (!line) return null;
+  if (line.length > 300) line = `${line.slice(0, 297)}…`;
+  const seen = shown.filter(Boolean).map(s => s!.trim().toLowerCase());
+  return seen.some(s => s === line.toLowerCase() || s.includes(line.toLowerCase())) ? null : line;
+}
+
 export function formatDuration(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
@@ -1328,9 +1357,10 @@ export function describeHistoryEntry(entry: HistoryEntry): string {
     parts.push(`${entry.rows.toLocaleString()} ${entry.rows === 1 ? 'row' : 'rows'}`);
   }
   if (entry.engine) parts.push(entry.engine === 'KAFKA_DIRECT' ? 'Kafka Direct' : entry.engine);
-  else if (entry.engineMode) parts.push(entry.engineMode === 'FLINK' ? 'Flink SQL' : 'Kafka Direct');
-  if (entry.engineMode === 'KAFKA_DIRECT' && entry.offsetMode) parts.push(entry.offsetMode === 'LATEST' ? 'Latest' : 'Earliest');
-  if (entry.engineMode === 'FLINK' && entry.boundedSnapshot) parts.push('Snapshot');
+  if (entry.engineMode) {
+    const scope = readScopeOf(entry);
+    parts.push(READ_SCOPES.find(s => s.value === scope)!.label);
+  }
   return parts.join(' · ');
 }
 
@@ -1374,6 +1404,76 @@ export function readQueryOptions(search: string): { engineMode: 'FLINK' | 'KAFKA
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Ce qu'on lit d'un topic — un seul réglage (SQL-EDITOR-AUDIT.md, X3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * La question que l'utilisateur se pose : *quels enregistrements ?*
+ *
+ * La barre posait d'abord « Engine : Flink SQL / Kafka Direct », puis un second réglage dont le nom
+ * et le sens changeaient selon le premier (« Read : Stream / Snapshot » ou « Offset : Earliest /
+ * Latest ») — quatre mots du fonctionnement interne entre un nouveau venu et son premier résultat,
+ * et la seule question qui compte pour lui coupée en deux. Le moteur devient une conséquence, que
+ * la pastille du résultat nomme déjà.
+ */
+export type ReadScope = 'LATEST' | 'BEGINNING' | 'SNAPSHOT';
+
+export const READ_SCOPES: ReadonlyArray<{ value: ReadScope; label: string }> = [
+  { value: 'LATEST', label: 'Latest records' },
+  { value: 'BEGINNING', label: 'From the beginning' },
+  { value: 'SNAPSHOT', label: 'Whole topic' },
+];
+
+export const READ_SCOPE_HELP =
+  'Latest records: the most recent records of each partition, up to the row cap — a sample of the '
+  + 'tail of every partition, not a global newest-N ordering. A JOIN or a subquery is answered by '
+  + 'Flink from the beginning, and the result says so. '
+  + 'From the beginning: Flink reads the topic from its oldest record and stops at the row cap. '
+  + 'Whole topic: Flink fixes each partition\u2019s start and end before reading, and reads all retained '
+  + 'records of one automatically registered topic.';
+
+/** Ce que la requête envoie pour un réglage — le seul endroit où le moteur est choisi. */
+export function readRequestFor(scope: ReadScope): {
+  readMode: string | null; flinkOnly: boolean; directRead: boolean; boundedSnapshot: boolean;
+} {
+  switch (scope) {
+    // Un mode de lecture *nommé*, sans imposer de moteur : le serveur confie une lecture d'une
+    // seule table au lecteur direct, qui seul sait lire la fin d'un topic, et une jointure au
+    // planner en disant que le mode n'a pas été appliqué. Exiger le lecteur direct ici refusait
+    // toute jointure sous le réglage par défaut.
+    case 'LATEST': return { readMode: 'latest-offset', flinkOnly: false, directRead: false, boundedSnapshot: false };
+    case 'SNAPSHOT': return { readMode: null, flinkOnly: true, directRead: false, boundedSnapshot: true };
+    default: return { readMode: null, flinkOnly: true, directRead: false, boundedSnapshot: false };
+  }
+}
+
+/** Les trois champs historiques (liens partagés, historique) d'un réglage, et l'inverse. */
+export function readOptionsOf(scope: ReadScope): {
+  engineMode: 'FLINK' | 'KAFKA_DIRECT'; offsetMode: 'EARLIEST' | 'LATEST'; boundedSnapshot: boolean;
+} {
+  if (scope === 'LATEST') return { engineMode: 'KAFKA_DIRECT', offsetMode: 'LATEST', boundedSnapshot: false };
+  return { engineMode: 'FLINK', offsetMode: 'EARLIEST', boundedSnapshot: scope === 'SNAPSHOT' };
+}
+
+export function readScopeOf(o: {
+  engineMode?: 'FLINK' | 'KAFKA_DIRECT'; offsetMode?: 'EARLIEST' | 'LATEST'; boundedSnapshot?: boolean;
+}): ReadScope {
+  if (o.engineMode === 'KAFKA_DIRECT') return o.offsetMode === 'LATEST' ? 'LATEST' : 'BEGINNING';
+  if (o.engineMode === 'FLINK') return o.boundedSnapshot ? 'SNAPSHOT' : 'BEGINNING';
+  return 'LATEST';
+}
+
+/**
+ * Le réglage qu'une adresse demande. Sans paramètre `engine` — l'ouverture ordinaire de la page,
+ * et les liens des autres pages, qui ne portent que `sql` — c'est le défaut : les derniers
+ * enregistrements, la question qu'on pose en ouvrant un topic. Un lien partagé garde le sien.
+ */
+export function readScopeFromSearch(search: string): ReadScope {
+  const params = new URLSearchParams(search);
+  return params.has('engine') ? readScopeOf(readQueryOptions(search)) : 'LATEST';
+}
+
 export function buildQueryLink(baseUrl: string, sql: string,
   options?: { engineMode: 'FLINK' | 'KAFKA_DIRECT'; offsetMode: 'EARLIEST' | 'LATEST'; boundedSnapshot?: boolean }): string {
   const trimmed = (sql ?? '').trim();
@@ -1405,14 +1505,19 @@ export interface WorkbenchLayout {
   /**
    * L'assistant de fenêtrage prenait 288 px à l'éditeur en permanence, pour un outil occasionnel,
    * et rien ne permettait de le replier. Replié il laisse un rail, et l'état voyage avec le reste
-   * de la disposition. Ouvert par défaut : c'est ainsi qu'il a toujours été, et le replier doit
-   * rester une décision, pas une surprise à la mise à jour.
+   * de la disposition. Replié par défaut depuis SQL-EDITOR-AUDIT.md X6 ; une disposition déjà
+   * enregistrée garde le sien, donc qui l'avait ouvert le retrouve ouvert.
    */
   assistantOpen: boolean;
 }
 
 export const LAYOUT_STORAGE_KEY = 'kse:query-layout';
-export const DEFAULT_LAYOUT: WorkbenchLayout = { splitPercent: 55, sidebarWidth: 288, assistantOpen: true };
+/*
+ * L'assistant de fenêtrage commence **replié** (SQL-EDITOR-AUDIT.md, X6) : ouvert, il prenait 288 px
+ * à l'éditeur pour un outil occasionnel — 608 px d'éditeur sur un écran de 1440, 448 sur 1280. Son
+ * rail reste, et celui qui l'a ouvert le retrouve ouvert : l'état voyage avec la disposition.
+ */
+export const DEFAULT_LAYOUT: WorkbenchLayout = { splitPercent: 55, sidebarWidth: 288, assistantOpen: false };
 export const SPLIT_MIN = 20, SPLIT_MAX = 80;
 export const SIDEBAR_MIN = 200, SIDEBAR_MAX = 480;
 

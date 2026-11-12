@@ -166,7 +166,10 @@ const Metrics: React.FC = () => {
   useEffect(() => {
     if (!forecastRequest) return;
     const heading = document.getElementById('metric-forecast-preparation');
-    heading?.focus(); heading?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+    // The section, from its top: `nearest` on the heading alone brought one line of it to the bottom
+    // edge of the window and left the form under the fold (METRICS-FORECAST-UX-AUDIT.md U4).
+    heading?.focus({ preventScroll: true });
+    heading?.closest('section')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   }, [forecastRequest]);
   const [isModalOpen, setIsModalOpen]   = useState(restoredEditor !== null);
   const [editingMetric, setEditingMetric] = useState<Partial<MetricConfig>>(restoredEditor?.metric ?? EMPTY_METRIC);
@@ -951,7 +954,8 @@ const Metrics: React.FC = () => {
         <h3 id="metric-forecast-preparation" tabIndex={-1}>Prepare a forecast</h3>
         <Button variant="ghost" onClick={() => setForecastRequest(null)}>Close forecast preparation</Button>
         <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId}
-          onApplied={() => setForecastRevision(v => v + 1)} />
+          onApplied={() => setForecastRevision(v => v + 1)}
+          forecastMetricIds={forecastStatus?.series.map(s => s.metricId) ?? []} />
       </section>}
       <ForecastPanel refresh={forecastRevision} onStatus={setForecastStatus}
         onConfigure={() => setForecastRequest(previous => ({ sequence: (previous?.sequence ?? 0) + 1 }))} />

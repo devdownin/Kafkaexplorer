@@ -719,3 +719,201 @@ list to keep and no stale closure to capture.
   edited, and the cursor is in it — and telling them apart means tracking a statement's identity
   across edits, which is the document model `resolveOrigin` was already left without in the first
   pass.
+
+---
+
+# SQL Editor — audit, third pass: simplicity and fluidity (2026-11)
+
+The first two passes asked whether the editor is *right*. This one asks whether it is **simple and
+fluid to use**: how many gestures a common task takes, what the screen says at each step, and what
+a newcomer has to understand before pressing Run.
+
+> **Status.** **X1, X2 and X3 are fixed**, each with a test that fails without it: a result is
+> kept per tab (and a run in flight keeps its tab until it ends); a topic click and a starter card
+> fill *and* run; and the toolbar asks one question, **Read: Latest records / From the beginning /
+> Whole topic**, latest by default — sent as a named read mode without forcing an engine, so a JOIN
+> is still answered by Flink. Shared links and history entries keep their old fields and map onto
+> the new control. **X4–X10 are fixed too**: a running panel with its elapsed time, the previous
+> rows kept dimmed until the answer (X4); the editor focused on arrival, `Ctrl+Enter` / `⌘↵` bound
+> on the whole page and printed for the platform (X5); the Window Assistant folded by default — the
+> editor goes from 608 to 856 px at 1440 — and the starter queries as the empty state (X6); Read
+> and Rows count in staleness, and the Latest caveat moved into the tooltip (X7); a filter, Saved
+> Queries first, one row per topic with its columns on the chevron and Drop inside, hand-written
+> tables apart (X8); the engine's own sentence under the error title and no row count on an error
+> (X9); a searchable history, no "Opened in a new tab" toast, 24 px Link / Format (X10). **The
+> whole pass is addressed.** Every finding was **observed in the real UI** — the
+> compiled SPA served by `docs/screenshots/server.mjs` over its frozen fixtures, driven with
+> Playwright at 1440×900 and 1280×720 — and then confirmed in the code named beside it. The
+> fixtures answer every query with the same ten rows, so nothing here is about engine behaviour.
+
+| # | Finding | Weight |
+|---|---|---|
+| X1 | A result belongs to the page, not to its tab | **High** |
+| X2 | "Show me this topic" takes two gestures and shows the oldest records | **High** |
+| X3 | The toolbar asks an implementation question first | **High** |
+| X4 | While a query runs, the panel says "No results yet" | Medium |
+| X5 | The editor is not focused, and `Ctrl+Enter` works only inside it | Medium |
+| X6 | The editor gets 42 % of the window, less on a laptop | Medium |
+| X7 | Changing how the topic is read does not mark the result stale | Medium |
+| X8 | The schema browser has no filter, and names everything twice | Medium |
+| X9 | The error hides the one sentence that says what is wrong | Low |
+| X10 | Small ones | Low |
+
+## X1 — A result belongs to the page, not to its tab *(high)*
+
+`results`, `ranSql`, `panelError` and the sort are single states of `QueryWorkbench`
+(`QueryWorkbench.tsx:554`), while the SQL is per tab. Observed:
+
+- run a query in tab 1, open an empty tab 2: the grid still shows tab 1's ten rows under tab 2;
+- run something in tab 2 that fails, go back to tab 1: tab 1 shows **tab 2's error** above its own,
+  untouched, valid SQL. Tab 1's rows are gone and have to be fetched again.
+
+Tabs exist to keep several lines of work side by side; here they keep several *texts* and one
+answer. The "Stale — rerun" marker softens the first case and is silent in the second.
+
+**Fix.** Keep the last result (rows, error, timing, engine, sort) per tab id, and show the active
+tab's. A batch is already tab-scoped (`batchTabId`); this is the same rule for a single run.
+
+## X2 — "Show me this topic" takes two gestures and shows the oldest records *(high)*
+
+The commonest gesture of the page is clicking a topic in the sidebar. Observed: the click writes
+`SELECT * FROM <table> LIMIT 50` into the editor and **does not run it** — one request goes out,
+for the schema. The user then has to find Run. The two starter cards behave the same way while
+carrying a ▶ icon, which says "run".
+
+What then runs is the default: engine *Flink SQL*, read *Stream*, so the fifty **oldest** records
+of the topic. Seeing what is arriving now — the usual question — takes two more controls: Engine →
+*Kafka Direct*, then Offset → *Latest*.
+
+And the first starter card states the opposite of what it does: it is labelled **"Read the latest
+rows"**, with the hint *"Reads … through the direct Kafka reader"*
+(`queryWorkbenchLogic.ts:1227`), and under the default engine it is neither.
+
+**Fix.** A click on a topic, and a starter card, fills *and runs*; and the default read is the
+recent end of the topic. The label then becomes true by construction.
+
+## X3 — The toolbar asks an implementation question first *(high)*
+
+The first control is **Engine: Flink SQL / Kafka Direct**. The second one changes name and meaning
+with the first: *Read: Stream / Snapshot* under Flink, *Offset: Earliest / Latest* under Kafka
+Direct. Four words of this product's internals stand between a newcomer and their first result, and
+the choice that matters to them — *which records* — is split across two controls, one of which is
+hidden at any time.
+
+The result header already says which engine answered (the `FLINK` / `KAFKA_DIRECT` badge, with its
+reason in the tooltip), which is where that fact belongs.
+
+**Fix.** One control, worded as the question the user has:
+
+| Choice | What it sends today |
+|---|---|
+| **Latest records** (default) | Kafka Direct, `Latest` |
+| **From the beginning** | Flink, `Stream` |
+| **Whole topic** | Flink, `Snapshot` |
+
+The engine becomes a consequence, reported by the badge. An explicit engine override, if it is
+still wanted, goes behind an "Advanced" disclosure. The shared-link format
+(`readQueryOptions`) keeps its three fields, so old links still open.
+
+## X4 — While a query runs, the panel says "No results yet" *(medium)*
+
+Observed with a three-second response: the Run button reads *Running…*, a *Stop* button appears,
+and the results panel shows the empty state — **"No results yet. Run a query with ⌘↵"** — beside
+`Execution …` and `Rows 0`. Nothing counts the seconds, and the previous rows are removed the
+moment Run is pressed, so a slow or failing re-run leaves an empty screen where an answer was.
+
+**Fix.** A running state in the panel: elapsed time, the statement being run, Stop. Keep the
+previous rows dimmed underneath until the new answer arrives.
+
+## X5 — The editor is not focused, and `Ctrl+Enter` works only inside it *(medium)*
+
+- On arrival the focus is on `<body>`: typing does nothing until the editor is clicked. From the
+  top of the page it is **117 presses of Tab** away.
+- `Ctrl+Enter` is a Monaco command (`QueryWorkbench.tsx:431`), not a page shortcut. Observed: after
+  a click in the sidebar or on a result row, `Ctrl+Enter` sends nothing. The natural loop — read
+  the rows, press the shortcut again — breaks on its first turn.
+- The shortcut is printed as **⌘↵** on Linux and Windows too (the toolbar hint and the empty
+  state); only the tooltip mentions `Ctrl+Enter`.
+
+**Fix.** Focus the editor on mount and after a tab switch; bind run / run-all on the page (ignoring
+other text inputs); print the shortcut for the platform.
+
+## X6 — The editor gets 42 % of the window, less on a laptop *(medium)*
+
+Measured widths: application nav 256 px, schema browser 288 px, Window Assistant 288 px.
+
+| Window | Editor width | Share |
+|---|---|---|
+| 1440×900 | 608 px | 42 % |
+| 1280×720 | 448 px | 35 % |
+
+The Window Assistant is **open by default** (`DEFAULT_LAYOUT.assistantOpen`), for a tool used
+occasionally, and its own action button ("Replace editor content") is below the fold of its panel.
+The two starter cards — the first thing a newcomer should see — start at y = 844 of 900 and
+y = 745 of 720: under the fold on both.
+
+**Fix.** Assistant closed by default (its rail stays), which gives the editor close to 290 px more at any width. Put
+the starter queries in the empty *editor*, or at the top of the empty results panel.
+
+## X7 — Changing how the topic is read does not mark the result stale *(medium)*
+
+`isResultStale` compares SQL text only. Observed: after a Flink result, switching to *Kafka Direct*
+and *Latest* leaves the grid headed `FLINK · Complete` with no "Stale" marker, although Run would
+now return different records. The same holds for the row cap.
+
+Selecting *Latest* also inserts a one-line caveat under the toolbar, which pushes the tabs, the
+editor and the grid down by 28 px at each toggle.
+
+**Fix.** Include the read options in the staleness test (they are already remembered:
+`ranOffsetMode`, `resultLimit`). Put the caveat in the control's tooltip or in the result header,
+where it does not move the page.
+
+## X8 — The schema browser has no filter, and names everything twice *(medium)*
+
+- **No filter.** With the demo's 31 topics the list is 1 100 px tall; on a real cluster it is
+  thousands. "Saved Queries" and its *Save current query* button sit **under** the topic list —
+  at y = 1365 in a 900 px window — so saving a query means scrolling past every topic.
+- **Two lists of the same things.** *Flink Tables* (`demo_orders_1_received`) and *Kafka Topics*
+  (`demo.orders.1.received`) name the same object twice, and the same click does two different
+  things: on a table row it expands the columns, on a topic row it writes a `SELECT`.
+- The *Drop table* icon sits 4 px from the *SELECT* icon, both 24 px. It asks for confirmation, so
+  nothing is lost — but a destructive action does not need to be the second-closest target.
+
+**Fix.** A filter field at the top; Saved Queries above the lists (or beside History in the
+toolbar); one list, one row per topic, with its columns on expand and "hand-written tables" as a
+short separate group; Drop behind a row menu.
+
+## X9 — The error hides the one sentence that says what is wrong *(low)*
+
+Observed on `SELECT * FORM t`: the panel says **"Syntax error — Check for a typo, a missing
+keyword, comma or quote near line 1:10"**, and the parser's own sentence — `Encountered "FORM"` —
+is behind *Show raw error*. The generic hint is shown, the specific one is folded. The header beside
+it still reads `Rows 0`, which is not a fact about a query that did not run.
+
+**Fix.** Show the parser's first line under the title (`describeQueryError` has it); keep the fold
+for the stack. Drop `Rows` and the engine badge from the header of an error.
+
+## X10 — Small ones *(low)*
+
+- The sidebar header reads **"SQL Workbench — Flink SQL Engine"** whatever the engine selected, and
+  repeats the page title above it; 72 px that could be the filter of X8.
+- **History** is a 384×256 px dropdown of one-line, truncated entries with no search; a query worth
+  finding again is usually longer than one line.
+- A toast confirms *"Opened … in a new tab"* over the bottom-right of the grid, for an event the
+  tab bar already shows.
+- **Link** and **Format** are 18 px-tall text buttons above the editor, the smallest targets of
+  the page for two frequent gestures.
+
+## What already works, and should not be lost
+
+The statement counter and "Run statement / Run selection" labels, *Jump to line*, the row detail
+panel with its arrows, the stale marker, CSV / JSON export, restored tabs and the reopen-closed-tab
+gesture. None of the fixes above needs to touch them.
+
+## Proposed order
+
+1. **X2 + X3** together — the first-run path: one read control, latest by default, click runs.
+2. **X1** — results per tab.
+3. **X4, X5** — the run loop: running state, focus, page-level shortcut.
+4. **X6, X7** — room for the editor, honest staleness.
+5. **X8**, then **X9, X10**.

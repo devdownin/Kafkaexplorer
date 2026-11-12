@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import type { ReactNode } from 'react';
@@ -222,6 +222,7 @@ describe('QueryWorkbench — dropping a table', () => {
     get.mockImplementation(withTable);
     renderPage();
 
+    await userEvent.click(await screen.findByRole('button', { name: 'Show the columns of orders' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Drop table orders' }));
 
     expect(await screen.findByText('Drop orders?')).toBeInTheDocument();
@@ -231,6 +232,7 @@ describe('QueryWorkbench — dropping a table', () => {
   it('does nothing when the confirmation is declined', async () => {
     get.mockImplementation(withTable);
     renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Show the columns of orders' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Drop table orders' }));
     await screen.findByText('Drop orders?');
 
@@ -243,6 +245,7 @@ describe('QueryWorkbench — dropping a table', () => {
   it('drops it and reloads the catalogue', async () => {
     get.mockImplementation(withTable);
     renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Show the columns of orders' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Drop table orders' }));
     await screen.findByText('Drop orders?');
 
@@ -263,6 +266,7 @@ describe('QueryWorkbench — dropping a table', () => {
     get.mockImplementation(withTable);
     del.mockResolvedValue({ data: { dropped: false, message: 'No table named orders was registered or stored.' } });
     renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Show the columns of orders' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Drop table orders' }));
     await screen.findByText('Drop orders?');
 
@@ -315,12 +319,13 @@ describe('QueryWorkbench — the sidebar lets a truncated name be read', () => {
       return Promise.resolve({ data: {} });
     });
     renderPage();
-    const tableName = await screen.findByTitle('orders');
+    const tableName = (await screen.findByTitle('orders')).querySelector('span')!;
     expect(tableName).toHaveTextContent('orders');
     expect(tableName.className).toContain('group-hover/name:whitespace-normal');
     expect(tableName.closest('.group\\/name')).not.toBeNull();
 
-    await userEvent.click(tableName);
+    // The chevron unfolds the columns; the name itself reads the table (SQL-EDITOR-AUDIT.md, X8).
+    await userEvent.click(screen.getByRole('button', { name: 'Show the columns of orders' }));
 
     expect(await screen.findByTitle('shipping_address_city'))
       .toHaveTextContent('shipping_address_city');
@@ -346,6 +351,56 @@ describe('QueryWorkbench — nothing silently replaces the tab you are writing i
     // The work in progress survived, in the tab it was written in.
     await userEvent.click(screen.getAllByRole('tab')[0]);
     await waitFor(() => expect(editor().value).toBe('SELECT 1'));
+  });
+});
+
+// SQL-EDITOR-AUDIT.md, X2: opening a topic is asking to see it, so it runs.
+describe('QueryWorkbench — a topic click and a starter card run what they write', () => {
+  const runs = () => post.mock.calls.filter(c => c[0] === '/api/query/run-sync');
+  beforeEach(() => post.mockImplementation((url: string) => (url === '/api/query/validate'
+    ? Promise.resolve({ data: { valid: true } })
+    : Promise.resolve({ data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT', warnings: [] } }))));
+
+  it('runs the SELECT a topic click writes, in the tab it opened', async () => {
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'SELECT from demo.orders.1.received' }));
+    await waitFor(() => expect(runs()).toHaveLength(1));
+    expect(runs()[0][1]).toMatchObject({ sql: expect.stringContaining('demo_orders_1_received') });
+  });
+
+  it('runs a starter card', async () => {
+    renderPage();
+    await userEvent.click(await screen.findByText('SELECT * FROM demo_orders_1_received LIMIT 50'));
+    await waitFor(() => expect(runs()).toHaveLength(1));
+  });
+});
+
+// SQL-EDITOR-AUDIT.md, X1: each tab keeps its own answer.
+describe('QueryWorkbench — a result belongs to its tab', () => {
+  it('shows nothing in a new tab, an error only in its own tab, and the first tab\'s rows on return', async () => {
+    post.mockImplementation((url: string, body: { sql?: string }) => {
+      if (url === '/api/query/validate') return Promise.resolve({ data: { valid: true } });
+      return Promise.resolve({ data: body.sql?.includes('broken')
+        ? { columns: [], rows: [], error: 'Object not found: broken', engine: null, warnings: [] }
+        : { columns: ['id'], rows: [{ id: 'ROW-ONE' }], error: null, engine: 'FLINK', warnings: [] } });
+    });
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT id FROM t');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findByText('ROW-ONE')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(2));
+    await waitFor(() => expect(screen.queryByText('ROW-ONE')).not.toBeInTheDocument());
+
+    await userEvent.type(editor(), 'SELECT * FROM broken');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findAllByText(/broken/)).not.toHaveLength(0);
+
+    await userEvent.click(screen.getAllByRole('tab')[0]);
+    expect(await screen.findByText('ROW-ONE')).toBeInTheDocument();
+    expect(screen.queryByText(/Object not found/)).not.toBeInTheDocument();
   });
 });
 
@@ -396,29 +451,29 @@ describe('QueryWorkbench — what Run sends', () => {
       : Promise.resolve({ data: { columns: ['id'], rows: [{ id: 'A' }], error: null, engine: 'KAFKA_DIRECT' } }));
   });
 
-  it('uses Flink strictly by default and switches to an explicit bounded Kafka scan', async () => {
+  it('reads the latest records by default, and Flink from the beginning or over the whole topic on request', async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
     await userEvent.type(editor(), 'SELECT * FROM orders');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await waitFor(() => expect(runSync()).toBeTruthy());
+    // Par défaut, les derniers enregistrements : un mode nommé, sans imposer de moteur (X3).
+    expect(runSync()![1]).toMatchObject({ flinkOnly: false, directRead: false,
+      boundedSnapshot: false, readMode: 'latest-offset' });
+
+    post.mockClear();
+    await userEvent.click(screen.getByRole('button', { name: 'From the beginning' }));
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     await waitFor(() => expect(runSync()).toBeTruthy());
     expect(runSync()![1]).toMatchObject({ flinkOnly: true, directRead: false,
       boundedSnapshot: false, readMode: null });
 
     post.mockClear();
-    await userEvent.click(screen.getByRole('button', { name: 'Snapshot' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Whole topic' }));
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     await waitFor(() => expect(runSync()).toBeTruthy());
     expect(runSync()![1]).toMatchObject({ flinkOnly: true, directRead: false,
       boundedSnapshot: true, readMode: null });
-
-    post.mockClear();
-    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Latest' }));
-    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
-    await waitFor(() => expect(runSync()).toBeTruthy());
-    expect(runSync()![1]).toMatchObject({ flinkOnly: false, directRead: true, boundedSnapshot: false,
-      readMode: 'latest-offset' });
   });
 
   it('sends the whole tab when it holds one statement', async () => {
@@ -698,6 +753,9 @@ describe('QueryWorkbench — a closed tab can be reopened', () => {
 });
 
 describe('QueryWorkbench — the window assistant', () => {
+  // Folded by default since SQL-EDITOR-AUDIT.md X6; these cases are about the assistant itself.
+  beforeEach(() => localStorage.setItem('kse:query-layout', JSON.stringify({ splitPercent: 55, sidebarWidth: 288, assistantOpen: true })));
+
   /** Le bouton de l'assistant, une fois la page posée. */
   const applyButton = () => screen.getByRole('button', { name: 'Replace editor content' });
 
@@ -1029,7 +1087,7 @@ describe('QueryWorkbench — the engine badge says why the direct reader answere
   const run = async () => {
     renderPage();
     await screen.findByText('demo.orders.1.received');
-    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
+    await userEvent.click(screen.getByRole('button', { name: 'From the beginning' }));
     await userEvent.type(editor(), 'SELECT id FROM t');
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     return screen.findByText('KAFKA_DIRECT');
@@ -1039,8 +1097,6 @@ describe('QueryWorkbench — the engine badge says why the direct reader answere
     directResult();
     renderPage();
     await screen.findByText('demo.orders.1.received');
-    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Latest' }));
     await userEvent.type(editor(), 'SELECT id FROM t');
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     await screen.findByText('KAFKA_DIRECT');
@@ -1071,7 +1127,6 @@ describe('QueryWorkbench — bounded scan evidence', () => {
         } } )));
     renderPage();
     await screen.findByText('demo.orders.1.received');
-    await userEvent.click(screen.getByRole('button', { name: 'Kafka Direct' }));
     await userEvent.type(editor(), 'SELECT COUNT(*) AS n FROM t');
     await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
     expect(await screen.findByText(/Captured slice \(end exclusive\): partition 0: \[4, 7\), next 7/))
@@ -1162,5 +1217,102 @@ describe('QueryWorkbench — the assistant', () => {
     expect(await screen.findByText('Not validated')).toBeInTheDocument();
     expect(screen.getByText("Object 't' not found")).toBeInTheDocument();
     expect(screen.getByText('Before')).toBeInTheDocument();
+  });
+});
+
+// SQL-EDITOR-AUDIT.md, third pass, X4-X10.
+describe('QueryWorkbench — the run loop is simple and says what it is doing', () => {
+  const ROWS = { columns: ['id'], rows: [{ id: 'FIRST-ROW' }], error: null, engine: 'FLINK', warnings: [] };
+  const answer = (data: unknown) => post.mockImplementation((url: string) => (url === '/api/query/validate'
+    ? Promise.resolve({ data: { valid: true } }) : Promise.resolve({ data })));
+  const runs = () => post.mock.calls.filter(c => c[0] === '/api/query/run-sync');
+
+  it('X4: keeps the previous rows while a re-run is in flight, and says it is running', async () => {
+    answer(ROWS);
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT id FROM t');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findByText('FIRST-ROW')).toBeInTheDocument();
+
+    let release!: (v: unknown) => void;
+    post.mockImplementation((url: string) => (url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } }) : new Promise(r => { release = r; })));
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await waitFor(async () => expect((await screen.findAllByRole('status'))
+      .some(el => /Running \d/.test(el.textContent ?? ''))).toBe(true));
+    expect(screen.getByText('FIRST-ROW')).toBeInTheDocument();
+    release({ data: ROWS });
+  });
+
+  it('X4: shows a waiting state, not "No results yet", on a first run', async () => {
+    post.mockImplementation((url: string) => (url === '/api/query/validate'
+      ? Promise.resolve({ data: { valid: true } }) : new Promise(() => {})));
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT id FROM t');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findByText('Waiting for the first rows')).toBeInTheDocument();
+    expect(screen.queryByText('No results yet')).not.toBeInTheDocument();
+  });
+
+  it('X5: runs on Ctrl+Enter from anywhere on the page, not only in the editor', async () => {
+    answer(ROWS);
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT id FROM t');
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document.body, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(runs()).toHaveLength(1));
+  });
+
+  it('X6: shows the starter queries as the empty state of an empty tab', async () => {
+    renderPage();
+    expect(await screen.findByText('SELECT * FROM demo_orders_1_received LIMIT 50')).toBeInTheDocument();
+    expect(screen.queryByText('No results yet')).not.toBeInTheDocument();
+  });
+
+  it('X7: marks the rows stale when Read changes, not only when the SQL does', async () => {
+    answer(ROWS);
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT id FROM t');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    await screen.findByText('FIRST-ROW');
+    expect(screen.queryByText(/Stale/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Whole topic' }));
+    expect(await screen.findByText(/Stale/)).toBeInTheDocument();
+  });
+
+  it('X8: filters the topics', async () => {
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Filter tables and topics' }), 'nothing-like-it');
+    expect(screen.queryByText('demo.orders.1.received')).not.toBeInTheDocument();
+    expect(screen.getByText(/No topic matches/)).toBeInTheDocument();
+  });
+
+  it('X9: says what the engine said, and no row count, on an error', async () => {
+    answer({ columns: [], rows: [], engine: null, warnings: [],
+      error: 'SQL Validation Error: SQL parse failed. Encountered "FORM" at line 1, column 10.' });
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.type(editor(), 'SELECT * FORM t');
+    await userEvent.click(screen.getByRole('button', { name: /Run query/ }));
+    expect(await screen.findByText(/Encountered "FORM" at line 1, column 10/)).toBeInTheDocument();
+    // The toolbar keeps its "Rows" cap selector; the result header shows no count.
+    expect(screen.queryByText((_, el) => el?.tagName === 'SPAN' && /^Rows\s*\d/.test(el.textContent ?? ''))).toBeNull();
+  });
+
+  it('X10: searches the history', async () => {
+    localStorage.setItem('kse:query-history', JSON.stringify([
+      { sql: 'SELECT a FROM orders', ts: 2 }, { sql: 'SELECT b FROM payments', ts: 1 }]));
+    renderPage();
+    await screen.findByText('demo.orders.1.received');
+    await userEvent.click(screen.getByRole('button', { name: 'Query history' }));
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Search the history' }), 'payments');
+    expect(screen.getByText('SELECT b FROM payments')).toBeInTheDocument();
+    expect(screen.queryByText('SELECT a FROM orders')).not.toBeInTheDocument();
   });
 });

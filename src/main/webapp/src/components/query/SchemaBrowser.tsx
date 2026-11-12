@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 // Composant de la page SQL Editor, sorti de `QueryWorkbench.tsx` — voir `ResultsGrid.tsx`.
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { Input, ScrollList, cn } from '../ui';
 import { toTableName } from '../../pages/sqlScope';
 import type { QueryInitResponse } from '../../api/types';
@@ -31,15 +31,10 @@ export type SchemaInfo = QueryInitResponse;
  */
 const ICON_HIT = 'focus-visible:opacity-100 text-outline transition-all shrink-0 ml-1 '
   + 'min-w-6 min-h-6 inline-flex items-center justify-center rounded';
-/** Les actions d'une ligne de table, révélées au survol de `group/tbl`. */
-const ICON_BUTTON = `opacity-0 group-hover/tbl:opacity-100 ${ICON_HIT}`;
 /*
- * La même cible pour une ligne de topic. Le nom du groupe Tailwind fait partie de la classe, donc
- * une seule constante ne pouvait pas servir les deux : le bouton « Preview DDL » avait sa propre
+ * L'action d'une ligne de topic, révélée au survol. Le bouton « Preview DDL » avait sa propre
  * chaîne écrite à la main, sans `min-w-6 min-h-6`, et se rendait à **14 x 24** — vingt-huit fois
- * sur cet écran. C'est précisément ce que le commentaire ci-dessus annonçait comme à éviter, deux
- * cibles voisines de tailles différentes, et il le disait au-dessus de la constante que le voisin
- * n'utilisait pas.
+ * sur cet écran : la cible minimale est dans `ICON_HIT`, pour qu'aucune ligne ne la réécrive.
  */
 const TOPIC_ICON_BUTTON = `opacity-0 group-hover/topic:opacity-100 ${ICON_HIT}`;
 
@@ -62,6 +57,34 @@ const TOPIC_ICON_BUTTON = `opacity-0 group-hover/topic:opacity-100 ${ICON_HIT}`;
  */
 const REVEAL_ON_HOVER = 'group-hover/name:whitespace-normal group-hover/name:break-all '
   + 'group-focus-within/name:whitespace-normal group-focus-within/name:break-all';
+
+/** Les colonnes d'une table dépliée, et sa suppression quand elle est enregistrée. */
+function Columns({ table, columns, registered, onDropTable }: {
+  table: string; columns: Record<string, string> | undefined; registered: boolean;
+  onDropTable: (table: string) => void;
+}) {
+  const entries = Object.entries(columns ?? {});
+  return (
+    <div className="ml-6 pl-3 border-l border-primary/20 py-1 space-y-1">
+      {entries.length === 0 ? (
+        <p className="text-[10px] text-outline py-0.5">
+          {registered ? 'No columns reported.' : 'Columns appear once the topic has been read — click its name.'}
+        </p>
+      ) : entries.map(([col, type]) => (
+        <div key={col} className="flex justify-between items-center text-[10px] py-0.5">
+          <span className="text-on-surface-variant truncate pr-2 font-mono" title={col}>{col}</span>
+          <span className="text-primary/60 font-mono uppercase shrink-0">{type}</span>
+        </div>
+      ))}
+      {registered && (
+        <button type="button" onClick={() => onDropTable(table)} aria-label={`Drop table ${table}`}
+          className="min-h-6 inline-flex items-center gap-1 text-[10px] text-outline hover:text-error rounded">
+          <span aria-hidden="true" className="material-symbols-outlined text-[14px]">delete</span>Drop table
+        </button>
+      )}
+    </div>
+  );
+}
 
 export interface SchemaBrowserProps {
   schema: SchemaInfo | null;
@@ -127,6 +150,16 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
   saveInputVisible, saveInputName, onSaveInputChange, onSaveOpen, onSaveCancel, onSaveConfirm,
   activeTabName,
 }, ref) {
+  const [filter, setFilter] = useState('');
+  const q = filter.trim().toLowerCase();
+  const registered = useMemo(() => new Set(schema?.tables ?? []), [schema]);
+  const topicTables = useMemo(() => new Set((schema?.topics ?? []).map(toTableName)), [schema]);
+  const shownTopics = useMemo(() => (schema?.topics ?? []).filter(t =>
+    !q || t.toLowerCase().includes(q) || toTableName(t).toLowerCase().includes(q)), [schema, q]);
+  const otherTables = useMemo(() => (schema?.tables ?? []).filter(t =>
+    !topicTables.has(t) && (!q || t.toLowerCase().includes(q))), [schema, topicTables, q]);
+  const shownSaved = useMemo(() => savedQueries.filter(sq =>
+    !q || sq.name.toLowerCase().includes(q) || sq.sql.toLowerCase().includes(q)), [savedQueries, q]);
   return (
   <aside ref={ref} className="relative flex-shrink-0 flex flex-col border-r border-outline-variant/60 bg-surface-container-low" style={{ width }}>
     {/* Sidebar drag handle */}
@@ -144,24 +177,26 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
       className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/40 focus-visible:bg-primary/60 transition-colors z-10"
     />
 
-    <div className="p-4 flex items-center gap-3 border-b border-outline-variant/60">
-      <div className="size-8 bg-primary/15 text-primary rounded-lg flex items-center justify-center shrink-0">
-        <span className="material-symbols-outlined text-[18px]">database</span>
-      </div>
-      <div className="min-w-0">
-        <h1 className="text-[14px] font-semibold tracking-tight text-on-surface">SQL Workbench</h1>
-        <p className="text-[11px] text-on-surface-variant">Flink SQL Engine</p>
-      </div>
+    {/* L'en-tête répétait le titre de la page et annonçait « Flink SQL Engine » quel que soit le
+        moteur ; sa place va au filtre (SQL-EDITOR-AUDIT.md, X8 et X10). Sur un vrai cluster la liste
+        compte des milliers de topics, et rien ne permettait d'en trouver un sans faire défiler. */}
+    <h1 className="sr-only">SQL Workbench</h1>
+    <div className="p-3 flex items-center gap-2 border-b border-outline-variant/60">
+      <Input
+        type="search"
+        aria-label="Filter tables and topics"
+        placeholder="Filter tables and topics"
+        value={filter}
+        onChange={e => setFilter(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Escape') setFilter(''); }}
+        className="flex-1 h-8 text-[12px]"
+      />
+      <button onClick={onRefresh} disabled={schemaLoading} aria-label="Refresh schema" className="min-w-6 min-h-6 p-1 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors disabled:opacity-50" title="Refresh">
+        <span className={`material-symbols-outlined text-[18px] ${schemaLoading ? 'animate-spin' : ''}`}>{schemaLoading ? 'progress_activity' : 'refresh'}</span>
+      </button>
     </div>
 
     <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-[11px] font-medium text-on-surface-variant uppercase tracking-[0.05em]">Schema Browser</h2>
-        <button onClick={onRefresh} disabled={schemaLoading} aria-label="Refresh schema" className="p-1 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors disabled:opacity-50" title="Refresh">
-          <span className={`material-symbols-outlined text-[18px] ${schemaLoading ? 'animate-spin' : ''}`}>{schemaLoading ? 'progress_activity' : 'refresh'}</span>
-        </button>
-      </div>
-
       {/* Ce qui n'a pas répondu, et pourquoi. Une liste vide sans motif se lit comme « ce
           cluster n'a rien », qui est une tout autre information. */}
       {(schema?.kafkaError || schema?.flinkError) && (
@@ -188,108 +223,6 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
       )}
 
       <div className="space-y-1">
-        {/* Flink Tables */}
-        <details className="group" open>
-          <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
-            <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
-            <span className="material-symbols-outlined text-base text-on-surface-variant">grid_view</span>
-            <span className="text-sm font-medium">Flink Tables</span>
-            <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{schema?.tables.length ?? 0}</span>
-          </summary>
-          {schema?.tables.length === 0 && (
-            <p className="text-[10px] text-outline px-2 py-2 pl-6">
-              {schema.flinkError ? 'Tables could not be listed — see above' : 'No Flink tables registered yet'}
-            </p>
-          )}
-          <ScrollList count={schema?.tables.length ?? 0} className="pl-4 pt-1 space-y-0.5">
-            {schema?.tables.map(table => (
-              <div key={table}>
-                <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/tbl group/name">
-                  {/* Un `<div onClick>` n'est ni tabulable ni actionnable au clavier : toute la
-                      barre latérale était inatteignable sans souris. */}
-                  <button type="button" onClick={() => onToggleTable(table)}
-                    aria-expanded={!!expandedTables[table]}
-                    className="flex-1 flex items-center gap-1 min-w-0 text-left rounded">
-                    <span className={`material-symbols-outlined text-xs text-on-surface-variant transition-transform duration-200 shrink-0 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
-                    {/* Même traitement que la liste des topics plus bas, et pour la même raison :
-                        deux listes voisines qui tronquent de la même façon ne peuvent pas répondre
-                        différemment au même geste. Les deux boutons d'action à droite rendent la
-                        troncature plus fréquente ici. */}
-                    <span className={cn('text-xs text-on-surface truncate font-mono', REVEAL_ON_HOVER)} title={table}>{table}</span>
-                  </button>
-                  <button type="button" onClick={() => onSelectFrom(table)}
-                    className={cn(ICON_BUTTON, 'hover:text-primary')} title={actionLabelFor('this table')} aria-label={actionLabelFor(table)}>
-                    <span className="material-symbols-outlined text-sm">play_arrow</span>
-                  </button>
-                  <button type="button" onClick={() => onDropTable(table)}
-                    className={cn(ICON_BUTTON, 'hover:text-error')}
-                    title="Drop this table" aria-label={`Drop table ${table}`}>
-                    <span className="material-symbols-outlined text-sm">delete</span>
-                  </button>
-                </div>
-                {expandedTables[table] && tableSchemas[table] && (
-                  <div className="ml-6 pl-3 border-l border-primary/20 py-1 space-y-1">
-                    {Object.entries(tableSchemas[table]).map(([col, type]) => (
-                      <div key={col} className="flex justify-between items-center text-[10px] py-0.5">
-                        <span className="text-on-surface-variant truncate pr-2 font-mono" title={col}>{col}</span>
-                        <span className="text-primary/60 font-mono uppercase shrink-0">{type}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </ScrollList>
-        </details>
-
-        {/* Kafka Topics */}
-        <details className="group" open>
-          <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
-            <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
-            <span className="material-symbols-outlined text-base text-on-surface-variant">topic</span>
-            <span className="text-sm font-medium">Kafka Topics</span>
-            <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{schema?.topics.length ?? 0}</span>
-          </summary>
-          <div className="pl-4 pt-1 space-y-0.5">
-            {schemaLoading ? (
-              <div className="flex items-center gap-2 py-3 px-2 text-on-surface-variant">
-                <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
-                <span className="text-xs">Loading…</span>
-              </div>
-            ) : schema?.topics.length === 0 ? (
-              // « Aucun topic avec des messages » est une affirmation sur le cluster ; elle
-              // n'a de sens que si on a pu le lire.
-              <p className="text-[10px] text-outline px-2 py-2">
-                {schema.kafkaError ? 'Topics could not be listed — see above' : 'No topics with messages'}
-              </p>
-            ) : (
-              <ScrollList count={schema?.topics.length ?? 0} className="space-y-0.5">
-                {schema?.topics.map(topic => (
-                  <div key={topic} className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic group/name">
-                    <button type="button" onClick={() => onSelectFrom(toTableName(topic))}
-                      className="flex-1 min-w-0 text-left rounded" title={topic} aria-label={actionLabelFor(topic)}>
-                      {/* Un nom de topic est plus long qu'un nom de table — il garde ses points
-                          là où `toTableName` les remplace — et la barre latérale est étroite :
-                          c'est ici que la troncature mord le plus. Le `title` reste (c'est
-                          l'infobulle que l'habitude attend, et il porte le nom entier), mais il
-                          n'est plus le seul recours : `REVEAL_ON_HOVER` déplie le nom sur place,
-                          au survol comme au focus. Le `title` va sur le bouton, pas sur le
-                          `span` : c'est lui qui occupe la ligne, donc la zone que l'on survole. */}
-                      <span className={cn('text-xs text-on-surface-variant hover:text-primary font-mono truncate block', REVEAL_ON_HOVER)}>{topic}</span>
-                    </button>
-                    <button type="button" onClick={e => { e.stopPropagation(); onPreviewDdl(topic); }}
-                      className={cn(TOPIC_ICON_BUTTON, 'hover:text-primary')}
-                      title="Preview DDL" aria-label={`Preview the generated DDL for ${topic}`}>
-                      <span className="material-symbols-outlined text-sm">code</span>
-                    </button>
-                  </div>
-                ))}
-              </ScrollList>
-            )}
-            <p className="text-[10px] text-outline px-2 pt-1">Only topics with messages shown</p>
-          </div>
-        </details>
-
         {/* ── Saved Queries ── */}
         <details className="group">
           <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
@@ -327,8 +260,8 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
             {savedQueries.length === 0 && !saveInputVisible && (
               <p className="text-[11px] text-outline px-2 py-1">No saved queries yet</p>
             )}
-            <ScrollList count={savedQueries.length} className="space-y-1">
-              {savedQueries.map(q => (
+            <ScrollList count={shownSaved.length} className="space-y-1">
+              {shownSaved.map(q => (
                 <div key={q.id} className="flex items-center gap-1 py-1 px-2 rounded hover:bg-primary/5 transition-colors group/saved">
                   {/* Un `<button>`, comme les tables et les topics au-dessus. C'était le dernier
                       `<div onClick>` de cette colonne : la passe d'accessibilité avait converti
@@ -352,6 +285,97 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
             </ScrollList>
           </div>
         </details>
+        {/* Les topics — une ligne par topic. Il y avait deux listes du même objet : « Flink Tables »
+            (`demo_orders_1_received`) et « Kafka Topics » (`demo.orders.1.received`), où le même clic
+            dépliait les colonnes dans l'une et écrivait un SELECT dans l'autre. Ici le nom lit le
+            topic, le chevron montre ses colonnes, et la suppression de la table enregistrée est dans
+            le dépliant, plus à 4 px du bouton qui lit. */}
+        <details className="group" open>
+          <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
+            <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
+            <span className="material-symbols-outlined text-base text-on-surface-variant">topic</span>
+            <span className="text-sm font-medium">Topics</span>
+            <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{shownTopics.length}</span>
+          </summary>
+          <div className="pl-4 pt-1 space-y-0.5">
+            {schemaLoading ? (
+              <div className="flex items-center gap-2 py-3 px-2 text-on-surface-variant">
+                <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
+                <span className="text-xs">Loading…</span>
+              </div>
+            ) : schema?.topics.length === 0 ? (
+              <p className="text-[10px] text-outline px-2 py-2">
+                {schema.kafkaError ? 'Topics could not be listed — see above' : 'No topics with messages'}
+              </p>
+            ) : shownTopics.length === 0 ? (
+              <p className="text-[10px] text-outline px-2 py-2">No topic matches “{filter.trim()}”</p>
+            ) : (
+              <ScrollList count={shownTopics.length} className="space-y-0.5">
+                {shownTopics.map(topic => {
+                  const table = toTableName(topic);
+                  return (
+                    <div key={topic}>
+                      <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/topic group/name">
+                        <button type="button" onClick={() => onToggleTable(table)}
+                          aria-expanded={!!expandedTables[table]} aria-label={`Show the columns of ${topic}`}
+                          className="min-w-6 min-h-6 -ml-1 inline-flex items-center justify-center rounded text-on-surface-variant shrink-0">
+                          <span className={`material-symbols-outlined text-xs transition-transform duration-200 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
+                        </button>
+                        <button type="button" onClick={() => onSelectFrom(table)}
+                          className="flex-1 min-w-0 text-left rounded" title={topic} aria-label={actionLabelFor(topic)}>
+                          <span className={cn('text-xs text-on-surface-variant hover:text-primary font-mono truncate block', REVEAL_ON_HOVER)}>{topic}</span>
+                        </button>
+                        <button type="button" onClick={e => { e.stopPropagation(); onPreviewDdl(topic); }}
+                          className={cn(TOPIC_ICON_BUTTON, 'hover:text-primary')}
+                          title="Preview DDL" aria-label={`Preview the generated DDL for ${topic}`}>
+                          <span className="material-symbols-outlined text-sm">code</span>
+                        </button>
+                      </div>
+                      {expandedTables[table] && (
+                        <Columns table={table} columns={tableSchemas[table]}
+                          registered={registered.has(table)} onDropTable={onDropTable} />
+                      )}
+                    </div>
+                  );
+                })}
+              </ScrollList>
+            )}
+            <p className="text-[10px] text-outline px-2 pt-1">Only topics with messages shown</p>
+          </div>
+        </details>
+
+        {/* Les tables que ce catalogue tient d'ailleurs que d'un topic — écrites à la main. */}
+        {otherTables.length > 0 && (
+          <details className="group" open>
+            <summary className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-primary/10 cursor-pointer list-none">
+              <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
+              <span className="material-symbols-outlined text-base text-on-surface-variant">grid_view</span>
+              <span className="text-sm font-medium">Other tables</span>
+              <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{otherTables.length}</span>
+            </summary>
+            <ScrollList count={otherTables.length} className="pl-4 pt-1 space-y-0.5">
+              {otherTables.map(table => (
+                <div key={table}>
+                  <div className="flex items-center py-1 px-2 rounded hover:bg-primary/5 transition-colors group/tbl group/name">
+                    <button type="button" onClick={() => onToggleTable(table)}
+                      aria-expanded={!!expandedTables[table]} aria-label={`Show the columns of ${table}`}
+                      className="min-w-6 min-h-6 -ml-1 inline-flex items-center justify-center rounded text-on-surface-variant shrink-0">
+                      <span className={`material-symbols-outlined text-xs transition-transform duration-200 ${expandedTables[table] ? 'rotate-90' : ''}`}>chevron_right</span>
+                    </button>
+                    <button type="button" onClick={() => onSelectFrom(table)}
+                      className="flex-1 min-w-0 text-left rounded" title={table} aria-label={actionLabelFor(table)}>
+                      <span className={cn('text-xs text-on-surface truncate block font-mono', REVEAL_ON_HOVER)}>{table}</span>
+                    </button>
+                  </div>
+                  {expandedTables[table] && (
+                    <Columns table={table} columns={tableSchemas[table]} registered onDropTable={onDropTable} />
+                  )}
+                </div>
+              ))}
+            </ScrollList>
+          </details>
+        )}
+
       </div>
     </div>
 

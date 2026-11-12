@@ -146,7 +146,7 @@ def main():
     compose(*kafka[:-1], kafka[-1] + 'kafka-console-consumer.sh', '--bootstrap-server', 'localhost:9092',
             '--topic', 'forecast.ci.orders', '--group', 'forecast-ci', '--from-beginning', '--max-messages', '1',
             '--consumer-property', 'enable.auto.commit=true', '--consumer-property', 'auto.commit.interval.ms=100')
-    api('/api/metrics', {'id': 'forecast-ci-lag', 'name': 'CI consumer time lag', 'type': 'GAUGE',
+    api('/api/metrics', {'id': 'forecast-ci-lag', 'name': 'ci_consumer_time_lag', 'type': 'GAUGE',
                         'templateType': 'CONSUMER_TIME_LAG', 'executionMode': 'TEMPLATE_BOUNDED_SCAN',
                         'templateParams': {'topic': 'forecast.ci.orders', 'group': 'forecast-ci', 'aggregation': 'MAX'}})
     api('/api/metrics/forecast-ci-lag/refresh', {})
@@ -177,7 +177,11 @@ def main():
     assert {check['id']: check['state'] for check in readiness['checks'] if check['id'] in ('postgres', 'timesfm')} == {'postgres': 'READY', 'timesfm': 'READY'}
     def forecast():
         return next((row['result'] for row in api('/api/forecasts')['series'] if row['seriesId'] == series_id), None)
-    record = wait_for(forecast, lambda value: value is not None and value['state'] == 'READY' and value['strategy'] == 'TIMESFM', 'Real TimesFM result', 240)
+    listed = wait_for(forecast, lambda value: value is not None and value['state'] == 'READY' and value['strategy'] == 'TIMESFM', 'Real TimesFM result', 240)
+    # The list is a summary: it keeps the counts and drops the history points (METRICS-FORECAST-UX-AUDIT.md
+    # P1). The whole record, context included, is the series' own endpoint.
+    assert listed['context']['observedPoints'] > 0 and listed['context']['points'] == []
+    record = api(f'/api/forecasts/{series_id}')['result']
     assert record['visibility'] == 'SHADOW' and len(record['forecast']['points']) == 10
     assert record['context']['status'] == 'READY' and len(record['context']['points']) == 512
     assert record['forecast']['seriesId'] == series_id

@@ -312,6 +312,16 @@ layout, and two statements of identical text being indistinguishable to `resolve
 the ones a test pins, which is why every one of them carries a test verified to fail against the
 revision it describes.
 
+**A third pass (X1–X10, 2026-11) audits simplicity and fluidity**, observed in the real UI on
+frozen fixtures: results are page-level rather than per tab, a click on a topic fills without
+running and reads the oldest records, the toolbar's first question is the engine, the panel says
+"No results yet" while a query runs, `Ctrl+Enter` works only inside the editor, and the editor gets
+42 % of a 1440 px window. **All ten are fixed**: results per tab, a click runs, one "Read"
+control defaulting to the latest records (X1–X3); then a running state that keeps the previous
+rows, page-wide `Ctrl+Enter` and focus on arrival, the assistant folded by default, read options
+in staleness, a filtered single topic list, the engine's sentence on an error, a searchable history
+(X4–X10).
+
 **A second pass (S1–S7) sits under it**, and two of its seven items are the first pass's own
 corrections re-opened by work that landed afterwards — which is the reason to read it before
 touching either path again. The pre-flight `POST /api/query/validate` was added *above*
@@ -586,3 +596,22 @@ modal says when the definition on screen was never previewed; `explorer.metric-m
 caps one metric's label series — past it nothing is published and the card says why, and the
 preview counts the series first.
 Read it before touching `Metrics.tsx`'s editor or `MetricService.save`.
+
+`METRICS-FORECAST-UX-AUDIT.md` (2026-11) reviews the Metrics page's forecast side — the panel, the
+setup assistant, the cards' forecast line and the `/api/forecasts` endpoints behind them — for
+bugs, performance and UX; the forecasting engine itself is `TIMESFM-FORECAST-AUDIT.md`'s. It fixed
+nothing. Seventeen findings, observed on the compiled SPA over invented fixtures, two of them
+reproduced or measured: **the 80 % interval is never drawn** (its two `<Area>` sit in a fragment
+recharts does not see — drawn once they are separate); **one unreadable series turns the whole list
+into a 503** with zero series (reproduced), which also strips every card of its forecast line;
+`GET /api/forecasts` returns the full 512-point record of every series (44 KB measured each, up to
+20 by default) every 30 s although the page shows one; and the panel buries the chart and the one
+decision under 914 px of stacked blocks. Read it before changing `ForecastPanel.tsx` or
+`ForecastController`. **Fixed since: B1, B2, P1–P3** — the band is drawn; an unreadable series is
+an error row (`SeriesView.error`) rather than a 503; the list drops the history points (4 KB per
+series instead of 44 KB) and `GET /api/forecasts/{seriesId}` serves the shown series in full;
+`/progress` prepares a series once per closed step; choosing a series reads only that series.
+**Then the rest**: no "Baseline fallback" on a series collecting history, imputed points and the
+threshold drawn, an already-forecast metric marked in the assistant, the panel reordered (750 px
+instead of 914, chart at 140 px instead of 500), shared controls, no empty tiles, the assistant
+opened at its sources, and the approval saying what it changes. Nothing is left open.
