@@ -703,17 +703,25 @@ list to keep and no stale closure to capture.
   deletion to argue on its own rather than a line to flip inside an audit, and S1 has removed the
   harm in the meantime. The measurement that would settle it is the wall time of the two passes on
   the demo cluster, which nothing takes today.
+  **Measured since (2026-11), and kept.** One `explainSql` pass on a warm planner, four cores:
+  **18 ms** for `SELECT * … LIMIT 50`, **42 ms** for a self-join, **61 ms** for a `GROUP BY` with a
+  filter — against a Kafka read that takes seconds, and the editor already skips the pre-flight for
+  a statement it has validated as written. The double pass is real and bounded; deleting the
+  endpoint is not worth what it would cost.
 - **`stripSqlNoise` (`pages/sqlScope.ts`) strips comments before literals**, so a `--` inside a
   string value truncates the rest of the line before the FROM/JOIN scan runs. The backend has the
   single-pass answer for exactly this (`SqlStatements.outsideLiterals`) and the frontend has no
   equivalent. What it costs is bounded to the autocompletion scope and the window assistant's table
   guess — never to what is sent to the engine, `splitStatements` and `planRun` doing their own
   proper scan — so it is recorded rather than fixed here.
+  **Fixed since** (commit `b21e238`): literals and comments are now read in one pass, in source order.
 - **A selected statement is sent with its trailing `;`.** `planRun` returns the selection verbatim
   when it splits to one statement, rather than the statement `splitStatements` found inside it.
   Flink accepts the semicolon (`FlinkSqlServiceInsertVariantsTest` pins that), so nothing fails; the
   only visible effect is that `isResultStale` compares a string that no statement of the tab equals,
   which on a multi-statement tab marks the result stale one edit early.
+  **Fixed since (2026-11)**: `planRun` sends the statement `splitStatements` finds inside the
+  selection, without its semicolon, and a test pins that the result is then not stale.
 - **“Stale — rerun” runs the statement under the cursor**, not the one that produced the rows on
   screen. They are the same in the ordinary case — the result goes stale because that statement was
   edited, and the cursor is in it — and telling them apart means tracking a statement's identity

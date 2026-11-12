@@ -234,7 +234,9 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
         <div style={{ height: 260 }} role="img" aria-label="Measured history and forecast">
           <ResponsiveContainer><ComposedChart data={chart}>
             <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={tick} />
-            <YAxis />
+            {/* The axis reaches the threshold: `ifOverflow="extendDomain"` does not widen it in
+                recharts 2, so a threshold above every value was drawn outside the plot, unseen. */}
+            <YAxis domain={threshold ? [0, (max: number) => Math.ceil(Math.max(max, threshold.threshold) * 1.05)] : [0, 'auto']} />
             {/* The band is drawn as a floor plus a width, so its own tooltip value is the width — shown
                 beside the floor it read as an interval narrower than its lower edge. */}
             <Tooltip labelFormatter={v => new Date(Number(v)).toLocaleString()}

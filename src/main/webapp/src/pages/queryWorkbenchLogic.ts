@@ -577,13 +577,10 @@ export function planRun(
 ): PlannedStatement[] {
   if (selection && selection.text.trim()) {
     const inner = splitStatements(selection.text);
-    if (inner.length <= 1) {
-      // Un fragment : envoyé tel quel, aux espaces de bord près, pour que le décalage d'erreur
-      // désigne son premier caractère utile et non le blanc qui le précède.
-      const leading = selection.text.length - selection.text.trimStart().length;
-      const text = selection.text.trim();
-      return text ? [{ text, start: selection.start + leading }] : [];
-    }
+    // L'instruction que `splitStatements` trouve dans la sélection, et non la sélection brute :
+    // celle-ci emportait son `;` final, si bien que `isResultStale` comparait un texte qu'aucune
+    // instruction de l'onglet n'égale et marquait le résultat périmé une édition trop tôt
+    // (SQL-EDITOR-AUDIT.md, seconde passe). Le décalage reste celui du premier caractère utile.
     return inner.map(s => ({ text: s.text, start: selection.start + s.start }));
   }
 

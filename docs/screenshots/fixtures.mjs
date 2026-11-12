@@ -975,8 +975,76 @@ export const lineage = {
   warnings: [],
 };
 
-/** GET /api/forecasts — ForecastController.Status with the pilot disabled by default. */
-export const forecastStatus = { enabled: false, state: 'DISABLED', series: [] };
+/*
+ * Prévisions — une série en observation sur la latence de m-hop-latency, pour que la page Metrics
+ * montre son panneau de prévision (et la ligne « Forecast » de la carte) au lieu de « Forecast pilot
+ * disabled ». Tout dérive de NOW au pas d'une minute : 512 points de contexte, dont trois comblés,
+ * et 30 points prévus. Les valeurs sont une onde déterministe autour de la latence de la carte.
+ */
+const FORECAST_ID = 'a3'.repeat(32);
+const FORECAST_STEP = 60_000;
+const forecastEnd = Math.floor(NOW / FORECAST_STEP) * FORECAST_STEP;
+const forecastContext = {
+  status: 'READY', reason: 'Ready', seriesId: FORECAST_ID, definitionVersion: 'v1',
+  sourceUnit: 'milliseconds', outputUnit: 'milliseconds',
+  fromInclusive: forecastEnd - 512 * FORECAST_STEP, toExclusive: forecastEnd,
+  profile: { stepMillis: FORECAST_STEP, contextPoints: 512, transformation: 'GAUGE_MEAN' },
+  profileFingerprint: 'p-ci', inputFingerprint: 'i-ci', observedPoints: 509, missingPoints: 0, imputedPoints: 3,
+  points: Array.from({ length: 512 }, (_, i) => ({
+    endAt: forecastEnd - (511 - i) * FORECAST_STEP,
+    value: Math.round(2140 + 180 * Math.sin(i / 24) + 40 * Math.sin(i / 3.1)),
+    imputed: i % 173 === 40,
+    samples: 2,
+  })),
+};
+const forecastPoints = Array.from({ length: 30 }, (_, k) => {
+  const i = k + 1;
+  const central = Math.round(2140 + 180 * Math.sin((511 + i) / 24));
+  return { at: forecastEnd + i * FORECAST_STEP, central, q10: central - 70 - 5 * i, q50: central, q90: central + 70 + 5 * i };
+});
+const forecastQuality = { mae: 96.4, mase: 0.81, meanPinballLoss: 41.2, q10Q90Coverage: 0.79, meanIntervalWidth: 231 };
+const forecastResult = {
+  key: 'k-forecast-ci', generatedAt: NOW, state: 'READY', strategy: 'TIMESFM', visibility: 'SHADOW',
+  context: forecastContext,
+  forecast: { requestId: 'r-1', seriesId: FORECAST_ID, definitionVersion: 'v1', inputFingerprint: 'i-ci',
+    profileFingerprint: 'p-ci', outputUnit: 'milliseconds', historyEndAt: forecastEnd, modelId: 'google/timesfm-2.5-200m-pytorch',
+    modelRevision: '1d952420fba87f3c6dee4f240de0f1a0fbc790e3', adapterVersion: '1', centralStatistic: 'median',
+    durationMillis: 840, points: forecastPoints },
+  quality: forecastQuality, evaluatedPoints: 24, evaluatedThrough: forecastEnd - 6 * FORECAST_STEP,
+  baselineMae: { LAST_VALUE: 131.2, MEAN: 188.5, SEASONAL_NAIVE: 131.2, DRIFT: 140.7 },
+  reason: 'Forecast produced by TimesFM.',
+  qualityWindow: { open: [], lastBlock: null, failedBlocks: 0 },
+};
+const forecastActivation = { eligible: false, reason: '24 of the 30 realised points required have been evaluated',
+  blockPoints: 24, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 };
+
+/** GET /api/forecasts/{seriesId} — the series on screen, its 512 context points included. */
+export const forecastSeries = {
+  seriesId: FORECAST_ID, metricId: 'm-hop-latency', environment: 'local', result: forecastResult,
+  activation: forecastActivation, stepMillis: FORECAST_STEP, minimumContextPoints: 32, withdrawable: true, error: null,
+};
+
+/** GET /api/forecasts — the list is a summary: the same row without its history points. */
+export const forecastStatus = {
+  enabled: true, state: 'AVAILABLE',
+  series: [{ ...forecastSeries, result: { ...forecastResult, context: { ...forecastContext, points: [] } } }],
+};
+
+/** GET /api/forecasts/{seriesId}/progress — the threshold of the card, judged on the cautious edge. */
+export const forecastProgress = {
+  seriesId: FORECAST_ID, state: 'READY', reason: 'Ready', observedPoints: 509, requiredPoints: 512, missingPoints: 0,
+  imputedPoints: 3, checkedAt: NOW, nextScheduledAt: NOW + FORECAST_STEP, stepMillis: FORECAST_STEP, horizon: 30,
+  topics: ['demo.orders.3.enriched', 'demo.orders.4.transformed'], groups: [],
+  breach: {
+    threshold: { seriesId: FORECAST_ID, definitionVersion: 'v1', breached: false, threshold: 3800, direction: 'ABOVE',
+      horizonPoints: 30, confidence: 0.9, confidenceBound: 2690, historyQuality: 'READY', visibility: 'SHADOW',
+      forecastStatus: 'READY', basis: 'q90' },
+    resultKey: 'k-forecast-ci', evaluatedAt: NOW, windowEndAt: forecastEnd + 30 * FORECAST_STEP, generatedAt: NOW,
+    historyEndAt: forecastEnd, modelId: 'google/timesfm-2.5-200m-pytorch',
+    modelRevision: '1d952420fba87f3c6dee4f240de0f1a0fbc790e3', inputFingerprint: 'i-ci', profileFingerprint: 'p-ci',
+  },
+  breachState: 'EVALUATED',
+};
 
 /**
  * GET /api/assistant/status — AssistantStatus as a default server answers it: the assistant is

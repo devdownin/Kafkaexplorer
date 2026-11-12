@@ -126,6 +126,19 @@ const SCREENS = [
     // Past the KPI row and the two configured metrics, onto the proposals with their evidence.
     scroll: 520,
   },
+  {
+    // The forecast panel of the same page, which no screenshot showed: the fixtures had the pilot
+    // disabled, so the documentation never carried the chart, its interval or its decision.
+    name: 'metrics-forecast',
+    url: '/metrics',
+    // The interval's legend entry is drawn once the series' own record has arrived, the threshold
+    // once its progress has: two requests, so both are waited for.
+    settle: async page => {
+      await page.getByText('80 % interval').first().waitFor();
+      await page.getByText(/Threshold ≥/).first().waitFor();
+    },
+    anchor: 'section[aria-label="Metrics Forecast"]',
+  },
 ];
 
 /**
@@ -230,6 +243,9 @@ for (const screen of SCREENS) {
     await page.goto(baseUrl + screen.url, { waitUntil: 'networkidle', timeout: 30_000 });
     await screen.settle(page);
     if (screen.scroll) await scrollBy(page, screen.scroll);
+    // The section's top at the top of the window: scrollIntoView moves the app's inner scroll
+    // container, which window.scrollTo would not.
+    if (screen.anchor) await page.locator(screen.anchor).first().evaluate(e => e.scrollIntoView({ block: 'start' }));
     // Let transitions and the graph layout settle; a half-drawn edge is worse than a wait.
     await page.waitForTimeout(700);
     const file = path.join(outDir, `${screen.name}.png`);

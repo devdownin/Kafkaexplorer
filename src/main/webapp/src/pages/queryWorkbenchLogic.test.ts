@@ -1015,3 +1015,12 @@ describe('errorHeadline (X9)', () => {
     expect(errorHeadline('')).toBeNull();
   });
 });
+
+// SQL-EDITOR-AUDIT.md, second pass: a selected statement is sent without its trailing semicolon.
+describe('planRun — a selection ending on its semicolon', () => {
+  it('sends the statement, not the semicolon after it', () => {
+    const sql = 'SELECT 1 FROM a;\nSELECT 2 FROM b;';
+    expect(planRun(sql, 0, { start: 0, text: 'SELECT 1 FROM a;' }, 'cursor')).toEqual([{ text: 'SELECT 1 FROM a', start: 0 }]);
+    expect(isResultStale('SELECT 1 FROM a', sql, splitStatements(sql))).toBe(false);
+  });
+});

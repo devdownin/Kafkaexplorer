@@ -55,4 +55,19 @@ describe('ForecastPanel chart', () => {
     render(<ForecastPanel />);
     expect(await screen.findByText('Threshold ≥ 11')).toBeInTheDocument();
   });
+
+  // A threshold above every value was drawn outside the plot: `ifOverflow="extendDomain"` does not
+  // widen the axis in recharts 2. Found by the documentation capture, not by the test above.
+  it('widens the value axis to a threshold above every value', async () => {
+    const progress = { seriesId: id, state: 'READY', reason: 'ok', observedPoints: 3, requiredPoints: 512, missingPoints: 0, imputedPoints: 0,
+      checkedAt: 1, nextScheduledAt: 2, stepMillis: 60000, horizon: 3, topics: ['t'], groups: [], breachState: 'EVALUATED',
+      breach: { resultKey: 'k', threshold: { threshold: 50, direction: 'ABOVE', breached: false } } };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status
+      : String(url).endsWith('/progress') ? progress : {} }));
+    const { container } = render(<ForecastPanel />);
+    await screen.findByText('Threshold ≥ 50');
+    const ticks = [...container.querySelectorAll('.recharts-yAxis .recharts-cartesian-axis-tick-value')]
+      .map(t => Number(t.textContent));
+    expect(Math.max(...ticks)).toBeGreaterThanOrEqual(50);
+  });
 });
