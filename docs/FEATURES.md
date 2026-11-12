@@ -44,7 +44,7 @@ A language model drafts Flink SQL, and **never runs or saves anything**: `explor
 
 ## 4. Professional SQL Editor
 - **Monaco Editor**: High-performance SQL editor (VS Code engine) with SQL syntax highlighting and Cyberpunk theme.
-- **Read Mode Switch**: Toggle between **Earliest** (start from beginning) and **Latest** (new messages only) offsets directly in the UI.
+- **Read Mode Switch**: Toggle between **Earliest** (the oldest retained records) and **Latest** (the most recent ones) directly in the UI. **Latest is the default**, here and in the Topic Explorer's sample, where the switch sits above the sample it governs and gives way to the search's own scope while a search is shown.
 - **Dynamic SQL Hints**: Automatic injection of Flink SQL hints (`/*+ OPTIONS(...) */`) for per-query offset control without DDL changes.
 - **Auto-completion**: Intelligent suggestion of topic names and registered tables (`Ctrl+Space`).
 - **A topic is queried by its own name**: `SELECT * FROM "demo.orders.1.received"` and `SELECT * FROM demo_orders_1_received` read the same table — the topic's name as the cluster shows it, or the name the app registers it under, with dots and dashes turned into underscores (the one the Schema Browser lists). The first form also works unquoted, `FROM orders-v1` included, in a `JOIN`, in the table of a window (`TUMBLE(TABLE "demo.iot.sensors", …)`), in the target of an `INSERT`, in a metric's SQL and in the MCP `kex_sql_query` tool. Quote a dotted name when you can: a bare `demo.orders` is also read as table `orders` of database `demo`, and wherever such a database exists it keeps that meaning.
