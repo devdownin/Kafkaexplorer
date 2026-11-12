@@ -168,6 +168,8 @@ Any query the engine can run becomes a Prometheus series, scraped from `/actuato
 
 ![The Metrics page: two configured metrics above the KPIs derived from this cluster — each card carrying the audit measurement it rests on and the multiple its thresholds come from](img/metrics.png)
 
+![The forecast panel of the Metrics page: one series in observation, its 80 % interval and the threshold it is judged against on the chart, the decision beside the sentence saying where the series stands, then its four steps](img/metrics-forecast.png)
+
 ## 15. Dead Letter & Retry Supervision
 A page of its own for the topics named `.DLQ`, `.DLT` or `retry` — because they are the one family
 this application must read backwards. Everywhere else a curve that climbs is a sign of life; on a
