@@ -10,6 +10,7 @@ The complete guided tour of everything Kafka SQL Explorer does. For the short ve
   - **Prefix Filter**: Allows quickly finding topics belonging to a domain (e.g., `order.*`).
   - **Full Name Match**: Exact search to isolate a specific topic.
   - **DLT Filtering**: Toggle to hide Dead Letter Topics (`*.dlt`) and focus on functional streams.
+  - **Hide internal**: Toggle to hide the topics Kafka Explorer writes for itself (audit history, field mappings, MCP audit trail…), read off the configured `explorer.internal-topic-prefix` rather than a literal `internal.`.
 - **Flink Dynamic Tables**: Dedicated section to manage temporary tables and views registered in the local Flink engine.
 - **Command Palette**: `⌘K` / `Ctrl+K` global search over pages, quick actions, Kafka topics and Flink tables.
 - **Topic hierarchy**: From **Explore → Topic hierarchy**, group names under one selected separator (`.`, `-` or `_`). Filter and navigate the tree by keyboard; inspect names excluded for mixed separators, empty levels or no separator. The selected view persists within the browser tab, and long trees render only visible rows. This groups names, not actual data-flow relationships. [Guide](TOPIC-HIERARCHY.md) · [Guide en français](TOPIC-HIERARCHY.fr.md).

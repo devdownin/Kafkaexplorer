@@ -20,6 +20,8 @@ import {
   type ActivityChoice, type ActivityScale,
 } from './topicActivity';
 import { isRetryTopic, isDeadLetterTopic, deadLetterLabel } from './topicKinds';
+import { isInternalTopic } from '../internalTopics';
+import { useCatalog } from '../catalogStore';
 import {
   REFRESH_OPTIONS, REFRESH_OFF, readRefreshChoice, writeRefreshChoice,
   refreshIntervalMs, activityIntervalMs, describeRefreshStatus,
@@ -76,6 +78,14 @@ const Dashboard: React.FC = () => {
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [hideEmpty, setHideEmpty] = useState(() => params.get('empty') === 'true');
   const [hideDlt, setHideDlt] = useState(() => params.get('dlt') === 'true');
+  /**
+   * Masquer les topics que l'application s'écrit à elle-même (audit, mappings, journaux MCP…) :
+   * ils sont des lignes du cluster comme les autres tant qu'on ne les écarte pas, et sur un
+   * cluster où l'on cherche ses propres flux ils sont du bruit. Le préfixe vient du catalogue —
+   * `explorer.internal-topic-prefix` en a fait un réglage — jamais d'un littéral `internal.`.
+   */
+  const [hideInternal, setHideInternal] = useState(() => params.get('internal') === 'true');
+  const { internalPrefix } = useCatalog();
   /** Marquer les topics de reprise — un signalement, pas un filtre : rien n'est retiré. */
   const [markRetry, setMarkRetry] = useState(false);
   /**
@@ -257,6 +267,7 @@ const Dashboard: React.FC = () => {
       .filter(t => t.toLowerCase().includes(searchTerm.toLowerCase()))
       .filter(t => !hideEmpty || (data.topicSizes[t] ?? 0) > 0)
       .filter(t => !hideDlt   || !isDeadLetterTopic(t))
+      .filter(t => !hideInternal || !isInternalTopic(t, internalPrefix))
       .sort((a, b) => {
         let cmp = 0;
         if (sortKey === 'name') cmp = a.localeCompare(b);
@@ -273,7 +284,7 @@ const Dashboard: React.FC = () => {
         }
         return sortDir === 'asc' ? cmp : -cmp;
       });
-  }, [data, searchTerm, hideEmpty, hideDlt, sortKey, sortDir, getState]);
+  }, [data, searchTerm, hideEmpty, hideDlt, hideInternal, internalPrefix, sortKey, sortDir, getState]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTopics.length / pageSize));
   const pagedTopics = useMemo(
@@ -542,6 +553,7 @@ const Dashboard: React.FC = () => {
               {([
                 { label: 'Hide empty',       value: hideEmpty, set: setHideEmpty, filters: true },
                 { label: 'Hide dead letter', value: hideDlt, set: setHideDlt, filters: true },
+                { label: 'Hide internal',    value: hideInternal, set: setHideInternal, filters: true },
                 { label: 'Mark retry',       value: markRetry, set: setMarkRetry, filters: false },
               ] as const).map(sw => (
                 <label key={sw.label} className="flex items-center gap-1.5 cursor-pointer select-none group">
