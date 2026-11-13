@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * One declared window, every prompt budget capped by it. Process Mining's and the assistant's
- * budgets were tuned by hand against the same Ollama window, and Ollama drops what does not fit.
+ * budgets were tuned by hand against the same local window, and what does not fit is lost.
  */
 class ClaudeConfigWindowTest {
 
@@ -27,11 +27,11 @@ class ClaudeConfigWindowTest {
         config.setMaxTokens(4096);
         config.setContextWindowTokens(16_384);
 
-        // (16 384 - 4 096) x 3: the Ollama stack's window, which neither shipped budget reaches.
+        // (16 384 - 4 096) x 3: the llama.cpp stack's window, which neither shipped budget reaches.
         assertEquals(36_864, config.promptCharCeiling());
         assertEquals(16_000, config.effectivePromptCharBudget(16_000), "under the ceiling: unchanged");
         assertEquals(36_864, config.effectivePromptCharBudget(120_000),
-            "the shipped Process Mining default on a 16k window is what Ollama used to truncate");
+            "the shipped Process Mining default does not fit a 16k window");
     }
 
     @Test

@@ -12,7 +12,7 @@ const usage = (over: Partial<LlmUsage> = {}): LlmUsage => ({
   cachedInputTokens: null,
   reasoningTokens: null,
   durationMs: 8400,
-  provider: 'Ollama',
+  provider: 'llama.cpp',
   model: 'qwen3:4b',
   ...over,
 });

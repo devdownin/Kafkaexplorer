@@ -34,9 +34,8 @@ final class LlmAnswerSignals {
      *
      * <p>Half. Not a tuning knob but the point past which no tokeniser difference explains the
      * gap: an endpoint counting fewer than half the tokens a four-characters-per-token floor
-     * predicts did not read what it was sent. Ollama's behaviour is exactly this — it drops the
-     * oldest messages until the prompt fits and logs that at debug level, i.e. nowhere on a default
-     * install — and {@code docs/LLM-PROVIDERS.md} devotes a section to it whose only remedy is two
+     * predicts did not read what it was sent. A local server that drops the oldest messages until the prompt fits, and logs that at debug
+     * level if at all, behaves exactly like this — and {@code docs/LLM-PROVIDERS.md} devotes a section to it whose only remedy is two
      * environment variables set together and trusted.
      */
     static final double TRUNCATION_RATIO = 0.5;

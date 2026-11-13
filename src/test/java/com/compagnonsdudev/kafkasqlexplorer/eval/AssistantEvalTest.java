@@ -59,7 +59,7 @@ import static org.mockito.Mockito.mock;
  *
  * Settings, each also readable as a system property of the same name in lower case with dots:
  * {@code ASSISTANT_EVAL_MODEL} (required), {@code ASSISTANT_EVAL_PROVIDER} (default
- * {@code OLLAMA}), {@code ASSISTANT_EVAL_BASE_URL} (default the provider's),
+ * {@code LLAMA_CPP}), {@code ASSISTANT_EVAL_BASE_URL} (default the provider's),
  * {@code ASSISTANT_EVAL_API_KEY}, {@code ASSISTANT_EVAL_TIMEOUT_SECONDS} (per model call, default
  * 300), {@code ASSISTANT_EVAL_CASES} (ids or families, comma-separated, to run a subset).
  */
@@ -86,12 +86,12 @@ class AssistantEvalTest {
         String model = setting("ASSISTANT_EVAL_MODEL");
         assumeTrue(model != null && !model.isBlank(),
             "No model named for the assistant eval — set ASSISTANT_EVAL_MODEL (and ASSISTANT_EVAL_PROVIDER / "
-                + "ASSISTANT_EVAL_BASE_URL for anything but a local Ollama). Skipped, not failed.");
+                + "ASSISTANT_EVAL_BASE_URL for anything but a local llama.cpp). Skipped, not failed.");
 
         ClaudeConfig claude = new ClaudeConfig();
         String provider = setting("ASSISTANT_EVAL_PROVIDER");
         claude.setProvider(ClaudeConfig.Provider.valueOf(
-            (provider == null || provider.isBlank() ? "OLLAMA" : provider.strip()).toUpperCase(Locale.ROOT)));
+            (provider == null || provider.isBlank() ? "LLAMA_CPP" : provider.strip()).toUpperCase(Locale.ROOT)));
         String baseUrl = setting("ASSISTANT_EVAL_BASE_URL");
         claude.setBaseUrl(baseUrl == null ? "" : baseUrl.strip());
         claude.setModel(model.strip());

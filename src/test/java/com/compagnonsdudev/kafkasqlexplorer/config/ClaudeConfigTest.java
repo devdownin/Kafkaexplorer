@@ -26,27 +26,27 @@ class ClaudeConfigTest {
     @Test
     void loopbackAddressesAreLocal() {
         for (String url : new String[]{
-            "http://localhost:11434/v1",
-            "http://127.0.0.1:11434/v1",
+            "http://localhost:8083/v1",
+            "http://127.0.0.1:8083/v1",
             "http://127.1.2.3:8080",
-            "http://[::1]:11434/v1",
-            "https://ollama.localhost/v1",
+            "http://[::1]:8083/v1",
+            "https://llama.localhost/v1",
         }) {
-            assertTrue(at(ClaudeConfig.Provider.OLLAMA, url).isLocalDeployment(), url);
+            assertTrue(at(ClaudeConfig.Provider.LLAMA_CPP, url).isLocalDeployment(), url);
         }
     }
 
     /**
-     * The bug this replaced: {@code provider == OLLAMA} short-circuited the check, so pointing
-     * Ollama at a GPU box — an entirely ordinary setup — kept "nothing leaves this host" on screen
+     * The bug this replaced: the local provider short-circuited the check, so pointing
+     * llama.cpp at a GPU box — an entirely ordinary setup — kept "nothing leaves this host" on screen
      * while every message digest went over the network.
      */
     @Test
-    void remoteOllamaIsNotLocal() {
-        assertFalse(at(ClaudeConfig.Provider.OLLAMA, "http://gpu-box:11434/v1").isLocalDeployment());
-        assertFalse(at(ClaudeConfig.Provider.OLLAMA, "http://10.0.0.5:11434/v1").isLocalDeployment());
+    void remoteLlamaCppIsNotLocal() {
+        assertFalse(at(ClaudeConfig.Provider.LLAMA_CPP, "http://gpu-box:8083/v1").isLocalDeployment());
+        assertFalse(at(ClaudeConfig.Provider.LLAMA_CPP, "http://10.0.0.5:8083/v1").isLocalDeployment());
         // The address the bundled LLM compose stack uses: another container, not this host.
-        assertFalse(at(ClaudeConfig.Provider.OLLAMA, "http://ollama:11434/v1").isLocalDeployment());
+        assertFalse(at(ClaudeConfig.Provider.LLAMA_CPP, "http://llama-cpp:8080/v1").isLocalDeployment());
     }
 
     /**
@@ -77,10 +77,10 @@ class ClaudeConfigTest {
         assertFalse(at(ClaudeConfig.Provider.ANTHROPIC, "").isLocalDeployment());
     }
 
-    /** A blank base URL under OLLAMA still resolves to the loopback default. */
+    /** A blank base URL under LLAMA_CPP still resolves to the loopback default. */
     @Test
-    void ollamaDefaultIsLocal() {
-        assertTrue(at(ClaudeConfig.Provider.OLLAMA, "").isLocalDeployment());
+    void llamaCppDefaultIsLocal() {
+        assertTrue(at(ClaudeConfig.Provider.LLAMA_CPP, "").isLocalDeployment());
     }
 
     /**
@@ -132,25 +132,25 @@ class ClaudeConfigTest {
     /** A host with no scheme is how one writes an internal gateway, and it cannot be sent to. */
     @Test
     void anAddressThatIsNotAnAddressIsReported() {
-        ClaudeConfig config = at(ClaudeConfig.Provider.OPENAI_COMPATIBLE, "gpu-box:11434/v1");
+        ClaudeConfig config = at(ClaudeConfig.Provider.OPENAI_COMPATIBLE, "gpu-box:8083/v1");
         String problem = config.configurationProblem();
         assertNotNull(problem);
         assertTrue(problem.contains("absolute http(s) URL"), problem);
 
-        assertFalse(ClaudeConfig.isAbsoluteHttpUrl("gpu-box:11434/v1"),
+        assertFalse(ClaudeConfig.isAbsoluteHttpUrl("gpu-box:8083/v1"),
             "java.net.URI parses this as a scheme of its own — the HTTP client is what refuses it");
         assertFalse(ClaudeConfig.isAbsoluteHttpUrl("/v1/chat/completions"));
         assertFalse(ClaudeConfig.isAbsoluteHttpUrl("ftp://gpu-box/v1"));
         assertFalse(ClaudeConfig.isAbsoluteHttpUrl(""));
         assertFalse(ClaudeConfig.isAbsoluteHttpUrl(null));
-        assertTrue(ClaudeConfig.isAbsoluteHttpUrl("http://gpu-box:11434/v1"));
+        assertTrue(ClaudeConfig.isAbsoluteHttpUrl("http://gpu-box:8083/v1"));
         assertTrue(ClaudeConfig.isAbsoluteHttpUrl("https://openrouter.ai/api/v1"));
     }
 
     /** Nothing is reported about a configuration that can be tried — the endpoint answers for itself. */
     @Test
     void aConfigurationThatCanBeTriedReportsNothing() {
-        assertNull(at(ClaudeConfig.Provider.OLLAMA, "").configurationProblem(),
+        assertNull(at(ClaudeConfig.Provider.LLAMA_CPP, "").configurationProblem(),
             "the provider's own default fills in, so there is an address");
         assertNull(at(ClaudeConfig.Provider.SPECTRA, "http://spectra-api:8080").configurationProblem());
 

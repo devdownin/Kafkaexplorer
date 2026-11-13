@@ -81,7 +81,7 @@ public class AssistantLlm {
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("explorer.assistant.provider '"
                     + properties.getProvider() + "' is not a provider — use one of ANTHROPIC, "
-                    + "OPENAI_COMPATIBLE, OLLAMA, OPENROUTER.", e);
+                    + "OPENAI_COMPATIBLE, LLAMA_CPP, OPENROUTER.", e);
             }
             // A provider switch with no address of its own gets that provider's default address,
             // not the inherited one, which belongs to another dialect.
@@ -115,7 +115,7 @@ public class AssistantLlm {
             // SpectraLLM's query API constrains nothing and answers about its own corpus; it is
             // the wrong tool for writing a statement against this catalogue.
             return "SpectraLLM cannot serve the assistant — set explorer.assistant.provider to "
-                + "OLLAMA, OPENAI_COMPATIBLE, OPENROUTER or ANTHROPIC.";
+                + "LLAMA_CPP, OPENAI_COMPATIBLE, OPENROUTER or ANTHROPIC.";
         }
         return effective.configurationProblem();
     }

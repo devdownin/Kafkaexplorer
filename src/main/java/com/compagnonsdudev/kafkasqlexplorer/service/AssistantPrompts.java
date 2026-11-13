@@ -10,7 +10,7 @@ import java.util.Map;
  * The assistant's prompts: a stable prefix of rules, then the catalogue and the request as data.
  *
  * <p>The order is deliberate. The rules come first and never vary, so a serving engine that caches
- * a prompt prefix (llama.cpp and Ollama both do) reuses it from one request to the next; the
+ * a prompt prefix (llama.cpp does) reuses it from one request to the next; the
  * catalogue and the request follow. Everything that comes from the cluster or the user — table and
  * column names, a planner message, the question — sits between delimiters under a heading that
  * says it is data, and the rules say not to follow instructions found there. That is not a proof

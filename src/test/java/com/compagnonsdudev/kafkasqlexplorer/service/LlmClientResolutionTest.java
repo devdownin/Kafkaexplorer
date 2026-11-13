@@ -16,23 +16,23 @@ class LlmClientResolutionTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private static ClaudeConfig ollamaConfig() {
+    private static ClaudeConfig llamaCppConfig() {
         ClaudeConfig config = new ClaudeConfig();
-        config.setProvider(ClaudeConfig.Provider.OLLAMA);
-        config.setBaseUrl("http://localhost:11434/v1");
+        config.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
+        config.setBaseUrl("http://localhost:8083/v1");
         return config;
     }
 
     @Test
     void sameConfigurationReusesTheSameClient() {
-        LlmClientProvider provider = new LlmClientProvider(ollamaConfig());
+        LlmClientProvider provider = new LlmClientProvider(llamaCppConfig());
         assertSame(provider.get(), provider.get(),
             "an unchanged configuration must not reallocate the HTTP client per call");
     }
 
     @Test
     void changingProviderRebuildsTheClient() {
-        ClaudeConfig config = ollamaConfig();
+        ClaudeConfig config = llamaCppConfig();
         LlmClientProvider provider = new LlmClientProvider(config);
         LlmClient before = provider.get();
 
@@ -54,7 +54,7 @@ class LlmClientResolutionTest {
      */
     @Test
     void changingTheRequestTimeoutRebuildsTheClient() {
-        ClaudeConfig config = ollamaConfig();
+        ClaudeConfig config = llamaCppConfig();
         LlmClientProvider provider = new LlmClientProvider(config);
         LlmClient before = provider.get();
 
@@ -71,7 +71,7 @@ class LlmClientResolutionTest {
      */
     @Test
     void aReplacedClientIsClosed() {
-        ClaudeConfig config = ollamaConfig();
+        ClaudeConfig config = llamaCppConfig();
         LlmClientProvider provider = new LlmClientProvider(config);
         RecordingClient first = new RecordingClient();
         provider.setClientForTest(first, config);
@@ -86,7 +86,7 @@ class LlmClientResolutionTest {
     /** And the last one built is released at shutdown, or it is the one that leaks. */
     @Test
     void theLastClientIsClosedOnShutdown() {
-        ClaudeConfig config = ollamaConfig();
+        ClaudeConfig config = llamaCppConfig();
         LlmClientProvider provider = new LlmClientProvider(config);
         RecordingClient held = new RecordingClient();
         provider.setClientForTest(held, config);
@@ -99,7 +99,7 @@ class LlmClientResolutionTest {
     /** Retiring a client must never be able to fail the save that retired it. */
     @Test
     void aClientThatRefusesToCloseDoesNotFailTheSave() {
-        ClaudeConfig config = ollamaConfig();
+        ClaudeConfig config = llamaCppConfig();
         LlmClientProvider provider = new LlmClientProvider(config);
         provider.setClientForTest(new RecordingClient() {
             @Override
@@ -131,7 +131,7 @@ class LlmClientResolutionTest {
 
     @Test
     void changingApiKeyRebuildsTheClient() {
-        ClaudeConfig config = ollamaConfig();
+        ClaudeConfig config = llamaCppConfig();
         LlmClientProvider provider = new LlmClientProvider(config);
         LlmClient before = provider.get();
 
@@ -143,11 +143,11 @@ class LlmClientResolutionTest {
 
     @Test
     void changingBaseUrlRebuildsTheClient() {
-        ClaudeConfig config = ollamaConfig();
+        ClaudeConfig config = llamaCppConfig();
         LlmClientProvider provider = new LlmClientProvider(config);
         LlmClient before = provider.get();
 
-        config.setBaseUrl("http://gpu-box:11434/v1");
+        config.setBaseUrl("http://gpu-box:8083/v1");
 
         assertNotSame(before, provider.get());
     }
@@ -177,7 +177,7 @@ class LlmClientResolutionTest {
         assertEquals("hello", OpenAiCompatibleLlmClient.firstChoiceContent(MAPPER.readTree(body), body));
     }
 
-    /** A 200 carrying an error object — Ollama's shape for an unknown model. */
+    /** A 200 carrying an error object — one local server's shape for an unknown model. */
     @Test
     void firstChoiceContentReportsAProviderError() throws Exception {
         String body = "{\"error\":{\"message\":\"model 'nope' not found\"}}";

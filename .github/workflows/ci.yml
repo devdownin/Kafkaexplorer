@@ -756,7 +756,7 @@ jobs:
           # and that is still the whole point: `compose/` holds bases and overlays alike, and
           # nothing about a path says which is which. It is now a much shorter list, because
           # the tree has ONE base that carries a broker instead of four near-copies of it —
-          # docker-compose.yml, with schema-registry / ollama / image / limits layering onto
+          # docker-compose.yml, with schema-registry / llama-cpp / image / limits layering onto
           # it in any combination. That is also what makes the coverage real rather than
           # nominal: `docker-compose.yml + all four` is a stack nobody could run before,
           # since -kafka4 and -llm were separate bases and could never be combined.
@@ -765,7 +765,7 @@ jobs:
           # NAMED here, so an omission is structural rather than a string search over a list
           # of command lines.
           declare -A OVERLAYS=(
-            [docker-compose.yml]="compose/schema-registry.yml compose/ollama.yml compose/mcp.yml compose/image.yml compose/limits.yml compose/ci.yml compose/timesfm.yml compose/forecasts.yml compose/demo.yml compose/demo-no-spectra.yml compose/demo-llm.yml"
+            [docker-compose.yml]="compose/schema-registry.yml compose/llama-cpp.yml compose/mcp.yml compose/image.yml compose/limits.yml compose/ci.yml compose/timesfm.yml compose/forecasts.yml compose/demo.yml compose/demo-no-spectra.yml compose/demo-llm.yml"
             [compose/dev.yml]=""
             [compose/build.yml]=""
             [compose/spectra-hub.yml]="compose/spectra-hub.ingest.yml compose/spectra-hub.gpu.yml compose/spectra-hub.limits.yml compose/spectra-hub.agent-eval.yml compose/spectra-hub.mcp.yml compose/ecosystem.yml"

@@ -19,8 +19,8 @@ documentation beside it or with itself.
     and the engine's context length are two halves of one setting, written in three files,
     each carrying a comment saying it is "kept in step" with the others — which is the
     shape this repository keeps removing, since nothing executes a comment.  What a model
-    cannot see it does not say it missed: Ollama drops the oldest messages until the prompt
-    fits and logs it at DEBUG, so exceeding the window is silent by construction.
+    cannot see it does not say it missed: a server that drops the oldest messages until the
+    prompt fits says so at DEBUG if at all, so exceeding the window can be silent.
 """
 from __future__ import annotations
 
@@ -127,12 +127,12 @@ def budget_vs_window(path: Path, text: str) -> tuple[str | None, int]:
     if chars is None:
         return None, 0
 
-    # Ollama serves one request against the whole window; llama-server splits it across
-    # `--parallel` slots, so the window a single request gets is the quotient. A stack that
-    # names no window (the developer SpectraLLM one) takes it from a checkout this file
+    # llama-server splits its window across `--parallel` slots, so the window a single request
+    # gets is the quotient. Two stacks serve one, each under its own pair of variables. A stack
+    # that names no window (the developer SpectraLLM one) takes it from a checkout this file
     # cannot read — not checkable rather than assumed fine.
-    window = setting('OLLAMA_CONTEXT_LENGTH')
-    slots = 1
+    window = setting('LLAMA_CPP_CONTEXT')
+    slots = number(defaults.get('LLAMA_CPP_PARALLEL', '')) or 1
     if window is None:
         window = setting('LLM_CONTEXT')
         slots = number(defaults.get('LLM_PARALLEL', '')) or 1

@@ -65,14 +65,18 @@ Everywhere else the sentence stands as written, and even there it is a floor rat
 calibration. It is sized for
 the default provider, which is hosted and has the room; what it is wrong for is a **local** model,
 which is therefore the thing that changes underfoot the day somebody switches to one — and it
-changes in silence: Ollama gives a model
-**4 096 tokens** unless the machine has the VRAM for more, `OpenAiCompatibleLlmClient` sends
-`model` / `messages` / `max_tokens` / `temperature` / `stream` and **never `num_ctx`** (which
-that endpoint would not read from the body anyway), and Ollama does not refuse the excess — it
-drops the oldest messages until the prompt fits and logs it at DEBUG, i.e. nowhere on a default
-install. Every Process Mining analysis on `compose/ollama.yml` was therefore reasoning on a
-fraction of what it had been handed, with nothing on screen or in the log naming the fraction.
-The bundled stacks now set both halves together (`OLLAMA_CONTEXT_LENGTH` / `LLM_CONTEXT` against
+changed in silence on the stack this was found on, `compose/ollama.yml`, since replaced by
+`compose/llama-cpp.yml`: Ollama gave a model **4 096 tokens** unless the machine had the VRAM for
+more, `OpenAiCompatibleLlmClient` sends `model` / `messages` / `max_tokens` / `temperature` /
+`stream` and nothing that sets a window, and Ollama did not refuse the excess — it dropped the
+oldest messages until the prompt fitted and logged it at DEBUG, i.e. nowhere on a default install.
+Every Process Mining analysis there was therefore reasoning on a fraction of what it had been
+handed, with nothing on screen or in the log naming the fraction. On llama.cpp the window is
+`-c` divided across the `--parallel` slots, and the pinned build carries a refusal for a request
+larger than its slot (`exceeds the available context size`, read in the binary, not observed on
+a running server) — a failed analysis instead of a silently partial one, so the rule did not go
+away with the runtime.
+The bundled stacks set both halves together (`LLAMA_CPP_CONTEXT` / `LLM_CONTEXT` against
 `PROCESS_MINING_PROMPT_CHAR_BUDGET`) and say so where they set them; the default in
 `application.yml` is unchanged, since the provider it now ships pointed at can afford it, and
 carries the rule beside it. Raising one without the other buys nothing or truncates again — and the KV cache is what a
@@ -80,7 +84,7 @@ wider window costs (~2 GB for a 7B at 16k).
 
 ### The SpectraLLM stack
 
-Process Mining can be answered by a **local SpectraLLM** instance rather than Ollama or Anthropic
+Process Mining can be answered by a **local SpectraLLM** instance rather than llama.cpp or Anthropic
 (`CLAUDE_PROVIDER=SPECTRA`, whose client posts to Spectra's single-turn `POST /api/query`). One
 file wires the pair. There were two, and the deletion of the other is the point:
 
@@ -301,7 +305,7 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
 - **`stop_grace_period` is set everywhere and is not decoration.** Docker's default is 10s; the app gets 35s, which is `spring.lifecycle.timeout-per-shutdown-phase` (15s of graceful web shutdown) plus `ShutdownBudget.TOTAL_MS` (10s of bean destruction) plus the JVM's exit. Raise either and you must raise the grace period, or Docker SIGKILLs exactly what they were meant to protect. The broker gets 30s so a stopping KRaft node finishes its flush instead of being SIGKILLed into a log recovery on the next start.
 - **`ShutdownBudget` is one deadline shared by every executor pool**, not five seconds each. Six services own a pool (`FlinkSqlService`, `StreamFlowService`, `FlinkRuntimeCoordinator`, `AuditService` ×2, `KafkaLiveConsumer` ×2) and bean destruction is sequential, so the private waits added up to ~35s and grew by five seconds with every pool the codebase gained. The first pool destroyed starts the clock; the rest inherit what is left, with a 500 ms floor each so the last one is not interrupted the instant the budget runs out. Use it for any new pool — do not reintroduce a private `awaitTermination`.
 - **Liveness and readiness are split, and the container healthcheck targets liveness.** The project uses `kafka-clients` directly rather than `spring-kafka`, so Boot auto-configures no Kafka health indicator and `/actuator/health` reported UP whatever the broker was doing. `KafkaHealthIndicator` (bean id `kafka`, a 2s `describeCluster` probe) joins the **readiness** group only: an unreachable broker means "not ready to answer queries", not "restart this process" — the UI still serves and the Settings page can repoint the app, which is what an operator needs at that moment. `HealthProbesTest` pins both groups against the real context, because a typo in the `include` would leave the group absent and the HEALTHCHECK reading a 404 as a dead container.
-- **Published ports bind to `${BIND_ADDR:-127.0.0.1}` and are parameterized** (`EXPLORER_PORT`, `KAFKA_PORT`, `SCHEMA_REGISTRY_PORT`, `OLLAMA_PORT`, `VITE_PORT` — see `.env.example`, which compose reads from a root `.env` automatically). The app has no authentication and `POST /api/config` can repoint the Kafka cluster at runtime; the Docker default of `0.0.0.0` offered that to the whole LAN on a plain `up`. Expose deliberately with `BIND_ADDR=0.0.0.0 docker compose up -d`. `KAFKA_PORT` also rewrites the broker's advertised `PLAINTEXT_HOST` listener — without that, a host client told to use the new port is redirected straight back to 9092 by the broker itself.
+- **Published ports bind to `${BIND_ADDR:-127.0.0.1}` and are parameterized** (`EXPLORER_PORT`, `KAFKA_PORT`, `SCHEMA_REGISTRY_PORT`, `VITE_PORT` — see `.env.example`, which compose reads from a root `.env` automatically). The app has no authentication and `POST /api/config` can repoint the Kafka cluster at runtime; the Docker default of `0.0.0.0` offered that to the whole LAN on a plain `up`. Expose deliberately with `BIND_ADDR=0.0.0.0 docker compose up -d`. `KAFKA_PORT` also rewrites the broker's advertised `PLAINTEXT_HOST` listener — without that, a host client told to use the new port is redirected straight back to 9092 by the broker itself.
 - **Base images are pinned by digest** (`tag@sha256:…`, tag kept in front — it is the only thing that says what the digest is), with Dependabot's `docker` ecosystem grouped so the bumps still arrive. Pinning without that would trade reproducibility for a frozen JRE, which is a worse deal than either.
 - **Every `close()` on a Kafka client at shutdown is bounded** (`AdminClient`, the audit-history and metrics-config producers, the live consumers): the no-arg overloads wait without a deadline, and shutdown is exactly when the broker is likely gone — an unbounded close hands the JVM to the SIGKILL mid-teardown. `KafkaLiveConsumer.shutdown()` also completes the SSE emitters of sessions whose polling task never reached `finishSession()`.
 - **The app writes under `/app` and both paths are volumes**: `logs/` (`logging.file.name`) and `data/` (`explorer.settings-store-path`, `explorer.flink-table-store-path` — the Settings page's own input and the hand-written `CREATE TABLE`s were lost on every recreate; `explorer.flink-job-store-path` was the third and went with the Dashboard's job table). They are named volumes, never a bind-mounted *file*: `./Kafkaexplorer.log:/app/logs/kafkaexplorer.log` pointed at a path absent from the checkout, so Docker created a directory there and Logback could not open its log at all. That broken mount was also the stated reason the runtime image stayed root; both images now run as `USER 10001:10001`, owning `/app/logs` and `/app/data`, and a named volume inherits that ownership where a host bind mount would not.
@@ -320,7 +324,7 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   |---|---|---|
   | `docker-compose.yml` | base | Kafka 4.3 KRaft + explorer + demo seeder. The one everything layers onto. |
   | `compose/schema-registry.yml` | overlay | Schema Registry + the Avro seeder. Was `docker-compose-kafka4.yml`. |
-  | `compose/ollama.yml` | overlay | One local Ollama model (`OLLAMA_MODEL`, `gemma4:e4b`; needs Ollama 0.20+) for Process Mining **and** the SQL & metric assistant. Was `docker-compose-llm.yml`. |
+  | `compose/llama-cpp.yml` | overlay | One local llama.cpp model (a GGUF: `LLAMA_CPP_MODEL_FILE` / `_NAME` / `_URL`, Gemma 4 E4B by default) for Process Mining **and** the SQL & metric assistant. Was `compose/ollama.yml`, and `docker-compose-llm.yml` before that. |
   | `compose/mcp.yml` | overlay | The MCP server on, its guards as variables, and a smoke probe. |
   | `compose/image.yml` | overlay | Run the published image instead of building. Was `docker-compose.release.yml`. |
   | `compose/limits.yml` | overlay | Opt-in `mem_limit` / `cpus`. |
@@ -456,8 +460,8 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   not an interpolation at all, and a default can itself be one (`${A:-${B:-c}}`), which
   `[^}]*` truncates at the first brace and attributes to the wrong variable. **And the third
   pass is not documentation**: it asserts that `PROCESS_MINING_PROMPT_CHAR_BUDGET` fits the
-  window the stack serves — the whole context for Ollama, the context divided by
-  `--parallel` slots for llama.cpp. Those two halves are written in three files, each with a
+  window the stack serves — the context divided by `--parallel` slots, for both stacks that
+  run a llama-server (`LLAMA_CPP_*` here, `LLM_*` on the SpectraLLM hub). Those two halves are written in three files, each with a
   comment saying it is "kept in step" with the others, and nothing executes a comment; a prompt
   that exceeds the window is dropped in silence and logged at DEBUG rather than refused. The
   4 characters-per-token ratio is deliberately optimistic, so a budget it passes may still not
@@ -635,20 +639,33 @@ Hugging Face’s auxiliary cache (Xet metadata and logs) also needs writable sto
 `explorer.assistant.enabled` ships **false**, because `claude.provider` ships as a hosted gateway
 and the assistant would send table and column names to a third party nobody chose. Two stacks turn
 it on, for opposite reasons, and each says in the UI which it is (`ClaudeConfig.isLocalDeployment()`
-read off the assistant's *effective* address): `compose/ollama.yml` because there nothing leaves the
+read off the assistant's *effective* address): `compose/llama-cpp.yml` because there nothing leaves the
 host, and `compose/demo-llm.yml` because the demo already sends Process Mining's digests to
 OpenRouter — there the editor's ask bar says the names leave the host, and with no
 `OPENROUTER_API_KEY` the assistant reports a configuration problem and the editor shows nothing
 (the Help page says why). `EXPLORER_ASSISTANT_ENABLED` (default `true` in the demo, `false` turns it
 off) is exported by `demo.sh` and defaulted by `demo.ps1` — the two edited together, as ever.
 
-`ollama-pull-model` pulls one model, `OLLAMA_MODEL` (default `gemma4:e4b`), and both consumers ask
-it: `CLAUDE_MODEL` reads the same variable and the assistant inherits `claude.*`. It used to pull two
+`llama-cpp-model` downloads one GGUF (`LLAMA_CPP_MODEL_URL`, Gemma 4 E4B Q4_K_M from `unsloth/*`
+by default) and `llama-cpp` serves it under `LLAMA_CPP_MODEL_NAME`; both consumers ask it:
+`CLAUDE_MODEL` reads that alias and the assistant inherits `claude.*`. The stack used to pull two
 — `qwen2.5-coder:7b` for Process Mining and Gemma 4 E4B for the assistant — until
 `EMBEDDED-LLM-SCOPE.md` §7.2 measured Gemma on Process Mining as well and found it at least as good
 on every count. One model means one download, one model resident, and one window and one timeout
-for both (`CLAUDE_CONTEXT_WINDOW_TOKENS` from `OLLAMA_CONTEXT_LENGTH`, the assistant inheriting
-`CLAUDE_REQUEST_TIMEOUT_SECONDS`). `setup-llm.sh` / `setup-llm.ps1`, the host-Ollama twins, pull the
-same default. Not exercised against a live Ollama in this repository's CI: the tag `gemma4:e4b` and
-the Ollama 0.20+ requirement come from Ollama's library and the guides that cite it, and the pinned
-`0.32.6` is newer than 0.20.
+for both (`CLAUDE_CONTEXT_WINDOW_TOKENS` from `LLAMA_CPP_CONTEXT`, the assistant inheriting
+`CLAUDE_REQUEST_TIMEOUT_SECONDS`). `setup-llm.sh` / `setup-llm.ps1`, the host twins, start a
+`llama-server` on the same default through `-hf`.
+
+**llama.cpp replaced Ollama here** (`compose/ollama.yml`, the `OLLAMA` provider, `OLLAMA_*`
+variables). The tree already ran and pinned llama.cpp for SpectraLLM, so it carried two inference
+servers for one job; and the evals that chose the model were measured on Q4_K_M GGUF weights from
+`unsloth/*`, which is what this stack now downloads rather than a registry tag standing for them.
+What it changes for an operator: a model is a file, an alias and a URL instead of a tag; the port
+is 8083 on the loopback only, llama-server having no authentication and 8080 being the Explorer's;
+the explorer waits for the server to be *started*, not healthy, because it is unhealthy for the
+whole first download; and `claude.provider: OLLAMA` is refused at boot by `RetiredProviderGuard`
+with the name to write instead. **Not exercised against a live llama-server in this repository's
+CI or in the session that wrote it** (no Docker daemon there): `docker compose config` resolves,
+`check-compose.py` holds the budget to the window, and the server's flags are the ones
+`scripts/spectra-hub/llm-chat.sh` already runs in the `spectra-hub-stack` job on the same pinned
+image — but the first `up` of this overlay is the first time it serves.

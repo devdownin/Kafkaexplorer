@@ -37,11 +37,11 @@ re-entered after each restart.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CLAUDE_PROVIDER` | `OPENROUTER` | `ANTHROPIC`, `OPENAI_COMPATIBLE`, `OLLAMA`, `OPENROUTER` or `SPECTRA`. The default is a **hosted** gateway: message digests leave the host. Use `OLLAMA` or `SPECTRA` to keep everything on your own network. |
-| `CLAUDE_BASE_URL` | `https://openrouter.ai/api/v1` | Endpoint of the provider. Blank falls back to the provider's own default — `http://localhost:11434/v1` for `OLLAMA`. |
+| `CLAUDE_PROVIDER` | `OPENROUTER` | `ANTHROPIC`, `OPENAI_COMPATIBLE`, `LLAMA_CPP`, `OPENROUTER` or `SPECTRA`. The default is a **hosted** gateway: message digests leave the host. Use `LLAMA_CPP` or `SPECTRA` to keep everything on your own network. |
+| `CLAUDE_BASE_URL` | `https://openrouter.ai/api/v1` | Endpoint of the provider. Blank falls back to the provider's own default — `http://localhost:8083/v1` for `LLAMA_CPP`. |
 | `CLAUDE_MODEL` | `openai/gpt-4o-mini` | Model name at that endpoint. `OPENROUTER` names models `vendor/model` — anything on [its model list](https://openrouter.ai/models), though you need not know a name: the Settings page lists the models that fit this deployment, cheapest first. |
 | `OPENROUTER_API_KEY` | — | The OpenRouter key (`sk-or-v1-…`), and with the default provider it is **required**: an anonymous request is a 401. |
-| `ANTHROPIC_API_KEY` | — | The same setting under its historical name, read when `OPENROUTER_API_KEY` is unset. Required for `ANTHROPIC`; ignored by a local Ollama. On a machine that exports several, `CLAUDE_API_KEY` outranks both and is the unambiguous form. |
+| `ANTHROPIC_API_KEY` | — | The same setting under its historical name, read when `OPENROUTER_API_KEY` is unset. Required for `ANTHROPIC`; ignored by a local llama.cpp server. On a machine that exports several, `CLAUDE_API_KEY` outranks both and is the unambiguous form. |
 | `CLAUDE_USE_RAG` | `false` | `SPECTRA` provider only: also retrieve from SpectraLLM's ingested corpus instead of reasoning solely on the messages inlined in the prompt. |
 | `CLAUDE_COLLECTION` | — | `SPECTRA` + `CLAUDE_USE_RAG` only: which ChromaDB collection to retrieve from. Blank uses SpectraLLM's default. |
 | `CLAUDE_OPENROUTER_DATA_COLLECTION` | `DENY` | `OPENROUTER` only: `DENY` restricts routing to upstream providers that do not retain or train on what is sent. `ALLOW` widens the choice of models back — a model served only by data-collecting providers is otherwise unroutable, and the error says so. |
@@ -61,14 +61,13 @@ passes may still not fit while one it rejects certainly does not.
 
 The shipped default is sized for the shipped provider: a hosted
 OpenRouter model has room for 30 000 tokens. It is when you point this at a **local** model that
-the budget stops fitting, and it does so in silence: Ollama gives a
-model 4 096 tokens unless the machine has the VRAM for more, this image's request carries no
-`num_ctx` (the OpenAI-compatible endpoint would not read one from the body), and the default
-budget above is roughly 30 000 tokens. Ollama does not refuse the excess — it drops the oldest
-messages until the prompt fits, and logs that at debug level. The analysis then reasons on a
-fraction of what it was given, with nothing saying which fraction. Raise the window
-(`OLLAMA_CONTEXT_LENGTH` on the Ollama server, `-c` on llama.cpp) or lower the budget so the
-two agree; the [bundled stacks](https://github.com/devdownin/Kafkaexplorer/blob/main/compose/ollama.yml)
+the budget stops fitting: a local server gives the model the window it was started with, this
+image's request carries nothing that could change it, and the default budget above is roughly
+30 000 tokens. What does not fit is refused or cut down to what fits, depending on the server —
+and where it is cut, the analysis reasons on a fraction of what it was given, with nothing saying
+which fraction. Raise the window (`-c` on llama.cpp, divided across its `--parallel` slots) or
+lower the budget so the
+two agree; the [bundled stacks](https://github.com/devdownin/Kafkaexplorer/blob/main/compose/llama-cpp.yml)
 set both together.
 
 ### Runtime

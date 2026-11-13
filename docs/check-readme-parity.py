@@ -103,7 +103,7 @@ def paths(text: str) -> set[str]:
 
     Splitting each span on whitespace rather than taking it whole is the difference between
     this comparison earning its place and being decoration: a README names its files inside
-    the commands it hands you (`docker compose -f compose/ollama.yml up -d`), so a
+    the commands it hands you (`docker compose -f compose/llama-cpp.yml up -d`), so a
     whole-span rule saw three tokens in this file, two of which were CPU architectures.
 
     No allow-list and no filtering of the near-misses, deliberately. This is a PARITY

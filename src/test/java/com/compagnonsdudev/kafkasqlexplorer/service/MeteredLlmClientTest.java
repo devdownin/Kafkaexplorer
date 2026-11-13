@@ -47,7 +47,7 @@ class MeteredLlmClientTest {
     @Test
     void bothConsumersReportIntoTheSameSeries() {
         ClaudeConfig claude = new ClaudeConfig();
-        claude.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claude.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
         AssistantProperties properties = new AssistantProperties();
         // Built through the Spring constructors: what production wires, minus the network.
         LlmClient pm = new LlmClientProvider(claude, registry).get();

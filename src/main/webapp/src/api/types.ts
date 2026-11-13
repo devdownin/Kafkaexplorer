@@ -1016,7 +1016,7 @@ export interface LlmUsage {
    *
    * Rapporté, jamais calculé : aucune table de prix ne vit dans cette application, donc un montant
    * affiché est un montant qu'un fournisseur a assumé. OpenRouter le renvoie sur chaque réponse ;
-   * l'API OpenAI, Ollama et SpectraLLM non, et il y reste `null`. Attention, `0` est une vraie
+   * l'API OpenAI, llama.cpp et SpectraLLM non, et il y reste `null`. Attention, `0` est une vraie
    * mesure — un modèle gratuit — et non une mesure absente.
    */
   costUsd: number | null;
@@ -1830,7 +1830,7 @@ export interface AssistantStatus {
   promptCharBudget: number;
   /** La fenêtre déclarée du point d'accès, 0 quand personne ne l'a déclarée. */
   contextWindowTokens: number;
-  /** Le fournisseur tel que le connaît `claude.provider` (OPENROUTER, OLLAMA…), pour la phrase de confidentialité. */
+  /** Le fournisseur tel que le connaît `claude.provider` (OPENROUTER, LLAMA_CPP…), pour la phrase de confidentialité. */
   providerCode: string | null;
   /** Vrai seulement là où le routage a pu être restreint — OpenRouter avec `DENY`. */
   dataRetentionRefused: boolean;

@@ -11,7 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <p><b>Off by default</b>, which is the posture rather than a convenience: the shipped
  * {@code claude.provider} is a hosted gateway, so turning the assistant on by default would send
  * topic and column names to a third party nobody chose. The local stack
- * ({@code compose/ollama.yml}) turns it on, because there nothing leaves the host.
+ * ({@code compose/llama-cpp.yml}) turns it on, because there nothing leaves the host.
  *
  * <p>The three endpoint fields are <b>overrides</b>: blank means "the same as {@code claude.*}",
  * so a deployment with one model has nothing more to set, and one that wants a small fast model
@@ -29,7 +29,7 @@ public class AssistantProperties {
     private String model = "";
     /**
      * 0 (the default) inherits {@code claude.request-timeout-seconds}, so one setting governs how
-     * long any call to the model may take — the Ollama stack's 300 s reaches both consumers.
+     * long any call to the model may take — the llama.cpp stack's 300 s reaches both consumers.
      * Terminal either way: a request that runs out is not retried, since replaying the prompt on a
      * model that has just shown it needs longer triples the wait for the same outcome.
      */

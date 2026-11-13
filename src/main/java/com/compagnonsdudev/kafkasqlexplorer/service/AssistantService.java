@@ -362,7 +362,7 @@ public class AssistantService {
     /**
      * Not a ternary: {@code a == null ? b : a + b} on {@code Double} is typed {@code double} by
      * numeric promotion, so a {@code null} branch is unboxed and throws. A local model reports no
-     * cost, so that is exactly what every repair round did on Ollama — measured by the eval, eight
+     * cost, so that is exactly what every repair round did on a local model — measured by the eval, eight
      * of fifty cases ending in a NullPointerException instead of a second answer.
      */
     private static Double add(Double a, Double b) {

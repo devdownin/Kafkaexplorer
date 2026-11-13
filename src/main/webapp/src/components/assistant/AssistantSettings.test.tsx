@@ -17,9 +17,9 @@ vi.mock('axios', () => ({ default: { get: (...a: unknown[]) => get(...a), post: 
 import { AssistantSettings } from './AssistantSettings';
 
 const STATUS = {
-  enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e4b', localDeployment: false,
-  baseUrl: 'http://ollama:11434/v1', requestTimeoutSeconds: 300, promptCharBudget: 12000, contextWindowTokens: 16384,
-  providerCode: 'OLLAMA', dataRetentionRefused: false,
+  enabled: true, problem: null, provider: 'llama.cpp', model: 'gemma-4-e4b-it', localDeployment: false,
+  baseUrl: 'http://llama-cpp:8080/v1', requestTimeoutSeconds: 300, promptCharBudget: 12000, contextWindowTokens: 16384,
+  providerCode: 'LLAMA_CPP', dataRetentionRefused: false,
 };
 
 beforeEach(() => vi.clearAllMocks());
@@ -30,12 +30,12 @@ describe('AssistantSettings', () => {
     render(<AssistantSettings contextWindowTokens={16384} promptCharCeiling={36864} />);
 
     expect(screen.getByText(/Context window declared: 16,384 tokens/)).toBeInTheDocument();
-    expect(await screen.findByText(/gemma4:e4b at http:\/\/ollama:11434\/v1 — 300 s per call/)).toBeInTheDocument();
+    expect(await screen.findByText(/gemma-4-e4b-it at http:\/\/llama-cpp:8080\/v1 — 300 s per call/)).toBeInTheDocument();
   });
 
   it('tests the assistant\'s own model through its own route', async () => {
     get.mockResolvedValue({ data: STATUS });
-    post.mockResolvedValue({ data: { ok: true, message: 'Assistant model reachable via http://ollama:11434/v1. Sample reply: OK' } });
+    post.mockResolvedValue({ data: { ok: true, message: 'Assistant model reachable via http://llama-cpp:8080/v1. Sample reply: OK' } });
     render(<AssistantSettings contextWindowTokens={0} promptCharCeiling={null} />);
 
     await userEvent.click(await screen.findByRole('button', { name: /Test the assistant model/ }));

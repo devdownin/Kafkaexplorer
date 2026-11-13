@@ -15,28 +15,31 @@ Ce guide explique comment configurer et exploiter des modèles d'IA **Open Sourc
 
 Kafka Explorer communique avec vos modèles locaux via une API compatible OpenAI. Vous pouvez utiliser plusieurs moteurs d'inférence :
 
-1.  **Ollama** (Recommandé) : Simple, performant, tourne sur Windows/Mac/Linux.
+1.  **llama.cpp** (Recommandé) : `llama-server`, un seul binaire, tourne sur Windows/Mac/Linux, CPU ou GPU.
 2.  **vLLM** : Idéal pour les serveurs Linux avec GPU.
 3.  **LM Studio** : Interface graphique simple pour explorer les modèles GGUF.
 
-### Exemple avec Ollama
+### Exemple avec llama.cpp
 
-1.  **Installez Ollama** : [ollama.com](https://ollama.com)
-2.  **Téléchargez un modèle adapté** :
+1.  **Installez llama.cpp** : [github.com/ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp#quick-start)
+    (`brew install llama.cpp`, `winget install llama.cpp`, ou une archive des releases).
+2.  **Servez un modèle adapté** — un dépôt GGUF de Hugging Face, téléchargé au premier lancement.
+    Pas sur le port par défaut de `llama-server`, 8080, qui est celui de l'application :
     ```bash
-    ollama run qwen2.5-coder:7b
+    llama-server -hf unsloth/gemma-4-E4B-it-GGUF:Q4_K_M --alias gemma-4-e4b-it --port 8083 -c 16384 --parallel 1
     ```
+    `./setup-llm.sh` (ou `setup-llm.ps1`) fait cette étape et la suivante.
 3.  **Configurez l'application** (`src/main/resources/application.yml`) :
     ```yaml
     claude:
-      provider: OLLAMA
-      base-url: http://localhost:11434/v1
-      model: qwen2.5-coder:7b
+      provider: LLAMA_CPP
+      base-url: http://localhost:8083/v1
+      model: gemma-4-e4b-it
     ```
 
-    `OLLAMA` et non `OPENAI_COMPATIBLE` : les deux parlent le même dialecte et passent par le même
+    `LLAMA_CPP` et non `OPENAI_COMPATIBLE` : les deux parlent le même dialecte et passent par le même
     client, mais `claude.structured-output` vaut `AUTO`, qui n'envoie un schéma que là où le support
-    est connu — et une passerelle anonyme ne l'est pas. Écrire `OPENAI_COMPATIBLE` devant un Ollama
+    est connu — et une passerelle anonyme ne l'est pas. Écrire `OPENAI_COMPATIBLE` devant un llama.cpp
     éteint donc la sortie contrainte, en silence, sur la catégorie de modèle qui en a le plus besoin
     (voir le point 2 ci-dessous). Gardez `OPENAI_COMPATIBLE` pour vLLM, LM Studio ou une passerelle
     dont vous n'avez pas établi le comportement.
@@ -65,7 +68,7 @@ Les petits modèles (1B à 7B) sont plus sensibles à la structure des prompts. 
     compatible OpenAI), de sorte que le décodeur ne *peut* pas produire autre chose. C'est sur un
     petit modèle que cela compte le plus, lui qui est bien plus enclin à broder autour du JSON
     demandé. `claude.structured-output` vaut `AUTO` par défaut : actif là où le support est connu
-    (Anthropic, Ollama, OpenRouter), laissé de côté sur une passerelle `OPENAI_COMPATIBLE`
+    (Anthropic, llama.cpp, OpenRouter), laissé de côté sur une passerelle `OPENAI_COMPATIBLE`
     quelconque, dont certaines répondent 400 à un `response_format` qu'elles ne connaissent pas —
     et le client se dégrade tout seul, avec un réessai sans schéma, plutôt que de vous annoncer une
     panne. Ce refus est retenu **par modèle** et non par point d'accès, ce qui n'a l'air de rien
@@ -88,21 +91,21 @@ Si vous utilisez un modèle très petit (ex: Llama 3.2 1B), il peut arriver qu'i
 
 ### L'analyse ignore des messages qu'elle a pourtant reçus
 C'est le défaut le plus silencieux de cette page, et il n'a rien à voir avec le modèle : **le
-prompt ne tient pas dans sa fenêtre de contexte**. Ollama donne 4 096 jetons à un modèle sauf si
-la machine a la VRAM pour davantage, la requête compatible OpenAI envoie `model`, `messages`,
-`max_tokens`, `temperature` et `stream` — jamais `num_ctx`, que cet endpoint ne lirait pas depuis
-le corps de toute façon — et `process-mining.prompt-char-budget` vaut 120 000 caractères, soit
-~30 000 jetons. Ollama ne refuse pas l'excédent : il enlève les messages les plus anciens jusqu'à
-ce que le prompt entre, et le journalise en DEBUG. L'analyse répond donc depuis une fraction de
-ce qu'on lui a donné, sans que rien ne dise laquelle.
+prompt ne tient pas dans sa fenêtre de contexte**. Un serveur local donne au modèle la fenêtre avec
+laquelle il a été lancé (`-c` pour `llama-server`, **divisée par son nombre de slots
+`--parallel`**), la requête compatible OpenAI envoie `model`, `messages`, `max_tokens`,
+`temperature` et `stream` — rien qui puisse changer cette fenêtre — et
+`process-mining.prompt-char-budget` vaut 120 000 caractères, soit ~30 000 jetons. Ce qui ne tient
+pas est refusé ou coupé, selon le serveur et ses réglages ; et là où c'est coupé, l'analyse répond
+depuis une fraction de ce qu'on lui a donné, sans que rien ne dise laquelle.
 
-- **Solution** : posez les deux moitiés ensemble, comme le fait `compose/ollama.yml` —
-  `OLLAMA_CONTEXT_LENGTH=16384` côté serveur (llama.cpp : `-c 16384`, vLLM : `--max-model-len`)
+- **Solution** : posez les deux moitiés ensemble, comme le fait `compose/llama-cpp.yml` —
+  `LLAMA_CPP_CONTEXT=16384` côté serveur (`-c 16384 --parallel 1` ; vLLM : `--max-model-len`)
   et `PROCESS_MINING_PROMPT_CHAR_BUDGET=16000` côté application. En élargir une seule n'apporte
-  rien, ou tronque de nouveau. Le coût d'une fenêtre plus large est le cache KV : ~2 Go pour un
+  rien, ou ne tient de nouveau plus. Le coût d'une fenêtre plus large est le cache KV : ~2 Go pour un
   7B à 16k.
-- **Vérification** : sur l'API native d'Ollama, `prompt_eval_count` dans la réponse dit combien
-  de jetons ont *réellement* été lus.
+- **Vérification** : `usage.prompt_tokens` dans la réponse dit combien de jetons ont *réellement*
+  été lus ; l'application le compare à ce qu'elle a envoyé et le signale quand l'écart est trop grand.
 
 ### Le modèle répond 200, sans réponse
 
@@ -164,4 +167,4 @@ blanche n'accepte que `SELECT`, `EXPLAIN` et `CREATE TABLE`, et un `CREATE STREA
 ksqlDB — y serait refusé. Transposez-la avant de la lancer dans l'éditeur.
 
 ---
-*Astuce : Pour une analyse de production sans GPU, le modèle **Qwen 2.5-Coder 7B** en quantification 4-bit (via Ollama) offre le meilleur rapport précision/performance.*
+*Astuce : Pour une analyse de production sans GPU, le modèle **Qwen 2.5-Coder 7B** en quantification 4-bit (GGUF Q4_K_M, via llama.cpp) offre le meilleur rapport précision/performance.*

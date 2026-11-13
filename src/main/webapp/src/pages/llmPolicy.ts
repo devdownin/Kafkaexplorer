@@ -13,7 +13,7 @@
  *
  * Deux règles tiennent ce module. D'abord, une politique n'est affirmée que là où elle est
  * *applicable* : sur OpenRouter elle est imposée au routage, donc on peut en parler ; sur Anthropic,
- * une passerelle quelconque ou un Ollama distant, cette application n'a aucun moyen de l'imposer ni
+ * une passerelle quelconque ou un llama.cpp distant, cette application n'a aucun moyen de l'imposer ni
  * de l'observer, et le dire relèverait de l'invention. Ensuite, l'inconnu se dit, il ne se tait pas
  * — c'est aussi la position d'OpenRouter, qui suppose rétention *et* entraînement quand la
  * politique d'un fournisseur ne peut être établie.

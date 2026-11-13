@@ -44,11 +44,11 @@ const submit = () =>
   fireEvent.click(screen.getByRole('button', { name: /Validate and Launch Analysis/ }));
 
 describe('SchemaValidationPanel', () => {
-  /** The provider is a choice — the page's own banner says Ollama by default. */
+  /** The provider is a choice, and the panel names whichever one answered. */
   it('names the model that produced the proposal rather than asserting Claude', () => {
-    render(<SchemaValidationPanel result={profile()} onValidate={vi.fn()} providerLabel="Ollama" />);
+    render(<SchemaValidationPanel result={profile()} onValidate={vi.fn()} providerLabel="llama.cpp" />);
 
-    expect(screen.getByText(/proposed by Ollama/)).toBeTruthy();
+    expect(screen.getByText(/proposed by llama.cpp/)).toBeTruthy();
     expect(screen.queryByText(/detected by Claude/)).toBeNull();
   });
 

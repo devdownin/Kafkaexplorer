@@ -1,0 +1,129 @@
+# A local llama.cpp model for Process Mining and the assistant, as an OVERLAY on docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f compose/llama-cpp.yml up -d
+#
+# It replaces `compose/ollama.yml`. Same role — one local model, nothing leaving the host — on
+# the runtime this repository already ships and pins for SpectraLLM (compose/spectra-hub.yml),
+# so the tree carries one inference server instead of two. What changes for an operator: a model
+# is a GGUF file named by its URL rather than a registry tag, and the provider is
+# `CLAUDE_PROVIDER=LLAMA_CPP`.
+#
+# As an overlay it states only what it adds, and it composes with the others — `-f
+# docker-compose.yml -f compose/schema-registry.yml -f compose/llama-cpp.yml` is one stack.
+services:
+  llama-cpp:
+    # The same pinned build as compose/spectra-hub.yml, read from the same variable: the `server`
+    # tag is rebuilt from llama.cpp's master several times a day, and docs/check-image-pins.py
+    # holds every llama.cpp image of this tree to one build.
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-b9828}
+    # Loopback whatever BIND_ADDR says: llama-server has no authentication. 8083 on the host
+    # because llama-server's own default, 8080, is the Explorer's.
+    ports:
+      - "127.0.0.1:${LLAMA_CPP_PORT:-8083}:8080"
+    volumes:
+      - ../scripts/llama-cpp/serve.sh:/opt/llama-cpp/serve.sh:ro
+      # Read-only: this container serves weights, `llama-cpp-model` is what writes them.
+      - llama_cpp_models:/models:ro
+    environment:
+      - LLAMA_CPP_MODEL_FILE=${LLAMA_CPP_MODEL_FILE:-gemma-4-E4B-it-Q4_K_M.gguf}
+      - LLAMA_CPP_MODEL_NAME=${LLAMA_CPP_MODEL_NAME:-gemma-4-e4b-it}
+      # THE PROMPT HAS TO FIT. The app's OpenAI-compatible client sends `model`, `messages`,
+      # `max_tokens`, `temperature` and `stream` — never a context size, which is the server's to
+      # set — and `process-mining`'s shipped prompt budget is 120 000 characters, about 30 000
+      # tokens. So the window is stated here and the budget is lowered to match below. What
+      # happens past it is the server's: the pinned build carries a refusal for a request larger
+      # than its slot (`exceeds the available context size`), which is a failed analysis rather
+      # than one that silently read a fraction — still not the outcome to configure for.
+      #
+      # 16 384 total, and ONE slot: llama-server divides `-c` across its `--parallel` slots, so
+      # two slots would be 8 192 tokens per request. Raise the window and the budget together or
+      # neither: a wider window without a wider budget buys nothing, and the reverse does not
+      # fit. The cost is the KV cache — roughly 2 GB at this size for a 7B model, on a stack that
+      # ships no memory limit.
+      - LLAMA_CPP_CONTEXT=${LLAMA_CPP_CONTEXT:-16384}
+      - LLAMA_CPP_PARALLEL=${LLAMA_CPP_PARALLEL:-1}
+      # e.g. --n-gpu-layers 99 to offload. Threads are left to llama-server's own detection.
+      - LLAMA_CPP_EXTRA_ARGS=${LLAMA_CPP_EXTRA_ARGS:-}
+    # The shell lives in scripts/llama-cpp/serve.sh — see its header for why it is not inline.
+    entrypoint: ["/bin/sh", "/opt/llama-cpp/serve.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # Covers loading the GGUF, not downloading it: on a first boot this container is
+      # legitimately unhealthy for as long as the download takes. Nothing depends on it being
+      # healthy, so that is a red line in `ps` and not a broken stack.
+      start_period: 300s
+      start_interval: 5s
+    # A model load can take a while to unwind; and like the broker, it should come back
+    # with the app after a daemon restart.
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  llama-cpp-model:
+    # The llama.cpp image again rather than a curl image: it carries curl (its healthcheck is
+    # one), it runs as root so it can write the volume, and it is one pin instead of two.
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-b9828}
+    volumes:
+      - ../scripts/llama-cpp/fetch-model.sh:/opt/llama-cpp/fetch-model.sh:ro
+      - llama_cpp_models:/models
+    # One model for both consumers, Process Mining and the assistant: EMBEDDED-LLM-SCOPE.md §7.1-7.2
+    # measured Gemma 4 E4B best on the assistant's 50 cases and at least as good as the previous
+    # qwen2.5-coder 7B on Process Mining's seeded pipeline — on Q4_K_M GGUF weights from
+    # unsloth/*, which is what is fetched here. One download, one window, one model resident.
+    # Another model: change the file, the name and the URL together.
+    environment:
+      - LLAMA_CPP_MODEL_FILE=${LLAMA_CPP_MODEL_FILE:-gemma-4-E4B-it-Q4_K_M.gguf}
+      - LLAMA_CPP_MODEL_URL=${LLAMA_CPP_MODEL_URL:-https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf}
+      # Empty: unverified. Set it to refuse a file whose digest differs.
+      - LLAMA_CPP_MODEL_SHA256=${LLAMA_CPP_MODEL_SHA256:-}
+    entrypoint: ["/bin/sh", "/opt/llama-cpp/fetch-model.sh"]
+
+  explorer:
+    # Started, not healthy, and never `llama-cpp-model`: the server is unhealthy for the whole
+    # multi-gigabyte download of a first boot, and waiting on it held the UI back for a model
+    # that is not reached until somebody opens Process Mining or asks the assistant. The broker
+    # dependency comes from the base file.
+    depends_on:
+      llama-cpp:
+        condition: service_started
+    environment:
+      # LLAMA_CPP, not OPENAI_COMPATIBLE, and the difference is not cosmetic: `claude.structured-output`
+      # defaults to AUTO, which sends a JSON Schema where support is known — ANTHROPIC, LLAMA_CPP,
+      # OPENROUTER — and deliberately leaves an arbitrary OpenAI-compatible gateway alone, since some
+      # answer 400 to a `response_format` they do not implement. Naming the wrong one here therefore
+      # turns constrained decoding **off** on the one stack this project ships for local inference,
+      # on a 4-bit small model — which is exactly the case the schema work exists for, small models
+      # being the ones most likely to editorialise around the JSON they were asked for. The client
+      # speaks the same OpenAI dialect either way, so this changes what is sent and nothing else.
+      - CLAUDE_PROVIDER=LLAMA_CPP
+      # Still explicit: the provider's own default is localhost, which inside this container is the
+      # container.
+      - CLAUDE_BASE_URL=http://llama-cpp:8080/v1
+      # The alias the server answers under (`--alias`), not the file name.
+      - CLAUDE_MODEL=${LLAMA_CPP_MODEL_NAME:-gemma-4-e4b-it}
+      # The other half of LLAMA_CPP_CONTEXT above: ~16 000 characters is ~4 000 tokens,
+      # which fits the window with room left for the JSON answer. The shipped default of
+      # 120 000 does not fit.
+      - PROCESS_MINING_PROMPT_CHAR_BUDGET=${EXPLORER_PROMPT_CHAR_BUDGET:-16000}
+      # 60 s is the shipped default and it is sized for a hosted API. A small model quantised to
+      # Q4 on CPU takes minutes on a prompt this size, and a request timeout is TERMINAL on this
+      # path — retrying replays the whole prompt on a model that has already shown it needs
+      # longer, tripling the load and the wait for the same outcome.
+      - CLAUDE_REQUEST_TIMEOUT_SECONDS=${EXPLORER_LLM_TIMEOUT:-300}
+      # The window the llama-cpp service above gives the model, declared once: it caps Process
+      # Mining's and the assistant's prompt budgets so neither can outgrow it, and the assistant
+      # inherits the timeout above. Read from the same variable as the server's `-c`, so the two
+      # cannot disagree — as long as LLAMA_CPP_PARALLEL stays 1, the window being per slot.
+      - CLAUDE_CONTEXT_WINDOW_TOKENS=${LLAMA_CPP_CONTEXT:-16384}
+      # The SQL and metric assistant (EMBEDDED-LLM-SCOPE.md) is off by default because the
+      # shipped provider is hosted and it would send table and column names out. Here the model
+      # is on this stack, so nothing leaves it: on. Its prompt is ~12 000 characters, inside the
+      # window set above, and it asks the same model as Process Mining (CLAUDE_MODEL above).
+      - EXPLORER_ASSISTANT_ENABLED=true
+
+# Merged with the base file's declarations rather than replacing them: `kafka_data`,
+# `explorer_logs` and `explorer_data` are declared there and stay.
+volumes:
+  llama_cpp_models:

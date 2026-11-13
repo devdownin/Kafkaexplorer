@@ -140,7 +140,7 @@ final class AgentModels {
                     ? Optional.of("no API key: set OPENROUTER_API_KEY or ANTHROPIC_API_KEY ("
                             + providerVariable + " is " + provider + ")")
                     : missingModel(role, modelVariable + " or CLAUDE_MODEL");
-            case "OLLAMA" -> missingModel(role, modelVariable + " or CLAUDE_MODEL");
+            case "LLAMA_CPP" -> missingModel(role, modelVariable + " or CLAUDE_MODEL");
             case SPECTRA -> missingModel(role, modelVariable + " or LLM_CHAT_MODEL_NAME");
             default -> Optional.of(providerVariable + "=" + provider
                     + " has no tool-calling API this harness can drive");
@@ -199,7 +199,7 @@ final class AgentModels {
         }
         return switch (provider) {
             case "ANTHROPIC" -> "https://api.anthropic.com/v1";
-            case "OLLAMA" -> "http://localhost:11434/v1";
+            case "LLAMA_CPP" -> "http://localhost:8083/v1";
             default -> "https://openrouter.ai/api/v1";
         };
     }

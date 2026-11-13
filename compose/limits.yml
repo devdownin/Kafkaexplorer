@@ -1,7 +1,7 @@
 # Opt-in resource limits, layered over any of the bundled stacks:
 #
 #   docker compose -f docker-compose.yml -f compose/limits.yml up -d
-#   docker compose -f docker-compose.yml -f compose/ollama.yml -f compose/limits.yml up -d
+#   docker compose -f docker-compose.yml -f compose/llama-cpp.yml -f compose/limits.yml up -d
 #
 # Why this is not in the stacks themselves. A limit that is too low is worse than none:
 # the JVM is OOM-killed rather than running a GC, and on a demo stack that reads a
@@ -22,7 +22,7 @@
 # WHAT IT APPLIES TO is now one answer instead of four. It bounds the services named
 # `explorer` and `kafka`, and since docker-compose.yml is the only base carrying those, this
 # layers onto that base and onto anything layered with it — `compose/schema-registry.yml`,
-# `compose/ollama.yml`, `compose/image.yml`, in any combination. It used to have to name
+# `compose/llama-cpp.yml`, `compose/image.yml`, in any combination. It used to have to name
 # four separate base files, which is the maintenance this reduction removed: a fifth stack
 # meant a fifth line here, and forgetting it was silent.
 #

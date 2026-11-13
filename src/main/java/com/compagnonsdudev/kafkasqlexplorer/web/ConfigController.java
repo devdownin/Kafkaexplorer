@@ -372,7 +372,7 @@ public class ConfigController {
             claudeConfig.setBaseUrl(ClaudeConfig.defaultBaseUrl(claudeConfig.getProvider()));
             // A derived value is still one the operator will be looking at, so it has to be stored
             // like an entered one. Without this, switching to Anthropic stored the provider alone
-            // and the next boot took the base URL from application.yml — which ships Ollama's —
+            // and the next boot took the base URL from application.yml — which ships another provider's —
             // pointing the new provider at the old one's endpoint, silently.
             touched.add("llmBaseUrl");
         }

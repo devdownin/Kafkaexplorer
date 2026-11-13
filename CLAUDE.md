@@ -218,7 +218,7 @@ parser/       JSON, XML and Avro (via Confluent Schema Registry) schema inferenc
 
 
 - `AssistantService` — the SQL and metric assistant behind `/api/assistant/*`, **off by default**
-  (`explorer.assistant.enabled`; on in `compose/ollama.yml`). The model proposes, the planner
+  (`explorer.assistant.enabled`; on in `compose/llama-cpp.yml`). The model proposes, the planner
   disposes: every statement passes `AssistantSqlGate` (one `SELECT`, described tables only, the
   validator, a dry `planCheck`) and nothing is run or saved by it. `EMBEDDED-LLM-SCOPE.md` and
   `docs/notes/backend-services.md` carry the rules.

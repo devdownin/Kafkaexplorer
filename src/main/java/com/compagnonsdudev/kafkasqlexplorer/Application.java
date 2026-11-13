@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 package com.compagnonsdudev.kafkasqlexplorer;
 
+import com.compagnonsdudev.kafkasqlexplorer.config.RetiredProviderGuard;
 import com.compagnonsdudev.kafkasqlexplorer.config.StoredSettingsInitializer;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -22,6 +23,8 @@ public class Application {
         // from the entry point, and so that @SpringBootTest contexts — which never call this
         // method — cannot pick up a settings file left in the working directory.
         app.addInitializers(new StoredSettingsInitializer());
+        // After it, so a provider name restored from the settings file is checked too.
+        app.addInitializers(new RetiredProviderGuard());
         app.run(args);
     }
 }

@@ -9,17 +9,17 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "claude")
 public class ClaudeConfig {
 
-    public enum Provider { ANTHROPIC, OPENAI_COMPATIBLE, OLLAMA, OPENROUTER, SPECTRA }
+    public enum Provider { ANTHROPIC, OPENAI_COMPATIBLE, LLAMA_CPP, OPENROUTER, SPECTRA }
 
     /**
      * Whether to constrain the model's answer to a JSON Schema rather than merely asking for JSON
      * in the prompt.
      *
      * <p>{@link #AUTO} is deliberately not "on everywhere". {@code OPENAI_COMPATIBLE} points at an
-     * endpoint we know nothing about — llama.cpp, vLLM, LM Studio, a corporate gateway — and an
+     * endpoint we know nothing about — vLLM, LM Studio, a corporate gateway — and an
      * unrecognised {@code response_format} is answered with a 400 by some of them. Turning a
      * working deployment into a failing one to gain a guarantee it may not need is the wrong
-     * default, so AUTO enables it where support is known ({@code ANTHROPIC}, {@code OLLAMA},
+     * default, so AUTO enables it where support is known ({@code ANTHROPIC}, {@code LLAMA_CPP},
      * {@code OPENROUTER}) and {@link #ON} is there for an operator who knows their gateway supports
      * it. Either way the client degrades on its own if the endpoint refuses the field.
      *
@@ -53,19 +53,19 @@ public class ClaudeConfig {
     /**
      * The provider a deployment that configures nothing gets.
      *
-     * <p>{@code OPENROUTER}, and it used to be {@code OLLAMA} pointed at
-     * {@code http://localhost:11434/v1}. That default only ever worked in one situation — a
-     * developer running this application outside a container with Ollama installed on the same
-     * machine — because inside every image published here {@code localhost} is the container, where
-     * no Ollama runs, so the shipped default answered a connection refused to itself. A default is
+     * <p>{@code OPENROUTER}, and it used to be a local model server on {@code localhost}. That
+     * default only ever worked in one situation — a developer running this application outside a
+     * container with that server installed on the same machine — because inside every image
+     * published here {@code localhost} is the container, where no model server runs, so the shipped
+     * default answered a connection refused to itself. A default is
      * what the largest number of people meet first, and OpenRouter is reachable from anywhere with
      * a key and one line of configuration.
      *
      * <p>It is a hosted gateway, so what it costs is stated rather than implied: message digests
      * leave the host, and both the Settings banner and the Process Mining page read that off the
      * resolved address (see {@link #isLocalDeployment()}) rather than off this constant. A
-     * deployment that must keep everything in-house sets {@code claude.provider} to {@code OLLAMA}
-     * or {@code SPECTRA} — {@code compose/ollama.yml} and the SpectraLLM stacks name their
+     * deployment that must keep everything in-house sets {@code claude.provider} to {@code LLAMA_CPP}
+     * or {@code SPECTRA} — {@code compose/llama-cpp.yml} and the SpectraLLM stacks name their
      * provider explicitly and are untouched by this.
      */
     private Provider provider = Provider.OPENROUTER;
@@ -77,7 +77,7 @@ public class ClaudeConfig {
     private int snapshotWindowSize = 100;
     private int snapshotWindowTimeoutSeconds = 30;
     /**
-     * Per-call timeout for HTTP-based LLM providers (OpenAI-compatible, Ollama, SpectraLLM),
+     * Per-call timeout for HTTP-based LLM providers (OpenAI-compatible, llama.cpp, SpectraLLM),
      * applied as both connect and request timeout. Local audit models can be slow, so this
      * defaults high; lower it to fail fast against a hosted endpoint.
      */
@@ -89,8 +89,9 @@ public class ClaudeConfig {
      * {@code process-mining.prompt-char-budget}, the assistant's
      * {@code explorer.assistant.prompt-char-budget}), and the window that has to hold that prompt
      * belongs to the endpoint, which nothing here can read. Two budgets set by hand against one
-     * window is how they stopped agreeing — Ollama silently drops what does not fit. Declared once
-     * (compose/ollama.yml passes {@code OLLAMA_CONTEXT_LENGTH} through), it caps both: see
+     * window is how they stopped agreeing — and a local server may drop what does not fit without
+     * saying so. Declared once (compose/llama-cpp.yml passes {@code LLAMA_CPP_CONTEXT} through), it
+     * caps both: see
      * {@link #effectivePromptCharBudget}.
      */
     private int contextWindowTokens = 0;
@@ -152,7 +153,7 @@ public class ClaudeConfig {
      *
      * <p>A live session calls the model every time a window is cut, on a timer, and its SSE
      * emitter lives twelve hours: a tab left open overnight is on the order of a thousand
-     * analyses. That was free while the shipped provider was a local Ollama and is a real bill
+     * analyses. That was free while the shipped provider was a local model and is a real bill
      * now that it bills per token, and nothing anywhere bounded it — the only limits in the
      * pipeline are on prompt size and window count, neither of which is money.
      *
@@ -163,7 +164,7 @@ public class ClaudeConfig {
      *
      * <p>It bounds the <em>analyses</em> of one session, not the profiling call that precedes it:
      * profiling is a separate request the server does not attribute to a session. And it can only
-     * be enforced where cost is reported — on a provider that prices nothing (Ollama, SpectraLLM,
+     * be enforced where cost is reported — on a provider that prices nothing (llama.cpp, SpectraLLM,
      * the OpenAI API) the session says the bound cannot apply rather than counting calls it cannot
      * price, which would be a budget in name only.
      */
@@ -389,7 +390,7 @@ public class ClaudeConfig {
             case ON -> true;
             case OFF -> false;
             case AUTO -> provider == Provider.ANTHROPIC
-                || provider == Provider.OLLAMA
+                || provider == Provider.LLAMA_CPP
                 || provider == Provider.OPENROUTER;
         };
     }
@@ -397,7 +398,7 @@ public class ClaudeConfig {
     /**
      * Whether a call can be made at all without a key. OpenRouter is a hosted gateway that answers
      * 401 to an anonymous request, so an empty key there is not "optional credentials" as it is on
-     * a local Ollama — it is a deployment that cannot analyse anything, and the Process Mining page
+     * a local llama.cpp server — it is a deployment that cannot analyse anything, and the Process Mining page
      * says so up front rather than after the first failed window.
      */
     public boolean isApiKeyRequired() {
@@ -478,8 +479,8 @@ public class ClaudeConfig {
      *
      * <p>This is a privacy claim, not a convenience flag: the Process Mining page renders it as
      * "It is a loopback address, so no message content leaves this host." It used to be true by
-     * <em>provider</em> — {@code provider == OLLAMA} short-circuited the check — so pointing Ollama
-     * at a GPU box (a thoroughly ordinary setup: {@code CLAUDE_BASE_URL=http://gpu-box:11434/v1})
+     * <em>provider</em> — the local provider short-circuited the check — so pointing it
+     * at a GPU box (a thoroughly ordinary setup: {@code CLAUDE_BASE_URL=http://gpu-box:8083/v1})
      * kept the reassurance on screen while every message digest went over the network. A claim about
      * where data goes has to be read off the address the data is actually sent to.
      */
@@ -491,7 +492,7 @@ public class ClaudeConfig {
         return switch (provider) {
             case ANTHROPIC -> "Anthropic";
             case OPENAI_COMPATIBLE -> "OpenAI-compatible";
-            case OLLAMA -> "Ollama";
+            case LLAMA_CPP -> "llama.cpp";
             case OPENROUTER -> "OpenRouter";
             case SPECTRA -> "SpectraLLM";
         };
@@ -501,7 +502,9 @@ public class ClaudeConfig {
         return switch (provider) {
             case ANTHROPIC -> "https://api.anthropic.com";
             case OPENAI_COMPATIBLE -> "";
-            case OLLAMA -> "http://localhost:11434/v1";
+            // Not llama-server's own default port, 8080: that one is this application's. 8083 is
+            // what compose/llama-cpp.yml publishes and what setup-llm.sh starts the server on.
+            case LLAMA_CPP -> "http://localhost:8083/v1";
             case OPENROUTER -> "https://openrouter.ai/api/v1";
             case SPECTRA -> "http://localhost:8080";
         };
@@ -542,7 +545,8 @@ public class ClaudeConfig {
         return switch (provider) {
             case ANTHROPIC -> "claude-3-5-sonnet-20241022";
             case OPENAI_COMPATIBLE -> "";
-            case OLLAMA -> "qwen3:4b";
+            // The alias compose/llama-cpp.yml and setup-llm.sh serve the model under (`--alias`).
+            case LLAMA_CPP -> "gemma-4-e4b-it";
             case OPENROUTER -> "openai/gpt-4o-mini";
             case SPECTRA -> "";
         };
