@@ -70,6 +70,8 @@ interface Props {
   onTogglePin: () => void;
   /** Valeurs observées au chemin choisi, tirées des messages déjà échantillonnés. */
   fieldValues: string[];
+  /** Noms de headers portés par les messages déjà chargés — la liste du mode Header. */
+  headerNames: string[];
   following: boolean;
   onToggleFollow: () => void;
   followAvailable: boolean;
@@ -93,7 +95,7 @@ interface Props {
 
 const TopicSearchPanel: React.FC<Props> = ({
   schemaPaths, partitionCount, topicSize, criteria, onChange, onSearch, onContinue, onCancel,
-  onCopyLink, onClear, onExport, onApply, history, pinned, onTogglePin, fieldValues, following,
+  onCopyLink, onClear, onExport, onApply, history, pinned, onTogglePin, fieldValues, headerNames, following,
   onToggleFollow, followAvailable, advancedOpen, onToggleAdvanced, searching,
   active, coverage, ranCriteria, warnings, error, errors, stopped, loadedHits,
 }) => {
@@ -245,16 +247,20 @@ const TopicSearchPanel: React.FC<Props> = ({
         <div className="flex flex-wrap items-start gap-2">
           <div className="flex-1 min-w-[12rem]">
             {criteria.mode === 'HEADER' ? (
-              // Les noms de headers ne viennent d'aucun schéma : saisie libre, pas de liste.
-              <Input
+              // Les noms de headers ne viennent d'aucun schéma, mais les messages déjà chargés les
+              // portent : on les propose, comme les chemins en mode Field. Un Combobox et non un
+              // Select, parce que la liste n'est pas exhaustive — un header que l'échantillon ne
+              // montre pas reste une saisie valide.
+              <Combobox
                 id={FIELD_IDS.field}
                 value={criteria.field}
-                onChange={e => set('field', e.target.value)}
+                onChange={value => set('field', value)}
+                options={headerNames}
                 placeholder="Header name, e.g. correlation-id"
                 aria-label="Header name"
-                aria-invalid={Boolean(errors.field)}
+                invalid={Boolean(errors.field)}
                 aria-describedby={errors.field ? `${FIELD_IDS.field}-error` : undefined}
-                className="w-full"
+                maxVisible={12}
               />
             ) : (
               <Select

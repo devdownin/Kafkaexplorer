@@ -25,6 +25,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
+import userEvent from '@testing-library/user-event';
 import type { TopicDetailResponse, TopicMessage } from '../api/types';
 import { previewOf } from '../components/topic/topicSearch';
 
@@ -136,6 +137,35 @@ describe('Topic Explorer page', () => {
     );
     const group = await screen.findByRole('group', { name: 'Read mode' });
     expect(within(group).getByRole('button', { name: 'Latest' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('offers the header names and values the loaded messages carry, in Header mode', async () => {
+    const user = userEvent.setup();
+    await renderAt('');
+    await waitFor(() => expect(screen.getByText(TOPIC)).toBeInTheDocument());
+
+    await user.click(await screen.findByRole('button', { name: 'Header' }));
+    const name = await screen.findByLabelText('Header name');
+    await user.click(name);
+    // The sample carries `correlation-id`: it is proposed, as a field path is in Field mode.
+    expect(await screen.findByRole('option', { name: 'correlation-id' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('option', { name: 'correlation-id' }));
+    // And once a name is chosen, the values it carries.
+    const value = await screen.findByLabelText('Value');
+    await user.click(value);
+    expect(await screen.findByRole('option', { name: 'ORD-1042' })).toBeInTheDocument();
+  });
+
+  it('keeps a header the messages do not show a valid free entry', async () => {
+    const user = userEvent.setup();
+    await renderAt('');
+    await waitFor(() => expect(screen.getByText(TOPIC)).toBeInTheDocument());
+
+    await user.click(await screen.findByRole('button', { name: 'Header' }));
+    await user.type(await screen.findByLabelText('Header name'), 'x-tenant');
+
+    expect(screen.getByLabelText('Header name')).toHaveValue('x-tenant');
   });
 
   it('runs the search a shared link carries', async () => {
