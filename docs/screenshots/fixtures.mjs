@@ -506,7 +506,7 @@ export const config = {
     ANTHROPIC: { baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-5' },
     OPENROUTER: { baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
     OPENAI_COMPATIBLE: { baseUrl: '', model: '' },
-    OLLAMA: { baseUrl: 'http://localhost:11434/v1', model: 'qwen3:4b' },
+    LLAMA_CPP: { baseUrl: 'http://localhost:8083/v1', model: 'gemma-4-e4b-it' },
     SPECTRA: { baseUrl: 'http://localhost:8080', model: '' },
   },
   settingsPersisted: true,

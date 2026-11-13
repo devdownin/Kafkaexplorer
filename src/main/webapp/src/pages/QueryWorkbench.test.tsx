@@ -1155,11 +1155,11 @@ describe('QueryWorkbench — bounded scan evidence', () => {
 });
 
 describe('QueryWorkbench — the assistant', () => {
-  const STATUS = { enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e2b', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0, providerCode: 'OLLAMA', dataRetentionRefused: false };
+  const STATUS = { enabled: true, problem: null, provider: 'llama.cpp', model: 'gemma-4-e2b-it', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0, providerCode: 'LLAMA_CPP', dataRetentionRefused: false };
   const PROPOSAL = {
     status: 'OK', sql: 'SELECT status FROM demo_orders LIMIT 100', explanation: 'Lists statuses.',
     missing: null, validated: true, validationError: null, repairRounds: 0,
-    tablesConsidered: ['demo_orders'], tablesOmitted: [], model: 'gemma4:e2b', usage: null,
+    tablesConsidered: ['demo_orders'], tablesOmitted: [], model: 'gemma-4-e2b-it', usage: null,
     durationMs: 1200, error: null,
   };
   const withStatus = (status: unknown) => get.mockImplementation((url: string) => {

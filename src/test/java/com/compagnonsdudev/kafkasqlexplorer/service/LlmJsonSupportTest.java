@@ -34,7 +34,7 @@ class LlmJsonSupportTest {
 
     /**
      * The defect this class was blind to, on the model the application ships as its default.
-     * {@code qwen3:4b} is a reasoning model: through Ollama it emits its whole train of thought
+     * {@code qwen3:4b} is a reasoning model: it emits its whole train of thought
      * before the answer — and a model reasoning about JSON quotes fragments of that JSON while it
      * does so, so the first {@code &#123;} in the text sits inside the trace. The balanced scan then
      * returned a piece of the deliberation, and a run that had produced a perfectly good answer was

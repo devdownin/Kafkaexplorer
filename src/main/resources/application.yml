@@ -292,7 +292,7 @@ explorer:
   # ---------------------------------------------------------------------------------------------
   assistant:
     # Off by default: claude.provider ships as a hosted gateway, so an assistant on by default
-    # would send topic and column names to a third party nobody chose. compose/ollama.yml turns
+    # would send topic and column names to a third party nobody chose. compose/llama-cpp.yml turns
     # it on, because there nothing leaves the host. It proposes; it never runs or saves anything.
     enabled: ${EXPLORER_ASSISTANT_ENABLED:false}
     # Blank = the same as claude.*; set them to give the assistant a smaller, faster model than
@@ -301,13 +301,13 @@ explorer:
     base-url: ${EXPLORER_ASSISTANT_BASE_URL:}
     model: ${EXPLORER_ASSISTANT_MODEL:}
     # 0 inherits claude.request-timeout-seconds: one budget for every call to the model (the
-    # Ollama stack's 300 s reaches both consumers). Terminal, not retried.
+    # llama.cpp stack's 300 s reaches both consumers). Terminal, not retried.
     request-timeout-seconds: 0
     # What the model is shown of the catalogue: names and types only, never a message value.
     max-tables: 5
     max-columns-per-table: 40
     # About 3 000 tokens, capped by claude.context-window-tokens when the window is declared —
-    # Ollama truncates the excess silently (see compose/ollama.yml).
+    # the excess does not fit, and some servers drop it silently (see compose/llama-cpp.yml).
     prompt-char-budget: 12000
     # A statement the planner refuses is sent back once with the planner's own sentence.
     repair-rounds: 1
@@ -488,12 +488,11 @@ process-mining:
   max-messages-per-topic-in-prompt: 60
   # ~30k tokens for the message section. THE MODEL'S CONTEXT WINDOW HAS TO BE LARGER, and
   # nothing here can check that: the window belongs to the endpoint, not to this application.
-  # It matters most where a small local model is served, which is the default deployment —
-  # Ollama's window is 4 096 tokens unless the machine has the VRAM for more, and the
-  # OpenAI-compatible request carries no `num_ctx` to change it, so a prompt this size is
-  # silently truncated to the newest messages that fit (Ollama logs that at DEBUG, i.e. nowhere
-  # on a default install). Raise the window (`OLLAMA_CONTEXT_LENGTH`, llama.cpp's `-c`) or lower
-  # this budget so the two agree — the bundled stacks set both together and say so.
+  # It matters most where a small local model is served: its window is whatever the server was
+  # started with, the OpenAI-compatible request carries nothing to change it, and a prompt this
+  # size then either is refused or is cut to what fits, depending on the server. Raise the window
+  # (llama.cpp's `-c`, `LLAMA_CPP_CONTEXT` in compose/llama-cpp.yml — divided by `--parallel`) or
+  # lower this budget so the two agree — the bundled stacks set both together and say so.
   prompt-char-budget: 120000
   # What the analysis prompt inlines per message, as opposed to what the digest carries.
   # `max-sample-fields` above is 40 because field profiling aggregates those values per path
@@ -537,17 +536,17 @@ management:
       application: kafka-sql-explorer
 
 claude:
-  # ANTHROPIC | OPENAI_COMPATIBLE | OLLAMA | OPENROUTER | SPECTRA
+  # ANTHROPIC | OPENAI_COMPATIBLE | LLAMA_CPP | OPENROUTER | SPECTRA
   #
   # OPENROUTER is the default: one hosted gateway in front of most vendors' models, so a key and a
-  # model slug are all a deployment needs. It replaced OLLAMA at http://localhost:11434/v1, which
-  # only ever worked for a developer running this application outside a container with Ollama on
-  # the same machine — inside every image published here `localhost` is the container itself, so
+  # model slug are all a deployment needs. It replaced a local model server on localhost, which
+  # only ever worked for a developer running this application outside a container with that
+  # server on the same machine — inside every image published here `localhost` is the container itself, so
   # the shipped default answered a connection refused to itself.
   #
   # What it costs is stated rather than implied: this is a hosted endpoint, so the message digests
-  # Process Mining builds leave the host. Keep everything in-house with provider: OLLAMA (see
-  # compose/ollama.yml) or provider: SPECTRA (compose/spectra-hub.yml) — both of those
+  # Process Mining builds leave the host. Keep everything in-house with provider: LLAMA_CPP (see
+  # compose/llama-cpp.yml) or provider: SPECTRA (compose/spectra-hub.yml) — both of those
   # stacks name their provider explicitly and are unaffected by this default.
   provider: OPENROUTER
   # The key for whichever provider is configured — the variable names are historical, and both are
@@ -563,14 +562,15 @@ claude:
   snapshot-window-size: 100
   snapshot-window-timeout-seconds: 30
   # Per-call timeout (connect + request) for HTTP LLM providers (OpenAI-compatible,
-  # Ollama, SpectraLLM). Transient failures (timeout, 5xx, 429) are retried with backoff;
+  # llama.cpp, SpectraLLM). Transient failures (timeout, 5xx, 429) are retried with backoff;
   # 4xx fail fast. Local audit models can be slow, hence the generous default.
   request-timeout-seconds: 60
   # The serving endpoint's context window in tokens; 0 = not declared, budgets apply as set.
   # Declared, it caps every consumer's prompt budget (process-mining.prompt-char-budget and
   # explorer.assistant.prompt-char-budget) to (window - max-tokens) x 3 characters, so the prompt
   # and the answer fit — the two budgets were otherwise tuned by hand against one window, and
-  # Ollama drops the excess silently. compose/ollama.yml passes OLLAMA_CONTEXT_LENGTH here.
+  # a local server may drop the excess silently. compose/llama-cpp.yml passes LLAMA_CPP_CONTEXT
+  # here.
   context-window-tokens: 0
   # SPECTRA provider only: audit Kafka exchanges via a local SpectraLLM instance
   # (POST <base-url>/api/query). Set provider: SPECTRA and base-url to the SpectraLLM
@@ -584,7 +584,7 @@ claude:
   # Whether the answer is constrained to a JSON Schema rather than merely requested as JSON in
   # the prompt. Constraining removes the "model wrapped its JSON in prose" failure instead of
   # reporting it, which matters most for the small local model this ships with by default.
-  # AUTO (default) enables it where support is known — ANTHROPIC, OLLAMA and OPENROUTER — and
+  # AUTO (default) enables it where support is known — ANTHROPIC, LLAMA_CPP and OPENROUTER — and
   # leaves an arbitrary OPENAI_COMPATIBLE gateway alone, because an unrecognised response_format is
   # a 400 on some of them and breaking a working deployment is the wrong default. ON forces it for
   # a gateway you know supports it; OFF disables it everywhere. Whatever the setting, a client that
@@ -628,7 +628,7 @@ claude:
   #
   # Une session live appelle le modèle à chaque fenêtre, sur minuterie, et son flux SSE vit douze
   # heures : un onglet laissé ouvert la nuit, c'est de l'ordre du millier d'analyses. C'était sans
-  # conséquence tant que le fournisseur livré était un Ollama local ; ça ne l'est plus depuis qu'il
+  # conséquence tant que le fournisseur livré était un modèle local ; ça ne l'est plus depuis qu'il
   # facture au token, et rien ne le bornait — les seules limites du pipeline portent sur la taille
   # du prompt et le nombre de messages, pas sur l'argent.
   #

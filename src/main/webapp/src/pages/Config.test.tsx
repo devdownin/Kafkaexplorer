@@ -33,7 +33,7 @@ const serverConfig = {
   llmApiKeyConfigured: true,
   llmProviderDefaults: {
     OPENROUTER: { baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-4o-mini' },
-    OLLAMA: { baseUrl: 'http://localhost:11434/v1', model: 'qwen3:4b' },
+    LLAMA_CPP: { baseUrl: 'http://localhost:8083/v1', model: 'gemma-4-e4b-it' },
     ANTHROPIC: { baseUrl: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-20241022' },
     OPENAI_COMPATIBLE: { baseUrl: '', model: '' },
     SPECTRA: { baseUrl: 'http://localhost:8080', model: '' },
@@ -150,7 +150,7 @@ describe('Config — testing a model', () => {
     await screen.findByDisplayValue('openai/gpt-4o-mini');
 
     expect(screen.queryByText(/connection currently in force/i)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('radio', { name: /ollama/i }));
+    await user.click(screen.getByRole('radio', { name: /llama\.cpp/i }));
 
     expect(await screen.findByText(/connection currently in force/i)).toBeInTheDocument();
   });
@@ -223,7 +223,7 @@ describe('Config — the model shortlist', () => {
   it('offers no picker for a provider that publishes no catalogue', async () => {
     mockedAxios.get.mockImplementation((url: string) => {
       if (url === '/api/config') {
-        return Promise.resolve({ data: { ...serverConfig, llmProvider: 'OLLAMA', llmModel: 'qwen3:4b' } });
+        return Promise.resolve({ data: { ...serverConfig, llmProvider: 'LLAMA_CPP', llmModel: 'qwen3:4b' } });
       }
       return Promise.reject(new Error(`unexpected GET ${url}`));
     });
@@ -244,9 +244,9 @@ describe('Config — provider defaults', () => {
     renderPage();
     await screen.findByDisplayValue('openai/gpt-4o-mini');
 
-    await user.click(screen.getByRole('radio', { name: /ollama/i }));
+    await user.click(screen.getByRole('radio', { name: /llama\.cpp/i }));
 
-    expect(await screen.findByDisplayValue('qwen3:4b')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('gemma-4-e4b-it')).toBeInTheDocument();
   });
 });
 
@@ -662,7 +662,7 @@ describe('Config — decoding and routing', () => {
     const user = userEvent.setup();
     mockedAxios.get.mockImplementation((url: string) => {
       if (url === '/api/config') {
-        return Promise.resolve({ data: { ...serverConfig, llmProvider: 'OLLAMA', llmModel: 'qwen3:4b' } });
+        return Promise.resolve({ data: { ...serverConfig, llmProvider: 'LLAMA_CPP', llmModel: 'qwen3:4b' } });
       }
       return Promise.reject(new Error(`unexpected GET ${url}`));
     });

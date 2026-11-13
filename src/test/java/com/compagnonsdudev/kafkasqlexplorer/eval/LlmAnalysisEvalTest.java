@@ -99,7 +99,7 @@ class LlmAnalysisEvalTest {
             System.getenv("OPENROUTER_API_KEY"),
             System.getenv("ANTHROPIC_API_KEY"));
         if (key != null) config.setApiKey(key.trim());
-        // The stack's own timeout, read like the stack reads it: compose/ollama.yml sets 300 s for a
+        // The stack's own timeout, read like the stack reads it: compose/llama-cpp.yml sets 300 s for a
         // CPU-served model, and without this the eval kept the 60 s default and measured a slow
         // model as a broken one.
         String timeout = setting("CLAUDE_REQUEST_TIMEOUT_SECONDS", "claude.request-timeout-seconds");

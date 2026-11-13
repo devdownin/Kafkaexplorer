@@ -56,7 +56,7 @@ interface ClusterConfig {
    * d'une réponse plus ancienne.
    */
   connectionError?: string | null;
-  llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'OLLAMA' | 'OPENROUTER' | 'SPECTRA';
+  llmProvider: 'ANTHROPIC' | 'OPENAI_COMPATIBLE' | 'LLAMA_CPP' | 'OPENROUTER' | 'SPECTRA';
   llmProviderLabel?: string;
   llmApiKey?: string;
   llmApiKeyConfigured?: boolean;
@@ -88,7 +88,7 @@ interface ClusterConfig {
   llmStructuredOutputActive?: boolean;
   /**
    * Le contrat de décodage demandé au point d'accès. `AUTO` ne l'active que là où le support est
-   * connu (Anthropic, Ollama, OpenRouter) : une passerelle inconnue peut répondre 400 à un
+   * connu (Anthropic, llama.cpp, OpenRouter) : une passerelle inconnue peut répondre 400 à un
    * `response_format` qu'elle n'implémente pas, et transformer un déploiement qui marche en
    * déploiement qui échoue pour gagner une garantie dont il n'a peut-être pas besoin est le
    * mauvais défaut. `ON` est l'option de qui sait mieux. Le serveur l'acceptait et le validait
@@ -159,7 +159,7 @@ const LLM_PROVIDERS = [
   { value: 'ANTHROPIC', label: 'Anthropic', description: 'Hosted Claude models' },
   { value: 'OPENROUTER', label: 'OpenRouter', description: 'One key, many hosted models (vendor/model)' },
   { value: 'OPENAI_COMPATIBLE', label: 'OpenAI-compatible', description: 'vLLM, LM Studio or compatible gateways' },
-  { value: 'OLLAMA', label: 'Ollama', description: 'Lightweight local open-source models' },
+  { value: 'LLAMA_CPP', label: 'llama.cpp', description: 'Local open-source models (GGUF) on a llama-server' },
   { value: 'SPECTRA', label: 'SpectraLLM', description: 'Local SpectraLLM instance (RAG + fine-tuned models)' },
 ] as const;
 
@@ -719,8 +719,8 @@ const Config: React.FC = () => {
       const slugProblem = validateModelSlug(config.llmProvider, config.llmModel);
       if (slugProblem) errors.llmModel = slugProblem;
     }
-    if (config.llmProvider !== 'OLLAMA' && !config.llmBaseUrl?.trim()) {
-      errors.llmBaseUrl = 'A base URL is required for every provider but Ollama, which defaults to the local one.';
+    if (config.llmProvider !== 'LLAMA_CPP' && !config.llmBaseUrl?.trim()) {
+      errors.llmBaseUrl = 'A base URL is required for every provider but llama.cpp, which defaults to the local one.';
     }
     if (API_KEY_REQUIRED.has(config.llmProvider)
       && !config.llmApiKeyConfigured
@@ -812,19 +812,19 @@ const Config: React.FC = () => {
       }
       /*
        * Le modèle ne suit que lorsque celui en place ne peut pas convenir au nouveau fournisseur :
-       * les slugs OpenRouter s'appellent `vendor/model`, donc un `qwen3:4b` hérité d'Ollama n'y
+       * les slugs OpenRouter s'appellent `vendor/model`, donc un nom de modèle local hérité de llama.cpp n'y
        * résout rien et l'erreur arriverait à la première fenêtre analysée. La valeur proposée vient
        * du serveur, jamais d'une constante écrite ici.
        */
       const staleModel =
         !prev.llmModel
         || (provider === 'OPENROUTER' && !prev.llmModel.includes('/'))
-        || (provider === 'OLLAMA'
+        || (provider === 'LLAMA_CPP'
             && (prev.llmModel.startsWith('claude-') || prev.llmModel.includes('/')));
       if (staleModel && suggested?.model) {
         next.llmModel = suggested.model;
       }
-      if (provider === 'OLLAMA') {
+      if (provider === 'LLAMA_CPP') {
         next.llmApiKey = '';
       }
       if (provider === 'SPECTRA') {
@@ -1116,7 +1116,7 @@ const Config: React.FC = () => {
 
           {/* Ce que devient le contenu envoyé au modèle, dans les quatre cas où la réponse
               diffère — voir `llmPolicy.ts`. Lu sur l'adresse résolue et sur le réglage de routage,
-              jamais sur le nom du fournisseur : un Ollama pointé sur une autre machine est
+              jamais sur le nom du fournisseur : un llama.cpp pointé sur une autre machine est
               distant, et « aucune rétention » ne se dit que là où le routage peut l'imposer. */}
           {policy && (
             <div className={`rounded-lg border px-4 py-3 text-xs ${
@@ -1129,7 +1129,7 @@ const Config: React.FC = () => {
               <p className="mt-1 opacity-90">{policy.detail}</p>
               {policy.tone !== 'local' && (
                 <p className="mt-1 opacity-90">
-                  Switch to Ollama or SpectraLLM to keep everything on your own network.
+                  Switch to llama.cpp or SpectraLLM to keep everything on your own network.
                 </p>
               )}
               {/* Le bandeau décrit ce qui tourne, pas ce qui est tapé — le dire vaut mieux que de
@@ -1302,7 +1302,7 @@ const Config: React.FC = () => {
             </Field>
             <Field
               label="Base URL"
-              required={config.llmProvider !== 'OLLAMA'}
+              required={config.llmProvider !== 'LLAMA_CPP'}
               id={fieldIds.llmBaseUrl}
               error={errors.llmBaseUrl}
             >
@@ -1313,7 +1313,7 @@ const Config: React.FC = () => {
                   value={config.llmBaseUrl}
                   onChange={e => set('llmBaseUrl', e.target.value)}
                   placeholder={
-                    config.llmProvider === 'OLLAMA' ? 'http://localhost:11434/v1'
+                    config.llmProvider === 'LLAMA_CPP' ? 'http://localhost:8083/v1'
                     : config.llmProvider === 'SPECTRA' ? 'http://localhost:8080'
                     : config.llmProvider === 'OPENROUTER' ? 'https://openrouter.ai/api/v1'
                     : 'https://...'}
@@ -1332,7 +1332,7 @@ const Config: React.FC = () => {
                * distinguait sans raison. « in memory » n'était plus vrai depuis que les réglages
                * survivent à un redémarrage, et il manquait le second état : un champ tapé puis
                * effacé *efface* la clé enregistrée — ce que faisait déjà, en silence, le passage à
-               * Ollama ou SpectraLLM, qui vide ce champ.
+               * llama.cpp ou SpectraLLM, qui vide ce champ.
                */
               description={secretHint(config.llmApiKeyConfigured, config.llmApiKey, 'API key')
                 ?? (config.llmApiKeyConfigured ? undefined : 'No key is configured.')}
@@ -1343,7 +1343,7 @@ const Config: React.FC = () => {
                   value={config.llmApiKey ?? ''}
                   onChange={e => set('llmApiKey', e.target.value)}
                   placeholder={
-                    config.llmProvider === 'OLLAMA' || config.llmProvider === 'SPECTRA'
+                    config.llmProvider === 'LLAMA_CPP' || config.llmProvider === 'SPECTRA'
                       ? 'Optional for local deployments'
                       : config.llmProvider === 'OPENROUTER' ? 'sk-or-v1-…' : 'sk-…'}
                 />

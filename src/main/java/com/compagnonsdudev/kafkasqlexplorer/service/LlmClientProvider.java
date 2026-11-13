@@ -15,8 +15,8 @@ import org.springframework.stereotype.Component;
  * services that call the model used to resolve their client once, in their constructor. Everything
  * read per call (base URL, model) followed a change, but the two things baked into the client did
  * not: the {@link ClaudeConfig.Provider} chosen by {@link LlmClientFactory} and the API key the
- * Anthropic SDK client is built with. So switching Ollama → Anthropic in Settings left every
- * analysis on Ollama, and {@code POST /api/config/test-llm} — which has always built a fresh client
+ * Anthropic SDK client is built with. So switching a local provider → Anthropic in Settings left every
+ * analysis on the local one, and {@code POST /api/config/test-llm} — which has always built a fresh client
  * — reported the new provider reachable. A settings page that confirms a change the engine ignores
  * is worse than one that refuses it.
  *

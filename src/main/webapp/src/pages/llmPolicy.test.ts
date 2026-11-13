@@ -11,7 +11,7 @@ describe('describeDataPolicy', () => {
   });
 
   it('reads a loopback endpoint as staying on the host', () => {
-    const policy = describeDataPolicy({ llmProvider: 'OLLAMA', llmLocalDeployment: true });
+    const policy = describeDataPolicy({ llmProvider: 'LLAMA_CPP', llmLocalDeployment: true });
     expect(policy?.tone).toBe('local');
     expect(policy?.detail).toContain('leaves this machine');
   });
@@ -47,7 +47,7 @@ describe('describeDataPolicy', () => {
    * exactement l'affirmation invérifiable que la pastille de connexion a été réécrite pour retirer.
    */
   it('refuses to claim a policy where none can be enforced', () => {
-    for (const llmProvider of ['ANTHROPIC', 'OPENAI_COMPATIBLE', 'SPECTRA', 'OLLAMA']) {
+    for (const llmProvider of ['ANTHROPIC', 'OPENAI_COMPATIBLE', 'SPECTRA', 'LLAMA_CPP']) {
       const policy = describeDataPolicy({ llmProvider, llmLocalDeployment: false });
       expect(policy?.tone, llmProvider).toBe('unenforceable');
       expect(policy?.detail, llmProvider).toContain('its own terms');
@@ -79,7 +79,7 @@ describe('describeRuntimeModel', () => {
 
   it('says nothing at all before anything is loaded', () => {
     expect(describeRuntimeModel(null, null)).toBeNull();
-    expect(describeRuntimeModel('OLLAMA', '   ')).toBeNull();
+    expect(describeRuntimeModel('LLAMA_CPP', '   ')).toBeNull();
   });
 });
 

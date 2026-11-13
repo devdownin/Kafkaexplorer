@@ -59,7 +59,7 @@ class AssistantServiceTest {
     @BeforeEach
     void setUp() {
         ClaudeConfig claude = new ClaudeConfig();
-        claude.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claude.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
         claude.setModel("gemma4:e2b");
         properties = new AssistantProperties();
         properties.setEnabled(true);
@@ -121,9 +121,9 @@ class AssistantServiceTest {
 
     @Test
     void costsThatWereNotReportedAreSummedWithoutFailing() {
-        // A local model reports tokens and no cost: the shape every repair round summed on Ollama.
+        // A local model reports tokens and no cost: the shape every repair round summed on a local model.
         com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage local =
-            new com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage(100L, 20L, null, null, null, 1000L, "Ollama", "m");
+            new com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage(100L, 20L, null, null, null, 1000L, "llama.cpp", "m");
         com.compagnonsdudev.kafkasqlexplorer.domain.LlmUsage sum = AssistantService.sum(local, local);
 
         assertNull(sum.costUsd(), "no cost reported is still no cost, not zero");
@@ -188,7 +188,7 @@ class AssistantServiceTest {
 
     @Test
     void aFailedCallReportsTheRealReason() {
-        model.answers.add(new IllegalStateException("connection refused: ollama:11434"));
+        model.answers.add(new IllegalStateException("connection refused: llama-cpp:8080"));
 
         AssistantSqlResponse response = service.sql(generate("statuses"));
 
@@ -277,10 +277,10 @@ class AssistantServiceTest {
 
         assertTrue(status.enabled());
         assertNull(status.problem());
-        assertEquals("Ollama", status.provider());
+        assertEquals("llama.cpp", status.provider());
         assertEquals("gemma4:e2b", status.model());
-        assertTrue(status.localDeployment(), "localhost:11434 is a loopback address");
-        assertEquals("http://localhost:11434/v1", status.baseUrl());
+        assertTrue(status.localDeployment(), "localhost:8083 is a loopback address");
+        assertEquals("http://localhost:8083/v1", status.baseUrl());
         assertEquals(60, status.requestTimeoutSeconds(), "inherited from claude.*");
         assertEquals(12_000, status.promptCharBudget(), "no window declared: the budget as configured");
         assertEquals(0, status.contextWindowTokens());
@@ -289,7 +289,7 @@ class AssistantServiceTest {
     @Test
     void aDeclaredWindowCapsTheAssistantsBudget() {
         ClaudeConfig claude = new ClaudeConfig();
-        claude.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claude.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
         claude.setMaxTokens(4096);
         claude.setContextWindowTokens(6_000);
         AssistantService capped = new AssistantService(properties,

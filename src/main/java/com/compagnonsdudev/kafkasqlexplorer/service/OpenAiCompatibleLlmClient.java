@@ -282,7 +282,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     }
 
     /**
-     * Reads the {@code usage} object. Both OpenAI and Ollama's compatibility layer report
+     * Reads the {@code usage} object. Both OpenAI and llama.cpp's server report
      * {@code prompt_tokens} / {@code completion_tokens}, but a leaner gateway may omit the object
      * entirely — in which case the counts stay null rather than becoming a zero that would read as
      * "this call was free".
@@ -295,7 +295,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
             // OpenRouter prices every response, so the money is already on the wire and used to be
             // thrown away — on the provider this application now ships pointed at, which bills per
             // token. Read, never computed: no price table lives here, so a figure on screen is one
-            // the provider stood behind. Absent on OpenAI and Ollama, and null there rather than 0.
+            // the provider stood behind. Absent on OpenAI and llama.cpp, and null there rather than 0.
             doubleOrNull(usage, "cost"),
             // How much of the prompt the provider served from its cache. Reported under
             // prompt_tokens_details by OpenAI-shaped APIs; absent elsewhere, and null there rather
@@ -324,7 +324,7 @@ public class OpenAiCompatibleLlmClient implements LlmClient {
     /**
      * Reads {@code choices[0].message.content}, refusing an answerless body rather than crashing on
      * it. {@code path("choices").get(0)} returns {@code null} when the array is absent or empty —
-     * which is precisely what a 200-with-an-error body looks like on Ollama and on several
+     * which is precisely what a 200-with-an-error body looks like on several
      * OpenAI-compatible gateways — so the NPE that followed reached the user as
      * "LLM call failed: null", the one message that names neither cause nor remedy. The provider's
      * own {@code error.message} is the useful half of such a body, so it is what gets reported.

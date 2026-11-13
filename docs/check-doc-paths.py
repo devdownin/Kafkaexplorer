@@ -150,7 +150,8 @@ NOT_A_PATH = {
 # which point the prose is describing a deletion that was undone. Written as (path, why).
 RETIRED = {
     'docker-compose-kafka4.yml': 'was renamed to compose/schema-registry.yml (every stack is Kafka 4)',
-    'docker-compose-llm.yml': 'was renamed to compose/ollama.yml',
+    'docker-compose-llm.yml': 'was renamed to compose/ollama.yml, itself since replaced',
+    'compose/ollama.yml': 'was replaced by compose/llama-cpp.yml (llama.cpp is the local runtime)',
     'docker-compose.release.yml': 'was replaced by compose/image.yml',
     'docker-compose-spectra.yml': 'was deleted: it needed a sibling SpectraLLM checkout',
     'docker-compose-spectra-hub.small.yml': 'was deleted: it is four .env lines, not a file',

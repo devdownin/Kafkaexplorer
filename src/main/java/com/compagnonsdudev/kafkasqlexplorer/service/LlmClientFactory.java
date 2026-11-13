@@ -21,7 +21,7 @@ public final class LlmClientFactory {
             // OpenRouter speaks the OpenAI /chat/completions API verbatim; what is specific to it
             // (its base URL, its required key, its attribution headers) is carried by the config
             // and by that client, not by a class of its own.
-            case OPENAI_COMPATIBLE, OLLAMA, OPENROUTER -> new OpenAiCompatibleLlmClient(config);
+            case OPENAI_COMPATIBLE, LLAMA_CPP, OPENROUTER -> new OpenAiCompatibleLlmClient(config);
         };
     }
 }

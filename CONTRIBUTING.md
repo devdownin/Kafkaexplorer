@@ -50,7 +50,8 @@ compose/limits.yml up` fails, by construction.
 |---|---|---|
 | `docker-compose.yml` | **base** | `docker compose up -d` — Kafka 4.3 KRaft, the app, and the demo seeder. |
 | `compose/schema-registry.yml` | overlay | Adds Schema Registry and the Avro demo topics. |
-| `compose/ollama.yml` | overlay | Adds a local Ollama model and points Process Mining at it. |
+| `compose/llama-cpp.yml` | overlay | Adds a local llama.cpp model and points Process Mining and the assistant at it. |
+| `compose/local-ai.yml` | overlay of overlays | On top of `compose/forecasts.yml` and `compose/llama-cpp.yml`: Qwen 2.5 as the model and the Timestral shadow pinned and scored. Run by `bin/local-ai-stack.sh`. |
 | `compose/image.yml` | overlay | Pulls the published image instead of building from source. |
 | `compose/limits.yml` | overlay | Opt-in `mem_limit` / `cpus`. |
 | `compose/ci.yml` | overlay | CI only; layered on `image.yml`. |
@@ -61,7 +62,7 @@ compose/limits.yml up` fails, by construction.
 Overlays **combine**, in any order after the base:
 
 ```bash
-docker compose -f docker-compose.yml -f compose/schema-registry.yml -f compose/ollama.yml -f compose/limits.yml up -d
+docker compose -f docker-compose.yml -f compose/schema-registry.yml -f compose/llama-cpp.yml -f compose/limits.yml up -d
 ```
 
 Set `COMPOSE_FILE=docker-compose.yml:compose/schema-registry.yml` in a root `.env` if you

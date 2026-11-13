@@ -80,7 +80,7 @@ export interface AssistantHelp {
 
 export const HOW_TO_ENABLE_ASSISTANT =
   'Set EXPLORER_ASSISTANT_ENABLED=true (explorer.assistant.enabled), or start the local stack: '
-  + 'docker compose -f docker-compose.yml -f compose/ollama.yml up -d. It uses claude.* unless '
+  + 'docker compose -f docker-compose.yml -f compose/llama-cpp.yml up -d. It uses claude.* unless '
   + 'EXPLORER_ASSISTANT_PROVIDER / _BASE_URL / _MODEL name another model.';
 
 /**
@@ -168,7 +168,7 @@ export function describeScope(response: AssistantSqlResponse): string | null {
   return parts.length ? parts.join(' ') : null;
 }
 
-/** « gemma4:e2b · 8.4 s » — ce qui a répondu et combien de temps cela a pris. */
+/** « gemma-4-e2b-it · 8.4 s » — ce qui a répondu et combien de temps cela a pris. */
 export function describeProvenance(response: AssistantSqlResponse): string | null {
   // Le formateur de Process Mining quand l'appel a rapporté son usage : un même modèle, une même
   // ligne (tokens, coût à six décimales sous le centime, durée), au lieu d'un format à soi qui
@@ -251,7 +251,7 @@ export function describeContextWindow(windowTokens: number | null | undefined,
                                       ceilingChars: number | null | undefined): string {
   if (!windowTokens || windowTokens <= 0) {
     return 'No context window declared (claude.context-window-tokens): prompt budgets apply as '
-      + 'configured, and nothing checks that they fit the model. Ollama drops what does not fit, silently.';
+      + 'configured, and nothing checks that they fit the model. A prompt that does not fit is refused or cut by the server, not here.';
   }
   const ceiling = ceilingChars ? ` — every prompt is capped at ${ceilingChars.toLocaleString('en-US')} characters` : '';
   return `Context window declared: ${windowTokens.toLocaleString('en-US')} tokens${ceiling}, `

@@ -5,7 +5,7 @@ Kafka SQL Explorer's AI-assisted auditing works with cloud **and** fully local L
 **The default is Option A, OpenRouter**, which is a *hosted* endpoint: the message digests Process
 Mining builds leave your machine. If that is not acceptable, Option C and Option D keep everything
 on your own network, and the Config page states which of the two you are on — read off the
-resolved address, not off the provider's name, so an Ollama pointed at another box counts as
+resolved address, not off the provider's name, so a llama.cpp server on another box counts as
 remote.
 
 ## Option A: OpenRouter (default — one key, many hosted models)
@@ -86,7 +86,7 @@ Both pages that call a model say which of four cases you are in, in the same wor
 policy that reads differently depending on the screen is not a policy. Note what the sentence is
 about: it states what **this deployment enforces**, not what a given model **declares**. Those are
 different claims, and only the first is one this application can stand behind. `No retention` is
-therefore never shown outside OpenRouter — on Anthropic, an arbitrary gateway or a remote Ollama
+therefore never shown outside OpenRouter — on Anthropic, an arbitrary gateway or a remote llama.cpp server
 the question has an answer, but it belongs to the endpoint's own terms and nothing here can impose
 or observe it, so the UI says exactly that instead of guessing.
 
@@ -145,7 +145,7 @@ form has moved ahead of what is running.
 OpenRouter prices every response, so Process Mining shows the real figure beside the token counts —
 the last window and the running session total — rather than an estimate. It is read from the
 provider's own accounting: this application keeps no price table, so a model that reports no cost
-(the OpenAI API, Ollama, SpectraLLM) shows none rather than a zero, and a session containing one
+(the OpenAI API, llama.cpp, SpectraLLM) shows none rather than a zero, and a session containing one
 unpriced call reports no total at all instead of one that understates the bill.
 
 Two breakdowns travel beside it, both measurements rather than promises. **Cached prompt tokens**
@@ -212,34 +212,38 @@ CLAUDE_MODEL=claude-3-5-sonnet-20241022
 The base URL fills itself in (`https://api.anthropic.com`) when you switch provider and have not
 set one.
 
-## Option C: Open Source / Local (Ollama, vLLM, LM Studio)
+## Option C: Open Source / Local (llama.cpp, vLLM, LM Studio)
 
 This is the option that keeps every byte on your machine, and the one to pick if the hosted
 default is not acceptable. Note the two settings that have to move together — see the window
 section just below, which is the trap this option carries.
 
-1. Run your model (e.g., `ollama run qwen2.5-coder:7b`).
+1. Run your model on a llama.cpp server — not on its default port, 8080, which is this
+   application's (`./setup-llm.sh` does this step and the next for you):
+```bash
+llama-server -hf unsloth/gemma-4-E4B-it-GGUF:Q4_K_M --alias gemma-4-e4b-it --port 8083 -c 16384 --parallel 1
+```
 2. Update `src/main/resources/application.yml`:
 ```yaml
 claude:
-  provider: OLLAMA                    # OPENAI_COMPATIBLE for vLLM, LM Studio or a gateway
-  base-url: http://localhost:11434/v1
-  model: qwen2.5-coder:7b
+  provider: LLAMA_CPP                 # OPENAI_COMPATIBLE for vLLM, LM Studio or a gateway
+  base-url: http://localhost:8083/v1
+  model: gemma-4-e4b-it               # the --alias the server answers under
 ```
 
 **Name the provider you are actually running.** Both values speak the same OpenAI dialect and reach
 the same client, so it is tempting to read them as interchangeable — they are not, and the
 difference lands on the setting a small model needs most. `claude.structured-output` defaults to
-`AUTO`, which sends a JSON Schema where support is known — `ANTHROPIC`, `OLLAMA`, `OPENROUTER` — and
+`AUTO`, which sends a JSON Schema where support is known — `ANTHROPIC`, `LLAMA_CPP`, `OPENROUTER` — and
 deliberately leaves `OPENAI_COMPATIBLE` alone, since some gateways answer 400 to a `response_format`
-they do not implement (see the paragraph under Option A). Writing `OPENAI_COMPATIBLE` in front of an
-Ollama therefore turns constrained decoding off, silently, on exactly the class of model that is
+they do not implement (see the paragraph under Option A). Writing `OPENAI_COMPATIBLE` in front of a
+llama.cpp server therefore turns constrained decoding off, silently, on exactly the class of model that is
 most likely to wrap its JSON in prose. Use `OPENAI_COMPATIBLE` for vLLM, LM Studio or anything else
 whose schema support you have not established — and `claude.structured-output: ON` once you have.
 
-A one-command stack with Ollama pre-wired is available:
+A one-command stack with llama.cpp pre-wired is available:
 ```bash
-docker compose -f docker-compose.yml -f compose/ollama.yml up -d
+docker compose -f docker-compose.yml -f compose/llama-cpp.yml up -d
 ```
 
 Going further on this option — which engine, which model at which quantisation, how small models
@@ -250,22 +254,22 @@ the [open-source LLM guide](LLM_OPEN_SOURCE_GUIDE.md) *(en français)*.
 
 This is the one setting a local deployment gets wrong silently, and the reason it is a *local*
 problem is that the shipped budget is sized for the shipped provider: a hosted model has room for
-it, so moving to Option C is exactly the moment the two numbers stop agreeing. Ollama gives a model
-**4 096 tokens** unless the machine has the VRAM for more; the app's OpenAI-compatible request carries
-`model`, `messages`, `max_tokens`, `temperature` and `stream` — never `num_ctx`, which that
-endpoint would not read from the body anyway; and `process-mining.prompt-char-budget` is 120 000
-characters, about 30 000 tokens. Ollama does not refuse the excess: it drops the oldest messages
-until the prompt fits, and logs that at debug level. The analysis then reasons on a fraction of
-what it was given, and nothing says which fraction.
+it, so moving to Option C is exactly the moment the two numbers stop agreeing. A local server gives the
+model the window it was started with (llama-server: `-c`, **divided across its `--parallel`
+slots**); the app's OpenAI-compatible request carries `model`, `messages`, `max_tokens`,
+`temperature` and `stream` — nothing that could change that window; and
+`process-mining.prompt-char-budget` is 120 000 characters, about 30 000 tokens. What does not fit
+is refused or cut down to what fits, depending on the server and its settings — and where it is
+cut, the analysis reasons on a fraction of what it was given, and nothing says which fraction.
 
 Set both halves together — the bundled stack does:
 
 ```bash
-OLLAMA_CONTEXT_LENGTH=16384          # on the Ollama server (llama.cpp: -c 16384)
+LLAMA_CPP_CONTEXT=16384              # llama-server's -c, for LLAMA_CPP_PARALLEL=1 slot
 PROCESS_MINING_PROMPT_CHAR_BUDGET=16000   # ~4k tokens, leaving the rest of the window for the answer
 ```
 
-Raising one without the other buys nothing, or truncates again. A wider window costs KV cache —
+Raising one without the other buys nothing, or stops fitting again. A wider window costs KV cache —
 roughly 2 GB for a 7B model at 16k. The same arithmetic applies to vLLM (`--max-model-len`) and
 to LM Studio's context slider.
 
@@ -348,12 +352,12 @@ nobody chose. It never sends a message value, and it never runs or saves what it
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `explorer.assistant.enabled` (`EXPLORER_ASSISTANT_ENABLED`) | `false` | On in `compose/ollama.yml` and in `./demo.sh` |
+| `explorer.assistant.enabled` (`EXPLORER_ASSISTANT_ENABLED`) | `false` | On in `compose/llama-cpp.yml` and in `./demo.sh` |
 | `provider`, `base-url`, `model` (`EXPLORER_ASSISTANT_*`) | blank | Blank inherits `claude.*`. Naming another endpoint **drops the `claude.*` key**: a key never follows a different host |
 | `request-timeout-seconds` | 0 | 0 inherits `claude.request-timeout-seconds`: one budget for every call. Terminal — a slow model is not retried |
 | `prompt-char-budget` | 12 000 | About 3 000 tokens, capped by `claude.context-window-tokens` when the window is declared |
 
-**One window for both consumers.** `claude.context-window-tokens` (`CLAUDE_CONTEXT_WINDOW_TOKENS`, 0 = not declared) is the serving endpoint's context window. Declared, it caps Process Mining's and the assistant's prompt budgets at `(window − max-tokens) × 3` characters, so neither can outgrow what Ollama will read — Ollama drops the excess silently. `compose/ollama.yml` passes `OLLAMA_CONTEXT_LENGTH` into it, so the server's window and the application's ceiling come from one variable. Settings shows the declared window, the ceiling, and what the assistant really calls, with a **Test the assistant model** button beside the existing **Test LLM**.
+**One window for both consumers.** `claude.context-window-tokens` (`CLAUDE_CONTEXT_WINDOW_TOKENS`, 0 = not declared) is the serving endpoint's context window. Declared, it caps Process Mining's and the assistant's prompt budgets at `(window − max-tokens) × 3` characters, so neither can outgrow what the server will read. `compose/llama-cpp.yml` passes `LLAMA_CPP_CONTEXT` into it, so the server's window and the application's ceiling come from one variable. Settings shows the declared window, the ceiling, and what the assistant really calls, with a **Test the assistant model** button beside the existing **Test LLM**.
 
 **Which model.** `EMBEDDED-LLM-SCOPE.md` §7.1 measured four local models on 50 questions, running
 every accepted statement against the seeder's data, on four CPU cores with no GPU:
@@ -362,14 +366,13 @@ every accepted statement against the seeder's data, on four CPU cores with no GP
 |---|---|---|---|---|
 | **Gemma 4 E4B** (`gemma4:e4b`) | 96 % | 4 % | 40 s | 8.7 GB |
 | Qwen3-4B-Instruct-2507 | 94 % | 2 % | 37 s | 6.4 GB |
-| Gemma 4 E2B (`gemma4:e2b`) | 88 % | 4 % | 36 s | 5.1 GB |
+| Gemma 4 E2B | 88 % | 4 % | 36 s | 5.1 GB |
 
 **One model for both consumers.** Measured on Process Mining's seeded pipeline too (§7.2), Gemma 4
 E4B did at least as well as the previous `qwen2.5-coder:7b` on every count (format, pipeline,
-planted facts found, anomalies), so `compose/ollama.yml` now pulls one model, `OLLAMA_MODEL`
-(default `gemma4:e4b`), for Process Mining and the assistant alike — one pull, one window, one
-timeout. `qwen2.5-coder:7b` was the weakest on the assistant's questions (68 %, v1 prompt). Use `gemma4:e2b` on a small machine. Gemma 4 needs Ollama
-0.20 or newer. The latency is the one thing that depends on your hardware: measure it with
+planted facts found, anomalies), so `compose/llama-cpp.yml` serves one model, the Q4_K_M GGUF named by
+`LLAMA_CPP_MODEL_FILE` / `LLAMA_CPP_MODEL_URL` (default Gemma 4 E4B), for Process Mining and the assistant alike — one download, one window, one
+timeout. `qwen2.5-coder:7b` was the weakest on the assistant's questions (68 %, v1 prompt). Use the E2B GGUF on a small machine. The latency is the one thing that depends on your hardware: measure it with
 `bin/llm-eval.sh`, which runs the assistant's 50 cases and Process Mining's seeded pipeline against whichever models you name and prints one line per model.
 
 ## Recommended Lightweight Models

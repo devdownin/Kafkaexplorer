@@ -26,7 +26,7 @@ import com.compagnonsdudev.kafkasqlexplorer.util.LogSafe;
  *                     rather than as an unpriced one. It is <em>reported</em>, never derived — no
  *                     price table is kept in this application, so a figure shown is one the
  *                     provider stood behind. OpenRouter returns it on every response; the OpenAI
- *                     API, Ollama and SpectraLLM do not, and there it stays null. Note that
+ *                     API, llama.cpp and SpectraLLM do not, and there it stays null. Note that
  *                     {@code 0.0} is a real measurement (a free model), not an absent one.
  * @param cachedInputTokens how many of the prompt tokens were served from the provider's prompt
  *                     cache, or {@code null} when the provider does not report it. A cache read

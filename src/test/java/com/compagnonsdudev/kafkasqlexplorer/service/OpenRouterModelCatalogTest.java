@@ -193,7 +193,7 @@ class OpenRouterModelCatalogTest {
     }
 
     /**
-     * A slug with no slash is the shape an Ollama model name leaves behind after a provider
+     * A slug with no slash is the shape a local model's name leaves behind after a provider
      * switch. It cannot address the catalogue path, and the gateway answers it with the same 404
      * it uses for a routing refusal — so it is named here instead.
      */
@@ -414,7 +414,7 @@ class OpenRouterModelCatalogTest {
 
     @Test
     void doesNotOfferAShortlistForAProviderWithNoCatalogue() {
-        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
         LlmModelShortlist list = catalog.shortlist(claudeConfig, false, 20);
         assertFalse(list.available());
         assertNotNull(list.error());
@@ -422,7 +422,7 @@ class OpenRouterModelCatalogTest {
 
     @Test
     void isNotAttemptedForAnyOtherProvider() {
-        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
         assertFalse(catalog.isSupported());
     }
 
@@ -486,7 +486,7 @@ class OpenRouterModelCatalogTest {
 
     @Test
     void doesNotAskAboutAKeyForAProviderThatPublishesNone() {
-        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
         assertNotNull(catalog.describeKey(claudeConfig).error());
     }
 

@@ -7,7 +7,7 @@
  * Deux écrans appellent ce point d'accès et attendaient chacun autrement : Process Mining
  * abandonnait au bout de 90 s en dur, Réglages n'avait aucun délai du tout — `axios` n'en pose
  * aucun par défaut, la règle que l'éditeur SQL a déjà servi à écrire. Les deux sont faux, et le
- * premier l'est là où ça se voit : `compose/ollama.yml` et `compose/spectra-hub.yml` règlent tous
+ * premier l'est là où ça se voit : `compose/llama-cpp.yml` et `compose/spectra-hub.yml` règlent tous
  * deux le serveur sur **300 s**, et le champ de Réglages accepte jusqu'à 600. Un modèle 7B
  * quantifié sur CPU — le cas exact pour lequel ces stacks existent — dépasse couramment 90 s à sa
  * première réponse, chargement du modèle compris. Le bouton dont le métier est de distinguer « ça

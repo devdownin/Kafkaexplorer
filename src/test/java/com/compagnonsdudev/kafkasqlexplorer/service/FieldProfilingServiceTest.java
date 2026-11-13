@@ -196,7 +196,7 @@ class FieldProfilingServiceTest {
     void testProfileWithMissingApiKeyOpenAiCompatible() {
         claudeConfig.setProvider(ClaudeConfig.Provider.OPENAI_COMPATIBLE);
         claudeConfig.setApiKey("");
-        claudeConfig.setBaseUrl("http://localhost:11434/v1");
+        claudeConfig.setBaseUrl("http://localhost:8083/v1");
         LlmClient llmClient = mock(LlmClient.class);
         fieldProfilingService = new FieldProfilingService(snapshotReader, claudeConfig, llmClient);
 

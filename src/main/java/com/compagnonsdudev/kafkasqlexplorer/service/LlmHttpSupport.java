@@ -21,7 +21,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 
 /**
- * Shared HTTP plumbing for the plain-HTTP LLM clients (OpenAI-compatible, Ollama, SpectraLLM).
+ * Shared HTTP plumbing for the plain-HTTP LLM clients (OpenAI-compatible, llama.cpp, SpectraLLM).
  *
  * <p>Centralises three concerns so each client does not reinvent them:
  * <ul>
@@ -103,7 +103,7 @@ final class LlmHttpSupport {
      * that one is sized for how long a model may take to generate (60s by default), and applying it
      * to the TCP/TLS handshake means a wrong port or an endpoint that is simply down takes a full
      * minute to say so — three times over, since a connect failure is retried. Opening a socket to a
-     * local Ollama or a hosted API is a sub-second operation; anything past {@value #MAX_CONNECT_SECONDS}s
+     * local llama.cpp server or a hosted API is a sub-second operation; anything past {@value #MAX_CONNECT_SECONDS}s
      * is an unreachable endpoint, not a slow one.
      */
     static HttpClient newClient(ClaudeConfig config) {

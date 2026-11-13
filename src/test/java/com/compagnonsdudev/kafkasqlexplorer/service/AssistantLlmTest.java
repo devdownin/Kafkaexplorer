@@ -58,13 +58,13 @@ class AssistantLlmTest {
 
     @Test
     void theKeyDoesNotFollowAnotherEndpoint() {
-        properties.setProvider("ollama");
+        properties.setProvider("llama-cpp");
         properties.setModel("gemma4:e2b");
 
         ClaudeConfig effective = new AssistantLlm(claude, properties).effectiveConfig();
 
-        assertEquals(ClaudeConfig.Provider.OLLAMA, effective.getProvider());
-        assertEquals("http://localhost:11434/v1", effective.getResolvedBaseUrl(),
+        assertEquals(ClaudeConfig.Provider.LLAMA_CPP, effective.getProvider());
+        assertEquals("http://localhost:8083/v1", effective.getResolvedBaseUrl(),
             "a provider switch with no address gets that provider's default, not the inherited one");
         assertEquals("", effective.getApiKey(), "the OpenRouter key must not be sent to another host");
         assertEquals("gemma4:e2b", effective.getModel());

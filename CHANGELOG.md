@@ -20,6 +20,29 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A fully local AI stack in one command: `bin/local-ai-stack.sh`.** `compose/local-ai.yml`
+  layers on `compose/forecasts.yml` and `compose/llama-cpp.yml` and fills in what they leave to
+  the operator: Qwen 2.5 7B Instruct (Q4_K_M, pinned by revision and SHA-256) as the model for
+  Process Mining and the assistant, and the Timestral shadow pinned (`TIMESTRAL_REVISION`,
+  `TIMESTRAL_SHA256`) and scored beside TimesFM. **Starting it accepts Timestral's Modified MIT
+  licence, which excludes companies above 20 million USD of monthly revenue** — the other stacks
+  still ship that pin empty. `docs/local-ai-stack-check.py` holds the values the overlay writes
+  twice to each other, in CI.
+
+- **BREAKING — llama.cpp replaces Ollama as the local runtime.** The provider `OLLAMA` is gone:
+  write `CLAUDE_PROVIDER=LLAMA_CPP` (and `EXPLORER_ASSISTANT_PROVIDER` likewise). A deployment that
+  still names `OLLAMA` — in its environment or in settings saved from the Settings page — is
+  refused at boot with that sentence rather than with a failed enum conversion. The provider's
+  default address is `http://localhost:8083/v1` (llama-server's own 8080 is this application's)
+  and its default model name `gemma-4-e4b-it`, the alias the bundled stack serves.
+  `compose/ollama.yml` becomes `compose/llama-cpp.yml`: the llama.cpp server image the SpectraLLM
+  stack already pins, one GGUF downloaded once (`LLAMA_CPP_MODEL_FILE` / `_NAME` / `_URL`, Gemma 4
+  E4B Q4_K_M by default), published on the loopback only. `OLLAMA_PORT`, `OLLAMA_MODEL` and
+  `OLLAMA_CONTEXT_LENGTH` become `LLAMA_CPP_PORT`, the three model variables and
+  `LLAMA_CPP_CONTEXT`. `setup-llm.sh` / `setup-llm.ps1` start a `llama-server`, and
+  `bin/llm-eval.sh` takes Hugging Face GGUF repositories and runs one server per candidate. The
+  weights of a previous Ollama volume are not reused.
+
 - **ksqlDB → Flink migration examples.** `docs/QUERY-EXAMPLES.md` carries the queries of the
   ksql2flink laboratory — the Lexhistoric projection and its `UNION ALL`, the socle ET referential
   and its join, the hourly indicator, the classification-quality threshold — rewritten for the

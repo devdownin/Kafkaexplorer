@@ -68,7 +68,7 @@ over it, which is the product's real situation on the demo topics. `AssistantEva
 `@Tag("assistant-eval")`, excluded like the other two and skipping without `ASSISTANT_EVAL_MODEL`;
 it runs the real `AssistantService` and then **executes** each accepted statement, scoring
 "accepted and wrong" apart from "accepted", the plausible wrong answer being what the gate cannot
-see. `bin/llm-eval.sh` runs it per candidate through a local Ollama, beside Process Mining's `LlmAnalysisEvalTest#reportsTheAnalysisForComparison` — both consumers of one model, one summary. Before any model was
+see. `bin/llm-eval.sh` runs it per candidate through a local llama.cpp server (one `llama-server` per candidate), beside Process Mining's `LlmAnalysisEvalTest#reportsTheAnalysisForComparison` — both consumers of one model, one summary. Before any model was
 pointed at it, an oracle that answers the reference proved the chain — and scored 47 of 50, the
 three misses being a product defect rather than a harness one: on a `FIX` whose statement did not
 parse, or named a table that does not exist, the context found no table and the assistant answered
@@ -120,7 +120,7 @@ nothing", it becomes the agent failing a scenario, which blames the wrong party.
 **A local model can be the agent, and the judge can live elsewhere.** `CLAUDE_PROVIDER=SPECTRA`
 used to be refused because SpectraLLM's `POST /api/query` is single-turn and knows no tool; the
 harness now drives the `llm-chat` llama-server behind it instead, through the OpenAI client that
-already spoke to Ollama. Three things in `AgentModels` follow from what that server is, each
+already spoke to a local server. Three things in `AgentModels` follow from what that server is, each
 asserted in `AgentModelsTest`. `CLAUDE_BASE_URL` is not read for it — under that provider it names
 Spectra's API, so a chat completion posted there answers 404 about a server that is fine — and the
 port is `AGENT_EVAL_LLM_PORT`, the variable `compose/spectra-hub.agent-eval.yml` publishes. No key is

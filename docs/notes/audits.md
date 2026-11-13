@@ -633,3 +633,9 @@ Latest with its read mode beside the sample it governs, hidden during a search, 
 to narrow the next trace to the topics reached and frames a long chain at a readable scale from
 its source (`readableFitTransform`; `0` still fits all); `GET /api/forecasts` carries
 `shadowEnabled`, so the panel no longer asks for a shadow that answers 404. Nothing is left open.
+
+**A note on the runtime these reports name.** Several of them — `PROCESS-MINING-LLM-CALLS-AUDIT.md`,
+`EMBEDDED-LLM-SCOPE.md`, `DOCKER-AUDIT.md` — were written against the Ollama stack
+(`compose/ollama.yml`, the `OLLAMA` provider), and the paragraphs above keep that name where it is
+what was measured. The local runtime is llama.cpp now: read `compose/llama-cpp.yml` and `LLAMA_CPP`
+for the stack and the provider those findings apply to today.

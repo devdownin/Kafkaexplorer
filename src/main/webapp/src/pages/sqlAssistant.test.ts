@@ -18,7 +18,7 @@ const response = (over: Partial<AssistantSqlResponse> = {}): AssistantSqlRespons
   repairRounds: 0,
   tablesConsidered: ['orders'],
   tablesOmitted: [],
-  model: 'gemma4:e2b',
+  model: 'gemma-4-e2b-it',
   usage: null,
   durationMs: 8400,
   error: null,
@@ -26,7 +26,7 @@ const response = (over: Partial<AssistantSqlResponse> = {}): AssistantSqlRespons
 });
 
 const status = (over: Partial<AssistantStatus> = {}): AssistantStatus => ({
-  enabled: true, problem: null, provider: 'Ollama', model: 'gemma4:e2b', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0, providerCode: 'OLLAMA', dataRetentionRefused: false, ...over,
+  enabled: true, problem: null, provider: 'llama.cpp', model: 'gemma-4-e2b-it', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0, providerCode: 'LLAMA_CPP', dataRetentionRefused: false, ...over,
 });
 
 describe('assistantAvailability', () => {
@@ -89,7 +89,7 @@ describe('describeScope and describeProvenance', () => {
   });
 
   it('reports the model and the time, and a cost only when one was reported', () => {
-    expect(describeProvenance(response())).toBe('gemma4:e2b · 8.4 s');
+    expect(describeProvenance(response())).toBe('gemma-4-e2b-it · 8.4 s');
   });
 
   it('uses the Process Mining formatter when the call reported its usage', () => {
@@ -162,7 +162,7 @@ describe('describeAssistantHelp', () => {
     const help = describeAssistantHelp(status({ enabled: false, problem: 'off' }))!;
     expect(help.label).toBe('Off on this server');
     expect(help.howToEnable).toContain('EXPLORER_ASSISTANT_ENABLED=true');
-    expect(help.howToEnable).toContain('compose/ollama.yml');
+    expect(help.howToEnable).toContain('compose/llama-cpp.yml');
   });
 
   it('reports an assistant that is on but cannot answer, with the reason and no how-to', () => {
@@ -193,7 +193,7 @@ describe('describeContextWindow', () => {
 
 describe('describeAssistantEffective', () => {
   it('reports the model, the endpoint and the effective budgets', () => {
-    expect(describeAssistantEffective(status({ baseUrl: 'http://ollama:11434/v1', requestTimeoutSeconds: 300 })))
-      .toBe('Ollama · gemma4:e2b at http://ollama:11434/v1 — 300 s per call, 12,000 characters of prompt.');
+    expect(describeAssistantEffective(status({ baseUrl: 'http://llama-cpp:8080/v1', requestTimeoutSeconds: 300 })))
+      .toBe('llama.cpp · gemma-4-e2b-it at http://llama-cpp:8080/v1 — 300 s per call, 12,000 characters of prompt.');
   });
 });

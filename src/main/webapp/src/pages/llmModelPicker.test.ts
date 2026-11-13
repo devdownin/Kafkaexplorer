@@ -238,7 +238,7 @@ describe('validateModelSlug', () => {
    * d'accès veut bien accepter, et cette application n'a pas d'avis dessus.
    */
   it('says nothing about a model name on any other provider', () => {
-    for (const provider of ['OLLAMA', 'ANTHROPIC', 'OPENAI_COMPATIBLE', 'SPECTRA']) {
+    for (const provider of ['LLAMA_CPP', 'ANTHROPIC', 'OPENAI_COMPATIBLE', 'SPECTRA']) {
       expect(validateModelSlug(provider, 'qwen3:4b')).toBeNull();
       expect(validateModelSlug(provider, '../weird')).toBeNull();
     }
