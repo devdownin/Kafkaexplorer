@@ -15,7 +15,7 @@
 # what the digest is.
 
 # --- Stage 1: Build Frontend ---
-FROM node:26.12.1-alpine@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS frontend-builder
+FROM node:26.13.0-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS frontend-builder
 WORKDIR /app
 
 # Manifest first: this layer is reused as long as the dependencies do not move.
@@ -90,7 +90,7 @@ RUN cp target/kafka-sql-explorer-*.jar app.jar \
  && java -Djarmode=tools -jar app.jar extract --layers --launcher --destination extracted
 
 # --- Stage 3: Runtime ---
-FROM eclipse-temurin:25-jre-alpine@sha256:b7528962e65d43064d8a8b67ba175367896bc948363ea2d3fcd7f10d34e1f048
+FROM eclipse-temurin:25-jre-alpine@sha256:e1898fd6a11fc965a994d8ace186fd3585aeb636cf8f05f47a723fcfee0b0918
 WORKDIR /app
 
 # The app writes two things under its working directory: logs/kafkaexplorer.log
