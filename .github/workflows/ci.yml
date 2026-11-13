@@ -797,6 +797,16 @@ jobs:
           done
           echo "$resolved combinations resolved"
 
+          # A stack that is an overlay of overlays: compose/local-ai.yml only sets values on
+          # services two other overlays define, so alone on the base it names services with no
+          # image and cannot resolve. It is checked on the one combination it exists for — the
+          # one bin/local-ai-stack.sh runs — and named here so the guard below still holds.
+          LOCAL_AI="-f docker-compose.yml -f compose/forecasts.yml -f compose/llama-cpp.yml -f compose/local-ai.yml"
+          echo "· $LOCAL_AI"
+          # shellcheck disable=SC2086 - the combination is a deliberate word list.
+          docker compose $LOCAL_AI config --format json | python3 docs/local-ai-stack-check.py
+          named="$named compose/local-ai.yml"
+
           # Every compose file in the tree is named above, as a base or as somebody's overlay.
           # A new one added without a line there would be checked by nothing, which is the
           # situation this job exists to end — so the omission fails rather than passing

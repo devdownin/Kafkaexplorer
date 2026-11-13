@@ -51,6 +51,7 @@ compose/limits.yml up` fails, by construction.
 | `docker-compose.yml` | **base** | `docker compose up -d` — Kafka 4.3 KRaft, the app, and the demo seeder. |
 | `compose/schema-registry.yml` | overlay | Adds Schema Registry and the Avro demo topics. |
 | `compose/llama-cpp.yml` | overlay | Adds a local llama.cpp model and points Process Mining and the assistant at it. |
+| `compose/local-ai.yml` | overlay of overlays | On top of `compose/forecasts.yml` and `compose/llama-cpp.yml`: Qwen 2.5 as the model and the Timestral shadow pinned and scored. Run by `bin/local-ai-stack.sh`. |
 | `compose/image.yml` | overlay | Pulls the published image instead of building from source. |
 | `compose/limits.yml` | overlay | Opt-in `mem_limit` / `cpus`. |
 | `compose/ci.yml` | overlay | CI only; layered on `image.yml`. |

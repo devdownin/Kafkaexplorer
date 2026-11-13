@@ -656,6 +656,23 @@ for both (`CLAUDE_CONTEXT_WINDOW_TOKENS` from `LLAMA_CPP_CONTEXT`, the assistant
 `CLAUDE_REQUEST_TIMEOUT_SECONDS`). `setup-llm.sh` / `setup-llm.ps1`, the host twins, start a
 `llama-server` on the same default through `-hf`.
 
+**`compose/local-ai.yml` is the two local models decided, and it is an overlay of overlays.** It
+defines no service: it sets values on services `compose/forecasts.yml` and `compose/llama-cpp.yml`
+define — the chat model (Qwen 2.5 7B Instruct, Q4_K_M, the URL pinned to a Hub revision and the
+file to its SHA-256) and the Timestral pin with `shadow.enabled` — as plain values rather than
+`${…:-default}`, the file being the choice. So it cannot resolve alone on the base, and
+`compose-lint` checks it on the one combination `bin/local-ai-stack.sh` runs instead of through
+the `OVERLAYS` table. Each value is written twice because two services read it, which is the
+mirror this tree keeps removing: `docs/local-ai-stack-check.py` reads the *resolved* document and
+fails when the downloader and the server disagree on the file, the server and the Explorer on the
+alias, or the prefetch and the worker on the pin — three ways of starting and never answering.
+**The Timestral pin is committed here and nowhere else**, against the rule that accepting its
+licence is a deployment decision (`docs/notes/timesfm-pilot.md`): this file is that decision made
+for whoever starts it, its header says so before anything else, and every other stack still ships
+the pin empty. The pin and the GGUF digest were read from the Hub's API; **the stack was not
+started** where it was written (no Docker daemon), so neither download nor the shadow's first
+score has been observed.
+
 **llama.cpp replaced Ollama here** (`compose/ollama.yml`, the `OLLAMA` provider, `OLLAMA_*`
 variables). The tree already ran and pinned llama.cpp for SpectraLLM, so it carried two inference
 servers for one job; and the evals that chose the model were measured on Q4_K_M GGUF weights from

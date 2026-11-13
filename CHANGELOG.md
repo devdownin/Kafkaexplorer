@@ -20,6 +20,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A fully local AI stack in one command: `bin/local-ai-stack.sh`.** `compose/local-ai.yml`
+  layers on `compose/forecasts.yml` and `compose/llama-cpp.yml` and fills in what they leave to
+  the operator: Qwen 2.5 7B Instruct (Q4_K_M, pinned by revision and SHA-256) as the model for
+  Process Mining and the assistant, and the Timestral shadow pinned (`TIMESTRAL_REVISION`,
+  `TIMESTRAL_SHA256`) and scored beside TimesFM. **Starting it accepts Timestral's Modified MIT
+  licence, which excludes companies above 20 million USD of monthly revenue** — the other stacks
+  still ship that pin empty. `docs/local-ai-stack-check.py` holds the values the overlay writes
+  twice to each other, in CI.
+
 - **BREAKING — llama.cpp replaces Ollama as the local runtime.** The provider `OLLAMA` is gone:
   write `CLAUDE_PROVIDER=LLAMA_CPP` (and `EXPLORER_ASSISTANT_PROVIDER` likewise). A deployment that
   still names `OLLAMA` — in its environment or in settings saved from the Settings page — is
