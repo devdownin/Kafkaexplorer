@@ -157,6 +157,13 @@ const Metrics: React.FC = () => {
   // The panel's own poll feeds the cards: one request for both, not one per card.
   const [forecastStatus, setForecastStatus] = useState<ForecastStatus | null>(null);
   const [forecastRevision, setForecastRevision] = useState(0);
+  /**
+   * Whether a forecast can be created at all: the pilot is on and a forecasting model is configured
+   * (TimesFM; Timestral is only its shadow). Known only once the status has been read, and a status
+   * that cannot be read offers nothing — a way to create a forecast that appears and then goes is
+   * worse than one that is simply absent for the first second.
+   */
+  const canCreateForecast = Boolean(forecastStatus?.enabled && forecastStatus.modelAvailable !== false);
   const forecastStages = useMemo(() => {
     const stages = new Map<string, ReturnType<typeof forecastStage>>();
     // A metric forecast in two environments shows the first, as the panel's selector does.
@@ -935,7 +942,9 @@ const Metrics: React.FC = () => {
               onDelete={() => handleDelete(metric.id)}
               onRefresh={() => handleRefreshOne(metric.id)}
               refreshing={refreshingId === metric.id}
-              onPrepareForecast={() => setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1 }))}
+              onPrepareForecast={canCreateForecast
+                ? () => setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1 }))
+                : undefined}
               forecast={forecastStages.get(metric.id)}
             />
           )) : (
@@ -950,7 +959,7 @@ const Metrics: React.FC = () => {
           Au-dessus des gabarits génériques, parce qu'une proposition qui nomme un topic de ce
           cluster et la mesure dont elle sort vaut mieux qu'un COUNT(*) sur la première table
           trouvée — et en dessous des métriques existantes, qui restent le sujet de la page. */}
-      {forecastRequest && <section aria-labelledby="metric-forecast-preparation" className="space-y-3">
+      {canCreateForecast && forecastRequest && <section aria-labelledby="metric-forecast-preparation" className="space-y-3">
         <h3 id="metric-forecast-preparation" tabIndex={-1}>Prepare a forecast</h3>
         <Button variant="ghost" onClick={() => setForecastRequest(null)}>Close forecast preparation</Button>
         <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId}
@@ -958,7 +967,9 @@ const Metrics: React.FC = () => {
           forecastMetricIds={forecastStatus?.series.map(s => s.metricId) ?? []} />
       </section>}
       <ForecastPanel refresh={forecastRevision} onStatus={setForecastStatus}
-        onConfigure={() => setForecastRequest(previous => ({ sequence: (previous?.sequence ?? 0) + 1 }))} />
+        onConfigure={canCreateForecast
+          ? () => setForecastRequest(previous => ({ sequence: (previous?.sequence ?? 0) + 1 }))
+          : undefined} />
       <SuggestionsPanel
         response={suggestions}
         loading={suggestionsLoading}

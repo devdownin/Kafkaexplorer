@@ -33,13 +33,18 @@ public class ForecastController {
    * {@code shadowEnabled} says whether {@code GET /{seriesId}/shadow} has anything to answer: without
    * it the panel asked on every load, got the 404 that means "no shadow configured", and the browser
    * wrote that 404 into the console of every Metrics page (PAGES-SIMPLICITY-AUDIT.md X1).
+   *
+   * <p>{@code modelAvailable} says whether a forecasting model is configured. Without one there is
+   * nothing a forecast could be calculated by, so the Metrics page withdraws every way of creating
+   * one rather than leading an operator through a preparation that cannot end in a forecast.
    */
-  public record Status(boolean enabled, String state, List<SeriesView> series, boolean shadowEnabled) {}
+  public record Status(boolean enabled, String state, List<SeriesView> series, boolean shadowEnabled,
+                       boolean modelAvailable) {}
 
   @GetMapping
   public ResponseEntity<Status> status() {
     var p = services.getIfAvailable();
-    if (p == null) return ResponseEntity.ok(new Status(false, "DISABLED", List.of(), false));
+    if (p == null) return ResponseEntity.ok(new Status(false, "DISABLED", List.of(), false, false));
     try {
       var rows = new java.util.ArrayList<SeriesView>();
       // One series per row, each read on its own (METRICS-FORECAST-UX-AUDIT.md B2): a single record
@@ -48,9 +53,9 @@ public class ForecastController {
       // The list carries no history points (P1): up to 512 per series were sent every 30 s to a
       // page that draws one series, whose detail is GET /{seriesId}.
       for (var s : p.series()) rows.add(view(p, s, false));
-      return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows), p.shadowEnabled()));
+      return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows), p.shadowEnabled(), p.modelAvailable()));
     } catch (Exception e) {
-      return ResponseEntity.status(503).body(new Status(true, "UNAVAILABLE", List.of(), p.shadowEnabled()));
+      return ResponseEntity.status(503).body(new Status(true, "UNAVAILABLE", List.of(), p.shadowEnabled(), p.modelAvailable()));
     }
   }
 

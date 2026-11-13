@@ -111,4 +111,24 @@ class ForecastControllerTest {
     when(pilot.shadowEnabled()).thenReturn(true);
     org.junit.jupiter.api.Assertions.assertTrue(controller().status().getBody().shadowEnabled());
   }
+
+  /** The list says whether a forecasting model is configured, so the page can withdraw creation. */
+  @Test
+  void theListSaysWhetherAForecastingModelIsConfigured() {
+    when(pilot.series()).thenReturn(java.util.List.of());
+    when(pilot.modelAvailable()).thenReturn(false);
+    org.junit.jupiter.api.Assertions.assertFalse(controller().status().getBody().modelAvailable());
+    when(pilot.modelAvailable()).thenReturn(true);
+    org.junit.jupiter.api.Assertions.assertTrue(controller().status().getBody().modelAvailable());
+  }
+
+  /** With the pilot itself off there is no service at all, and so no model either. */
+  @Test
+  void aDisabledPilotHasNoModel() {
+    ObjectProvider<ForecastPilotService> none = mock(ObjectProvider.class);
+    when(none.getIfAvailable()).thenReturn(null);
+    var status = new ForecastController(none).status().getBody();
+    org.junit.jupiter.api.Assertions.assertFalse(status.enabled());
+    org.junit.jupiter.api.Assertions.assertFalse(status.modelAvailable());
+  }
 }

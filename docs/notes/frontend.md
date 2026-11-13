@@ -659,6 +659,7 @@ blocked — with an estimate from the sampling interval worded as one. The card 
 place of **Prepare a forecast**. The page takes the status from the panel's own poll through
 `onStatus` rather than polling again, and bumps `refresh` after an approval so the panel and the
 card do not wait for the next tick.
+**No model, no way to create one.** `GET /api/forecasts` carries `modelAvailable` — whether the forecasting client exists (`ForecastPilotService.modelAvailable()`, i.e. `explorer.forecasting.inference.enabled`), read from configuration and not probed, so a service that is briefly down does not make the page withdraw the assistant and offer it again a minute later. The page derives `canCreateForecast` from it and from `enabled`: false, and the card's **Prepare a forecast**, the assistant and the panel's **Configure a forecast** are all absent, while the panel stays and says why, keeping its preparation diagnostic since that is what tells an operator what to enable. Known only once the status has been read: a way to create a forecast that appears and then goes is worse than one absent for the first second. Timestral does not count on its own — it is a shadow built under the same switch as TimesFM and never served. A series that already exists stays visible and operable whatever this says.
 
 **The panel reads as one timeline: history → forecast → quality → approval.** It used to say the
 same things in three places that did not read together — history against 512 in the progress
