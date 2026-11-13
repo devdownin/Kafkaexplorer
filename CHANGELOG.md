@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.4.1] — 2026-11-13
+
 - **A fully local AI stack in one command: `bin/local-ai-stack.sh`.** `compose/local-ai.yml`
   layers on `compose/forecasts.yml` and `compose/llama-cpp.yml` and fills in what they leave to
   the operator: Qwen 2.5 7B Instruct (Q4_K_M, pinned by revision and SHA-256) as the model for
@@ -2750,7 +2754,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.4...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.4.1...HEAD
+[2.4.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.4...v2.4.1
 [2.3.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.3...v2.3.4
 [2.3.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.1...v2.3.2
