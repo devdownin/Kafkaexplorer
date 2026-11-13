@@ -25,6 +25,8 @@ import {
   readPinned,
   togglePinned,
   valuesAtPath,
+  valuesAtHeader,
+  headerNames,
   directionApplies,
   raiseHitCapAction,
   switchStart,
@@ -1151,6 +1153,42 @@ describe('describeAdvanced', () => {
       .toEqual(['payload only, not keys', 'headers too']);
     expect(describeAdvanced(criteria({ mode: 'KEY', searchKey: false, searchHeaders: true })))
       .toEqual([]);
+  });
+});
+
+describe('headerNames and valuesAtHeader', () => {
+  const withHeaders = (headers: Record<string, string | null>): TopicMessage => ({
+    partition: 0, offset: 0, timestamp: 0, key: null, value: '{}', valueBytes: 2, truncated: false, headers,
+  });
+
+  /** Headers are no part of any payload schema: the messages already loaded are the only source. */
+  it('lists the distinct header names the messages carry, sorted', () => {
+    const messages = [
+      withHeaders({ 'correlation-id': 'a', 'trace-id': 't1' }),
+      withHeaders({ 'correlation-id': 'b', source: 'web' }),
+      withHeaders({}),
+    ];
+    expect(headerNames(messages)).toEqual(['correlation-id', 'source', 'trace-id']);
+    expect(headerNames([])).toEqual([]);
+  });
+
+  it('collects a header\'s distinct values, resolving the name as the server does', () => {
+    const messages = [
+      withHeaders({ 'Correlation-Id': 'a' }),
+      withHeaders({ 'correlation-id': 'b' }),
+      withHeaders({ 'correlation-id': 'a' }),
+      withHeaders({ 'correlation-id': null }),
+    ];
+    // Exact name first, then case-insensitive: `MessageMatcher.matchesHeader`.
+    expect(valuesAtHeader(messages, 'correlation-id')).toEqual(['a', 'b']);
+    expect(valuesAtHeader(messages, 'CORRELATION-ID')).toEqual(['a', 'b']);
+  });
+
+  it('suggests nothing for an empty or unknown name, and stops at the cap', () => {
+    const messages = Array.from({ length: 30 }, (_, i) => withHeaders({ id: String(i) }));
+    expect(valuesAtHeader(messages, '')).toEqual([]);
+    expect(valuesAtHeader(messages, 'missing')).toEqual([]);
+    expect(valuesAtHeader(messages, 'id')).toHaveLength(12);
   });
 });
 

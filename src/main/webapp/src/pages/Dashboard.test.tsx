@@ -18,6 +18,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import axios from 'axios';
+import { setCatalog } from '../catalogStore';
 import Dashboard from './Dashboard';
 import { ToastProvider } from '../components/Toast';
 import { ConfirmProvider } from '../components/ui';
@@ -517,5 +518,65 @@ describe('Dashboard dead-letter rule', () => {
     expect(screen.queryByText('demo.orders.dlt')).toBeNull();
     expect(screen.queryByText('demo.payments.dlq')).toBeNull();
     expect(screen.getByText('demo.orders.received')).toBeInTheDocument();
+  });
+
+  it('hides the topics the application writes for itself, and only those', async () => {
+    const user = userEvent.setup();
+    const mixed = ['demo.orders.received', 'internal.audit.history', 'internal.mcp.audit'];
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/dashboard') {
+        return Promise.resolve({
+          data: {
+            ...dashboard,
+            topics: mixed,
+            topicSizes: Object.fromEntries(mixed.map(t => [t, 10])),
+            topicLastMessages: Object.fromEntries(mixed.map(t => [t, WINDOW_START])),
+          },
+        });
+      }
+      if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(mixed) });
+      return Promise.resolve({ data: {} });
+    });
+    renderPage();
+
+    await screen.findByText('internal.audit.history');
+    await user.click(screen.getByLabelText('Hide internal'));
+
+    expect(screen.queryByText('internal.audit.history')).toBeNull();
+    expect(screen.queryByText('internal.mcp.audit')).toBeNull();
+    expect(screen.getByText('demo.orders.received')).toBeInTheDocument();
+  });
+
+  it('reads the marker from the configured prefix, not from a literal', async () => {
+    const user = userEvent.setup();
+    const mixed = ['demo.orders.received', 'internal.audit.history', 'acme.internal.audit.history'];
+    setCatalog([], [], 'acme.');
+    try {
+      mockedAxios.get.mockImplementation((url: string) => {
+        if (url === '/api/dashboard') {
+          return Promise.resolve({
+            data: {
+              ...dashboard,
+              topics: mixed,
+              topicSizes: Object.fromEntries(mixed.map(t => [t, 10])),
+              topicLastMessages: Object.fromEntries(mixed.map(t => [t, WINDOW_START])),
+            },
+          });
+        }
+        if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(mixed) });
+        return Promise.resolve({ data: {} });
+      });
+      renderPage();
+
+      await screen.findByText('acme.internal.audit.history');
+      await user.click(screen.getByLabelText('Hide internal'));
+
+      // Under prefix `acme.`, only `acme.internal.*` is this application's own: a cluster topic
+      // that happens to start with `internal.` is somebody else's and stays.
+      expect(screen.queryByText('acme.internal.audit.history')).toBeNull();
+      expect(screen.getByText('internal.audit.history')).toBeInTheDocument();
+    } finally {
+      setCatalog([], [], '');
+    }
   });
 });
