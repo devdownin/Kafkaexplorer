@@ -211,39 +211,6 @@ const TopicSearchPanel: React.FC<Props> = ({
           </span>
         )}
 
-        {!fieldScoped && !keyScoped && (
-          <>
-            <span className="flex items-center gap-1">
-              <label className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer">
-                <Checkbox
-                  checked={criteria.searchKey}
-                  onChange={value => set('searchKey', value)}
-                />
-                Search keys too
-              </label>
-              <HelpTip
-                label="More information about searching record keys"
-                content="Also matches the record key, not just the payload. On for a text or regex
-                  search: a key is where an identifier usually lives."
-              />
-            </span>
-            <span className="flex items-center gap-1">
-              <label className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer">
-                <Checkbox
-                  checked={criteria.searchHeaders}
-                  onChange={value => set('searchHeaders', value)}
-                />
-                Search headers too
-              </label>
-              <HelpTip
-                label="More information about searching headers"
-                content="Widens the search to every Kafka header value. Off by default, because
-                  turning it on changes what an existing search returns — but a correlation id very
-                  often travels only there."
-              />
-            </span>
-          </>
-        )}
       </div>
 
       {/* Criteria */}
@@ -410,6 +377,42 @@ const TopicSearchPanel: React.FC<Props> = ({
 
         {advancedOpen && (
           <div id="topic-search-advanced" className="mt-2.5 space-y-2.5">
+            {/* Où le texte est cherché, au-delà du payload. Rangé ici plutôt qu'en tête : à côté des
+                modes Key et Header, ces deux cases disaient la même chose qu'eux, et ce qui n'est
+                pas au défaut reste annoncé replié (`describeAdvanced`). */}
+            {!fieldScoped && !keyScoped && (
+              <div className="flex flex-wrap items-start gap-3">
+                <span className="flex items-center gap-1">
+                  <label className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer">
+                    <Checkbox
+                      checked={criteria.searchKey}
+                      onChange={value => set('searchKey', value)}
+                    />
+                    Search keys too
+                  </label>
+                  <HelpTip
+                    label="More information about searching record keys"
+                    content="Also matches the record key, not just the payload. On for a text or regex
+                      search: a key is where an identifier usually lives."
+                  />
+                </span>
+                <span className="flex items-center gap-1">
+                  <label className="flex items-center gap-1.5 text-[12px] text-on-surface-variant cursor-pointer">
+                    <Checkbox
+                      checked={criteria.searchHeaders}
+                      onChange={value => set('searchHeaders', value)}
+                    />
+                    Search headers too
+                  </label>
+                  <HelpTip
+                    label="More information about searching headers"
+                    content="Widens the search to every Kafka header value. Off by default, because
+                      turning it on changes what an existing search returns — but a correlation id very
+                      often travels only there."
+                  />
+                </span>
+              </div>
+            )}
             <div className="flex flex-wrap items-start gap-3">
               {/* D'où le scan part. Une question d'incident prend presque toujours la forme
                   « à partir de telle heure » ou « à partir de tel offset ». */}
@@ -690,6 +693,9 @@ const TopicSearchPanel: React.FC<Props> = ({
               </Button>
             </Tooltip>
           )}
+          {/* Les outils forment un groupe qui ne se coupe pas : à 1440 px, « Clear » passait seul
+              à la ligne, loin des gestes qui vont avec lui. */}
+          <div className="ml-auto flex items-center gap-1">
           <Tooltip content="Copies a link that reruns this exact search — criterion, scan options and all.">
             <Button variant="ghost" icon="link" onClick={onCopyLink}>Link</Button>
           </Tooltip>
@@ -724,6 +730,7 @@ const TopicSearchPanel: React.FC<Props> = ({
           <Button variant="ghost" icon="close" onClick={onClear} disabled={searching}>
             Clear
           </Button>
+          </div>
         </div>
       )}
 

@@ -250,7 +250,7 @@ Chaque message est un résumé du payload d'origine :
                 scope.detailed().getOrDefault(topic, 0),
                 !read.unreadableTopics().contains(topic)));
         }
-        return ProcessMiningCoverage.of(rows, promptChars, processMiningConfig.getPromptCharBudget(),
+        return ProcessMiningCoverage.of(rows, promptChars, claudeConfig.effectivePromptCharBudget(processMiningConfig.getPromptCharBudget()),
             read.budgetExhausted(), read.readError(), warnings);
     }
 
@@ -709,7 +709,7 @@ Traces complètes, un cas par variante ci-dessus : ce sont des exemples vérifia
 sont dans la section VARIANTES.
 """);
 
-        int budget = processMiningConfig.getPromptCharBudget();
+        int budget = claudeConfig.effectivePromptCharBudget(processMiningConfig.getPromptCharBudget());
         int start = sb.length();
         int casesWritten = 0;
         for (String caseId : model.spotlightCases()) {
@@ -780,8 +780,8 @@ sont dans la section VARIANTES.
         // that inlines the messages. So the floor still governs what one topic gets, and a global
         // remainder governs how many topics get it — the ones past it are named, not dropped in
         // silence.
-        int perTopicBudget = Math.max(2_000, processMiningConfig.getPromptCharBudget() / topicCount);
-        int globalRemaining = Math.max(perTopicBudget, processMiningConfig.getPromptCharBudget());
+        int perTopicBudget = Math.max(2_000, claudeConfig.effectivePromptCharBudget(processMiningConfig.getPromptCharBudget()) / topicCount);
+        int globalRemaining = Math.max(perTopicBudget, claudeConfig.effectivePromptCharBudget(processMiningConfig.getPromptCharBudget()));
         int topicsOmitted = 0;
 
         for (Map.Entry<String, List<PayloadDigest>> entry : byTopic.entrySet()) {

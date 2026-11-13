@@ -6,7 +6,7 @@ final class LlmJsonSupport {
 
     /**
      * Tags a reasoning model wraps its deliberation in before answering. {@code <think>} is what
-     * Qwen3 — the model this application ships as its default — emits through Ollama's
+     * Qwen3 — a model this application shipped as its local default — emits through an
      * OpenAI-compatible endpoint; the other two are the same convention under different names.
      */
     private static final String[] REASONING_TAGS = {"think", "thinking", "reasoning"};
@@ -34,7 +34,7 @@ final class LlmJsonSupport {
      * Removes a reasoning model's deliberation, so only the answer is parsed.
      *
      * <p>Found on {@code qwen3:4b}, which this application shipped as its default model for
-     * several releases: a hybrid reasoning model, which through Ollama puts its whole train of
+     * several releases: a hybrid reasoning model, which puts its whole train of
      * thought in the content, inside {@code <think>} tags, and only then the JSON. The default has
      * since moved to a hosted gateway, and that widens the case rather than retiring it — a
      * reasoning model is now one slug away on OpenRouter, and several of the models people reach

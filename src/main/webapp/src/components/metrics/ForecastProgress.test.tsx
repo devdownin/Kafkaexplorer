@@ -31,4 +31,14 @@ describe('ForecastProgress', () => {
     expect(screen.getByText('Not evaluated for this result')).toBeTruthy();
     expect(screen.queryByText(/Predicted · ABOVE/)).toBeNull();
   });
+
+  // METRICS-FORECAST-UX-AUDIT.md U3: no tile when there is nothing to say.
+  it('shows no empty tiles for a series collecting history', () => {
+    const result = { key: 'k', state: 'WARMING_UP', strategy: 'UNAVAILABLE', forecast: null, quality: null, evaluatedPoints: 0,
+      context: { outputUnit: 'ms', points: [], fromInclusive: 0, toExclusive: 0 }, generatedAt: 0 } as unknown as ForecastRecord;
+    render(<ForecastProgress progress={null} error="" result={result} />);
+    expect(screen.queryByText('Trend')).toBeNull();
+    expect(screen.queryByText('Unmeasured')).toBeNull();
+    expect(screen.queryByText('No forecast yet')).toBeNull();
+  });
 });

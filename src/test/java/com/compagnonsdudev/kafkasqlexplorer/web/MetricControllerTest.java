@@ -196,4 +196,29 @@ class MetricControllerTest {
             .andExpect(jsonPath("$[0].componentHistory.leftValue[1]").value(14.0))
             .andExpect(jsonPath("$[0].componentHistory.rightValue[0]").value(7.0));
     }
+
+    /** METRICS-CREATION-AUDIT.md B2: a definition that reached no topic is a 503, not "saved". */
+    @Test
+    void aSaveThatCouldNotBePersistedAnswers503WithTheReason() throws Exception {
+        Mockito.doThrow(new MetricService.MetricPersistenceException(
+                "The metric could not be written to 'internal.metrics.config', so it was not saved: down", null))
+            .when(metricService).save(any(MetricConfig.class));
+
+        mockMvc.perform(post("/api/metrics").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"m\",\"sql\":\"SELECT 1 AS metric_value\"}"))
+            .andExpect(status().isServiceUnavailable())
+            .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("was not saved")));
+    }
+
+    /** METRICS-CREATION-AUDIT.md U2: the page needs the id of what it just created. */
+    @Test
+    void aSaveAnswersTheStoredMetric() throws Exception {
+        when(metricService.save(any(MetricConfig.class))).thenReturn(new MetricConfig(
+            "new-id", "m", "GAUGE", "SELECT 1 AS metric_value", null, null, null, null, null, null));
+
+        mockMvc.perform(post("/api/metrics").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"m\",\"sql\":\"SELECT 1 AS metric_value\"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value("new-id"));
+    }
 }

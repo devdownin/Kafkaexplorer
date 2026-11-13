@@ -19,6 +19,7 @@ import {
 } from '../components/ui';
 import { describeQueryError } from './queryError';
 import { clearDraft, readDraft, writeDraft } from '../draftStore';
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../api/requestTimeout';
 // La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
 import type {
@@ -33,6 +34,10 @@ import { forecastStage } from '../components/metrics/forecastStage';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
 import { TemplateParamsEditor } from '../components/metrics/TemplateParamsEditor';
+import { MetricDraftAssist } from '../components/assistant/MetricDraftAssist';
+import { useAssistantStatus } from '../components/assistant/useAssistantStatus';
+import { assistantAvailability, metricDraftPatch } from './sqlAssistant';
+import type { AssistantMetricResponse } from '../api/types';
 import { readFlowChains } from './flowChains';
 import { latestProcessModel, modelRoute, readMetricPriorities } from './processModelEvidence';
 import { highlightPriorities, newerAuditNote, suggestionToDraft } from './metricSuggestions';
@@ -57,6 +62,8 @@ import {
   validateDdlSql,
   validateMetricName,
   validateMetricSql,
+  previewTimeoutMs,
+  saveErrorTab,
   validateTemplate,
   validateThresholds,
 } from './metricsEditor';
@@ -95,6 +102,7 @@ const ValidationHints: React.FC<{ messages: ValidationMsg[] }> = ({ messages }) 
 
 /** Clé du brouillon de l'éditeur — voir `draftStore.ts`. */
 const EDITOR_DRAFT = 'metrics:editor';
+const DRAFT_WRITE_DELAY_MS = 400;
 
 /** Ce qu'il faut pour rouvrir le modal exactement là où il a été quitté. */
 interface EditorDraft {
@@ -158,7 +166,10 @@ const Metrics: React.FC = () => {
   useEffect(() => {
     if (!forecastRequest) return;
     const heading = document.getElementById('metric-forecast-preparation');
-    heading?.focus(); heading?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+    // The section, from its top: `nearest` on the heading alone brought one line of it to the bottom
+    // edge of the window and left the form under the fold (METRICS-FORECAST-UX-AUDIT.md U4).
+    heading?.focus({ preventScroll: true });
+    heading?.closest('section')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   }, [forecastRequest]);
   const [isModalOpen, setIsModalOpen]   = useState(restoredEditor !== null);
   const [editingMetric, setEditingMetric] = useState<Partial<MetricConfig>>(restoredEditor?.metric ?? EMPTY_METRIC);
@@ -172,6 +183,14 @@ const Metrics: React.FC = () => {
   // is allowed to write.
   const previewSeq = useRef(0);
   const overlayPressed = useRef(false);
+  // Whether the editor holds work of the user's: a typed field, a picked option, an applied
+  // draft — or a draft restored from a previous visit. Escape, the veil, the X and Cancel all
+  // closed the editor and deleted that work without a word (METRICS-CREATION-AUDIT.md U1).
+  // Set by gestures rather than by comparing the form with its state at opening: the topic and
+  // label effects rewrite the form on their own after it opens, so a comparison would always
+  // find a difference and ask about nothing.
+  const editorTouched = useRef(restoredEditor !== null);
+  const closeAsked = useRef(false);
   const clearPreview = useCallback(() => {
     previewSeq.current += 1;
     setPreviewResult(null);
@@ -183,6 +202,10 @@ const Metrics: React.FC = () => {
     [previewResult],
   );
   const previewSummary = previewResult?.summary ?? null;
+  // The definition the last successful preview ran, to say on Save when the one on screen has never
+  // been run (METRICS-CREATION-AUDIT.md U2): "Save & Activate" asks for no preview, and a query that
+  // fails then shows its error on the card, after the modal is gone.
+  const [previewedKey, setPreviewedKey] = useState<string | null>(null);
   const previewChips = useMemo(() => describeMetricScope(previewSummary), [previewSummary]);
   const previewMeasurement = useMemo(() => describeMeasurement(previewSummary), [previewSummary]);
   const previewNote = useMemo(() => scopeNoteOf(previewSummary), [previewSummary]);
@@ -291,7 +314,6 @@ const Metrics: React.FC = () => {
     fetchMetrics();
     void fetchSuggestions();
     void fetchAuditHistory();
-    axios.get<TableMetadata>('/api/metrics/metadata').then(r => setMetadata(r.data)).catch(() => { toast('Failed to load table metadata', 'error'); });
     // `.catch(() => {})` laissait la liste de gabarits vide sans que rien ne le dise.
     axios.get<MetricTemplateDescriptor[]>('/api/metrics/templates')
       .then(r => setTemplates(r.data))
@@ -364,23 +386,75 @@ const Metrics: React.FC = () => {
    * tout seul sur une métrique abandonnée serait une surprise, pas un service. L'enregistrement
    * ferme le modal, donc efface aussi.
    */
+  /*
+   * O2 — written after a pause rather than on every keystroke: Monaco changes `editingMetric` at
+   * each key, and the whole metric was serialised each time, value history included, which a draft
+   * never needs (the server keeps an existing metric's measurements, and a new one has none).
+   * A pending write is flushed when the page goes, so the last pause is not what gets lost.
+   */
+  /*
+   * O1 — the tables' columns feed the editor's completion only, and `/api/metrics/metadata` reads
+   * every table's schema under the Flink runtime's lock: it was fetched at each visit of the page,
+   * editor opened or not. Now at the first opening, once per visit.
+   */
+  const metadataAsked = useRef(false);
   useEffect(() => {
-    if (isModalOpen) {
-      writeDraft(EDITOR_DRAFT, {
-        metric: editingMetric, topic: selectedTopic, tab: editorTab, nameIsAuto,
-      } satisfies EditorDraft);
-    } else {
-      clearDraft(EDITOR_DRAFT);
-    }
-  }, [isModalOpen, editingMetric, selectedTopic, editorTab, nameIsAuto]);
+    if (!isModalOpen || metadataAsked.current) return;
+    metadataAsked.current = true;
+    axios.get<TableMetadata>('/api/metrics/metadata').then(r => setMetadata(r.data))
+      .catch(() => { toast('Failed to load table metadata', 'error'); });
+  }, [isModalOpen, toast]);
 
-  // U9 — close the modal on Escape.
+  const pendingDraft = useRef<EditorDraft | null>(null);
+  useEffect(() => {
+    if (!isModalOpen) {
+      pendingDraft.current = null;
+      clearDraft(EDITOR_DRAFT);
+      return;
+    }
+    const { history: _history, componentHistory: _components, ...metric } = editingMetric;
+    pendingDraft.current = { metric, topic: selectedTopic, tab: editorTab, nameIsAuto };
+    const timer = window.setTimeout(() => {
+      if (pendingDraft.current) writeDraft(EDITOR_DRAFT, pendingDraft.current);
+      pendingDraft.current = null;
+    }, DRAFT_WRITE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [isModalOpen, editingMetric, selectedTopic, editorTab, nameIsAuto]);
+  useEffect(() => {
+    const flush = () => { if (pendingDraft.current) writeDraft(EDITOR_DRAFT, pendingDraft.current); };
+    window.addEventListener('pagehide', flush);
+    return () => { window.removeEventListener('pagehide', flush); flush(); };
+  }, []);
+
+  /** Every way out but Save: asks first when closing would throw away the user's work. */
+  const requestClose = useCallback(async () => {
+    if (closeAsked.current) return;
+    if (editorTouched.current) {
+      closeAsked.current = true;
+      try {
+        const discard = await confirm({
+          title: 'Discard this metric?',
+          description: 'What was entered in the editor has not been saved and will be lost.',
+          confirmLabel: 'Discard', cancelLabel: 'Keep editing', tone: 'danger', icon: 'delete',
+        });
+        if (!discard) return;
+      } finally {
+        closeAsked.current = false;
+      }
+    }
+    setIsModalOpen(false);
+  }, [confirm]);
+
+  // U9 — close the modal on Escape. An Escape something else already handled — Monaco closing its
+  // suggestion list, the confirmation dialog cancelling itself — is not a request to close.
   useEffect(() => {
     if (!isModalOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsModalOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) void requestClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isModalOpen]);
+  }, [isModalOpen, requestClose]);
 
   // SQL autocomplete
   useEffect(() => {
@@ -443,6 +517,7 @@ const Metrics: React.FC = () => {
     setEditorTab('metric');
     clearPreview();
     setSaveError(null);
+    editorTouched.current = false;
     setIsModalOpen(true);
   };
 
@@ -484,6 +559,7 @@ const Metrics: React.FC = () => {
       setEditorTab('metric');
       clearPreview();
       setSaveError(null);
+      editorTouched.current = false;
       setIsModalOpen(true);
       setSearchParams(params => {
         const next = new URLSearchParams(params);
@@ -497,6 +573,20 @@ const Metrics: React.FC = () => {
     openFromUrl();
   }, [searchParams, setSearchParams, clearPreview]);
 
+  // L'assistant (EMBEDDED-LLM-SCOPE.md) : un brouillon pré-remplit le formulaire, l'aperçu tranche,
+  // et l'enregistrement reste un geste. Absent tant que le serveur ne dit pas qu'il peut répondre.
+  const assistantStatus = useAssistantStatus();
+  const assistantReady = assistantAvailability(assistantStatus).available;
+  const applyMetricDraft = (draft: AssistantMetricResponse) => {
+    const patch = metricDraftPatch(draft, RAW_SQL);
+    if (!patch) return;
+    setEditingMetric(m => ({ ...m, ...patch }));
+    editorTouched.current = true;
+    if (patch.name) setNameIsAuto(false);
+    setEditorTab('metric');
+    clearPreview();
+  };
+
   const openSuggestion = (suggestion: MetricSuggestion) => {
     const draft = suggestionToDraft(suggestion);
     setEditingMetric({ ...EMPTY_METRIC, ...draft });
@@ -505,6 +595,7 @@ const Metrics: React.FC = () => {
     setEditorTab('metric');
     clearPreview();
     setSaveError(null);
+    editorTouched.current = false;
     setIsModalOpen(true);
   };
 
@@ -625,10 +716,17 @@ const Metrics: React.FC = () => {
   ] as const).filter(entry => entry.failing && entry.tab !== editorTab);
 
   // ── Save ──────────────────────────────────────────────────────────────────
+  const definitionKey = JSON.stringify([editingMetric.type, isTemplate ? null : editingMetric.sql,
+    editingMetric.templateType, editingMetric.templateParams, editingMetric.createTableSql]);
+  const notPreviewed = previewedKey !== definitionKey;
+
   const handleSave = async () => {
     if (!editingMetric.name?.trim()) { toast('Name is required', 'error'); return; }
-    if (!isTemplate && !editingMetric.sql?.trim()) { toast('SQL is required', 'error'); return; }
+    if (!isTemplate && !editingMetric.sql?.trim()) { setEditorTab('metric'); toast('SQL is required', 'error'); return; }
     if (hasBlockingErrors) {
+      // Reached by Enter only — the button is disabled — and a toast goes behind the modal in
+      // three seconds: open the tab that fails, where the hint is written.
+      if (hiddenErrorTabs.length > 0) setEditorTab(hiddenErrorTabs[0].tab);
       const first = [...nameValidation, ...sqlValidation, ...templateValidation, ...ddlValidation, ...thresholdValidation].find(m => m.level === 'error');
       toast(first!.text, 'error');
       return;
@@ -638,10 +736,19 @@ const Metrics: React.FC = () => {
     try {
       // A template's parameters ARE its query: the SQL left from the mode it was switched away from
       // would be stored beside them and shown on the card as a query that never runs.
-      await axios.post('/api/metrics', isTemplate ? { ...editingMetric, sql: null } : editingMetric);
+      const res = await axios.post<MetricConfig | ''>('/api/metrics', isTemplate ? { ...editingMetric, sql: null } : editingMetric);
       toast('Metric saved', 'success');
       setIsModalOpen(false);
       fetchMetrics();
+      // Measured now rather than at the next cycle: the card read "pending" for up to a refresh
+      // interval with nothing saying when, and a query that fails said so only then (U2).
+      const savedId = res.data ? res.data.id : null;
+      if (savedId) {
+        void axios.post<MetricConfig>(`/api/metrics/${savedId}/refresh`)
+          .then(r => setMetrics(prev => prev.some(m => m.id === savedId)
+            ? prev.map(m => (m.id === savedId ? r.data : m)) : [...prev, r.data]))
+          .catch(() => { /* the scheduled cycle measures it anyway */ });
+      }
       // Ce qui vient d'être enregistré couvre peut-être une proposition : sans ce rappel, la
       // carte resterait à proposer un KPI désormais en place.
       void fetchSuggestions();
@@ -649,7 +756,9 @@ const Metrics: React.FC = () => {
       // Un toast disparaît derrière le modal en trois secondes, et `catch {}` jetait la seule
       // chose utile : la raison du refus — quelle colonne SQL est inconnue, quelle DDL ne compile
       // pas. Elle reste affichée dans le modal, là où l'on peut corriger.
-      setSaveError(describeApiError(err, 'Failed to save metric.'));
+      const info = describeApiError(err, 'Failed to save metric.');
+      setSaveError(info);
+      setEditorTab(saveErrorTab(info.raw));
     } finally {
       setSaving(false);
     }
@@ -684,8 +793,12 @@ const Metrics: React.FC = () => {
       // (mirrors the scheduled refresh) and the value is computed with the metric's real type
       // (or template semantics — count delta, transit latency).
       const res = await axios.post<MetricTestResponse>(
-        '/api/metrics/preview-template', editingMetric);
-      if (seq === previewSeq.current) setPreviewResult(res.data);
+        '/api/metrics/preview-template', editingMetric,
+        { timeout: previewTimeoutMs(templateType, editingMetric.templateParams ?? {}, DEFAULT_REQUEST_TIMEOUT_MS) });
+      if (seq === previewSeq.current) {
+        setPreviewResult(res.data);
+        setPreviewedKey(res.data.error ? null : definitionKey);
+      }
     } catch (err) {
       // The server's reason — which column, which DDL — is the only useful part of a refusal.
       if (seq === previewSeq.current) setPreviewResult({ error: describeApiError(err, 'Preview request failed').raw ?? 'Preview request failed' });
@@ -841,7 +954,8 @@ const Metrics: React.FC = () => {
         <h3 id="metric-forecast-preparation" tabIndex={-1}>Prepare a forecast</h3>
         <Button variant="ghost" onClick={() => setForecastRequest(null)}>Close forecast preparation</Button>
         <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId}
-          onApplied={() => setForecastRevision(v => v + 1)} />
+          onApplied={() => setForecastRevision(v => v + 1)}
+          forecastMetricIds={forecastStatus?.series.map(s => s.metricId) ?? []} />
       </section>}
       <ForecastPanel refresh={forecastRevision} onStatus={setForecastStatus}
         onConfigure={() => setForecastRequest(previous => ({ sequence: (previous?.sequence ?? 0) + 1 }))} />
@@ -897,7 +1011,7 @@ const Metrics: React.FC = () => {
           onClick={e => {
             // Selecting text in the editor and releasing outside the dialog is a click on the veil,
             // and it closed the editor and deleted the draft: only a press that began there counts.
-            if (overlayPressed.current && e.target === e.currentTarget) setIsModalOpen(false);
+            if (overlayPressed.current && e.target === e.currentTarget) void requestClose();
             overlayPressed.current = false;
           }}>
           {/* Le dialogue est la carte, pas le voile : `role` sur le conteneur `fixed inset-0`
@@ -909,6 +1023,8 @@ const Metrics: React.FC = () => {
           <div
             role="dialog" aria-modal="true" aria-labelledby="metric-editor-title"
             className="bg-surface-container border border-outline-variant rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
+            onInputCapture={() => { editorTouched.current = true; }}
+            onChangeCapture={() => { editorTouched.current = true; }}
             onClick={e => e.stopPropagation()}>
             {/* Un vrai <form> : Entrée depuis les champs du panneau de gauche enregistre.
                 Tous les boutons internes déclarent type="button", seul « Save » soumet. */}
@@ -922,7 +1038,7 @@ const Metrics: React.FC = () => {
                 <h2 id="metric-editor-title" className="text-[16px] font-semibold text-on-surface">
                   {editingMetric.id ? 'Edit Metric' : 'New SQL Metric'}
                 </h2>
-                <button type="button" onClick={() => setIsModalOpen(false)} aria-label="Close"
+                <button type="button" onClick={() => void requestClose()} aria-label="Close"
                   className="p-1.5 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors">
                   <span className="material-symbols-outlined text-[20px]">close</span>
                 </button>
@@ -1277,6 +1393,14 @@ const Metrics: React.FC = () => {
                     )}
                   </div>
 
+                  {/* The assistant drafts the metric's SQL, so it lives on that tab, at the width of the
+                      editor — in the 288 px column its proposal card was cramped. */}
+                  {editorTab === 'metric' && assistantReady && assistantStatus && (
+                    <div className="border-b border-outline-variant/60 p-3 max-h-72 overflow-y-auto shrink-0">
+                      <MetricDraftAssist status={assistantStatus} topic={selectedTopic} onApply={applyMetricDraft} />
+                    </div>
+                  )}
+
                   {/* Editor area */}
                   <div className="flex-1 overflow-hidden">
                     {editorTab === 'metric' ? (
@@ -1408,7 +1532,13 @@ const Metrics: React.FC = () => {
                     ))}
                   </div>
                 )}
-                <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancel</Button>
+                {!hasBlockingErrors && notPreviewed && (
+                  <span className="mr-auto flex items-center gap-1 text-[12px] text-on-surface-variant">
+                    <span aria-hidden="true" className="material-symbols-outlined text-[16px]">info</span>
+                    Not previewed: this definition has not been run yet.
+                  </span>
+                )}
+                <Button variant="ghost" onClick={() => void requestClose()}>Cancel</Button>
                 <Button type="submit" variant="primary" icon={saving ? undefined : 'save'} loading={saving}
                   disabled={saving || hasBlockingErrors}>
                   {saving ? 'Saving…' : 'Save & Activate'}

@@ -51,7 +51,7 @@ public class AnthropicLlmClient implements LlmClient {
         var builder = AnthropicOkHttpClient.builder()
             .apiKey(config.getApiKey())
             // claude.request-timeout-seconds applied at last. It was documented as governing "HTTP
-            // LLM providers (OpenAI-compatible, Ollama, SpectraLLM)" and this path silently took
+            // LLM providers (OpenAI-compatible, llama.cpp, SpectraLLM)" and this path silently took
             // the SDK's own default instead — while the Settings form renders the field whatever
             // the provider in force, so a number on screen did nothing on the one provider whose
             // section it sits in. Split the way LlmHttpSupport splits it, and for the same reason:

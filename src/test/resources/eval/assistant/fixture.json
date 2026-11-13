@@ -1,0 +1,1425 @@
+{
+ "_comment": "Written from setup-demo.sh (scenarios 1-3, customers, 9 and 10) with the clock frozen at TS=1767225600 and DATE_NOW=2026-01-01T00:00:00Z. Edit the two together; see AssistantEvalFixture.",
+ "tables": [
+  {
+   "topic": "demo.orders.1.received",
+   "records": [
+    {
+     "id": "ORD-101",
+     "state": "RECEIVED",
+     "description": "Smartphone purchase",
+     "type": "ELECTRONICS",
+     "odate": "2026-01-01T00:00:00Z",
+     "event_time": 1767225600,
+     "amount": 599.99,
+     "customer_id": "C-001"
+    },
+    {
+     "id": "ORD-102",
+     "state": "RECEIVED",
+     "description": "Broken laptop return",
+     "type": "ELECTRONICS",
+     "odate": "2026-01-01T00:00:00Z",
+     "event_time": 1767225600,
+     "amount": 0.0,
+     "customer_id": "C-002"
+    },
+    {
+     "id": "ORD-103",
+     "state": "RECEIVED",
+     "description": "Sofa",
+     "type": "FURNITURE",
+     "odate": "2026-01-01T00:00:00Z",
+     "event_time": 1767225600,
+     "amount": 1200.0,
+     "customer_id": "C-003"
+    },
+    {
+     "id": "ORD-104",
+     "state": "RECEIVED",
+     "description": "Table",
+     "type": "FURNITURE",
+     "odate": "2026-01-01T00:00:00Z",
+     "event_time": 1767225600,
+     "amount": 450.0,
+     "customer_id": "C-003"
+    },
+    {
+     "id": "ORD-105",
+     "state": "RECEIVED",
+     "description": "Apple",
+     "type": "FOOD",
+     "odate": "2026-01-01T00:00:00Z",
+     "event_time": 1767225600,
+     "amount": 2.5,
+     "customer_id": "C-001"
+    },
+    {
+     "id": "ORD-106",
+     "state": "RECEIVED",
+     "description": "Banana",
+     "type": "FOOD",
+     "odate": "2026-01-01T00:00:00Z",
+     "event_time": 1767225600,
+     "amount": 1.8,
+     "customer_id": "C-001"
+    },
+    {
+     "id": "ORD-103",
+     "state": "RECEIVED",
+     "description": "Sofa",
+     "type": "FURNITURE",
+     "odate": "2026-01-01T00:00:00Z",
+     "event_time": 1767225600,
+     "amount": 1200.0,
+     "customer_id": "C-003"
+    },
+    {
+     "id": "ORD-105",
+     "state": "RECEIVED",
+     "description": "Apple",
+     "type": "FOOD",
+     "odate": "2026-01-01T00:00:00Z",
+     "event_time": 1767225600,
+     "amount": 2.5,
+     "customer_id": "C-001"
+    }
+   ]
+  },
+  {
+   "topic": "demo.orders.2.validated",
+   "records": [
+    {
+     "id": "ORD-101",
+     "state": "VALIDATED",
+     "description": "Smartphone purchase",
+     "type": "ELECTRONICS",
+     "odate": "2026-01-01T00:00:00Z",
+     "event_time": 1767225600,
+     "amount": 599.99,
+     "customer_id": "C-001",
+     "validation_code": "VAL-A1"
+    },
+    {
+     "id": "ORD-102",
+     "state": "REJECTED",
+     "description": "Broken laptop return",
+     "type": "ELECTRONICS",
+     "odate": "2026-01-01T00:00:00Z",
+     "event_time": 1767225600,
+     "reason": "Warranty expired"
+    }
+   ]
+  },
+  {
+   "topic": "demo.customers",
+   "records": [
+    {
+     "customer_id": "C-001",
+     "name": "Alice",
+     "segment": "VIP",
+     "country": "FR"
+    },
+    {
+     "customer_id": "C-002",
+     "name": "Bob",
+     "segment": "REGULAR",
+     "country": "UK"
+    },
+    {
+     "customer_id": "C-003",
+     "name": "Charlie",
+     "segment": "REGULAR",
+     "country": "DE"
+    },
+    {
+     "customer_id": "C-004",
+     "name": "Diana",
+     "segment": "PREMIUM",
+     "country": "ES"
+    },
+    {
+     "customer_id": "C-005",
+     "name": "Ethan",
+     "segment": "NEW",
+     "country": "NL"
+    },
+    {
+     "customer_id": "C-002",
+     "name": "Bob",
+     "segment": "PREMIUM",
+     "country": "UK"
+    }
+   ]
+  },
+  {
+   "topic": "demo.payments.authorized",
+   "records": [
+    {
+     "paymentRef": "PAY-101",
+     "provider": "STRIPE",
+     "amount": 599.99,
+     "currency": "EUR",
+     "state": "AUTHORIZED",
+     "event_time": 1767225600
+    },
+    {
+     "paymentRef": "PAY-103",
+     "provider": "STRIPE",
+     "amount": 1200.0,
+     "currency": "EUR",
+     "state": "AUTHORIZED",
+     "event_time": 1767225600
+    },
+    {
+     "paymentRef": "PAY-104",
+     "provider": "STRIPE",
+     "amount": 450.0,
+     "currency": "EUR",
+     "state": "AUTHORIZED",
+     "event_time": 1767225600
+    },
+    {
+     "paymentRef": "PAY-106",
+     "provider": "STRIPE",
+     "amount": 1.8,
+     "currency": "EUR",
+     "state": "AUTHORIZED",
+     "event_time": 1767225600
+    }
+   ]
+  },
+  {
+   "topic": "demo.payments.captured",
+   "records": [
+    {
+     "paymentRef": "PAY-101",
+     "provider": "STRIPE",
+     "amount": 599.99,
+     "currency": "EUR",
+     "state": "CAPTURED",
+     "event_time": 1767225602
+    },
+    {
+     "paymentRef": "PAY-103",
+     "provider": "STRIPE",
+     "amount": 1200.0,
+     "currency": "EUR",
+     "state": "CAPTURED",
+     "event_time": 1767225602
+    },
+    {
+     "paymentRef": "PAY-104",
+     "provider": "STRIPE",
+     "amount": 450.0,
+     "currency": "EUR",
+     "state": "CAPTURED",
+     "event_time": 1767225602
+    },
+    {
+     "paymentRef": "PAY-106",
+     "provider": "STRIPE",
+     "amount": 1.8,
+     "currency": "EUR",
+     "state": "CAPTURED",
+     "event_time": 1767225602
+    }
+   ]
+  },
+  {
+   "topic": "demo.shipments.dispatched",
+   "records": [
+    {
+     "shipmentRef": "SHP-101",
+     "carrier": "DHL",
+     "state": "DISPATCHED",
+     "hub": "CDG",
+     "event_time": 1767225604
+    },
+    {
+     "shipmentRef": "SHP-103",
+     "carrier": "DHL",
+     "state": "DISPATCHED",
+     "hub": "CDG",
+     "event_time": 1767225604
+    }
+   ]
+  },
+  {
+   "topic": "demo.shipments.delivered",
+   "records": [
+    {
+     "shipmentRef": "SHP-101",
+     "carrier": "DHL",
+     "state": "DELIVERED",
+     "signed_by": "SIGNATURE",
+     "event_time": 1767225606
+    },
+    {
+     "shipmentRef": "SHP-103",
+     "carrier": "DHL",
+     "state": "DELIVERED",
+     "signed_by": "SIGNATURE",
+     "event_time": 1767225606
+    }
+   ]
+  },
+  {
+   "topic": "demo.iot.sensors",
+   "records": [
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767216960,
+     "temperature": 41.0,
+     "humidity": 35,
+     "status": "ALERT"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767217020,
+     "temperature": 19.37,
+     "humidity": 42,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767217080,
+     "temperature": 20.74,
+     "humidity": 49,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767217140,
+     "temperature": 22.11,
+     "humidity": 56,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767217200,
+     "temperature": 23.48,
+     "humidity": 63,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767217260,
+     "temperature": 24.85,
+     "humidity": 70,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767217320,
+     "temperature": 26.22,
+     "humidity": 77,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767217380,
+     "temperature": 18.59,
+     "humidity": 39,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767217440,
+     "temperature": 19.96,
+     "humidity": 46,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767217500,
+     "temperature": 21.33,
+     "humidity": 53,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767217560,
+     "temperature": 22.7,
+     "humidity": 60,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767217620,
+     "temperature": 24.07,
+     "humidity": 67,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767217680,
+     "temperature": 25.44,
+     "humidity": 74,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767217740,
+     "temperature": 26.81,
+     "humidity": 36,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767217800,
+     "temperature": 19.18,
+     "humidity": 43,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767217860,
+     "temperature": 20.55,
+     "humidity": 50,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767217920,
+     "temperature": 21.92,
+     "humidity": 57,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767217980,
+     "temperature": 23.29,
+     "humidity": 64,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767218040,
+     "temperature": 24.66,
+     "humidity": 71,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767218100,
+     "temperature": 26.03,
+     "humidity": 78,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767218160,
+     "temperature": 18.4,
+     "humidity": 40,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767218220,
+     "temperature": 19.77,
+     "humidity": 47,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767218280,
+     "temperature": 21.14,
+     "humidity": 54,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767218340,
+     "temperature": 22.51,
+     "humidity": 61,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767218400,
+     "temperature": 23.88,
+     "humidity": 68,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767218460,
+     "temperature": 25.25,
+     "humidity": 75,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767218520,
+     "temperature": 26.62,
+     "humidity": 37,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767218580,
+     "temperature": 18.99,
+     "humidity": 44,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767218640,
+     "temperature": 20.36,
+     "humidity": 51,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767218700,
+     "temperature": 21.73,
+     "humidity": 58,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767218760,
+     "temperature": 23.1,
+     "humidity": 65,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767218820,
+     "temperature": 24.47,
+     "humidity": 72,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767218880,
+     "temperature": 25.84,
+     "humidity": 79,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767218940,
+     "temperature": 18.21,
+     "humidity": 41,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767219000,
+     "temperature": 19.58,
+     "humidity": 48,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767219060,
+     "temperature": 20.95,
+     "humidity": 55,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767219120,
+     "temperature": 22.32,
+     "humidity": 62,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767219180,
+     "temperature": 41.6,
+     "humidity": 69,
+     "status": "ALERT"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767219240,
+     "temperature": 25.06,
+     "humidity": 76,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767219300,
+     "temperature": 26.43,
+     "humidity": 38,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767219360,
+     "temperature": 18.8,
+     "humidity": 45,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767219420,
+     "temperature": 20.17,
+     "humidity": 52,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767219480,
+     "temperature": 21.54,
+     "humidity": 59,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767219540,
+     "temperature": 22.91,
+     "humidity": 66,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767219600,
+     "temperature": 24.28,
+     "humidity": 73,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767219660,
+     "temperature": 25.65,
+     "humidity": 35,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767219720,
+     "temperature": 18.02,
+     "humidity": 42,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767219780,
+     "temperature": 19.39,
+     "humidity": 49,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767219840,
+     "temperature": 20.76,
+     "humidity": 56,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767219900,
+     "temperature": 22.13,
+     "humidity": 63,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767219960,
+     "temperature": 23.5,
+     "humidity": 70,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767220020,
+     "temperature": 24.87,
+     "humidity": 77,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767220080,
+     "temperature": 26.24,
+     "humidity": 39,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767220140,
+     "temperature": 18.61,
+     "humidity": 46,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767220200,
+     "temperature": 19.98,
+     "humidity": 53,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767220260,
+     "temperature": 21.35,
+     "humidity": 60,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767220320,
+     "temperature": 22.72,
+     "humidity": 67,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767220380,
+     "temperature": 24.09,
+     "humidity": 74,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767220440,
+     "temperature": 25.46,
+     "humidity": 36,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767220500,
+     "temperature": 26.83,
+     "humidity": 43,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767220560,
+     "temperature": 19.2,
+     "humidity": 50,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767220620,
+     "temperature": 20.57,
+     "humidity": 57,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767220680,
+     "temperature": 21.94,
+     "humidity": 64,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767220740,
+     "temperature": 23.31,
+     "humidity": 71,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767220800,
+     "temperature": 24.68,
+     "humidity": 78,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767220860,
+     "temperature": 26.05,
+     "humidity": 40,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767220920,
+     "temperature": 18.42,
+     "humidity": 47,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767220980,
+     "temperature": 19.79,
+     "humidity": 54,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767221040,
+     "temperature": 21.16,
+     "humidity": 61,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767221100,
+     "temperature": 22.53,
+     "humidity": 68,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767221160,
+     "temperature": 23.9,
+     "humidity": 75,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767221220,
+     "temperature": 25.27,
+     "humidity": 37,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767221280,
+     "temperature": 26.64,
+     "humidity": 44,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767221340,
+     "temperature": 19.01,
+     "humidity": 51,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767221400,
+     "temperature": 42.2,
+     "humidity": 58,
+     "status": "ALERT"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767221460,
+     "temperature": 21.75,
+     "humidity": 65,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767221520,
+     "temperature": 23.12,
+     "humidity": 72,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767221580,
+     "temperature": 24.49,
+     "humidity": 79,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767221640,
+     "temperature": 25.86,
+     "humidity": 41,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767221700,
+     "temperature": 18.23,
+     "humidity": 48,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767221760,
+     "temperature": 19.6,
+     "humidity": 55,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767221820,
+     "temperature": 20.97,
+     "humidity": 62,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767221880,
+     "temperature": 22.34,
+     "humidity": 69,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767221940,
+     "temperature": 23.71,
+     "humidity": 76,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767222000,
+     "temperature": 25.08,
+     "humidity": 38,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767222060,
+     "temperature": 26.45,
+     "humidity": 45,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767222120,
+     "temperature": 18.82,
+     "humidity": 52,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767222180,
+     "temperature": 20.19,
+     "humidity": 59,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767222240,
+     "temperature": 21.56,
+     "humidity": 66,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767222300,
+     "temperature": 22.93,
+     "humidity": 73,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767222360,
+     "temperature": 24.3,
+     "humidity": 35,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767222420,
+     "temperature": 25.67,
+     "humidity": 42,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767222480,
+     "temperature": 18.04,
+     "humidity": 49,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767222540,
+     "temperature": 19.41,
+     "humidity": 56,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767222600,
+     "temperature": 20.78,
+     "humidity": 63,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767222660,
+     "temperature": 22.15,
+     "humidity": 70,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767222720,
+     "temperature": 23.52,
+     "humidity": 77,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767222780,
+     "temperature": 24.89,
+     "humidity": 39,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767222840,
+     "temperature": 26.26,
+     "humidity": 46,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767222900,
+     "temperature": 18.63,
+     "humidity": 53,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767222960,
+     "temperature": 20.0,
+     "humidity": 60,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767223020,
+     "temperature": 21.37,
+     "humidity": 67,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767223080,
+     "temperature": 22.74,
+     "humidity": 74,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767223140,
+     "temperature": 24.11,
+     "humidity": 36,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767223200,
+     "temperature": 25.48,
+     "humidity": 43,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767223260,
+     "temperature": 26.85,
+     "humidity": 50,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767223320,
+     "temperature": 19.22,
+     "humidity": 57,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767223380,
+     "temperature": 20.59,
+     "humidity": 64,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767223440,
+     "temperature": 21.96,
+     "humidity": 71,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767223500,
+     "temperature": 23.33,
+     "humidity": 78,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767223560,
+     "temperature": 24.7,
+     "humidity": 40,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767223620,
+     "temperature": 41.3,
+     "humidity": 47,
+     "status": "ALERT"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767223680,
+     "temperature": 18.44,
+     "humidity": 54,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767223740,
+     "temperature": 19.81,
+     "humidity": 61,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767223800,
+     "temperature": 21.18,
+     "humidity": 68,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767223860,
+     "temperature": 22.55,
+     "humidity": 75,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767223920,
+     "temperature": 23.92,
+     "humidity": 37,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767223980,
+     "temperature": 25.29,
+     "humidity": 44,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767224040,
+     "temperature": 26.66,
+     "humidity": 51,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767224100,
+     "temperature": 19.03,
+     "humidity": 58,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767224160,
+     "temperature": 20.4,
+     "humidity": 65,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767224220,
+     "temperature": 21.77,
+     "humidity": 72,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767224280,
+     "temperature": 23.14,
+     "humidity": 79,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767224340,
+     "temperature": 24.51,
+     "humidity": 41,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767224400,
+     "temperature": 25.88,
+     "humidity": 48,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767224460,
+     "temperature": 18.25,
+     "humidity": 55,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767224520,
+     "temperature": 19.62,
+     "humidity": 62,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767224580,
+     "temperature": 20.99,
+     "humidity": 69,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767224640,
+     "temperature": 22.36,
+     "humidity": 76,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767224700,
+     "temperature": 23.73,
+     "humidity": 38,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767224760,
+     "temperature": 25.1,
+     "humidity": 45,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767224820,
+     "temperature": 26.47,
+     "humidity": 52,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767224880,
+     "temperature": 18.84,
+     "humidity": 59,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767224940,
+     "temperature": 20.21,
+     "humidity": 66,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767225000,
+     "temperature": 21.58,
+     "humidity": 73,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767225060,
+     "temperature": 22.95,
+     "humidity": 35,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-01",
+     "site": "LYON-DC2",
+     "event_time": 1767225120,
+     "temperature": 24.32,
+     "humidity": 42,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-02",
+     "site": "BERLIN-DC3",
+     "event_time": 1767225180,
+     "temperature": 25.69,
+     "humidity": 49,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-03",
+     "site": "MADRID-DC4",
+     "event_time": 1767225240,
+     "temperature": 18.06,
+     "humidity": 56,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-04",
+     "site": "PARIS-DC1",
+     "event_time": 1767225300,
+     "temperature": 19.43,
+     "humidity": 63,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-05",
+     "site": "LYON-DC2",
+     "event_time": 1767225360,
+     "temperature": 20.8,
+     "humidity": 70,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-06",
+     "site": "BERLIN-DC3",
+     "event_time": 1767225420,
+     "temperature": 22.17,
+     "humidity": 77,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-07",
+     "site": "MADRID-DC4",
+     "event_time": 1767225480,
+     "temperature": 23.54,
+     "humidity": 39,
+     "status": "OK"
+    },
+    {
+     "sensor_id": "sensor-08",
+     "site": "PARIS-DC1",
+     "event_time": 1767225540,
+     "temperature": 24.91,
+     "humidity": 46,
+     "status": "OK"
+    }
+   ]
+  }
+ ]
+}

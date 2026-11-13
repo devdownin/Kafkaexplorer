@@ -61,9 +61,9 @@ class AgentModelsTest {
     }
 
     @Test
-    @DisplayName("Ollama needs no key, because it has none")
-    void ollamaNeedsNoKey() {
-        assertThat(with("CLAUDE_PROVIDER", "OLLAMA", "AGENT_EVAL_MODEL", "qwen2.5").unconfigured())
+    @DisplayName("llama.cpp needs no key, because it has none")
+    void llamaCppNeedsNoKey() {
+        assertThat(with("CLAUDE_PROVIDER", "LLAMA_CPP", "AGENT_EVAL_MODEL", "qwen2.5").unconfigured())
                 .isEmpty();
     }
 
@@ -189,7 +189,7 @@ class AgentModelsTest {
     @Test
     @DisplayName("CLAUDE_BASE_URL is the agent's gateway, not the judge's on another provider")
     void theBaseUrlBelongsToClaudeProvider() {
-        AgentModels models = with("CLAUDE_PROVIDER", "OLLAMA", "CLAUDE_BASE_URL", "http://gpu-box:11434/v1",
+        AgentModels models = with("CLAUDE_PROVIDER", "LLAMA_CPP", "CLAUDE_BASE_URL", "http://gpu-box:8083/v1",
                 "AGENT_EVAL_MODEL", "qwen", "AGENT_EVAL_JUDGE_PROVIDER", "OPENROUTER",
                 "OPENROUTER_API_KEY", "k", "AGENT_EVAL_JUDGE_MODEL", "a/b");
 
@@ -203,7 +203,7 @@ class AgentModelsTest {
         assertThat(with("CLAUDE_PROVIDER", "ANTHROPIC", "ANTHROPIC_API_KEY", "sk-ant",
                 "AGENT_EVAL_MODEL", "claude-x").agent())
                 .isInstanceOf(AnthropicToolCallingModel.class);
-        assertThat(with("CLAUDE_PROVIDER", "OLLAMA", "AGENT_EVAL_MODEL", "qwen").agent())
+        assertThat(with("CLAUDE_PROVIDER", "LLAMA_CPP", "AGENT_EVAL_MODEL", "qwen").agent())
                 .isInstanceOf(OpenAiToolCallingModel.class);
     }
 

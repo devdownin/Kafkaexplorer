@@ -60,7 +60,7 @@ class LlmStructuredOutputTest {
         server.start();
 
         ClaudeConfig config = new ClaudeConfig();
-        config.setProvider(ClaudeConfig.Provider.OLLAMA);
+        config.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
         config.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
         config.setModel("qwen3:4b");
         return config;
@@ -88,7 +88,7 @@ class LlmStructuredOutputTest {
         server.start();
 
         ClaudeConfig config = new ClaudeConfig();
-        config.setProvider(ClaudeConfig.Provider.OLLAMA);
+        config.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
         config.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort() + "/v1");
         config.setModel("qwen3:4b");
         return config;
@@ -638,7 +638,7 @@ class LlmStructuredOutputTest {
     }
 
     /**
-     * A gateway that does not price its answers — the OpenAI API, Ollama — leaves the cost unknown.
+     * A gateway that does not price its answers — the OpenAI API, llama.cpp — leaves the cost unknown.
      * Zero would say the call was free, on a page whose whole point is what a configuration costs.
      */
     @Test

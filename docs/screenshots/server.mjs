@@ -49,6 +49,11 @@ const API = [
   [m => m.startsWith('/api/topic/') && m.endsWith('/consumers'), () => F.topicConsumers],
   [m => m.startsWith('/api/topic/'), () => F.topicDetail],
   [m => m === '/api/forecasts', () => F.forecastStatus],
+  [m => /^\/api\/forecasts\/[a-f0-9]{64}\/progress$/.test(m), () => F.forecastProgress],
+  // No shadow model on this deployment: the panel reads a 404 as "not configured" and stops asking.
+  [m => /^\/api\/forecasts\/[a-f0-9]{64}\/shadow$/.test(m), () => ({ [STATUS]: 404 })],
+  [m => /^\/api\/forecasts\/[a-f0-9]{64}$/.test(m), () => F.forecastSeries],
+  [m => m === '/api/assistant/status', () => F.assistantStatus],
   [m => m === '/api/metrics', () => F.metrics],
   [m => m === '/api/metrics/templates', () => F.metricTemplates],
   [m => m === '/api/metrics/metadata', () => ({ demo_orders_1_received: ['id', 'status', 'amount_cents'] })],
@@ -75,6 +80,9 @@ const API = [
  * échec, jamais un silence.
  */
 const unstubbed = new Set();
+
+/** A stub that answers with a status of its own rather than 200: `{ [STATUS]: 404 }`. */
+const STATUS = Symbol('status');
 
 const send = (res, status, body, type) => {
   res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' });
@@ -109,7 +117,9 @@ const server = http.createServer((req, res) => {
       console.warn(`  ! unstubbed API route: ${req.method} ${pathname}`);
       return send(res, 404, JSON.stringify({ message: `no stub for ${pathname}` }), MIME['.json']);
     }
-    return send(res, 200, JSON.stringify(route[1](url)), MIME['.json']);
+    const body = route[1](url);
+    if (body && body[STATUS]) return send(res, body[STATUS], '', MIME['.json']);
+    return send(res, 200, JSON.stringify(body), MIME['.json']);
   }
 
   // Static asset, else the SPA shell — SpaController does the same thing in production,

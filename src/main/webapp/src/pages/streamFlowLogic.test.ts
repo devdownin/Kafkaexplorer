@@ -6,7 +6,7 @@ import {
   analyzeChain, buildContinuation, buildLayout, buildTopicSearchQuery, buildTraceLinkForKey,
   buildTraceQuery, centerOn, clampScale, compareFlows, describeChainInsight, describeComparison,
   describeContinuation, describeCoverage, describeProgress, describeSearchScope, expandTopicPatterns,
-  filterHits, fitTransform, formatDwell, isNodeVisible, parseSseBuffer, parseTopicList,
+  filterHits, fitTransform, readableFitTransform, READABLE_SCALE, formatDwell, isNodeVisible, parseSseBuffer, parseTopicList,
   progressRatio, slowestDivergence, sortHits, clampEvidencePct, readEvidencePct,
   writeEvidencePct, EVIDENCE_KEY, MIN_EVIDENCE_PCT, MAX_EVIDENCE_PCT, DEFAULT_EVIDENCE_PCT,
   formatLatency, formatRelativeTime, hitsToRows, HISTORY_KEY, HIT_EXPORT_COLUMNS, PANEL_KEY,
@@ -431,6 +431,28 @@ describe('fitTransform', () => {
   it('falls back to a default when there is nothing to fit', () => {
     expect(fitTransform(buildLayout([], []), { width: 800, height: 600 }))
       .toEqual({ x: 48, y: 48, scale: 1 });
+  });
+});
+
+describe('readableFitTransform', () => {
+  const chain = (length: number) => {
+    const nodes = Array.from({ length }, (_, i) => ({ id: `t${i}`, label: `t${i}` }));
+    const edges = nodes.slice(1).map((n, i) => ({ source: nodes[i].id, target: n.id }));
+    return buildLayout(nodes, edges);
+  };
+
+  it('fits the whole graph when it stays readable', () => {
+    const layout = chain(2);
+    expect(readableFitTransform(layout, { width: 900, height: 400 }))
+      .toEqual(fitTransform(layout, { width: 900, height: 400 }));
+  });
+
+  it('never shrinks a long chain below a readable scale, and starts at the source', () => {
+    const layout = chain(6);
+    expect(fitTransform(layout, { width: 880, height: 400 }).scale).toBeLessThan(READABLE_SCALE);
+    const transform = readableFitTransform(layout, { width: 880, height: 400 });
+    expect(transform.scale).toBe(READABLE_SCALE);
+    expect(transform.x).toBe(48);
   });
 });
 

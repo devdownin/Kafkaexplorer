@@ -8,8 +8,10 @@ import {
   Table, TableHead, TableBody, TableRow, Th, Td,
 } from '../components/ui';
 import { copyText } from '../clipboard';
+import { useAssistantStatus } from '../components/assistant/useAssistantStatus';
+import { describeAssistantHelp } from './sqlAssistant';
 import {
-  LESSONS, ENGINE_MATRIX, ERROR_GUIDE, EDITOR_TIPS, WINDOW_ANATOMY, WINDOW_KINDS,
+  LESSONS, ENGINE_MATRIX, ERROR_GUIDE, EDITOR_TIPS, ASSISTANT_TIP_TITLE, WINDOW_ANATOMY, WINDOW_KINDS,
   FORMATS, SHORTCUTS, topicToTable, editorLink, filterLessons, numberSections,
   type Lesson,
 } from './helpContent';
@@ -171,6 +173,10 @@ const QUICK_LINKS = [
 ];
 
 const Help: React.FC = () => {
+  // L'état réel de l'assistant sur ce serveur, à côté de ce qu'il fait : savoir qu'il existe ne
+  // dit pas pourquoi l'éditeur n'en montre rien.
+  const assistantStatus = useAssistantStatus();
+  const assistantHelp = describeAssistantHelp(assistantStatus);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [topicSample, setTopicSample] = useState('demo.orders.1.received');
@@ -532,6 +538,15 @@ GROUP BY window_start, window_end`}
             <Card key={tip.title} padding="md">
               <h3 className="text-[12.5px] font-semibold text-on-surface mb-1">{tip.title}</h3>
               <p className="text-[12px] text-on-surface-variant leading-relaxed">{tip.body}</p>
+              {tip.title === ASSISTANT_TIP_TITLE && assistantHelp && (
+                <div className="mt-2 pt-2 border-t border-outline-variant/60" data-testid="assistant-help">
+                  <Badge tone={assistantHelp.tone} dot>{assistantHelp.label}</Badge>
+                  <p className="mt-1 text-[12px] text-on-surface-variant leading-relaxed">{assistantHelp.detail}</p>
+                  {assistantHelp.howToEnable && (
+                    <p className="mt-1 text-[11.5px] text-on-surface-variant leading-relaxed font-mono break-words">{assistantHelp.howToEnable}</p>
+                  )}
+                </div>
+              )}
             </Card>
           ))}
         </div>

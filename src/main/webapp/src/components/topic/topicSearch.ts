@@ -973,6 +973,10 @@ export function describeAdvanced(criteria: TopicSearchCriteria): string[] {
     notes.push(SCAN_BUDGETS.find(b => b.value === criteria.maxScan)?.label
       ?? `scan ${criteria.maxScan.toLocaleString()}`);
   }
+  if (criteria.mode === 'CONTAINS' || criteria.mode === 'REGEX') {
+    if (!criteria.searchKey) notes.push('payload only, not keys');
+    if (criteria.searchHeaders) notes.push('headers too');
+  }
   const scope = describePartitionScope(criteria);
   if (scope) notes.push(scope);
   return notes;

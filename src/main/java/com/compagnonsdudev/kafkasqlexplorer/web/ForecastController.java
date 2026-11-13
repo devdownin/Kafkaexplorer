@@ -25,27 +25,83 @@ public class ForecastController {
       ForecastPilotService.ActivationReadiness activation,
       long stepMillis,
       int minimumContextPoints,
-      boolean withdrawable) {}
+      boolean withdrawable,
+      /** Why this series could not be read; the other series are answered anyway. */
+      String error) {}
 
-  public record Status(boolean enabled, String state, List<SeriesView> series) {}
+  /**
+   * {@code shadowEnabled} says whether {@code GET /{seriesId}/shadow} has anything to answer: without
+   * it the panel asked on every load, got the 404 that means "no shadow configured", and the browser
+   * wrote that 404 into the console of every Metrics page (PAGES-SIMPLICITY-AUDIT.md X1).
+   */
+  public record Status(boolean enabled, String state, List<SeriesView> series, boolean shadowEnabled) {}
 
   @GetMapping
   public ResponseEntity<Status> status() {
     var p = services.getIfAvailable();
-    if (p == null) return ResponseEntity.ok(new Status(false, "DISABLED", List.of()));
+    if (p == null) return ResponseEntity.ok(new Status(false, "DISABLED", List.of(), false));
     try {
       var rows = new java.util.ArrayList<SeriesView>();
-      for (var s : p.series()) {
-        var result = p.get(s.seriesId());
-        rows.add(
-            new SeriesView(
-                s.seriesId(), s.metricId(), s.environment(), result, p.readiness(s.seriesId(), result),
-                s.profile().stepMillis(), p.minimumContextPoints(s), p.isWithdrawable(s.seriesId())));
-      }
-      return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows)));
+      // One series per row, each read on its own (METRICS-FORECAST-UX-AUDIT.md B2): a single record
+      // that did not decode turned this whole answer into a 503 with no series, which also stripped
+      // every metric card of its forecast line and left nothing to withdraw the culprit from.
+      // The list carries no history points (P1): up to 512 per series were sent every 30 s to a
+      // page that draws one series, whose detail is GET /{seriesId}.
+      for (var s : p.series()) rows.add(view(p, s, false));
+      return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows), p.shadowEnabled()));
     } catch (Exception e) {
-      return ResponseEntity.status(503).body(new Status(true, "UNAVAILABLE", List.of()));
+      return ResponseEntity.status(503).body(new Status(true, "UNAVAILABLE", List.of(), p.shadowEnabled()));
     }
+  }
+
+  /** One series with its whole record — the context the chart draws included. */
+  @GetMapping("/{seriesId}")
+  public ResponseEntity<SeriesView> series(@PathVariable String seriesId) {
+    var p = services.getIfAvailable();
+    if (p == null) return ResponseEntity.notFound().build();
+    ForecastPilotProperties.Series s;
+    try {
+      s = p.resolve(seriesId);
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.notFound().build();
+    }
+    return ResponseEntity.ok(view(p, s, true));
+  }
+
+  private static SeriesView view(ForecastPilotService p, ForecastPilotProperties.Series s, boolean full) {
+    String id = s.seriesId();
+    try {
+      var result = p.get(id);
+      return new SeriesView(id, s.metricId(), s.environment(), full ? result : withoutHistory(result),
+          p.readiness(id, result), s.profile().stepMillis(), p.minimumContextPoints(s), p.isWithdrawable(id), null);
+    } catch (Exception e) {
+      org.slf4j.LoggerFactory.getLogger(ForecastController.class)
+          .warn("Forecast series {} could not be read: {}", id, e.toString());
+      String error = "The latest result of this series could not be read (" + e.getClass().getSimpleName()
+          + "); the other series are unaffected. The server log has the cause.";
+      ForecastPilotService.ActivationReadiness activation;
+      try {
+        activation = p.readiness(id, null);
+      } catch (Exception ignored) {
+        activation = new ForecastPilotService.ActivationReadiness(
+            false, error, 0, 0, null, 0, ForecastQualityWindow.FAILED_BLOCKS_TO_DEGRADE);
+      }
+      return new SeriesView(id, s.metricId(), s.environment(), null, activation, s.profile().stepMillis(),
+          p.minimumContextPoints(s), p.isWithdrawable(id), error);
+    }
+  }
+
+  /** The record without its history points: the counts and the status stay, the 512 points go. */
+  static ForecastRecord withoutHistory(ForecastRecord r) {
+    if (r == null || r.context() == null) return r;
+    var c = r.context();
+    var light = new PreparedMetricSeries(c.status(), c.reason(), c.seriesId(), c.definitionVersion(),
+        c.sourceUnit(), c.outputUnit(), c.fromInclusive(), c.toExclusive(), c.profile(),
+        c.profileFingerprint(), c.inputFingerprint(), c.observedPoints(), c.missingPoints(),
+        c.imputedPoints(), List.of());
+    return new ForecastRecord(r.key(), r.generatedAt(), r.state(), r.strategy(), r.visibility(), light,
+        r.forecast(), r.quality(), r.evaluatedPoints(), r.evaluatedThrough(), r.baselineMae(), r.reason(),
+        r.qualityWindow());
   }
 
   /**

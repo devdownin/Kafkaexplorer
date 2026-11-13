@@ -312,6 +312,16 @@ layout, and two statements of identical text being indistinguishable to `resolve
 the ones a test pins, which is why every one of them carries a test verified to fail against the
 revision it describes.
 
+**A third pass (X1–X10, 2026-11) audits simplicity and fluidity**, observed in the real UI on
+frozen fixtures: results are page-level rather than per tab, a click on a topic fills without
+running and reads the oldest records, the toolbar's first question is the engine, the panel says
+"No results yet" while a query runs, `Ctrl+Enter` works only inside the editor, and the editor gets
+42 % of a 1440 px window. **All ten are fixed**: results per tab, a click runs, one "Read"
+control defaulting to the latest records (X1–X3); then a running state that keeps the previous
+rows, page-wide `Ctrl+Enter` and focus on arrival, the assistant folded by default, read options
+in staleness, a filtered single topic list, the engine's sentence on an error, a searchable history
+(X4–X10).
+
 **A second pass (S1–S7) sits under it**, and two of its seven items are the first pass's own
 corrections re-opened by work that landed afterwards — which is the reason to read it before
 touching either path again. The pre-flight `POST /api/query/validate` was added *above*
@@ -536,3 +546,96 @@ code showed the fix keeps the median and the order (F9), a bounded connection po
 before reuse (F10), the quarantine call on a series id removed (F11), forecast tools registered only
 when a series is approved (F12), one purge per refresh and a budget counting approved series (F13). F6 closed the report: returning a series to SHADOW takes no lock, since every read
 recomputes visibility from the control row.
+
+`EMBEDDED-LLM-SCOPE.md` (2026-11) studies a small local model of the Gemma family as an assistant
+for the SQL editor and the Metrics page, the two screens no model serves today. It implemented
+nothing, and its model figures are published ones rather than measurements. Its conclusions: run
+the model beside the JVM (the existing `compose/ollama.yml`, model made a variable) rather than in
+it — a native crash would take Flink and the UI down, off-heap weights escape `MaxRAMPercentage`,
+and the runtime image is musl; start with fixing a refused query, then question-to-SELECT, then a
+metric draft; and gate every output through `SqlAst`, the whitelist and an `EXPLAIN`, with nothing
+run or saved without a gesture. Lots 1–3 have since shipped (`/api/assistant/*`, the editor's
+ask bar and "Suggest a fix", the Metrics editor's draft), **off by default** and on in
+`compose/ollama.yml`; the report's status block lists where the shipped code departs from the
+design and why. Lot 0 has since been measured (§7.1, reports in `docs/benchmarks/assistant-eval/`),
+twice. The first pass found two defects (fixed) and three prompt weaknesses — a rule claiming every
+`event_time` is watermarked, which is false on every demo topic; a window example leaking
+`FROM TABLE x` into small models; an unrepaired `AS count` — which prompt v2 fixed by annotating
+each time column in the catalogue rather than by a rule. On v2, Gemma 4 E4B is 96 % correct, Qwen3-4B 94 % for 2.3 GB less, Gemma 4 E2B 88 % and the only one
+under 30 s p95 on four CPU cores. §7.2 then measured Process Mining on the same models: Gemma 4 E4B
+held its format and drew the pipeline every time and found twice the planted facts
+`qwen2.5-coder:7b` did, so `compose/ollama.yml` now serves one model (`OLLAMA_MODEL`, `gemma4:e4b`)
+to both consumers. The bilingual Process Mining prompt held its format 9 times in 9, so, by
+`PROCESS-MINING-LLM-SCOPE.md`'s own rule, no English variant is built. Two corrections are recorded
+in the report: the first memory figures were inflated by the eval server's logits buffer, and the
+first fact matcher read English only while the models answer in French. The v2 prompt gain is
+measured on the cases that inspired it, so it is an upper bound; and no model finds ORD-102's
+rejection or the truncated payloads, which points at the Process Mining prompt rather than the model. Read it before
+adding any LLM call outside Process Mining.
+
+`METRICS-CREATION-AUDIT.md` (2026-11) reviews the path from "New metric" to a Prometheus series —
+the editor, the preview and `MetricService.save`. It fixed nothing. Twelve findings, seven of them
+reproduced by a throwaway test: the assistant's "Describe the metric" block is a `<form>` nested in
+the editor's, so **Draft also submits the editor** (a regression from the assistant work); a save
+whose write to Kafka fails still answers "Metric saved"; a rename leaves the `metric_name` tag of
+the registered series unchanged; the server accepts any name, type, threshold or SQL; and the
+client validator blocks a leading `WITH` and a backticked `metric_value` while accepting the alias
+written inside a string. **Fixed since: B1, B2, B3, B7 and U1** — the assistant block is a group,
+not a form; `save` writes to Kafka before publishing in memory and a failed write answers 503; a
+rename re-registers the series; an unknown mode is refused by name; and every way out of the editor
+but Save asks first once it holds the user's work. **Then B4–B6**: `save` refuses what the editor
+blocks (on save only, so a stored metric keeps running); the editor reads past a leading CTE,
+accepts a backticked alias and looks for it outside string literals; a failing `CREATE TABLE` is
+the preview's answer and heads the refresh error; the preview restores masked secrets. Nothing is left open:
+the preview drops a table it created, from Flink and from the boot-replay
+store, and says when an edited DDL was not applied because the table already existed; the columns
+are fetched when the editor first opens (O1); the draft is written after a 400 ms pause without the
+value history (O2); the preview waits for both sides of a template instead of the global 60 s; and the light points: the assistant sits on the SQL tab, a refused save opens the tab it is about, and Enter on a blocking error opens the failing tab.
+**U2 and U3 too**: a save answers the stored metric, which the page refreshes at once, and the
+modal says when the definition on screen was never previewed; `explorer.metric-max-series` (500)
+caps one metric's label series — past it nothing is published and the card says why, and the
+preview counts the series first.
+Read it before touching `Metrics.tsx`'s editor or `MetricService.save`.
+
+`METRICS-FORECAST-UX-AUDIT.md` (2026-11) reviews the Metrics page's forecast side — the panel, the
+setup assistant, the cards' forecast line and the `/api/forecasts` endpoints behind them — for
+bugs, performance and UX; the forecasting engine itself is `TIMESFM-FORECAST-AUDIT.md`'s. It fixed
+nothing. Seventeen findings, observed on the compiled SPA over invented fixtures, two of them
+reproduced or measured: **the 80 % interval is never drawn** (its two `<Area>` sit in a fragment
+recharts does not see — drawn once they are separate); **one unreadable series turns the whole list
+into a 503** with zero series (reproduced), which also strips every card of its forecast line;
+`GET /api/forecasts` returns the full 512-point record of every series (44 KB measured each, up to
+20 by default) every 30 s although the page shows one; and the panel buries the chart and the one
+decision under 914 px of stacked blocks. Read it before changing `ForecastPanel.tsx` or
+`ForecastController`. **Fixed since: B1, B2, P1–P3** — the band is drawn; an unreadable series is
+an error row (`SeriesView.error`) rather than a 503; the list drops the history points (4 KB per
+series instead of 44 KB) and `GET /api/forecasts/{seriesId}` serves the shown series in full;
+`/progress` prepares a series once per closed step; choosing a series reads only that series.
+**Then the rest**: no "Baseline fallback" on a series collecting history, imputed points and the
+threshold drawn, an already-forecast metric marked in the assistant, the panel reordered (750 px
+instead of 914, chart at 140 px instead of 500), shared controls, no empty tiles, the assistant
+opened at its sources, and the approval saying what it changes. Nothing is left open.
+
+`PAGES-SIMPLICITY-AUDIT.md` (2026-11) applies the SQL editor's simplicity lens to Topic Explorer,
+Dead Letter and Stream Flow, observed on the compiled SPA over the screenshot fixtures. It fixed
+nothing. Eleven findings: **Dead Letter has no page padding** and overflows the right edge (an
+element reaches 1556 px in a 1440 px window), and **its refresh selector offers 2 s / 5 s / 15 s
+while the poll is floored at 30 s** (`ACTIVITY_FLOOR_MS`), so the status line states a cadence the
+page does not keep; Topic Explorer reads Earliest by default where the SQL editor now reads Latest,
+its Read mode does not govern search, and its search bar carries two boxes
+overlapping the Key and Header modes; Stream Flow scans the whole cluster by default and its
+fitted graph shrinks six nodes below legibility. Read it before changing `DeadLetter.tsx`,
+`TopicExplorer.tsx`'s search bar or `StreamFlow.tsx`'s form.
+**Fixed since, all eleven**: Dead Letter has the *Observe* pages' padding and offers only the
+cadences it keeps (`ACTIVITY_REFRESH_OPTIONS`, `activityRefreshChoice`); Topic Explorer opens on
+Latest with its read mode beside the sample it governs, hidden during a search, and the two
+"… too" boxes folded under Scan options and announced when off their default; Stream Flow offers
+to narrow the next trace to the topics reached and frames a long chain at a readable scale from
+its source (`readableFitTransform`; `0` still fits all); `GET /api/forecasts` carries
+`shadowEnabled`, so the panel no longer asks for a shadow that answers 404. Nothing is left open.
+
+**A note on the runtime these reports name.** Several of them — `PROCESS-MINING-LLM-CALLS-AUDIT.md`,
+`EMBEDDED-LLM-SCOPE.md`, `DOCKER-AUDIT.md` — were written against the Ollama stack
+(`compose/ollama.yml`, the `OLLAMA` provider), and the paragraphs above keep that name where it is
+what was measured. The local runtime is llama.cpp now: read `compose/llama-cpp.yml` and `LLAMA_CPP`
+for the stack and the provider those findings apply to today.

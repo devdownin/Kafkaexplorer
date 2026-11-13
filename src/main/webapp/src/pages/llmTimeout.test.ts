@@ -11,7 +11,7 @@ import {
 
 describe('testTimeoutMs', () => {
   it('outlasts the budget the two bundled local stacks configure', () => {
-    // compose/ollama.yml and compose/spectra-hub.yml both set 300s. The old hardcoded 90 000
+    // compose/llama-cpp.yml and compose/spectra-hub.yml both set 300s. The old hardcoded 90 000
     // aborted at less than a third of it, which is the defect this exists for.
     expect(testTimeoutMs(300)).toBe(300_000 + TEST_TIMEOUT_MARGIN_MS);
     expect(testTimeoutMs(300)).toBeGreaterThan(300_000);

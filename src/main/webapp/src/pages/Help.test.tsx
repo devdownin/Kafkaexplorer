@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import Help from './Help';
+
+// Help asks the server whether the assistant is on; these tests are about the page.
+const get = vi.fn();
+vi.mock('axios', () => ({ default: { get: (...a: unknown[]) => get(...a) } }));
 import { LESSONS } from './helpContent';
 
 /*
@@ -21,6 +25,37 @@ const renderPage = () =>
 
 /** Chaque leçon est un `role="article"` nommé par son titre — cible stable, sans classe CSS. */
 const lessonCard = (title: string) => screen.getByRole('article', { name: new RegExp(title, 'i') });
+
+beforeEach(() => {
+  get.mockReset();
+  get.mockImplementation(() => Promise.reject(new Error('no assistant on this server')));
+});
+
+describe('Help — the assistant', () => {
+  const STATUS = { enabled: true, problem: null, provider: 'llama.cpp', model: 'gemma-4-e4b-it', localDeployment: true, baseUrl: null, requestTimeoutSeconds: 60, promptCharBudget: 12000, contextWindowTokens: 0, providerCode: 'LLAMA_CPP', dataRetentionRefused: false };
+
+  it('says how to turn it on when the server has it off', async () => {
+    get.mockResolvedValue({ data: { ...STATUS, enabled: false, problem: 'off' } });
+    renderPage();
+    const box = await screen.findByTestId('assistant-help');
+    expect(within(box).getByText('Off on this server')).toBeInTheDocument();
+    expect(box).toHaveTextContent('EXPLORER_ASSISTANT_ENABLED=true');
+  });
+
+  it('names the model and where it runs when it is on', async () => {
+    get.mockResolvedValue({ data: STATUS });
+    renderPage();
+    const box = await screen.findByTestId('assistant-help');
+    expect(box).toHaveTextContent('llama.cpp · gemma-4-e4b-it');
+    expect(box).toHaveTextContent('no table or column name leaves this machine');
+  });
+
+  it('shows no state at all when the server does not know the assistant', async () => {
+    renderPage();
+    await screen.findByText('The assistant proposes, it never runs');
+    expect(screen.queryByTestId('assistant-help')).not.toBeInTheDocument();
+  });
+});
 
 describe('Help', () => {
   it('shows the whole path, each step numbered for a screen reader too', () => {

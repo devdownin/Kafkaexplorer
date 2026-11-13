@@ -292,11 +292,19 @@ describe('DeadLetter', () => {
     expect(screen.getByText('2 dead letter · 1 retry')).toBeInTheDocument();
   });
 
-  it('states when the figures were read and what it will do next', async () => {
+  it('states the cadence it really keeps, not the faster one it cannot', async () => {
     stubApi();
     await renderPage();
+    /* Le défaut partagé est 5 s, mais cette page sonde au plus toutes les 30 s : c'est ce qu'elle dit. */
     await waitFor(() =>
-      expect(screen.getByText(/Updated just now · refreshing every 5 s/)).toBeInTheDocument());
+      expect(screen.getByText(/Updated just now · refreshing every 30 s/)).toBeInTheDocument());
+    const select = screen.getByLabelText('Auto-refresh') as HTMLSelectElement;
+    expect(select.value).toBe('30s');
+    const offered = Array.from(select.options).map(o => o.value);
+    expect(offered).not.toContain('2s');
+    expect(offered).not.toContain('5s');
+    expect(offered).not.toContain('15s');
+    expect(offered).toContain('off');
   });
 
   it('reads a queue only when its row is opened, and says what the sample is', async () => {

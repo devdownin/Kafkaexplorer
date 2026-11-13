@@ -147,7 +147,7 @@ public class OpenRouterModelCatalog {
             return LlmModelCheck.unavailable("No model is configured.");
         }
         // OpenRouter names models vendor/model, and the catalogue path takes the two halves
-        // separately. A slug with no slash cannot address it — that is the shape of an Ollama model
+        // separately. A slug with no slash cannot address it — that is the shape of a local model's
         // name left behind by a provider switch, and saying so beats a 404 the operator would read
         // as a routing refusal.
         //
@@ -515,13 +515,13 @@ public class OpenRouterModelCatalog {
      *
      * <p>Both halves count, and forgetting the second is the easy mistake: the answer is generated
      * into the same window as the prompt, so a budget that fits exactly leaves the model no room to
-     * reply. Ollama's response to an over-long prompt is to drop the oldest messages and log it at
-     * debug — nothing on screen, nothing in a default log — which is why this is worth stating
+     * reply. A local server's response to an over-long prompt can be to drop the oldest messages and log it
+     * at debug — nothing on screen, nothing in a default log — which is why this is worth stating
      * before a call rather than diagnosing after one.
      */
     long estimatedPromptTokens() {
         long promptTokens = (long) Math.ceil(
-            processMiningConfig.getPromptCharBudget() / (double) CHARS_PER_TOKEN);
+            claudeConfig.effectivePromptCharBudget(processMiningConfig.getPromptCharBudget()) / (double) CHARS_PER_TOKEN);
         return promptTokens + Math.max(0, claudeConfig.getMaxTokens());
     }
 

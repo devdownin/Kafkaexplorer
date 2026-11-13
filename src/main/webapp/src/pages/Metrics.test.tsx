@@ -194,8 +194,9 @@ describe('Metrics page', () => {
   it('opens the forecast assistant from the matching metric card and aborts it on close', async () => {
     stubApi([templateMetric]); const user = userEvent.setup(); await renderPage();
     await user.click(await screen.findByRole('button', { name: 'Prepare a forecast' }));
-    expect(await screen.findByRole('button', { name: 'Continue to sources' })).toBeEnabled();
-    expect(screen.getByLabelText('Candidate metric')).toHaveValue('m-1');
+    // Opened for that metric, the assistant starts at its sources (METRICS-FORECAST-UX-AUDIT.md U4).
+    expect(await screen.findByText(/Step 2 of 2/)).toBeTruthy();
+    expect(screen.getByRole('list', { name: 'All source topics: selected' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Prepare a forecast' })).toHaveFocus();
     expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/forecasts/configuration', expect.anything(), expect.anything());
     await user.click(screen.getByRole('button', { name: 'Close forecast preparation' }));
@@ -384,6 +385,78 @@ describe('la liste, ses pannes et ses requêtes en vol', () => {
     await user.click(screen.getByRole('button', { name: 'Edit this metric' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).queryByText(/unknown column x/)).toBeNull();
+  });
+
+  // METRICS-CREATION-AUDIT.md, light points: a refusal about the DDL opens the DDL tab.
+  it('opens the table DDL tab when the server refuses the definition of the table', async () => {
+    const user = userEvent.setup();
+    stubApi([{ ...templateMetric, templateParams: savableTemplateParams }]);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, ...rest: unknown[]) =>
+      url === '/api/metrics' ? Promise.reject({ isAxiosError: true, response: { status: 400,
+        data: { error: 'The table definition (CREATE TABLE) failed: Unsupported options found for kafka' } } })
+        : (post as (u: string, ...r: unknown[]) => Promise<unknown>)(url, ...rest));
+    await renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Edit this metric' }));
+    await user.click(await screen.findByRole('button', { name: 'Save & Activate' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: /Table DDL/ })).toHaveAttribute('aria-selected', 'true'));
+  });
+
+  // METRICS-CREATION-AUDIT.md O1, O2: columns asked for by the editor, a draft written after a pause.
+  it('asks for the table columns only once the editor opens, and keeps no value history in the draft', async () => {
+    const user = userEvent.setup();
+    stubApi([{ ...templateMetric, templateParams: savableTemplateParams, history: [1, 2, 3] }]);
+    await renderPage();
+    await screen.findByRole('button', { name: 'Edit this metric' });
+    expect(mockedAxios.get).not.toHaveBeenCalledWith('/api/metrics/metadata');
+
+    await user.click(screen.getByRole('button', { name: 'Edit this metric' }));
+    await waitFor(() => expect(mockedAxios.get).toHaveBeenCalledWith('/api/metrics/metadata'));
+    await waitFor(() => expect(localStorage.getItem('kse:draft:metrics:editor')).not.toBeNull());
+    expect(localStorage.getItem('kse:draft:metrics:editor')).not.toContain('"history"');
+  });
+
+  // METRICS-CREATION-AUDIT.md U2: say an unpreviewed definition is one, and measure what was saved.
+  it('says the definition was never run, and refreshes the metric it saved at once', async () => {
+    const user = userEvent.setup();
+    const saved = { ...templateMetric, templateParams: savableTemplateParams };
+    stubApi([saved]);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, ...rest: unknown[]) =>
+      url === '/api/metrics' ? Promise.resolve({ data: saved })
+        : url === '/api/metrics/m-1/refresh' ? Promise.resolve({ data: { ...saved, lastValue: 42 } })
+          : (post as (u: string, ...r: unknown[]) => Promise<unknown>)(url, ...rest));
+    await renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit this metric' }));
+    expect(await screen.findByText(/Not previewed/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save & Activate' }));
+    await waitFor(() => expect(mockedAxios.post).toHaveBeenCalledWith('/api/metrics/m-1/refresh'));
+  });
+
+  // METRICS-CREATION-AUDIT.md U1: Escape, the veil, X and Cancel deleted the work and its draft.
+  it('asks before closing an editor the user has written in, and closes an untouched one at once', async () => {
+    const user = userEvent.setup();
+    stubApi([{ ...templateMetric, templateParams: savableTemplateParams }]);
+    await renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit this metric' }));
+    await screen.findByRole('dialog', { name: 'Edit Metric' });
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog', { name: 'Edit Metric' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Edit this metric' }));
+    const editor = await screen.findByRole('dialog', { name: 'Edit Metric' });
+    await user.type(within(editor).getAllByRole('textbox')[0], 'x');
+    await user.keyboard('{Escape}');
+    expect(await screen.findByText('Discard this metric?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Keep editing' }));
+    expect(screen.getByRole('dialog', { name: 'Edit Metric' })).toBeInTheDocument();
+    await waitFor(() => expect(localStorage.getItem('kse:draft:metrics:editor')).not.toBeNull());
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await user.click(await screen.findByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Metric' })).toBeNull());
   });
 });
 

@@ -1016,7 +1016,7 @@ export interface LlmUsage {
    *
    * Rapporté, jamais calculé : aucune table de prix ne vit dans cette application, donc un montant
    * affiché est un montant qu'un fournisseur a assumé. OpenRouter le renvoie sur chaque réponse ;
-   * l'API OpenAI, Ollama et SpectraLLM non, et il y reste `null`. Attention, `0` est une vraie
+   * l'API OpenAI, llama.cpp et SpectraLLM non, et il y reste `null`. Attention, `0` est une vraie
    * mesure — un modèle gratuit — et non une mesure absente.
    */
   costUsd: number | null;
@@ -1631,6 +1631,8 @@ export interface ForecastSeriesView {
   stepMillis: number;
   minimumContextPoints: number;
   withdrawable: boolean;
+  /** Why this series could not be read; `result` is then null and the other series are unaffected. */
+  error?: string | null;
 }
 /** @java ForecastPilotService.ActivationReadiness */
 export interface ForecastActivationReadiness {
@@ -1690,6 +1692,7 @@ export interface ForecastStatus {
   enabled: boolean;
   state: string;
   series: ForecastSeriesView[];
+  shadowEnabled: boolean;
 }
 /** @java ForecastSetupService.Check */
 export interface ForecastPreparationCheck {
@@ -1801,4 +1804,91 @@ export interface ForecastProgress {
   groups: string[];
   breach: ForecastPredictedBreach | null;
   breachState: string;
+}
+
+// ── Assistant SQL et métriques (EMBEDDED-LLM-SCOPE.md) ──────────────────────────────────────
+
+/**
+ * `GET /api/assistant/status` — l'assistant peut-il être proposé, et sinon pourquoi.
+ *
+ * `localDeployment` est lu sur l'adresse *effective* de l'assistant, jamais sur le nom du
+ * fournisseur : c'est une affirmation sur l'endroit où partent les noms de tables et de colonnes.
+ *
+ * @java AssistantStatus
+ */
+export interface AssistantStatus {
+  enabled: boolean;
+  problem: string | null;
+  provider: string | null;
+  model: string | null;
+  localDeployment: boolean;
+  /** L'adresse réellement appelée. */
+  baseUrl: string | null;
+  /** Le délai effectif : le sien, ou celui de `claude.*` quand il n'en fixe pas. */
+  requestTimeoutSeconds: number;
+  /** Le budget effectif : le sien, plafonné par la fenêtre déclarée. */
+  promptCharBudget: number;
+  /** La fenêtre déclarée du point d'accès, 0 quand personne ne l'a déclarée. */
+  contextWindowTokens: number;
+  /** Le fournisseur tel que le connaît `claude.provider` (OPENROUTER, LLAMA_CPP…), pour la phrase de confidentialité. */
+  providerCode: string | null;
+  /** Vrai seulement là où le routage a pu être restreint — OpenRouter avec `DENY`. */
+  dataRetentionRefused: boolean;
+}
+
+/**
+ * `POST /api/assistant/sql`.
+ *
+ * @java AssistantSqlRequest
+ */
+export interface AssistantSqlRequest {
+  mode: 'GENERATE' | 'FIX';
+  question: string | null;
+  sql: string | null;
+  error: string | null;
+  tables: string[] | null;
+}
+
+/**
+ * Une instruction proposée, et ce qu'on en sait. Une proposition que le planificateur n'a pas
+ * acceptée le dit (`validated: false`, `validationError`) et n'est jamais affichée sans ce statut.
+ *
+ * @java AssistantSqlResponse
+ */
+export interface AssistantSqlResponse {
+  status: 'OK' | 'NEEDS_CLARIFICATION' | 'OUT_OF_SCOPE' | 'BUSY' | 'DISABLED' | 'ERROR';
+  sql: string | null;
+  explanation: string | null;
+  missing: string | null;
+  validated: boolean;
+  validationError: string | null;
+  repairRounds: number;
+  tablesConsidered: string[];
+  tablesOmitted: string[];
+  model: string | null;
+  usage: LlmUsage | null;
+  durationMs: number;
+  error: string | null;
+}
+
+/**
+ * `POST /api/assistant/metric`.
+ *
+ * @java AssistantMetricRequest
+ */
+export interface AssistantMetricRequest {
+  description: string;
+  topic: string | null;
+}
+
+/**
+ * Un brouillon de métrique : il pré-remplit le formulaire, il n'est jamais enregistré. Aucun seuil.
+ *
+ * @java AssistantMetricResponse
+ */
+export interface AssistantMetricResponse {
+  proposal: AssistantSqlResponse;
+  name: string | null;
+  type: string;
+  description: string | null;
 }

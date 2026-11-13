@@ -336,7 +336,7 @@ src/test/java/.../eval/agent/
 ├── AgentRunner.java             # la boucle outil : modèle ↔ client MCP, bornée
 ├── AgentModel.java              # le modèle éprouvé, réduit à un tour
 ├── AgentModels.java             # agent et juge depuis l'environnement, ou le motif du saut
-├── OpenAiToolCallingModel.java  # /chat/completions (OpenRouter, Ollama, compatibles)
+├── OpenAiToolCallingModel.java  # /chat/completions (OpenRouter, llama.cpp, compatibles)
 ├── AnthropicToolCallingModel.java  # l'API Messages, blocs tool_use / tool_result
 ├── McpHttpClient.java           # le client MCP du harnais, HTTP streamable
 ├── ToolCall.java                # un appel, tel que le client du harnais l'a vu

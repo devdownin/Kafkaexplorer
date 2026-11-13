@@ -54,7 +54,7 @@ class LlmAnswerSignalsTest {
     @Test
     void reportsACountFarBelowWhatWasSent() {
         // 120 000 characters is a floor of 30 000 tokens on the optimistic ratio; an endpoint
-        // reporting 4 000 did not read the prompt. That is Ollama's documented behaviour — it
+        // reporting 4 000 did not read the prompt. That is what a server that truncates does — it
         // drops the oldest messages until the prompt fits and logs it at debug, i.e. nowhere.
         String warning = LlmAnswerSignals.truncationWarning(120_000, 4_000L);
 

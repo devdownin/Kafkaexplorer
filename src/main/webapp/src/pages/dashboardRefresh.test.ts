@@ -3,9 +3,9 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  REFRESH_OPTIONS, REFRESH_OFF, DEFAULT_REFRESH_CHOICE, ACTIVITY_FLOOR_MS,
+  REFRESH_OPTIONS, REFRESH_OFF, DEFAULT_REFRESH_CHOICE, ACTIVITY_FLOOR_MS, ACTIVITY_REFRESH_OPTIONS,
   readRefreshChoice, writeRefreshChoice, refreshById,
-  refreshIntervalMs, activityIntervalMs, describeAge, describeRefreshStatus,
+  refreshIntervalMs, activityIntervalMs, activityRefreshChoice, describeAge, describeRefreshStatus,
 } from './dashboardRefresh';
 
 beforeEach(() => localStorage.clear());
@@ -97,5 +97,27 @@ describe('dashboardRefresh — ce que la page annonce', () => {
       .toBe('Updated just now · refreshing every 5 s');
     expect(describeRefreshStatus(REFRESH_OFF, t, t + 4 * 60_000))
       .toBe('Updated 4 min ago · auto-refresh off');
+  });
+});
+
+describe('activityRefreshChoice', () => {
+  it('offers only the cadences an activity page keeps', () => {
+    expect(ACTIVITY_REFRESH_OPTIONS.map(o => o.id)).toEqual(['30s', '1m', '5m']);
+  });
+
+  it('reads a choice faster than the floor as the floor', () => {
+    expect(activityRefreshChoice('2s')).toBe('30s');
+    expect(activityRefreshChoice('5s')).toBe('30s');
+    expect(activityRefreshChoice('15s')).toBe('30s');
+  });
+
+  it('keeps a slower choice, and off, as they are', () => {
+    expect(activityRefreshChoice('1m')).toBe('1m');
+    expect(activityRefreshChoice('5m')).toBe('5m');
+    expect(activityRefreshChoice(REFRESH_OFF)).toBe(REFRESH_OFF);
+  });
+
+  it('never reads an unknown choice as off', () => {
+    expect(activityRefreshChoice('retired')).toBe('30s');
   });
 });

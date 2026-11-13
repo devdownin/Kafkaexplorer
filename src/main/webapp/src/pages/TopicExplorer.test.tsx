@@ -22,7 +22,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import type { TopicDetailResponse, TopicMessage } from '../api/types';
@@ -125,6 +125,17 @@ describe('Topic Explorer page', () => {
     );
     // Aucun critère dans l'URL : rien ne doit partir en recherche.
     expect(searchCalls()).toHaveLength(0);
+  });
+
+  it('opens on the newest records, with the read mode beside the sample it governs', async () => {
+    await renderAt('');
+
+    await waitFor(() => expect(screen.getByText(TOPIC)).toBeInTheDocument());
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      expect.stringContaining('?readMode=latest-offset'),
+    );
+    const group = await screen.findByRole('group', { name: 'Read mode' });
+    expect(within(group).getByRole('button', { name: 'Latest' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('runs the search a shared link carries', async () => {

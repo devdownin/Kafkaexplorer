@@ -1,0 +1,361 @@
+{
+ "_comment": "Questions for the SQL assistant eval (EMBEDDED-LLM-SCOPE.md, lot 0), over fixture.json. A case scores on execution: the reference's rows must each be found, as a multiset of values, in a distinct row of the generated result, with the same row count. Column names and order do not count; representation does (an epoch second is not a timestamp). AssistantEvalDatasetTest holds every reference to running, every broken statement to a planner refusal.",
+ "cases": [
+  {
+   "id": "F01",
+   "kind": "GENERATE",
+   "family": "filter",
+   "question": "List the ids and amounts of FURNITURE orders in demo.orders.1.received",
+   "reference": "SELECT id, amount FROM demo_orders_1_received WHERE type = 'FURNITURE'"
+  },
+  {
+   "id": "F02",
+   "kind": "GENERATE",
+   "family": "filter",
+   "question": "Which orders in demo.orders.1.received have an amount above 500?",
+   "reference": "SELECT id, amount FROM demo_orders_1_received WHERE amount > 500"
+  },
+  {
+   "id": "F03",
+   "kind": "GENERATE",
+   "family": "filter",
+   "question": "Show the id and name of the customers in the PREMIUM segment (demo.customers)",
+   "reference": "SELECT customer_id, name FROM demo_customers WHERE segment = 'PREMIUM'"
+  },
+  {
+   "id": "F04",
+   "kind": "GENERATE",
+   "family": "filter",
+   "question": "Which orders were rejected in demo.orders.2.validated, and for what reason?",
+   "reference": "SELECT id, reason FROM demo_orders_2_validated WHERE state = 'REJECTED'"
+  },
+  {
+   "id": "F05",
+   "kind": "GENERATE",
+   "family": "filter",
+   "question": "Sensor id and temperature of the readings whose status is ALERT in demo.iot.sensors",
+   "reference": "SELECT sensor_id, temperature FROM demo_iot_sensors WHERE status = 'ALERT'"
+  },
+  {
+   "id": "F06",
+   "kind": "GENERATE",
+   "family": "filter",
+   "question": "Quels capteurs du site PARIS-DC1 ont relevé plus de 26 degrés, et quelle température ? (demo.iot.sensors)",
+   "reference": "SELECT sensor_id, temperature FROM demo_iot_sensors WHERE site = 'PARIS-DC1' AND temperature > 26"
+  },
+  {
+   "id": "F07",
+   "kind": "GENERATE",
+   "family": "filter",
+   "question": "Payment references and amounts of the payments authorized for less than 10 EUR (demo.payments.authorized)",
+   "reference": "SELECT paymentRef, amount FROM demo_payments_authorized WHERE amount < 10"
+  },
+  {
+   "id": "F08",
+   "kind": "GENERATE",
+   "family": "filter",
+   "question": "Which shipments were dispatched from hub CDG? (demo.shipments.dispatched)",
+   "reference": "SELECT shipmentRef FROM demo_shipments_dispatched WHERE hub = 'CDG'"
+  },
+  {
+   "id": "F09",
+   "kind": "GENERATE",
+   "family": "filter",
+   "question": "Les identifiants des commandes du client C-001 dans demo.orders.1.received",
+   "reference": "SELECT id FROM demo_orders_1_received WHERE customer_id = 'C-001'"
+  },
+  {
+   "id": "F10",
+   "kind": "GENERATE",
+   "family": "filter",
+   "question": "Ids and names of the customers located in France or Germany (country codes FR and DE) in demo.customers",
+   "reference": "SELECT customer_id, name FROM demo_customers WHERE country IN ('FR', 'DE')"
+  },
+  {
+   "id": "A01",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "How many orders per type in demo.orders.1.received?",
+   "reference": "SELECT type, COUNT(*) AS orders FROM demo_orders_1_received GROUP BY type"
+  },
+  {
+   "id": "A02",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "Total order amount per customer id in demo.orders.1.received",
+   "reference": "SELECT customer_id, SUM(amount) AS total FROM demo_orders_1_received GROUP BY customer_id"
+  },
+  {
+   "id": "A03",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "How many distinct order ids are there in demo.orders.1.received?",
+   "reference": "SELECT COUNT(DISTINCT id) AS orders FROM demo_orders_1_received"
+  },
+  {
+   "id": "A04",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "Average temperature per site in demo.iot.sensors",
+   "reference": "SELECT site, AVG(temperature) AS avg_temperature FROM demo_iot_sensors GROUP BY site"
+  },
+  {
+   "id": "A05",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "Maximum humidity per sensor in demo.iot.sensors",
+   "reference": "SELECT sensor_id, MAX(humidity) AS max_humidity FROM demo_iot_sensors GROUP BY sensor_id"
+  },
+  {
+   "id": "A06",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "What is the total amount of the captured payments in demo.payments.captured?",
+   "reference": "SELECT SUM(amount) AS total FROM demo_payments_captured"
+  },
+  {
+   "id": "A07",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "Number of customer records per segment in demo.customers",
+   "reference": "SELECT segment, COUNT(*) AS records FROM demo_customers GROUP BY segment"
+  },
+  {
+   "id": "A08",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "Which order ids appear more than once in demo.orders.1.received, and how many times?",
+   "reference": "SELECT id, COUNT(*) AS occurrences FROM demo_orders_1_received GROUP BY id HAVING COUNT(*) > 1"
+  },
+  {
+   "id": "A09",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "Number of ALERT readings per site in demo.iot.sensors",
+   "reference": "SELECT site, COUNT(*) AS alerts FROM demo_iot_sensors WHERE status = 'ALERT' GROUP BY site"
+  },
+  {
+   "id": "A10",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "Combien de paiements par fournisseur (provider) dans demo.payments.authorized ?",
+   "reference": "SELECT provider, COUNT(*) AS payments FROM demo_payments_authorized GROUP BY provider"
+  },
+  {
+   "id": "A11",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "Minimum and maximum order amount per type in demo.orders.1.received",
+   "reference": "SELECT type, MIN(amount) AS min_amount, MAX(amount) AS max_amount FROM demo_orders_1_received GROUP BY type"
+  },
+  {
+   "id": "A12",
+   "kind": "GENERATE",
+   "family": "aggregate",
+   "question": "Average amount of the FOOD orders in demo.orders.1.received",
+   "reference": "SELECT AVG(amount) AS avg_amount FROM demo_orders_1_received WHERE type = 'FOOD'"
+  },
+  {
+   "id": "T01",
+   "kind": "GENERATE",
+   "family": "time",
+   "question": "Number of readings per 30-minute bucket in demo.iot.sensors; event_time is in epoch seconds and the bucket should be returned as the epoch second it starts at",
+   "reference": "SELECT event_time / 1800 * 1800 AS bucket_start, COUNT(*) AS readings FROM demo_iot_sensors GROUP BY event_time / 1800 * 1800"
+  },
+  {
+   "id": "T02",
+   "kind": "GENERATE",
+   "family": "time",
+   "question": "Average temperature per hour in demo.iot.sensors; event_time is in epoch seconds, return the hour start as epoch seconds",
+   "reference": "SELECT event_time / 3600 * 3600 AS hour_start, AVG(temperature) AS avg_temperature FROM demo_iot_sensors GROUP BY event_time / 3600 * 3600"
+  },
+  {
+   "id": "T03",
+   "kind": "GENERATE",
+   "family": "time",
+   "question": "Maximum temperature per site and per hour in demo.iot.sensors (event_time in epoch seconds, hour start as epoch seconds)",
+   "reference": "SELECT site, event_time / 3600 * 3600 AS hour_start, MAX(temperature) AS max_temperature FROM demo_iot_sensors GROUP BY site, event_time / 3600 * 3600"
+  },
+  {
+   "id": "T04",
+   "kind": "GENERATE",
+   "family": "time",
+   "question": "Number of customer records per one-minute tumbling window of event_time in demo.customers",
+   "reference": "SELECT window_start, COUNT(*) AS records FROM TABLE(TUMBLE(TABLE demo_customers, DESCRIPTOR(event_time), INTERVAL '1' MINUTE)) GROUP BY window_start, window_end"
+  },
+  {
+   "id": "J01",
+   "kind": "GENERATE",
+   "family": "join",
+   "question": "For each order in demo.orders.1.received, show the order id and the customer name from demo.customers",
+   "reference": "SELECT r.id, c.name FROM demo_orders_1_received r JOIN demo_customers c ON r.customer_id = c.customer_id"
+  },
+  {
+   "id": "J02",
+   "kind": "GENERATE",
+   "family": "join",
+   "question": "Which order ids of demo.orders.1.received appear in demo.orders.2.validated with the state VALIDATED?",
+   "reference": "SELECT DISTINCT r.id FROM demo_orders_1_received r JOIN demo_orders_2_validated v ON r.id = v.id WHERE v.state = 'VALIDATED'"
+  },
+  {
+   "id": "J03",
+   "kind": "GENERATE",
+   "family": "join",
+   "question": "For each payment, its reference with its authorization event_time (demo.payments.authorized) and its capture event_time (demo.payments.captured)",
+   "reference": "SELECT a.paymentRef, a.event_time AS authorized_at, c.event_time AS captured_at FROM demo_payments_authorized a JOIN demo_payments_captured c ON a.paymentRef = c.paymentRef"
+  },
+  {
+   "id": "J04",
+   "kind": "GENERATE",
+   "family": "join",
+   "question": "For each shipment, its reference, the hub it was dispatched from (demo.shipments.dispatched) and who signed for it (demo.shipments.delivered)",
+   "reference": "SELECT d.shipmentRef, d.hub, v.signed_by FROM demo_shipments_dispatched d JOIN demo_shipments_delivered v ON d.shipmentRef = v.shipmentRef"
+  },
+  {
+   "id": "J05",
+   "kind": "GENERATE",
+   "family": "join",
+   "question": "Total order amount per customer name, joining demo.orders.1.received with demo.customers",
+   "reference": "SELECT c.name, SUM(r.amount) AS total FROM demo_orders_1_received r JOIN demo_customers c ON r.customer_id = c.customer_id GROUP BY c.name"
+  },
+  {
+   "id": "J06",
+   "kind": "GENERATE",
+   "family": "join",
+   "question": "Ids of the orders in demo.orders.1.received placed by customers of the VIP segment (demo.customers)",
+   "reference": "SELECT r.id FROM demo_orders_1_received r JOIN demo_customers c ON r.customer_id = c.customer_id WHERE c.segment = 'VIP'"
+  },
+  {
+   "id": "J07",
+   "kind": "GENERATE",
+   "family": "join",
+   "question": "For each payment reference, the delay in seconds between its authorization (demo.payments.authorized) and its capture (demo.payments.captured); event_time is in epoch seconds",
+   "reference": "SELECT a.paymentRef, c.event_time - a.event_time AS delay_seconds FROM demo_payments_authorized a JOIN demo_payments_captured c ON a.paymentRef = c.paymentRef"
+  },
+  {
+   "id": "J08",
+   "kind": "GENERATE",
+   "family": "join",
+   "question": "Ids of the orders of demo.orders.1.received that have no row in demo.orders.2.validated",
+   "reference": "SELECT r.id FROM demo_orders_1_received r LEFT JOIN demo_orders_2_validated v ON r.id = v.id WHERE v.id IS NULL"
+  },
+  {
+   "id": "M01",
+   "kind": "METRIC",
+   "family": "metric",
+   "question": "Number of orders received of type FOOD",
+   "topic": "demo.orders.1.received",
+   "reference": "SELECT COUNT(*) AS metric_value FROM demo_orders_1_received WHERE type = 'FOOD'"
+  },
+  {
+   "id": "M02",
+   "kind": "METRIC",
+   "family": "metric",
+   "question": "Average temperature across all sensors",
+   "topic": "demo.iot.sensors",
+   "reference": "SELECT AVG(temperature) AS metric_value FROM demo_iot_sensors"
+  },
+  {
+   "id": "M03",
+   "kind": "METRIC",
+   "family": "metric",
+   "question": "Total amount of the captured payments",
+   "topic": "demo.payments.captured",
+   "reference": "SELECT SUM(amount) AS metric_value FROM demo_payments_captured"
+  },
+  {
+   "id": "M04",
+   "kind": "METRIC",
+   "family": "metric",
+   "question": "Number of sensor readings in ALERT status",
+   "topic": "demo.iot.sensors",
+   "reference": "SELECT COUNT(*) AS metric_value FROM demo_iot_sensors WHERE status = 'ALERT'"
+  },
+  {
+   "id": "M05",
+   "kind": "METRIC",
+   "family": "metric",
+   "question": "Number of distinct customers that placed an order",
+   "topic": "demo.orders.1.received",
+   "reference": "SELECT COUNT(DISTINCT customer_id) AS metric_value FROM demo_orders_1_received"
+  },
+  {
+   "id": "M06",
+   "kind": "METRIC",
+   "family": "metric",
+   "question": "Highest humidity measured",
+   "topic": "demo.iot.sensors",
+   "reference": "SELECT MAX(humidity) AS metric_value FROM demo_iot_sensors"
+  },
+  {
+   "id": "X01",
+   "kind": "FIX",
+   "family": "fix",
+   "broken": "SELECT id, FROM demo_orders_1_received",
+   "reference": "SELECT id FROM demo_orders_1_received"
+  },
+  {
+   "id": "X02",
+   "kind": "FIX",
+   "family": "fix",
+   "broken": "SELECT id, amout FROM demo_orders_1_received WHERE type = 'FOOD'",
+   "reference": "SELECT id, amount FROM demo_orders_1_received WHERE type = 'FOOD'"
+  },
+  {
+   "id": "X03",
+   "kind": "FIX",
+   "family": "fix",
+   "broken": "SELECT type, COUNT(*) AS orders FROM demo_orders_1_received",
+   "reference": "SELECT type, COUNT(*) AS orders FROM demo_orders_1_received GROUP BY type"
+  },
+  {
+   "id": "X04",
+   "kind": "FIX",
+   "family": "fix",
+   "broken": "SELECT site, AVG(temperature) AS avg_temperature FROM demo_iot_sensors GROUP BY sensor",
+   "reference": "SELECT site, AVG(temperature) AS avg_temperature FROM demo_iot_sensors GROUP BY site"
+  },
+  {
+   "id": "X05",
+   "kind": "FIX",
+   "family": "fix",
+   "broken": "SELECT customer_id, name FROM demo_customer WHERE country = 'FR'",
+   "reference": "SELECT customer_id, name FROM demo_customers WHERE country = 'FR'"
+  },
+  {
+   "id": "X06",
+   "kind": "FIX",
+   "family": "fix",
+   "broken": "SELECT id FROM demo_orders_2_validated WHERE state = REJECTED",
+   "reference": "SELECT id FROM demo_orders_2_validated WHERE state = 'REJECTED'"
+  },
+  {
+   "id": "X07",
+   "kind": "FIX",
+   "family": "fix",
+   "broken": "SELECT r.id, c.name FROM demo_orders_1_received r JOIN demo_customers c ON r.customer = c.customer_id",
+   "reference": "SELECT r.id, c.name FROM demo_orders_1_received r JOIN demo_customers c ON r.customer_id = c.customer_id"
+  },
+  {
+   "id": "X08",
+   "kind": "FIX",
+   "family": "fix",
+   "broken": "SELECT paymentRef SUM(amount) AS total FROM demo_payments_captured GROUP BY paymentRef",
+   "reference": "SELECT paymentRef, SUM(amount) AS total FROM demo_payments_captured GROUP BY paymentRef"
+  },
+  {
+   "id": "X09",
+   "kind": "FIX",
+   "family": "fix",
+   "broken": "SELECT sensor_id, MAX(temperature) AS max_temperature FROM demo_iot_sensors GROUP BY sensor_id HAVING status = 'ALERT'",
+   "reference": "SELECT sensor_id, MAX(temperature) AS max_temperature FROM demo_iot_sensors WHERE status = 'ALERT' GROUP BY sensor_id"
+  },
+  {
+   "id": "X10",
+   "kind": "FIX",
+   "family": "fix",
+   "broken": "SELECT id, amount FROM demo_orders_1_received ORDER BY amount DESC",
+   "reference": "SELECT id, amount FROM demo_orders_1_received ORDER BY amount DESC LIMIT 100"
+  }
+ ]
+}

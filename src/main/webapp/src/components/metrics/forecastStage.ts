@@ -29,6 +29,7 @@ export function about(points: number, stepMillis: number): string {
 export function forecastStage(series: ForecastSeriesView): ForecastStageSummary {
   const r = series.result;
   const step = series.stepMillis;
+  if (series.error) return { stage: 'BLOCKED', label: 'Unreadable', tone: 'error', detail: series.error };
   if (!r) return { stage: 'WAITING', label: 'Waiting', tone: 'neutral', detail: 'Waiting for the first forecast cycle' };
   if (r.state === 'DEGRADED')
     return { stage: 'DEGRADED', label: 'Degraded', tone: 'error', detail: 'Drift detected; revise the series to restart its evaluation' };
@@ -83,7 +84,9 @@ export function forecastTimeline(series: ForecastSeriesView): TimelineStep[] {
   const collected = r?.context?.observedPoints ?? 0;
   const forecasting = Boolean(r?.forecast);
 
-  const history: TimelineStep = !r
+  const history: TimelineStep = series.error
+    ? { key: 'history', label: 'History', state: 'failed', detail: series.error }
+    : !r
     ? { key: 'history', label: 'History', state: 'current', detail: 'Waiting for the first forecast cycle' }
     : forecasting || r.context?.status === 'READY'
       ? { key: 'history', label: 'History', state: 'done',

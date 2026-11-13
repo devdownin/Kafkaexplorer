@@ -92,16 +92,25 @@ describe('ForecastPanel', () => {
     expect(screen.getByRole('heading',{name:'Metrics Forecast'})).toBeTruthy();
     expect(axios.put).not.toHaveBeenCalled();
   });
-  it('polls the selected series progress in the same loop', async () => {
+  it('polls the list, then the selected series on its own: its record, progress and shadow', async () => {
     const progress = { seriesId: 'a'.repeat(64), state: 'WARMING_UP', reason: 'Need more observations', observedPoints: 40, requiredPoints: 512,
       missingPoints: 472, imputedPoints: 0, checkedAt: 1, nextScheduledAt: 100, stepMillis: 60000, horizon: 30,
       topics: ['orders'], groups: [], breach: null, breachState: 'NOT_CONFIGURED' };
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: String(url).endsWith('/progress') ? progress : seriesWith(ready) }));
     render(<ForecastPanel />);
     expect(await screen.findByText(/40 \/ 512 observed points/)).toBeTruthy();
-    // The preparation diagnostic is read once on mount; only these three are polled, in one loop.
+    // The preparation diagnostic is read once on mount; the list carries no history points
+    // (METRICS-FORECAST-UX-AUDIT.md P1), so the series shown is read on its own.
     expect(vi.mocked(axios.get).mock.calls.map(call => call[0]).filter(url => url !== '/api/forecasts/preparation'))
-      .toEqual(['/api/forecasts', `/api/forecasts/${'a'.repeat(64)}/progress`, `/api/forecasts/${'a'.repeat(64)}/shadow`]);
+      .toEqual(['/api/forecasts', `/api/forecasts/${'a'.repeat(64)}`,
+        `/api/forecasts/${'a'.repeat(64)}/progress`, `/api/forecasts/${'a'.repeat(64)}/shadow`]);
+  });
+  it('never asks for a shadow the list says is not configured', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: String(url).endsWith('/progress') ? {} : { ...seriesWith(ready), shadowEnabled: false } }));
+    render(<ForecastPanel />);
+    await screen.findByRole('button', { name: 'Approve after quality checks' });
+    await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.some(c => String(c[0]).endsWith('/progress'))).toBe(true));
+    expect(vi.mocked(axios.get).mock.calls.some(c => String(c[0]).endsWith('/shadow'))).toBe(false);
   });
   it('offers the raw result as a copy, not as a page of JSON', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(ready) });
@@ -176,7 +185,8 @@ describe('ForecastPanel', () => {
       render(<ForecastPanel />);
       await screen.findByRole('button', { name: 'Approve after quality checks' });
       const shadowCalls = () => vi.mocked(axios.get).mock.calls.filter(c => String(c[0]).endsWith('/shadow')).length;
-      expect(shadowCalls()).toBe(1);
+      // The selected series is read after the list, in its own loop.
+      await vi.waitFor(() => expect(shadowCalls()).toBe(1));
       await vi.advanceTimersByTimeAsync(31_000);
       expect(shadowCalls()).toBe(1);
 
@@ -220,5 +230,72 @@ describe('ForecastPanel', () => {
       expect(screen.getByText(/Timestral with covariates would not qualify yet: The first shared quality block holds 40 of 120/)).toBeTruthy();
       expect(axios.put).not.toHaveBeenCalled();
     });
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md P3: choosing a series reads that series, not the whole list again.
+  it('reads only the chosen series when the selection changes', async () => {
+    const two = seriesWith(ready);
+    const other = { ...two.series[0], seriesId: 'b'.repeat(64), metricId: 'other' };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...two, series: [two.series[0], other] } : {} }));
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    const select = await screen.findByLabelText('Series');
+    vi.mocked(axios.get).mockClear();
+    await user.selectOptions(select, 'b'.repeat(64));
+    await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).toContain(`/api/forecasts/${'b'.repeat(64)}`));
+    expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).not.toContain('/api/forecasts');
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md B2: an unreadable series says so, and the others stay listed.
+  it('names a series the server could not read instead of losing the list', async () => {
+    const status = seriesWith(ready);
+    const broken = { ...status.series[0], seriesId: 'b'.repeat(64), metricId: 'broken', result: null,
+      error: 'The latest result of this series could not be read (IllegalStateException)' };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...status, series: [broken, status.series[0]] } : {} }));
+    render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be read');
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md B3: collecting history is not a fallback.
+  it('does not call a series without a forecast a baseline fallback', async () => {
+    const status = seriesWith(blocked, 'WARMING_UP');
+    const collecting = { ...status.series[0], result: { ...status.series[0].result, strategy: 'UNAVAILABLE', forecast: null, reason: 'Collecting history' } };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...status, series: [collecting] } : {} }));
+    render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    expect(await screen.findByTitle('UNAVAILABLE')).toHaveTextContent('No forecast yet');
+    expect(screen.queryByText('Baseline fallback')).toBeNull();
+    // Nothing to approve and no interval to qualify without a forecast.
+    expect(screen.queryByRole('button', { name: 'Approve after quality checks' })).toBeNull();
+    expect(screen.queryByText(/80 % interval is nominal/)).toBeNull();
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md U1, U5: the decision sits with the sentence saying where the series stands.
+  it('puts approval and stop together, under the forecast', async () => {
+    const status = seriesWith(blocked);
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts'
+      ? { ...status, series: [{ ...status.series[0], withdrawable: true }] } : {} }));
+    render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    const approve = await screen.findByRole('button', { name: 'Approve after quality checks' });
+    expect(approve.parentElement).toBe(screen.getByRole('button', { name: 'Stop forecasting this series' }).parentElement);
+    expect(approve.parentElement).toHaveTextContent('Observing');
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md P4: the preparation checks are read when their section opens.
+  it('reads the preparation checks only once their section is opened', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? seriesWith(ready)
+      : url === '/api/forecasts/preparation' ? { checkedAt: 1, probed: false, checks: [] } : {} }));
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    await screen.findByLabelText('Forecast status');
+    expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).not.toContain('/api/forecasts/preparation');
+    await user.click(screen.getByText('Preparation and configuration'));
+    await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).toContain('/api/forecasts/preparation'));
+  });
+
+  // METRICS-FORECAST-UX-AUDIT.md U6: the confirmation says what approving changes.
+  it('says what approval changes before it is given', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: seriesWith(ready) });
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    await user.click(await screen.findByRole('button', { name: 'Approve after quality checks' }));
+    expect(await screen.findByText(/reported as ACTIVE/)).toBeTruthy();
   });
 });

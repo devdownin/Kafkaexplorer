@@ -431,7 +431,13 @@ public class MetricService {
                 m.executionMode(),
                 m.labelTopic(),
                 m.labelFields() != null ? List.copyOf(m.labelFields()) : List.of());
-            persistToKafka(updated);
+            try {
+                persistToKafka(updated);
+            } catch (MetricPersistenceException e) {
+                // A start-up migration: the repointed SQL still serves this process, and the next
+                // start migrates it again. Refusing to start over it would cost more than it saves.
+                log.warn("{}", e.getMessage());
+            }
             return updated;
         });
     }
@@ -482,7 +488,7 @@ public class MetricService {
     }
 
     private void seedClusterCount(String name, String measurement, String description) {
-        save(new MetricConfig(UUID.randomUUID().toString(), name, "GAUGE", null, description,
+        saveSeed(new MetricConfig(UUID.randomUUID().toString(), name, "GAUGE", null, description,
             null, null, null, null, null, List.of(), Map.of(), null,
             MetricTemplateType.KAFKA_CLUSTER_COUNT.name(), Map.of("measurement", measurement),
             MetricExecutionMode.TEMPLATE_BOUNDED_SCAN.name(), null, List.of()));
@@ -491,7 +497,16 @@ public class MetricService {
     private void addMetric(String name, String type, String sql, String description,
                            Double warning, Double critical) {
         String id = UUID.randomUUID().toString();
-        save(new MetricConfig(id, name, type, sql, description, warning, critical, null, null, null));
+        saveSeed(new MetricConfig(id, name, type, sql, description, warning, critical, null, null, null));
+    }
+
+    /** An example that cannot be written is skipped, not kept in memory as if it had been. */
+    private void saveSeed(MetricConfig metric) {
+        try {
+            save(metric);
+        } catch (MetricPersistenceException e) {
+            log.warn("Example metric '{}' not seeded: {}", LogSafe.name(metric.name()), e.getMessage());
+        }
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -510,22 +525,43 @@ public class MetricService {
 
     public MetricPreviewResult previewMetric(MetricConfig metric) {
         try {
-            MetricConfig normalized = normalizeMetric(metric);
+            // The browser only ever holds the DDL masked; the preview sent it back as it was, '******'
+            // included, and on a table not yet registered created it with those as its credentials.
+            // save() restores them from the stored version — so does the preview, now.
+            MetricConfig previous = metric.id() != null ? metrics.get(metric.id()) : null;
+            MetricConfig withSecrets = previous == null ? metric : new MetricConfig(
+                metric.id(), metric.name(), metric.type(), metric.sql(), metric.description(),
+                metric.warningThreshold(), metric.criticalThreshold(), metric.lastValue(),
+                metric.lastUpdateTime(), metric.errorMessage(), metric.history(), metric.lastSummary(),
+                DdlGeneratorService.restoreMaskedProperties(metric.createTableSql(), previous.createTableSql()),
+                metric.templateType(), metric.templateParams(), metric.executionMode(),
+                metric.labelTopic(), metric.labelFields());
+            MetricConfig normalized = normalizeMetric(withSecrets);
             validateMetric(normalized);
-            executeCreateTableIfPresent(normalized);
 
-            MetricComputationResult result = computeMetric(normalized, true);
-            Map<String, Object> summary = new LinkedHashMap<>(result.summary());
-            if (MetricExecutionMode.FLINK_MANAGED_JOB.name().equals(normalized.executionMode())) {
-                summary.put("plannedExecutionMode", MetricExecutionMode.FLINK_MANAGED_JOB.name());
-                summary.put("previewExecutionMode", MetricExecutionMode.TEMPLATE_BOUNDED_SCAN.name());
-                summary.put("managedJobStatus", "PLANNED");
-                summary.put("managedJobNote", "Preview uses a bounded scan until Flink job orchestration is implemented.");
+            // A preview looks; it does not leave a table behind (METRICS-CREATION-AUDIT.md B6). The
+            // DDL is run so the query can read what it defines, and a table this call created is
+            // dropped again afterwards — from Flink and from the store of definitions replayed at
+            // boot, where an abandoned editor's table otherwise came back at every restart.
+            String ddlTable = normalized.createTableSql() == null || normalized.createTableSql().isBlank()
+                ? null : FlinkTableStore.createdTableName(normalized.createTableSql());
+            boolean existedBefore = ddlTable != null && flinkSqlService.listTables().contains(ddlTable);
+            String ddlError = executeCreateTableIfPresent(normalized);
+            if (ddlError != null) {
+                // A preview is where the definition is checked, so a failing one is the answer,
+                // whatever the query would have read from a table registered some other way.
+                return new MetricPreviewResult(null, List.of(), withDdlFailure(ddlError, null), Map.of());
             }
-            List<Map<String, Object>> previewRows = result.rows().size() > 50
-                ? result.rows().subList(0, 50)
-                : result.rows();
-            return new MetricPreviewResult(result.displayValue(), previewRows, result.error(), summary);
+            try {
+                // Said only when the definition differs from the one stored: an existing metric's own
+                // table is registered by its refreshes, and re-previewing it unchanged is no news.
+                boolean edited = ddlTable != null && (previous == null || !Objects.equals(
+                    normalized.createTableSql().trim(),
+                    previous.createTableSql() == null ? null : previous.createTableSql().trim()));
+                return previewComputed(normalized, existedBefore && edited ? ddlTable : null);
+            } finally {
+                if (ddlTable != null && !existedBefore) dropPreviewTable(ddlTable);
+            }
         } catch (IllegalArgumentException e) {
             return new MetricPreviewResult(null, List.of(), e.getMessage(), Map.of());
         } catch (Exception e) {
@@ -534,7 +570,53 @@ public class MetricService {
         }
     }
 
-    public void save(MetricConfig metric) {
+    private void dropPreviewTable(String table) {
+        try {
+            flinkSqlService.dropTable(table);
+        } catch (Exception e) {
+            // A name this application will not put into a DROP (qualified, quoted) stays registered
+            // for this process, as every preview used to leave it; nothing worse.
+            log.debug("Preview table {} not dropped: {}", LogSafe.name(table), e.getMessage());
+        }
+    }
+
+    /**
+     * @param shadowedTable the table the DDL names when it already existed: {@code IF NOT EXISTS}
+     *                      then applies nothing, so an edited definition is not what the preview
+     *                      read — said rather than left to be discovered after the save.
+     */
+    private MetricPreviewResult previewComputed(MetricConfig normalized, String shadowedTable) {
+        MetricComputationResult result = computeMetric(normalized, true);
+        Map<String, Object> summary = new LinkedHashMap<>(result.summary());
+        if (shadowedTable != null) {
+            summary.put("ddlNotApplied", "A table named " + shadowedTable + " is already registered, so this "
+                + "CREATE TABLE was not applied (IF NOT EXISTS) and the preview read the existing table. "
+                + "To use an edited definition, drop that table first (schema browser).");
+        }
+        if (MetricExecutionMode.FLINK_MANAGED_JOB.name().equals(normalized.executionMode())) {
+            summary.put("plannedExecutionMode", MetricExecutionMode.FLINK_MANAGED_JOB.name());
+            summary.put("previewExecutionMode", MetricExecutionMode.TEMPLATE_BOUNDED_SCAN.name());
+            summary.put("managedJobStatus", "PLANNED");
+            summary.put("managedJobNote", "Preview uses a bounded scan until Flink job orchestration is implemented.");
+        }
+        // What the refresh would publish, said before it does (U3). Labels configured from a topic
+        // are one value each and add no series, so the rows alone decide the count.
+        if (result.error() == null && !result.rows().isEmpty()) {
+            int series = liveLabelKeys(result.rows(), Map.of()).size();
+            summary.put("seriesCount", series);
+            String overCap = seriesOverCap(series);
+            if (overCap != null) {
+                return new MetricPreviewResult(result.displayValue(), List.of(), overCap, summary);
+            }
+        }
+        List<Map<String, Object>> previewRows = result.rows().size() > 50
+            ? result.rows().subList(0, 50)
+            : result.rows();
+        return new MetricPreviewResult(result.displayValue(), previewRows, result.error(), summary);
+    }
+
+    /** @return the metric as stored, so the caller learns the id a creation was given. */
+    public MetricConfig save(MetricConfig metric) {
         String id = (metric.id() == null || metric.id().isEmpty())
             ? UUID.randomUUID().toString() : metric.id();
         MetricConfig previous = metrics.get(id);
@@ -572,6 +654,10 @@ public class MetricService {
         // reason, so the card reads "pending" exactly while the series is absent. History is kept.
         MetricConfig m = shapeChanged ? withoutMeasurement(edited) : edited;
         validateMetric(m, true);
+        // Written before it is published, and the failure propagates: persistToKafka used to log a
+        // warning and return, so the editor read 200 and said "Metric saved" for a definition that
+        // lived in memory only and was gone at the next restart. Nothing is changed when it fails.
+        persistToKafka(m);
         metrics.put(id, m);
         // When an existing metric's shape changes (type, SQL, labels, template, …),
         // any Micrometer series it already registered would linger forever with stale
@@ -581,7 +667,7 @@ public class MetricService {
         if (shapeChanged) {
             purgeMeters(id);
         }
-        persistToKafka(m);
+        return m;
     }
 
     private static MetricConfig withoutMeasurement(MetricConfig m) {
@@ -631,7 +717,10 @@ public class MetricService {
 
     /** True when a re-saved metric differs in any field that affects its Micrometer series. */
     private boolean metricShapeChanged(MetricConfig a, MetricConfig b) {
-        return !Objects.equals(a.type(), b.type())
+        // The name is in the series as `metric_name`, fixed when the meter is registered: a rename
+        // left Prometheus reporting the old name until the next restart.
+        return !Objects.equals(a.name(), b.name())
+            || !Objects.equals(a.type(), b.type())
             || !Objects.equals(a.sql(), b.sql())
             || !Objects.equals(a.labelTopic(), b.labelTopic())
             || !Objects.equals(a.labelFields(), b.labelFields())
@@ -777,6 +866,19 @@ public class MetricService {
         return normalizeObservationDefinition(metric);
     }
 
+    /**
+     * {@code valueOf} answered an unknown mode with "No enum constant com.compagnonsdudev…" — a Java
+     * class name in the editor's error banner, and no word of what would have been accepted.
+     */
+    static MetricExecutionMode parseExecutionMode(String value) {
+        String key = value == null ? "" : value.trim().toUpperCase(Locale.ROOT);
+        for (MetricExecutionMode mode : MetricExecutionMode.values()) {
+            if (mode.name().equals(key)) return mode;
+        }
+        throw new IllegalArgumentException("Unknown execution mode '" + value + "'. Expected one of: "
+            + Arrays.stream(MetricExecutionMode.values()).map(Enum::name).collect(java.util.stream.Collectors.joining(", ")) + ".");
+    }
+
     /** Pure collector definition normalization, also used when previewing forecast identities. */
     public static MetricConfig normalizeObservationDefinition(MetricConfig metric) {
         String normalizedType = metric.type() == null || metric.type().isBlank()
@@ -785,7 +887,7 @@ public class MetricService {
         MetricTemplateType templateType = MetricTemplateType.fromValue(metric.templateType());
         MetricExecutionMode executionMode = metric.executionMode() == null || metric.executionMode().isBlank()
             ? (templateType == MetricTemplateType.RAW_SQL ? MetricExecutionMode.SQL : MetricExecutionMode.TEMPLATE_BOUNDED_SCAN)
-            : MetricExecutionMode.valueOf(metric.executionMode().trim().toUpperCase(Locale.ROOT));
+            : parseExecutionMode(metric.executionMode());
 
         return new MetricConfig(
             metric.id(),
@@ -813,9 +915,20 @@ public class MetricService {
         validateMetric(metric, false);
     }
 
+    /**
+     * @param requireName the save path. The rules {@code metricsEditor.ts} blocks on are checked
+     *                    there too (METRICS-CREATION-AUDIT.md B4): they existed only in the browser,
+     *                    while a metric is also created through the API, a suggestion and a restored
+     *                    draft — and what got past them stayed stored and in error for ever. They are
+     *                    checked on save and not on refresh, so a metric stored before them keeps
+     *                    running rather than failing every cycle over a name.
+     */
     private void validateMetric(MetricConfig metric, boolean requireName) {
         if (requireName && (metric.name() == null || metric.name().isBlank())) {
             throw new IllegalArgumentException("Metric name is required");
+        }
+        if (requireName) {
+            validateSavedShape(metric);
         }
         if (metric.labelFields() != null && !metric.labelFields().isEmpty()
             && (metric.labelTopic() == null || metric.labelTopic().isBlank())) {
@@ -825,7 +938,7 @@ public class MetricService {
         MetricTemplateType templateType = MetricTemplateType.fromValue(metric.templateType());
         String metricType = metric.type() == null ? "GAUGE" : metric.type().toUpperCase(Locale.ROOT);
         Map<String, Object> params = metric.templateParams() != null ? metric.templateParams() : Map.of();
-        MetricExecutionMode executionMode = MetricExecutionMode.valueOf(metric.executionMode().toUpperCase(Locale.ROOT));
+        MetricExecutionMode executionMode = parseExecutionMode(metric.executionMode());
 
         if (executionMode == MetricExecutionMode.FLINK_MANAGED_JOB && templateType == MetricTemplateType.RAW_SQL) {
             throw new IllegalArgumentException("FLINK_MANAGED_JOB is only available for template metrics");
@@ -977,19 +1090,95 @@ public class MetricService {
         }
     }
 
-    private void executeCreateTableIfPresent(MetricConfig config) {
-        if (config.createTableSql() == null || config.createTableSql().isBlank()) return;
+    private static final Pattern PROMETHEUS_NAME = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*");
+    private static final Set<String> METRIC_TYPES = Set.of("GAUGE", "COUNTER", "HISTOGRAM", "SUMMARY");
+
+    /** The editor's blocking rules, in the editor's words (`metricsEditor.ts`). */
+    private static void validateSavedShape(MetricConfig metric) {
+        if (!PROMETHEUS_NAME.matcher(metric.name().trim()).matches()) {
+            throw new IllegalArgumentException("Metric name must start with a letter or underscore and contain "
+                + "only letters, digits, and underscores (Prometheus naming rules) (was '" + metric.name() + "').");
+        }
+        String type = metric.type() == null ? "GAUGE" : metric.type().trim().toUpperCase(Locale.ROOT);
+        if (!METRIC_TYPES.contains(type)) {
+            throw new IllegalArgumentException("Metric type must be one of GAUGE, COUNTER, HISTOGRAM, SUMMARY "
+                + "(was '" + metric.type() + "').");
+        }
+        Double warn = metric.warningThreshold();
+        Double crit = metric.criticalThreshold();
+        if ((warn != null && !Double.isFinite(warn)) || (crit != null && !Double.isFinite(crit))) {
+            throw new IllegalArgumentException("Thresholds must be finite numbers.");
+        }
+        if (warn != null && warn.equals(crit)) {
+            throw new IllegalArgumentException("The two thresholds are the same number, so they say nothing "
+                + "about which side the problem is on and would fire together.");
+        }
+        if (MetricTemplateType.fromValue(metric.templateType()) == MetricTemplateType.RAW_SQL
+            && metric.sql() != null && !metric.sql().isBlank()) {
+            String body = SqlStatements.withoutLeadingCte(withoutSqlComments(metric.sql()));
+            if (!body.toUpperCase(Locale.ROOT).startsWith("SELECT")) {
+                throw new IllegalArgumentException("Only SELECT queries are allowed (a leading WITH is accepted).");
+            }
+        }
+    }
+
+    /**
+     * Comments removed, found outside the string literals so a {@code '--'} in a value does not cut
+     * the statement. A hint ({@code /*+ … *}{@code /}) is not a comment and is kept.
+     */
+    static String withoutSqlComments(String sql) {
+        String blanked = SqlStatements.outsideLiterals(sql);
+        StringBuilder out = new StringBuilder(sql.length());
+        int i = 0;
+        while (i < sql.length()) {
+            if (blanked.startsWith("--", i)) {
+                int end = blanked.indexOf('\n', i);
+                i = end < 0 ? sql.length() : end;
+            } else if (blanked.startsWith("/*", i) && !blanked.startsWith("/*+", i)) {
+                int end = blanked.indexOf("*/", i + 2);
+                i = end < 0 ? sql.length() : end + 2;
+                out.append(' ');
+            } else {
+                out.append(sql.charAt(i++));
+            }
+        }
+        return out.toString().trim();
+    }
+
+    /**
+     * The metric's own {@code CREATE TABLE}, when it has one.
+     *
+     * @return the reason it failed, or {@code null}. It was caught and logged at debug, so a mistake
+     *         in the DDL never reached anyone: the query then failed on the table the DDL was meant
+     *         to create, "Object not found" about a name that is correct, and the operator corrected
+     *         the wrong tab (METRICS-CREATION-AUDIT.md B6).
+     */
+    private String executeCreateTableIfPresent(MetricConfig config) {
+        if (config.createTableSql() == null || config.createTableSql().isBlank()) return null;
 
         String ddl = config.createTableSql().trim();
         if (!ddl.toUpperCase(Locale.ROOT).contains("IF NOT EXISTS")) {
             ddl = ddl.replaceFirst("(?i)(CREATE\\s+TABLE\\s+)", "$1IF NOT EXISTS ");
         }
         try {
-            flinkSqlService.executeSql(QueryRequest.ddl(ddl, 10_000L));
-            log.debug("CREATE TABLE DDL executed for metric '{}'", config.name());
+            QueryResult result = flinkSqlService.executeSql(QueryRequest.ddl(ddl, 10_000L));
+            if (result != null && result.error() != null) {
+                log.debug("CREATE TABLE for metric '{}' failed: {}", LogSafe.name(config.name()), result.error());
+                return result.error();
+            }
+            log.debug("CREATE TABLE DDL executed for metric '{}'", LogSafe.name(config.name()));
+            return null;
         } catch (Exception ddlEx) {
-            log.debug("CREATE TABLE for metric '{}' skipped: {}", config.name(), ddlEx.getMessage());
+            log.debug("CREATE TABLE for metric '{}' failed: {}", LogSafe.name(config.name()), ddlEx.getMessage());
+            return ddlEx.getMessage() != null ? ddlEx.getMessage() : ddlEx.getClass().getSimpleName();
         }
+    }
+
+    /** The DDL's failure first when the query failed too: it is usually the cause. */
+    static String withDdlFailure(String ddlError, String queryError) {
+        if (ddlError == null) return queryError;
+        String ddl = "The table definition (CREATE TABLE) failed: " + ddlError;
+        return queryError == null ? ddl : ddl + " — then the query: " + queryError;
     }
 
     /**
@@ -2090,11 +2279,13 @@ public class MetricService {
                 return;
             }
 
-            executeCreateTableIfPresent(normalized);
+            String ddlError = executeCreateTableIfPresent(normalized);
 
             MetricComputationResult result = computeMetric(normalized, false);
             if (result.error() != null) {
-                updateMetricState(id, null, result.error(), result.summary());
+                // A running metric whose query still answers is left alone; one that fails says
+                // the DDL failed first, since that is usually why.
+                updateMetricState(id, null, withDdlFailure(ddlError, result.error()), result.summary());
                 captureObservation(normalized, observedEndpoint, List.of(), Map.of(), result.summary(), true);
             } else if (!result.rows().isEmpty()) {
                 Map<String, String> configuredLabels = resolveConfiguredLabels(normalized);
@@ -2165,6 +2356,13 @@ public class MetricService {
                              Double displayValueOverride, Map<String, Object> summary,
                              Map<String, String> configuredLabels) {
         String type = config.type() == null ? "GAUGE" : config.type().toUpperCase();
+
+        String overCap = seriesOverCap(liveLabelKeys(rows, configuredLabels).size());
+        if (overCap != null) {
+            purgeMeters(metricId);
+            updateMetricState(metricId, null, overCap, summary);
+            return;
+        }
 
         Double primaryValue = (type.equals("HISTOGRAM") || type.equals("SUMMARY"))
             ? recordDistributionRows(metricId, config, rows, configuredLabels,
@@ -2241,6 +2439,15 @@ public class MetricService {
     }
 
     /** The set of label series produced by this cycle's rows (rows without a numeric value are ignored). */
+    /** The refusal when a result would publish more series than one metric may, or null. */
+    private String seriesOverCap(int series) {
+        int cap = explorerConfig.getMetricMaxSeries();
+        if (cap <= 0 || series <= cap) return null;
+        return "This query would publish " + series + " label series, above the " + cap
+            + " one metric may (explorer.metric-max-series): every column besides metric_value becomes a "
+            + "label. Aggregate, or group by fewer columns.";
+    }
+
     private Set<String> liveLabelKeys(List<Map<String, Object>> rows, Map<String, String> configuredLabels) {
         Set<String> keys = new HashSet<>();
         for (Map<String, Object> row : rows) {
@@ -2706,6 +2913,13 @@ public class MetricService {
         }
     }
 
+    /** A metric definition that could not be written to its topic: saved nowhere, so not saved. */
+    public static class MetricPersistenceException extends RuntimeException {
+        public MetricPersistenceException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
     private void persistToKafka(MetricConfig metric) {
         try {
             configProducer().send(new ProducerRecord<>(
@@ -2713,9 +2927,13 @@ public class MetricService {
                 metric.id(),
                 objectMapper.writeValueAsString(metric))).get();
         } catch (Exception e) {
-            log.warn("Failed to persist metric config: {}", e.getMessage());
             // Drop the producer so the next attempt reconnects with fresh state/config
             closeConfigProducer();
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            throw new MetricPersistenceException("The metric could not be written to '"
+                + explorerConfig.getMetricsConfigTopic() + "', so it was not saved: "
+                + (cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName()), e);
         }
     }
 

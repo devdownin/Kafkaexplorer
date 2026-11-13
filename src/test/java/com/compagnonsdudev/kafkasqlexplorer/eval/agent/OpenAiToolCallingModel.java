@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The OpenAI {@code /chat/completions} tool-calling API — which is what OpenRouter, Ollama and every
+ * The OpenAI {@code /chat/completions} tool-calling API — which is what OpenRouter, llama.cpp and every
  * OpenAI-compatible endpoint speak.
  *
  * <p>Written against the wire rather than through an SDK, for the reason {@link McpHttpClient}

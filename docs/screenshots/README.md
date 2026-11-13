@@ -2,7 +2,7 @@
 
 `docs/img/*.png` is what the [Docker Hub overview page](../DOCKERHUB.md), the READMEs and the
 GitHub Pages site show. They are produced here, not taken by hand, so that a UI change can be
-reflected by re-running one command instead of someone remembering to re-photograph nine
+reflected by re-running one command instead of someone remembering to re-photograph ten
 screens at the same window size.
 
 ```bash
@@ -15,8 +15,8 @@ node capture.mjs http://127.0.0.1:4173 ../img
 ```
 
 Requires Node 22+ and Playwright with a Chromium build (`npm i -g playwright && playwright
-install chromium`). The capture exits non-zero if any screen fails — eight screenshots out of
-nine means the ninth silently disappears from the documentation, so a partial run is a
+install chromium`). The capture exits non-zero if any screen fails — nine screenshots out of
+ten means the tenth silently disappears from the documentation, so a partial run is a
 failed run.
 
 **Installed globally, Playwright needs `NODE_PATH` to be found**, and every command on this page
@@ -47,8 +47,8 @@ point is that its numbers get re-measured was the one that could not run.
 
 **Install `pngquant` too** (`apt install pngquant`, `brew install pngquant`, or point
 `PNGQUANT` at a binary). Each shot is quantised to an 8-bit palette, which on flat UI colour
-and text is visually indistinguishable from the original and takes the nine from ~2.9 MB to
-~1.0 MB. That is not repository housekeeping: the Docker Hub overview loads all nine of them from
+and text is visually indistinguishable from the original and takes them from ~2.9 MB to
+~1.0 MB. That is not repository housekeeping: the Docker Hub overview loads them from
 GitHub Pages on every view. Without the binary the run still succeeds and says so at the end
 — compression is not what this script is for, but nobody should discover the omission from a
 commit diff either.
@@ -162,7 +162,7 @@ fixed random seed was tried first and is *not* the fix, which is why it is not h
 starting positions repeat, while the drift depends on elapsed time and the shutter falls at an
 instant that varies. So the layer is hidden instead — `[data-decorative]`, which such layers set on
 themselves rather than being listed here, and which they can only honestly set when they are
-`aria-hidden` and carry no text. Nothing the capture documents is lost, and the nine screens are
+`aria-hidden` and carry no text. Nothing the capture documents is lost, and the ten screens are
 byte-identical across runs again.
 
 **An API route the SPA calls and `server.mjs` does not stub fails the run.** It used to be a

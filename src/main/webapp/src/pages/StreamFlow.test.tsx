@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 
@@ -119,6 +119,18 @@ describe('Stream Flow page', () => {
 
     // Et le résultat est rendu : deux topics, la latence du saut.
     await waitFor(() => expect(screen.getAllByText(/demo\.orders\.2\.validated/).length).toBeGreaterThan(0));
+  });
+
+  /* Le scan du cluster entier reste le défaut ; une fois la chaîne connue, s'y restreindre est un clic. */
+  it('offers to scan only the topics the last trace reached', async () => {
+    stubFetchWithoutBody();
+    mockedAxios.post.mockResolvedValue({ status: 200, data: FLOW });
+    await renderAt('?key=ORD-1042&exact=1');
+
+    const narrow = await screen.findByRole('button', { name: 'Scan only the 2 topics this trace reached' });
+    fireEvent.click(narrow);
+    expect(screen.getByText('2 topic(s) will be scanned.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Scan only the/ })).not.toBeInTheDocument();
   });
 
   /*

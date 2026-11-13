@@ -671,8 +671,26 @@ sources**, where they are detail rather than the headline.
 
 **The shadow comparison sits under the timeline, collapsed.** `ForecastShadowComparison` reads
 `GET /api/forecasts/{id}/shadow` in the panel's own loop, as a third read beside the status and the
-progress, on the same clock. A 404 means no shadow on this deployment and renders nothing. A 204
+progress, on the same clock. **It is not read at all when `GET /api/forecasts` says `shadowEnabled: false`**:
+asked anyway, the 404 below wrote a console error into every Metrics page (`PAGES-SIMPLICITY-AUDIT.md`
+X1). A 404 means no shadow on this deployment and renders nothing. A 204
 is a shadow with nothing scored yet, worded as waiting rather than as unavailable. Its tables put
 TimesFM first, since it is the model being served. `shadowModels.lowestMae` names a leader only
 once every model has a judged block: before that the figures pool a handful of cohorts, and the
 block exists to withhold exactly that verdict. Nothing on it can approve or serve the shadow.
+
+## The assistant — proposals, never actions
+
+`components/assistant/` and `pages/sqlAssistant.ts` (`EMBEDDED-LLM-SCOPE.md`). Three entries, all
+absent until `GET /api/assistant/status` says the assistant can answer — a failed or unknown status
+reads as "no assistant", so a newer front behind an older server is the page it was before: the ask
+bar above the SQL editor, **Suggest a fix** in the editor's error panel (only for an error that is
+the statement's — `isFixableError` keeps a busy runtime, a timeout or an unreachable broker away
+from the model, which would otherwise "fix" a correct query), and **Describe the metric** in the
+Metrics editor. A proposal is always rendered by `ProposalCard`, which carries the planner's verdict
+— there is no way to show a generated statement without it — the tables the model was shown and
+those left out by name, and one gesture that uses it without running it: a **new** tab whose first
+lines say what was asked and whether the planner accepted it (as SQL comments, stripped before any
+check), or a filled form whose thresholds are left alone and whose preview still decides. The
+privacy sentence appears where one types, read off `localDeployment`, the Settings banner's rule.
+

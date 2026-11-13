@@ -23,12 +23,6 @@ export function NameListField({ id, label, names, onChange, topics = false, erro
     setDraft('');
   }
   return <div className="space-y-2">
-    {names.length > 0 && <ul className="flex flex-wrap gap-2" aria-label={`${label}: selected`}>
-      {names.map(name => <li key={name} className="flex items-center gap-1 rounded-full border border-outline-variant px-2 py-0.5 text-sm">
-        <span>{name}</span>
-        <Button variant="ghost" size="sm" aria-label={`Remove ${name}`} onClick={() => onChange(names.filter(n => n !== name))}>×</Button>
-      </li>)}
-    </ul>}
     <div className="flex gap-2 items-end">
       <Field id={id} label={label} error={error} description={description} className="flex-1">
         {p => topics
@@ -38,5 +32,12 @@ export function NameListField({ id, label, names, onChange, topics = false, erro
       </Field>
       <Button onClick={add} disabled={!draft.trim()} aria-label={`Add to ${label}`}>Add</Button>
     </div>
+    {/* Under the field and its label (B7): above them, a chip read as a name with no title. */}
+    {names.length > 0 && <ul className="flex flex-wrap gap-2" aria-label={`${label}: selected`}>
+      {names.map(name => <li key={name} className="flex items-center gap-1 rounded-full border border-outline-variant px-2 py-0.5 text-sm">
+        <span>{name}</span>
+        <Button variant="ghost" size="sm" aria-label={`Remove ${name}`} onClick={() => onChange(names.filter(n => n !== name))}>×</Button>
+      </li>)}
+    </ul>}
   </div>;
 }

@@ -10,8 +10,8 @@
 # one. It is named for that now.
 #
 # Being an overlay rather than a base also removes a restriction nobody chose: as
-# separate bases, Schema Registry and Ollama could never run together. Layered, they can
-# (`-f docker-compose.yml -f compose/schema-registry.yml -f compose/ollama.yml`), and so
+# separate bases, Schema Registry and a local model could never run together. Layered, they can
+# (`-f docker-compose.yml -f compose/schema-registry.yml -f compose/llama-cpp.yml`), and so
 # can compose/limits.yml on top of any of them.
 #
 # Relative paths here resolve against the PROJECT directory, which is the directory of

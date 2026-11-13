@@ -216,6 +216,15 @@ class ForecastSetupServiceTest {
     assertThrows(IllegalArgumentException.class, () -> setup.draft(request(true, MetricObservation.definitionVersion(metric), "milliseconds", List.of("orders"), List.of("worker"), 86400000, 30)));
     verifyNoInteractions(history, client, pilot, preparation);
   }
+  /** METRICS-FORECAST-UX-AUDIT.md B6: a series started from the assistant is stopped, not edited in a file. */
+  @Test void aMetricAlreadyForecastFromTheAssistantIsReferredToTheStopButton() {
+    var id = setup.draft(valid()).seriesId();
+    var started = new ForecastPilotProperties.Series(id, "lag", "local", "v1", "milliseconds",
+        List.of("orders"), List.of(), SeriesPreparationProfile.initial(SeriesPreparationProfile.Transformation.GAUGE_MEAN), 30, 1, null, null, .8, 30);
+    root.getPilot().replaceRuntime(List.of(started));
+    var refusal = assertThrows(IllegalArgumentException.class, () -> setup.draft(valid()));
+    assertTrue(refusal.getMessage().contains("stop that series from Metrics Forecast"), refusal.getMessage());
+  }
   @Test void existingIdentityCannotBeChangedAndApprovedSeriesArePreserved() {
     root.getHistory().setEnabled(true); root.getHistory().setClusterId("existing");
     assertThrows(IllegalArgumentException.class, () -> setup.draft(valid()));
@@ -249,6 +258,20 @@ class ForecastSetupServiceTest {
     assertEquals(12, progress.observedPoints()); assertEquals(512, progress.requiredPoints());
     assertEquals(123L, progress.nextScheduledAt()); assertEquals("NOT_CONFIGURED", progress.breachState());
     verifyNoInteractions(client, history); verify(pilot, never()).breach(anyString());
+  }
+  /** METRICS-FORECAST-UX-AUDIT.md P2: the history is read once per step, not once per poll. */
+  @Test void progressReadsTheHistoryOncePerStep() throws Exception {
+    // A day-long step, so two calls a few milliseconds apart cannot straddle a boundary.
+    var profile = new SeriesPreparationProfile(86_400_000L, 512, SeriesPreparationProfile.Transformation.GAUGE_MEAN);
+    var spec = new ForecastPilotProperties.Series("b".repeat(64), "lag", "local", "v1", "milliseconds",
+        List.of("orders"), List.of(), profile, 30, 1, null, null, .8, 30);
+    when(pilot.resolve(spec.seriesId())).thenReturn(spec);
+    when(preparation.prepare(eq(spec.seriesId()), eq("v1"), eq("milliseconds"), anyLong(), eq(profile)))
+        .thenReturn(new PreparedMetricSeries(PreparedMetricSeries.Status.WARMING_UP, "collecting", spec.seriesId(),
+            "v1", "milliseconds", "milliseconds", 0, 1, profile, "p", "i", 9, 503, 0, List.of()));
+    assertEquals(9, setup.progress(spec.seriesId()).observedPoints());
+    assertEquals(9, setup.progress(spec.seriesId()).observedPoints());
+    verify(preparation, times(1)).prepare(anyString(), anyString(), anyString(), anyLong(), any());
   }
   @Test void progressOutageIsUnavailableRatherThanEmptyHistory() throws Exception {
     var spec = new ForecastPilotProperties.Series("a".repeat(64), "lag", "local", "v1", "milliseconds",

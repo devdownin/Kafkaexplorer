@@ -1,0 +1,58 @@
+# Everything local, fully configured: TimesFM forecasts scored beside the Timestral shadow, and
+# Qwen 2.5 on llama.cpp for Process Mining and the SQL & metric assistant. An OVERLAY, last of four:
+#
+#   bin/local-ai-stack.sh
+#
+# which is `bin/forecast-stack.sh --prepare-only` (the secrets and the forecast configuration
+# directory, generated once under .forecast-stack/) followed by
+#
+#   docker compose --env-file .forecast-stack/.env -f docker-compose.yml \
+#     -f compose/forecasts.yml -f compose/llama-cpp.yml -f compose/local-ai.yml up -d --build
+#
+# What it adds to the three files under it is only what they leave to the operator: which chat
+# model, and the Timestral pin. Both are written here as values rather than as overridable defaults,
+# on purpose — this file IS the choice. To serve another model or to run without the shadow, drop
+# this overlay and set the variables the files under it read (.env.example).
+#
+# READ BEFORE STARTING — the Timestral licence. `mistralai/Timestral-28M` is under a Modified MIT
+# licence whose clause 2 withdraws every right from a company (or the employee of one) whose
+# global consolidated revenue exceeded 20 million USD in the preceding month. The other stacks
+# ship with the pin empty for that reason: accepting those terms is a deployment decision.
+# Starting this stack is making it. Above that threshold, do not use this file.
+#
+# What it costs: TimesFM (4 CPUs / 8 GiB by default) beside a 7B model at Q4 (~4.7 GB of weights,
+# ~6 GB resident with a 16k window) and the Explorer — count 16 GB of RAM, more comfortably 24.
+# First start downloads the TimesFM checkpoint, the Timestral weights (111 MB) and the GGUF.
+services:
+  llama-cpp:
+    environment:
+      - LLAMA_CPP_MODEL_FILE=Qwen2.5-7B-Instruct-Q4_K_M.gguf
+      - LLAMA_CPP_MODEL_NAME=qwen2.5-7b-instruct
+
+  llama-cpp-model:
+    environment:
+      - LLAMA_CPP_MODEL_FILE=Qwen2.5-7B-Instruct-Q4_K_M.gguf
+      - LLAMA_CPP_MODEL_URL=https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/8911e8a47f92bac19d6f5c64a2e2095bd2f7d031/Qwen2.5-7B-Instruct-Q4_K_M.gguf
+      # The file's LFS digest as the Hub publishes it for that revision: a download that differs
+      # is not served.
+      - LLAMA_CPP_MODEL_SHA256=65b8fcd92af6b4fefa935c625d1ac27ea29dcb6ee14589c55a8f115ceaaa1423
+
+  # The pin, on both services that read it: the one-shot that downloads and verifies the weights,
+  # and the worker that loads them. A 40-hex Hub commit and the SHA-256 of `model.safetensors`
+  # at that commit — the pair `services/timesfm` refuses to start with only half of.
+  forecast-model-prefetch:
+    environment:
+      TIMESTRAL_REVISION: 49b26409ac87b5935539a5d8ffe7f397b720db47
+      TIMESTRAL_SHA256: dfc83c6220937ce5fc6687b35a4df94cd25e28a2cfe6fb92a23dad6301b2015d
+
+  timesfm:
+    environment:
+      TIMESTRAL_REVISION: 49b26409ac87b5935539a5d8ffe7f397b720db47
+      TIMESTRAL_SHA256: dfc83c6220937ce5fc6687b35a4df94cd25e28a2cfe6fb92a23dad6301b2015d
+
+  explorer:
+    environment:
+      # The alias llama-cpp serves the GGUF under.
+      - CLAUDE_MODEL=qwen2.5-7b-instruct
+      # The application scores the shadow only when told to; the service above now carries its pin.
+      - EXPLORER_FORECASTING_INFERENCE_SHADOW_ENABLED=true

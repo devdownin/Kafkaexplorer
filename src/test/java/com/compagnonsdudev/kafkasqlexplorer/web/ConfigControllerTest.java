@@ -120,8 +120,8 @@ class ConfigControllerTest {
      */
     @Test
     void aProbeCannotRedirectTheRequestOrBorrowTheStoredKeyForIt() throws Exception {
-        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
-        claudeConfig.setBaseUrl("http://localhost:11434/v1");
+        claudeConfig.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
+        claudeConfig.setBaseUrl("http://localhost:8083/v1");
         claudeConfig.setModel("qwen3:4b");
         claudeConfig.setApiKey("sk-configured");
 
@@ -131,17 +131,17 @@ class ConfigControllerTest {
             .andExpect(status().isOk())
             // Neither the endpoint nor the provider moved: the body's connection fields are
             // ignored, not honoured, so nothing was sent anywhere the operator did not configure.
-            .andExpect(jsonPath("$.provider").value("Ollama"))
+            .andExpect(jsonPath("$.provider").value("llama.cpp"))
             .andExpect(jsonPath("$.candidate").value(false));
 
-        assertEquals("http://localhost:11434/v1", claudeConfig.getBaseUrl());
-        assertEquals(ClaudeConfig.Provider.OLLAMA, claudeConfig.getProvider());
+        assertEquals("http://localhost:8083/v1", claudeConfig.getBaseUrl());
+        assertEquals(ClaudeConfig.Provider.LLAMA_CPP, claudeConfig.getProvider());
     }
 
     /** No body at all is the historical call, and it must behave exactly as it did. */
     @Test
     void anEmptyProbeStillTestsWhatIsRunning() throws Exception {
-        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
         claudeConfig.setModel("qwen3:4b");
 
         mockMvc.perform(post("/api/config/test-llm"))
@@ -157,7 +157,7 @@ class ConfigControllerTest {
      */
     @Test
     void abodyThatChangesNothingIsNotReportedAsACandidate() throws Exception {
-        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
         claudeConfig.setModel("qwen3:4b");
 
         mockMvc.perform(post("/api/config/test-llm").contentType(MediaType.APPLICATION_JSON)
@@ -269,7 +269,7 @@ class ConfigControllerTest {
                 .value("https://openrouter.ai/api/v1"))
             .andExpect(jsonPath("$.llmProviderDefaults.OPENROUTER.model")
                 .value(ClaudeConfig.defaultModel(ClaudeConfig.Provider.OPENROUTER)))
-            .andExpect(jsonPath("$.llmProviderDefaults.OLLAMA.model").value("qwen3:4b"))
+            .andExpect(jsonPath("$.llmProviderDefaults.LLAMA_CPP.model").value("gemma-4-e4b-it"))
             // Empty is a real answer here: we have nothing to propose for an endpoint we know
             // nothing about, and for a provider that ignores the field entirely.
             .andExpect(jsonPath("$.llmProviderDefaults.OPENAI_COMPATIBLE.model").value(""))
@@ -282,7 +282,7 @@ class ConfigControllerTest {
      */
     @Test
     void theModelShortlistIsUnavailableWithoutOpenRouterWhateverTheCallerAsksFor() throws Exception {
-        claudeConfig.setProvider(ClaudeConfig.Provider.OLLAMA);
+        claudeConfig.setProvider(ClaudeConfig.Provider.LLAMA_CPP);
 
         mockMvc.perform(get("/api/config/llm-models")
                 .param("provider", "OPENROUTER")

@@ -95,16 +95,50 @@ export interface ValidationMsg {
   text: string;
 }
 
+/**
+ * The statement as the checks below may read it: string literals emptied (their quotes kept), then
+ * comments removed — in that order, so a `--` inside a value does not cut the statement — and a
+ * table-options hint (slash, star, plus) kept, being no comment. METRICS-CREATION-AUDIT.md B5: the alias was found
+ * inside a literal (`WHERE note = 'x AS metric_value'`), so a query without it passed.
+ */
+export function sqlOutsideLiterals(sql: string): string {
+  return sql
+    .replace(/'(?:[^']|'')*'/g, "''")
+    .replace(/--[^\n]*/g, '')
+    .replace(/\/\*(?!\+)[\s\S]*?\*\//g, ' ')
+    .trim();
+}
+
+/** The body after a leading `WITH name AS (…), …` chain, or the statement itself. */
+function withoutLeadingCte(sql: string): string {
+  if (!/^WITH\b/i.test(sql)) return sql;
+  let depth = 0;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i];
+    if (c === '(') depth++;
+    else if (c === ')') {
+      depth--;
+      if (depth === 0) {
+        const rest = sql.slice(i + 1).trimStart();
+        if (rest.startsWith(',')) continue;
+        return rest;
+      }
+    }
+  }
+  return sql;
+}
+
 export function validateMetricSql(sql: string, type: string): ValidationMsg[] {
   if (!sql.trim()) return [];
-  // Strip comments before analysis (mirrors backend SqlQueryValidator behaviour)
-  const stripped = sql.replace(/--[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
+  const stripped = sqlOutsideLiterals(sql);
   const msgs: ValidationMsg[] = [];
 
-  if (!/^SELECT\b/i.test(stripped))
+  // A leading CTE is a SELECT to the server (and the assistant writes one): it was blocked here.
+  if (!/^SELECT\b/i.test(withoutLeadingCte(stripped)))
     msgs.push({ level: 'error', text: 'Only SELECT queries are allowed (INSERT / UPDATE / DELETE are rejected by the server).' });
 
-  if (!/\bAS\s+metric_value\b/i.test(stripped))
+  // Backticks are an identifier's quotes in Flink: `metric_value` is the same alias.
+  if (!/\bAS\s+(?:metric_value\b|`metric_value`)/i.test(stripped))
     msgs.push({ level: 'error', text: 'Result column must be aliased as metric_value — e.g. COUNT(*) AS metric_value.' });
 
   if (!/\bFROM\b/i.test(stripped))
@@ -128,6 +162,17 @@ export function validateMetricSql(sql: string, type: string): ValidationMsg[] {
   }
 
   return msgs;
+}
+
+/**
+ * The tab a server refusal belongs to. It was written at the top of the modal whichever tab was
+ * open, so a refusal about the DDL was read on the SQL tab with nothing pointing at the other one
+ * (METRICS-CREATION-AUDIT.md, light points). The wording is the server's own — a failed
+ * `CREATE TABLE` is reported as "The table definition (CREATE TABLE) failed" — so this follows it.
+ */
+export function saveErrorTab(raw: string | null | undefined): 'metric' | 'ddl' {
+  return /create\s+table|table definition|\bddl\b|properties\.|'connector'|unsupported options/i.test(raw ?? '')
+    ? 'ddl' : 'metric';
 }
 
 export function validateDdlSql(ddl: string): ValidationMsg[] {
@@ -182,6 +227,18 @@ export const defaultReadMode = (templateType: string): string =>
 
 export const SCAN_MAX_ROWS_DEFAULT = 10_000;
 export const SCAN_TIMEOUT_MS_DEFAULT = 30_000;
+
+/**
+ * How long the browser waits for a preview. It inherited the global 60 s while a two-query template
+ * may spend `timeoutMs` on each side (up to ten minutes): the browser gave up on a preview the server
+ * was still legitimately computing, and called it a failure. Both sides, plus a margin for the DDL
+ * and the answer; never below the global default.
+ */
+export function previewTimeoutMs(templateType: string, params: Record<string, unknown>, fallbackMs: number): number {
+  if (templateType === RAW_SQL) return fallbackMs;
+  const side = Number(paramStr(params, 'timeoutMs').trim()) || SCAN_TIMEOUT_MS_DEFAULT;
+  return Math.max(fallbackMs, 2 * side + 15_000);
+}
 
 /**
  * Deux instructions qui disent la même chose.

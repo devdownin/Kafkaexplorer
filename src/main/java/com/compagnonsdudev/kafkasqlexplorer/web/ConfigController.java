@@ -372,7 +372,7 @@ public class ConfigController {
             claudeConfig.setBaseUrl(ClaudeConfig.defaultBaseUrl(claudeConfig.getProvider()));
             // A derived value is still one the operator will be looking at, so it has to be stored
             // like an entered one. Without this, switching to Anthropic stored the provider alone
-            // and the next boot took the base URL from application.yml — which ships Ollama's —
+            // and the next boot took the base URL from application.yml — which ships another provider's —
             // pointing the new provider at the old one's endpoint, silently.
             touched.add("llmBaseUrl");
         }
@@ -699,6 +699,11 @@ public class ConfigController {
         // topic read, from inside the HTTP client, naming no setting.
         result.put("llmConfigurationProblem", claudeConfig.configurationProblem());
         result.put("llmRequestTimeoutSeconds", claudeConfig.getRequestTimeoutSeconds());
+        // The endpoint's window, declared once, and the ceiling it puts on every prompt budget —
+        // Process Mining's and the assistant's. 0 / null when nobody declared it.
+        result.put("llmContextWindowTokens", claudeConfig.getContextWindowTokens());
+        result.put("llmPromptCharCeiling",
+            claudeConfig.getContextWindowTokens() > 0 ? claudeConfig.promptCharCeiling() : null);
         result.put("llmMaxTokens", claudeConfig.getMaxTokens());
         result.put("llmSnapshotWindowSize", claudeConfig.getSnapshotWindowSize());
         result.put("llmSnapshotWindowTimeoutSeconds", claudeConfig.getSnapshotWindowTimeoutSeconds());
