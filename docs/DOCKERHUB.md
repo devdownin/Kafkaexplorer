@@ -107,9 +107,8 @@ docker compose -f compose/spectra-hub.yml up -d
 ```
 
 Kafka SQL Explorer on **http://localhost:8080**, the SpectraLLM UI on **http://localhost:8088**.
-The first boot downloads ~4.8 GB of model weights in the background — nothing waits for it,
-so both interfaces are up in seconds and Process Mining starts answering once the weights
-land. Plan for ~16 GB of RAM; a GPU turns minutes per analysis into seconds, through the
+The first boot downloads ~4.8 GB of weights in the background — nothing waits for it, and
+Process Mining answers once they land. Plan for ~16 GB of RAM; a GPU turns minutes per analysis into seconds, through the
 [`.gpu.yml` overlay](https://github.com/devdownin/Kafkaexplorer/blob/main/compose/spectra-hub.gpu.yml)
 next to it.
 
@@ -118,8 +117,21 @@ One overlay goes further than sharing a model:
 has SpectraLLM index the topics themselves, so the corpus answers questions about what is
 *in* your messages, with cited sources — and the Explorer's own audits can read it. Every
 variable is documented in
-[`.env.example`](https://github.com/devdownin/Kafkaexplorer/blob/main/.env.example),
-and the compose file explains each choice it makes.
+[`.env.example`](https://github.com/devdownin/Kafkaexplorer/blob/main/.env.example).
+
+### Everything local: `bin/local-ai-stack.sh`
+
+From the same checkout, with nothing leaving the host: Qwen 2.5 7B on llama.cpp for Process Mining
+and the SQL assistant, and TimesFM forecasts scored beside the **Timestral** shadow model, all
+pinned in [`compose/local-ai.yml`](https://github.com/devdownin/Kafkaexplorer/blob/main/compose/local-ai.yml).
+
+```bash
+bin/local-ai-stack.sh          # builds the Explorer; downloads TimesFM, Timestral and a 4.7 GB GGUF
+```
+
+~16 GB of RAM. **Read the licence note at the top of that file first**: Timestral's Modified MIT
+licence excludes companies above 20 million USD of monthly revenue, and starting this stack
+accepts it.
 
 ### Everything at once: `demo.sh`
 
@@ -146,19 +158,8 @@ $env:OPENROUTER_API_KEY = 'sk-or-...'; .\demo.cmd    # or: .\demo.cmd -NoSpectra
 ```
 
 Docker Desktop gives WSL 2 half the machine's memory by default; on 16 GB, raise `memory=` in
-`%UserProfile%\.wslconfig` or use `-NoSpectra`.
-
-#### Sous Windows 11 (en français)
-
-`demo.cmd` lance le jumeau PowerShell, `demo.ps1`, avec Docker Desktop pour seul prérequis — ni
-Git Bash, ni openssl :
-
-```powershell
-$env:OPENROUTER_API_KEY = 'sk-or-...'; .\demo.cmd    # ou : .\demo.cmd -NoSpectra · .\demo.cmd down
-```
-
-Docker Desktop donne par défaut à WSL 2 la moitié de la mémoire de la machine ; sur 16 Go,
-augmentez `memory=` dans `%UserProfile%\.wslconfig` ou utilisez `-NoSpectra`.
+`%UserProfile%\.wslconfig` or use `-NoSpectra`. *(En français : `demo.cmd` lance `demo.ps1`, avec
+Docker Desktop pour seul prérequis ; même réglage de `memory=` sur 16 Go.)*
 
 ## ✨ What you get
 
@@ -172,7 +173,7 @@ augmentez `memory=` dans `%UserProfile%\.wslconfig` ou utilisez `-NoSpectra`.
 - 📉 **Consumer lag that grades itself** — who reads a topic and how far behind, with `stalled` (nothing assigned), `partial` (never committed on some partitions) and `ahead` called out rather than folded into one number.
 - ⏱️ **Backlog in time, not just in records** — the same 4 000 messages are four seconds of traffic on one topic and four days on another. Ask any group how long its oldest unread message has been waiting, from the topic page or as a scheduled metric; a partition that could not be read says so instead of reporting zero.
 - 💡 **KPIs proposed from what your cluster was observed doing** — the Metrics page derives them from your audit, your traces, your running Flink jobs and your Process Mining mapping. Every card names the measurement it rests on and where its thresholds come from; nothing is created until you preview and save it.
-- 🔮 **TimesFM forecasting, safely staged** — the optional CPU service prepares bounded metric contexts and runs forecasts in `SHADOW` by default. The pilot and its five MCP tools are enabled by default with an empty approved-series catalogue; this default performs no database or model calls. Configuring PostgreSQL history, inference and approved series enables scheduled forecasts, Metrics Forecast UI and measured activation gates. Set `EXPLORER_FORECASTING_PILOT_ENABLED=false` to disable the pilot. Five scoped read-only MCP tools expose persisted results and provenance; no MCP call starts inference, and thresholds remain explicit operator policy rather than model guesses.
+- 🔮 **TimesFM forecasting, safely staged** — the optional CPU service prepares bounded metric contexts and runs forecasts in `SHADOW` by default. The pilot and its five read-only MCP tools are on with an empty approved-series catalogue, which performs no database or model call; configuring PostgreSQL history, inference and approved series enables scheduled forecasts, the Metrics Forecast UI and measured activation gates. `EXPLORER_FORECASTING_PILOT_ENABLED=false` disables it. No MCP call starts inference, and thresholds remain operator policy, not model guesses.
 - 🤖 **AI process mining** — reconstruct business flows as flowcharts and hunt anomalies with OpenRouter (the default: one key, most hosted vendors), Claude, any local LLM (llama.cpp, vLLM, LM Studio…), or a fully private [SpectraLLM](https://github.com/devdownin/SpectraLLM). Point it at a local provider and nothing leaves your network; the default is hosted, and both pages that call a model say which of the two you are on — read off the address, not the provider's name.
 - 💰 **What the AI cost, and a cap if you want one** — every analysis shows the tokens and the **price the provider reported**, per call and per run, never an estimate; nothing is shown where a provider prices nothing, rather than a misleading zero. `CLAUDE_SESSION_COST_LIMIT_USD` stops a live session once it has spent that much, which is what bounds a tab left open overnight.
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, in the UI and on `/actuator/prometheus`.
@@ -235,10 +236,7 @@ its thresholds are a multiple of that measurement, not a round number someone li
 
 ![Metrics: two configured metrics above the KPIs suggested for this cluster, each card carrying the audit measurement it rests on and the multiple its thresholds come from](https://devdownin.github.io/Kafkaexplorer/img/metrics.png)
 
-**Metrics Forecast** — the forecast panel of the same page: one series chosen, its 80 % interval
-and the threshold it is judged against drawn on the chart, the decision and the sentence saying
-where the series stands beside it, then its four steps. A series still collecting history says so
-instead of showing a baseline as a forecast, and approving one states what the approval changes.
+**Metrics Forecast** — one series, its 80 % interval and the threshold it is judged against on the chart, the decision beside the sentence saying where it stands. A series still collecting history says so instead of showing a baseline as a forecast.
 
 ![The forecast panel of the Metrics page: one series in observation, its 80 % interval and the threshold it is judged against on the chart, the decision beside the sentence saying where the series stands, then its four steps](https://devdownin.github.io/Kafkaexplorer/img/metrics-forecast.png)
 
@@ -332,7 +330,7 @@ explains the properties and limitations.
 | `EXPLORER_MCP_REQUIRE_TLS` | `true` | Configure HTTPS or TLS termination for remote access. |
 | `EXPLORER_MCP_READONLY` | `true` | Mutating tools are then absent from the registry. |
 | `EXPLORER_MCP_ALLOWED_TOPIC_PREFIXES` | `*` | Limit the topics accessible to agent tools, including SQL. |
-| `CLAUDE_PROVIDER` | `OPENROUTER` | Use `LLAMA_CPP` or `SPECTRA` for a local model. |
+| `CLAUDE_PROVIDER` | `OPENROUTER` | Use `LLAMA_CPP` or `SPECTRA` for a local model (`OLLAMA` was removed: the value is refused at boot). |
 
 Mount `/app/data` to keep UI settings and `/app/logs` to keep logs. Give the
 container a memory limit of about 2 GB. All settings and troubleshooting steps:
