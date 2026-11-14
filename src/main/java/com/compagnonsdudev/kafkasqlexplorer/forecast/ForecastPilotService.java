@@ -713,6 +713,19 @@ public final class ForecastPilotService {
   }
 
   /**
+   * Whether a forecasting model is configured at all: TimesFM, the one that produces what is stored
+   * and served. Timestral is deliberately not an alternative — it is a shadow scored beside TimesFM
+   * on its cohorts and never served, and both exist only under
+   * {@code explorer.forecasting.inference.enabled}, so a deployment with the shadow and without
+   * TimesFM cannot happen. Read from the client the configuration did or did not build, not probed:
+   * a service that is configured and briefly down is not a reason for the page to withdraw the way
+   * to prepare a forecast and offer it again a minute later.
+   */
+  public boolean modelAvailable() {
+    return client != null;
+  }
+
+  /**
    * TimesFM and the shadow on the cohorts both were scored on. {@code wouldQualify} applies the
    * activation gate to the shadow's last block — the same sentence an operator would read for
    * TimesFM — and answers a question only; nothing here can activate or serve the shadow.

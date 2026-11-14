@@ -215,7 +215,8 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
     {!status && !error && <p>Loading forecast status…</p>}
     {status && !status.enabled && <p>Forecast pilot disabled by configuration. Enable explorer.forecasting.pilot.enabled to use it.</p>}
     {(status?.enabled || !status && error) && !status?.series.length && <ForecastPreparation onConfigure={onConfigure} />}
-    {status?.enabled && status.series.length === 0 && <p>Forecast pilot enabled. Configure approved series, PostgreSQL history and TimesFM inference to calculate forecasts.</p>}
+    {status?.enabled && status.modelAvailable === false && <p role="note">No forecasting model is configured, so no forecast can be created. Enable explorer.forecasting.inference (TimesFM) to create one; Timestral only scores beside it.</p>}
+    {status?.enabled && status.modelAvailable !== false && status.series.length === 0 && <p>Forecast pilot enabled. Configure approved series, PostgreSQL history and TimesFM inference to calculate forecasts.</p>}
     {status?.enabled && status.series.length > 0 && <>
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Series" className="min-w-64">{p => <Select {...p} value={series?.seriesId ?? ''}

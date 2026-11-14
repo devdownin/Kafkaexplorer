@@ -1693,6 +1693,8 @@ export interface ForecastStatus {
   state: string;
   series: ForecastSeriesView[];
   shadowEnabled: boolean;
+  /** Whether a forecasting model (TimesFM) is configured: without one, no forecast can be created. */
+  modelAvailable: boolean;
 }
 /** @java ForecastSetupService.Check */
 export interface ForecastPreparationCheck {
