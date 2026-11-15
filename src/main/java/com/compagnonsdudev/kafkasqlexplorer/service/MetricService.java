@@ -1500,7 +1500,17 @@ public class MetricService {
     }
 
     /** Offsets when both sides ask the question offsets answer, records otherwise. */
-    private String resolveCountMode(Map<String, Object> params, String leftTopic, String rightTopic) {
+    /**
+     * How a {@code TOPIC_COUNT_DELTA} counts, from its definition alone — the refresh and the
+     * forecast assistant read the same answer. Only {@code OFFSETS} sees each whole log at one
+     * instant; {@code RECORDS} reads within a row ceiling, so it is complete by construction never.
+     */
+    public static String countMode(MetricConfig config) {
+        Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
+        return resolveCountMode(params, getStringParam(params, "leftTopic", ""), getStringParam(params, "rightTopic", ""));
+    }
+
+    private static String resolveCountMode(Map<String, Object> params, String leftTopic, String rightTopic) {
         String requested = getStringParam(params, "countBy", "AUTO").toUpperCase(Locale.ROOT);
         if (!"AUTO".equals(requested)) return requested;
         if (leftTopic.isBlank() || rightTopic.isBlank()) return "RECORDS";
@@ -1613,6 +1623,9 @@ public class MetricService {
         summary.put("rightValue", right);
         summary.put("operation", operation);
         summary.put("countedBy", countBy);
+        // Explicit rather than inferred from the note, which is always written: it explains the
+        // method as often as it states a limit, and history reads its mere presence as "limited".
+        summary.put("complete", "OFFSETS".equals(countBy) && read.warnings().isEmpty());
         summary.put("window", window);
         if (windowed) {
             summary.put("leftTotal", leftTotal);
@@ -2097,7 +2110,7 @@ public class MetricService {
         return String.valueOf(value);
     }
 
-    private String getStringParam(Map<String, Object> params, String key, String defaultValue) {
+    private static String getStringParam(Map<String, Object> params, String key, String defaultValue) {
         Object value = params.get(key);
         return value == null || String.valueOf(value).isBlank() ? defaultValue : String.valueOf(value);
     }

@@ -2084,6 +2084,51 @@ class MetricServiceTest {
         Mockito.verify(kafkaAdminService, Mockito.never()).getTopicRecordCounts(Mockito.anyList());
     }
 
+    /**
+     * The quality history gives a count delta, from the summary the refresh really writes. Every
+     * count delta writes a scope note, and history read its mere presence as limited scope: a count
+     * by offsets — the whole log, both sides at one instant — was approved and never forecast.
+     */
+    @Test
+    void historyRecordsACountByOffsetsAsObservedAndACountByRecordsAsLimited() throws Exception {
+        stubOffsets(20L, 1_000L);
+        var byOffsets = offsetDelta(Map.of("countBy", "OFFSETS", "operation", "RATIO"));
+        var offsetsSummary = service.previewMetric(byOffsets).summary();
+        Mockito.when(flinkSqlService.executeSql(Mockito.any())).thenReturn(directCount(7.0), directCount(12.0));
+        var byRecords = offsetDelta(Map.of(
+            "leftSql", "SELECT COUNT(*) AS metric_value FROM topic_a WHERE status = 'OK'"));
+        var recordsSummary = service.previewMetric(byRecords).summary();
+        assertEquals("RECORDS", recordsSummary.get("countedBy"));
+
+        // Saved, so each carries the id history files it under.
+        assertEquals("OBSERVED", journaledQuality(service.save(byOffsets), offsetsSummary));
+        assertEquals("LIMITED_SCOPE", journaledQuality(service.save(byRecords), recordsSummary));
+    }
+
+    private String journaledQuality(MetricConfig metric, Map<String, Object> summary) throws Exception {
+        var history = new com.compagnonsdudev.kafkasqlexplorer.forecast.MetricHistoryProperties();
+        history.setEnabled(true); history.setClusterId("lab"); history.setCollectorId("explorer");
+        history.setJdbcUrl("jdbc:postgresql://localhost/history"); history.setMetricIds(java.util.Set.of(metric.id()));
+        var stored = new java.util.concurrent.CopyOnWriteArrayList<com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservation>();
+        var written = new java.util.concurrent.CountDownLatch(1);
+        var store = new com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationStore() {
+            @Override public void append(List<com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservation> p) {
+                stored.addAll(p); written.countDown();
+            }
+            @Override public List<com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservation> read(String s, long f, long t, int n) { return List.of(); }
+            @Override public int purgeBefore(long t, int n) { return 0; }
+        };
+        var journal = new com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal(
+            history, store, new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        journal.start();
+        try {
+            journal.capture(metric, "broker", List.of(new com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal.Sample(
+                Map.of(), 1.0)), summary, false, 1000);
+            assertTrue(written.await(2, java.util.concurrent.TimeUnit.SECONDS), "nothing journaled");
+        } finally { journal.close(); }
+        return stored.getFirst().qualityState();
+    }
+
     @Test
     void anOffsetCountRefusesATopicThatDoesNotExistRatherThanCountingItAsZero() throws Exception {
         Mockito.when(kafkaAdminService.listTopics()).thenReturn(List.of("demo.orders.1.received"));

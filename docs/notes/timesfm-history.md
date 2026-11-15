@@ -148,6 +148,14 @@ Sampled SUMMARY/HISTOGRAM components may be explicitly treated as gauges. Means 
 percentile, average or ratio. Counts of disjoint arrival windows and numerator/denominator ratio
 aggregation require additional source-window metadata and are not implemented here.
 
+A template's `scopeNote` makes an observation `LIMITED_SCOPE` unless its summary states
+`complete: true`. The note is written for two reasons — to state a limit (a time lag missing
+partitions, a latency read within a row ceiling) and to explain a method (a count delta by offsets,
+both whole logs at one instant) — and only the template knows which. `CONSUMER_TIME_LAG` and
+`TOPIC_COUNT_DELTA` state it; a template that does not stays limited, which is the safe reading. A
+count delta counted by records is bounded and therefore never complete: `ForecastEligibility`
+refuses it before approval rather than letting it be approved into `INVALID_DATA`.
+
 Preparation sorts observations, removes identical retries and refuses conflicting retry payloads
 or different collection runs at the same timestamp. It verifies canonical series identity,
 definition, unit and consistent semantic kind. Non-null values require `OBSERVED` quality;

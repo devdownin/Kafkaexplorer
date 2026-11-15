@@ -20,7 +20,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+- **A count delta counted by offsets is forecast.** Every `TOPIC_COUNT_DELTA` writes a `scopeNote`,
+  and history recorded any summary carrying one as `LIMITED_SCOPE` — so no count delta was ever
+  forecast, while the assistant listed it eligible and let it be approved (`INVALID_DATA`, for
+  ever). A note explains the method as often as it states a limit: a count by offsets reads each
+  whole log at one instant. The template now says so with `complete` (true for `OFFSETS` without a
+  warning), as `CONSUMER_TIME_LAG` already did, and history treats a note as a limit only when
+  `complete` is not true. A count delta read record by record stays limited — it is bounded by its
+  row ceiling — and the assistant now refuses it before approval, naming `countBy: OFFSETS`.
+  Found by the Convergence suite's forecast bench; the test reads the summary the refresh writes
+  rather than one written for it.
 
 ## [0.3.0] — 2026-11-15
 
