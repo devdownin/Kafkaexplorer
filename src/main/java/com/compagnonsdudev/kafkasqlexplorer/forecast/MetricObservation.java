@@ -45,6 +45,20 @@ public record MetricObservation(
 
     /** Only semantics participate: names, descriptions, thresholds and runtime values do not. */
     /**
+     * The kind an observation of this metric is recorded under, which is what preparation checks a
+     * transformation against. Produced offsets are published as a {@code GAUGE} — that template
+     * accepts no other type — but they only ever grow, and the forecast assistant reads them as a
+     * {@code COUNTER_RATE}. Recording them under the metric's type made every point of such a
+     * series "incompatible" with the transformation the assistant itself chose: the series was
+     * approved, then refused as {@code INVALID_DATA} forever, and the produce-rate covariate with it.
+     */
+    public static String semanticKind(MetricConfig m) {
+        if ("KAFKA_CLUSTER_COUNT".equals(m.templateType()) && m.templateParams() != null
+            && "PRODUCED_OFFSETS".equals(m.templateParams().get("measurement"))) return "COUNTER";
+        return m.type() == null ? "GAUGE" : m.type();
+    }
+
+    /**
      * The unit an observation of this metric carries, inferred from its template where the template
      * fixes it. It was read from {@code templateParams.unit} alone, which no editor writes, so every
      * count metric was captured as {@code UNKNOWN} and refused by the forecast assistant with a

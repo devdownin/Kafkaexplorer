@@ -183,8 +183,8 @@ public class ForecastSetupService {
     var p = m.templateParams() == null ? Map.<String, Object>of() : m.templateParams();
     var topics = strings(p, "topic", "leftTopic", "rightTopic", "sourceTopic", "targetTopic");
     var groups = strings(p, "group");
-    // Produced offsets are published as a gauge but only ever grow: forecast them as a rate.
-    boolean counter = "COUNTER".equals(m.type()) || "PRODUCED_OFFSETS".equals(p.get("measurement"));
+    // The kind history records them under, so the transformation chosen here is one preparation accepts.
+    boolean counter = "COUNTER".equals(MetricObservation.semanticKind(m));
     return new Candidate(m.id(), m.name(), MetricObservation.definitionVersion(m), MetricObservation.unit(m),
         counter ? "COUNTER_RATE" : "GAUGE_MEAN", topics, groups, blockers.isEmpty(), enrolled,
         List.copyOf(blockers), suggestedStepMillis(m));
@@ -262,10 +262,9 @@ public class ForecastSetupService {
    * This template emits its pinned source identifiers as labels even without labelFields. Include
    * them so a series resolves the observations captured by MetricService.
    */
+  /** The labels history records the series under: the refresh row's own, never a second reading. */
   private static Map<String, String> labels(MetricConfig m) {
-    return "CONSUMER_TIME_LAG".equals(m.templateType())
-        ? Map.of("topic", String.valueOf(m.templateParams().get("topic")),
-                 "group", String.valueOf(m.templateParams().get("group"))) : Map.of();
+    return MetricService.pinnedLabels(m);
   }
 
   public record CovariateRequest(String targetSeriesId, String metricId, String definitionVersion,

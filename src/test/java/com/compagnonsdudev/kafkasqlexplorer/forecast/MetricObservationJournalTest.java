@@ -118,4 +118,35 @@ class MetricObservationJournalTest {
         p.setEnrollEligible(false);
         assertThrows(IllegalArgumentException.class, p::validateEnabled);
     }
+
+    /**
+     * The real path, from capture to preparation. The preparation tests build their points by hand
+     * with the {@code COUNTER} kind, which the journal never wrote for produced offsets: the series
+     * was approved, then refused as {@code INVALID_DATA} for ever.
+     */
+    @Test
+    void producedOffsetsRecordedByTheJournalPrepareAsTheRateTheAssistantChooses() throws Exception {
+        var produced = new MetricConfig("m1", "peage_evenements_produits", "GAUGE", null, null,
+            null, null, null, null, null, List.of(), Map.of(), null, "KAFKA_CLUSTER_COUNT",
+            Map.of("measurement", "PRODUCED_OFFSETS", "topic", "toll-events"), "TEMPLATE_BOUNDED_SCAN", null, List.of());
+        int n = 6; long step = 60_000;
+        var all = new CountDownLatch(n);
+        var store = new Store() {
+            @Override public void append(List<MetricObservation> p) throws Exception { super.append(p); all.countDown(); }
+        };
+        var journal = new MetricObservationJournal(config(), store, new SimpleMeterRegistry());
+        journal.start();
+        try {
+            for (int i = 0; i < n; i++)
+                journal.capture(produced, "broker", List.of(new MetricObservationJournal.Sample(Map.of(), 100.0 * i)),
+                    Map.of(), false, i * step + 1000);
+            assertTrue(all.await(2, TimeUnit.SECONDS));
+        } finally { journal.close(); }
+        var first = store.points.getFirst();
+        assertEquals("COUNTER", first.semanticKind());
+        var prepared = new MetricSeriesPreparer().prepare(first.seriesId(), first.definitionVersion(), first.unit(),
+            n * step, new SeriesPreparationProfile(step, n - 1, SeriesPreparationProfile.Transformation.COUNTER_RATE),
+            store.points);
+        assertEquals(PreparedMetricSeries.Status.READY, prepared.status(), prepared.reason());
+    }
 }

@@ -20,7 +20,25 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+- **A count-delta or transit-latency forecast finds its history.** A `TOPIC_COUNT_DELTA` refresh row
+  carries `operation`, `left_topic` and `right_topic`, a `TOPIC_TRANSIT_LATENCY` row `source_topic`
+  and `target_topic`, and history records them as the series' labels — while the approval computed
+  the series id without any (only `CONSUMER_TIME_LAG`'s were named). The approved series was never
+  the one recorded: an eligible candidate, approved, then `No observations in the requested
+  context` for ever. `MetricService.pinnedLabels` is now the one reading — the refresh rows are
+  built from it and the approval and covariate export compute their ids from it. Found by the same
+  bench; `MetricServiceTest` checks the approved id against the captured observation, as it already
+  did for the time-lag case.
+- **A produced-offsets forecast is produced at last.** `KAFKA_CLUSTER_COUNT` / `PRODUCED_OFFSETS`
+  was recorded in history as a `GAUGE` — the only type that template accepts — while the forecast
+  assistant, rightly, proposed it as a `COUNTER_RATE`. Preparation then refused every point as
+  `INVALID_DATA`, so the series was approved and never forecast, from the page as from
+  `POST /api/forecasts/series`, and the produce-rate covariate the TimesFM note documents could not
+  be used either. Both sides now read one function, `MetricObservation.semanticKind`, and such
+  observations are recorded as `COUNTER`. History written before this reads `SCOPE_CHANGED` until
+  it leaves the series' context window. Found by the Convergence suite's forecast bench against a
+  real stack; the existing preparation tests built their observations by hand with the kind the
+  journal never wrote, and the new test goes through the journal.
 
 ## [2.4.1] — 2026-11-13
 

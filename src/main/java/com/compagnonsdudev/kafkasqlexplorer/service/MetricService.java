@@ -1606,9 +1606,7 @@ public class MetricService {
         // moves mints a new time series per scrape — see isReservedColumn.
         row.put("__left_value", left);
         row.put("__right_value", right);
-        row.put("operation", operation);
-        addIfPresent(row, "left_topic", params.get("leftTopic"));
-        addIfPresent(row, "right_topic", params.get("rightTopic"));
+        row.putAll(pinnedLabels(config));
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("leftValue", left);
@@ -1855,9 +1853,7 @@ public class MetricService {
         List<Double> latencies = observations.stream().map(LatencyObservation::latencyMs).toList();
 
         double avgLatencyMs = latencies.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
-        Map<String, Object> sharedLabels = new LinkedHashMap<>();
-        addIfPresent(sharedLabels, "source_topic", params.get("sourceTopic"));
-        addIfPresent(sharedLabels, "target_topic", params.get("targetTopic"));
+        Map<String, Object> sharedLabels = new LinkedHashMap<>(pinnedLabels(config));
 
         List<Map<String, Object>> rows = new ArrayList<>();
         if ("GAUGE".equalsIgnoreCase(config.type())) {
@@ -2130,10 +2126,40 @@ public class MetricService {
         }
     }
 
-    private void addIfPresent(Map<String, Object> target, String key, Object value) {
-        if (value != null && !String.valueOf(value).isBlank()) {
-            target.put(key, value);
+    /**
+     * The labels a template's refresh row carries that its configuration pins, so they are the same
+     * on every refresh. History records them as the series' labels, and a forecast approval has to
+     * name the same ones: `ForecastSetupService` computes the series id from this map. A
+     * `TOPIC_COUNT_DELTA` row carried `operation`, `left_topic` and `right_topic` while the approval
+     * computed its id without them, so the approved series was never the one recorded and stayed
+     * at "No observations" for ever.
+     */
+    public static Map<String, String> pinnedLabels(MetricConfig config) {
+        Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
+        Map<String, String> labels = new LinkedHashMap<>();
+        switch (String.valueOf(config.templateType())) {
+            case "CONSUMER_TIME_LAG" -> {
+                labels.put("topic", String.valueOf(params.get("topic")));
+                labels.put("group", String.valueOf(params.get("group")));
+            }
+            case "TOPIC_COUNT_DELTA" -> {
+                Object operation = params.get("operation");
+                labels.put("operation", (operation == null || String.valueOf(operation).isBlank()
+                    ? "LEFT_MINUS_RIGHT" : String.valueOf(operation)).toUpperCase(Locale.ROOT));
+                putIfPresent(labels, "left_topic", params.get("leftTopic"));
+                putIfPresent(labels, "right_topic", params.get("rightTopic"));
+            }
+            case "TOPIC_TRANSIT_LATENCY" -> {
+                putIfPresent(labels, "source_topic", params.get("sourceTopic"));
+                putIfPresent(labels, "target_topic", params.get("targetTopic"));
+            }
+            default -> { }
         }
+        return labels;
+    }
+
+    private static void putIfPresent(Map<String, String> target, String key, Object value) {
+        if (value != null && !String.valueOf(value).isBlank()) target.put(key, String.valueOf(value));
     }
 
     @Scheduled(fixedRateString = "${explorer.metrics-refresh-rate:30000}")

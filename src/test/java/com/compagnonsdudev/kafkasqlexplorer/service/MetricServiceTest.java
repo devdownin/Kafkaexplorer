@@ -1108,6 +1108,50 @@ class MetricServiceTest {
         assertEquals(observation.seriesId(), draft.seriesId(), "The approved ID must locate the collected observations");
     }
 
+    /**
+     * The count-delta row carries {@code operation}, {@code left_topic} and {@code right_topic}, which
+     * history records as the series' labels. The approval used to compute its id without them, so the
+     * approved series was never the recorded one: "No observations" for ever, on a candidate the
+     * assistant called eligible. Same check as the time-lag case above, on the other labelled row.
+     */
+    @Test
+    void wizardEnrollmentMatchesTheSeriesActuallyCapturedForCountDelta() throws Exception {
+        var journal = Mockito.mock(com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal.class);
+        Mockito.when(journal.selects(Mockito.any(MetricConfig.class))).thenReturn(true);
+        service.setObservationJournal(journal);
+        Mockito.when(kafkaConfig.getBootstrapServers()).thenReturn("kafka:29092");
+        stubOffsets(20L, 1_000L);
+        service.save(offsetDelta(Map.of("countBy", "OFFSETS", "operation", "ratio")));
+        var metric = service.getAllMetrics().stream().filter(m -> "gap".equals(m.name())).findFirst().orElseThrow();
+        service.refreshMetric(metric.id());
+
+        var capturedMetric = ArgumentCaptor.forClass(MetricConfig.class);
+        ArgumentCaptor<List<com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal.Sample>> samples = ArgumentCaptor.forClass(List.class);
+        Mockito.verify(journal).capture(capturedMetric.capture(), Mockito.eq("kafka:29092"), samples.capture(),
+            Mockito.anyMap(), Mockito.eq(false), Mockito.anyLong());
+        var sample = samples.getValue().getFirst();
+        assertEquals(Map.of("operation", "RATIO", "left_topic", "demo.orders.1.received",
+            "right_topic", "demo.orders.2.validated"), sample.labels());
+        var beans = new org.springframework.beans.factory.support.StaticListableBeanFactory();
+        var setup = new com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastSetupService(
+            new com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastingProperties(),
+            new com.compagnonsdudev.kafkasqlexplorer.mcp.McpProperties(), kafkaConfig, service,
+            beans.getBeanProvider(com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCatalogService.class),
+            beans.getBeanProvider(com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationStore.class),
+            beans.getBeanProvider(com.compagnonsdudev.kafkasqlexplorer.forecast.TimesFmClient.class),
+            beans.getBeanProvider(com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastPilotService.class),
+            beans.getBeanProvider(com.compagnonsdudev.kafkasqlexplorer.forecast.MetricSeriesPreparationService.class));
+        var candidate = setup.candidates().metrics().stream().filter(c -> c.metricId().equals(metric.id())).findFirst().orElseThrow();
+        var draft = setup.draft(new com.compagnonsdudev.kafkasqlexplorer.forecast.ForecastSetupService.DraftRequest(
+            metric.id(), candidate.definitionVersion(), "local", candidate.unit(), "cluster", "collector",
+            candidate.topics(), candidate.groups(), 60000, 10, null, "ABOVE", true, "NONE"));
+        var observation = com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservation.create(
+            "cluster", metric.id(), com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservation.collectedVersion(
+                capturedMetric.getValue(), "kafka:29092", "collector"), "value", sample.labels(), "ratio",
+            "GAUGE", "run", 1000, sample.value(), "OBSERVED", Map.of());
+        assertEquals(observation.seriesId(), draft.seriesId(), "The approved ID must locate the collected observations");
+    }
+
     @Test
     void timeLagMetricHonoursTheAverageAggregation() {
         Mockito.when(kafkaAdminService.getConsumerTimeLag("demo.orders", "orders-api"))
