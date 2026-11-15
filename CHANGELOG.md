@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.3.0] — 2026-11-15
+
 - **A count-delta or transit-latency forecast finds its history.** A `TOPIC_COUNT_DELTA` refresh row
   carries `operation`, `left_topic` and `right_topic`, a `TOPIC_TRANSIT_LATENCY` row `source_topic`
   and `target_topic`, and history records them as the series' labels — while the approval computed
@@ -2772,7 +2776,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.4.1...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.4.1...v0.3.0
 [2.4.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.4...v2.4.1
 [2.3.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.3...v2.3.4
 [2.3.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.2...v2.3.3
