@@ -1792,7 +1792,7 @@ const DataModel: React.FC = () => {
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
-            onPointerLeave={onPointerUp}
+            onLostPointerCapture={onPointerUp}
             onKeyDown={onGraphKeyDown}
             onClick={e => { if (e.target === e.currentTarget) setSelectedId(null); }}
           >

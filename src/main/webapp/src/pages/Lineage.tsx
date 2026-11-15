@@ -556,7 +556,7 @@ const Lineage: React.FC = () => {
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
-            onPointerLeave={onPointerUp}
+            onLostPointerCapture={onPointerUp}
             onKeyDown={onGraphKeyDown}
             // Cliquer le fond désélectionne, comme sur le graphe de Stream Flow.
             onClick={e => { if (e.target === e.currentTarget) setSelectedNode(null); }}

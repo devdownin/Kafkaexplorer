@@ -1137,7 +1137,7 @@ const StreamFlow: React.FC = () => {
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
-              onPointerLeave={onPointerUp}
+              onLostPointerCapture={onPointerUp}
               onKeyDown={onGraphKeyDown}
               // Cliquer le fond désélectionne : sans cela, une ligne mise en avant le restait
               // jusqu'au clic sur un autre nœud.
