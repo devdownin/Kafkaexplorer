@@ -1,6 +1,16 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss' source(none);
+@config '../tailwind.config.js';
+
+/* Keep the Tailwind 3 border default for elements without a border color utility. */
+@layer base {
+  *,
+  ::before,
+  ::after,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Kafka Explorer — Design System (aligné sur Spectra)

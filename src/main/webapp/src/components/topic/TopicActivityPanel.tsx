@@ -222,7 +222,7 @@ const TopicActivityPanel: FC<TopicActivityPanelProps> = ({ topic, onPickInstant 
 
       <button
         type="button"
-        className="block w-full rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        className="block w-full rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary"
         onPointerMove={e => setHovered(bucketAt(e.clientX, e.currentTarget))}
         onPointerLeave={() => setHovered(null)}
         onBlur={() => setHovered(null)}

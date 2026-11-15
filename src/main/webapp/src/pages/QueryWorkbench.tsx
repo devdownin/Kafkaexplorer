@@ -2037,7 +2037,7 @@ const QueryWorkbench: React.FC = () => {
                         onChange={e => setRenamingName(e.target.value)}
                         onBlur={commitRename}
                         onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenamingTabId(null); }}
-                        className="bg-transparent border-none outline-none text-[12px] font-medium w-24 text-primary mx-3 my-2"
+                        className="bg-transparent border-none outline-hidden text-[12px] font-medium w-24 text-primary mx-3 my-2"
                       />
                     ) : (
                       <Tooltip content="Double-click to rename this tab.">
@@ -2363,7 +2363,7 @@ const QueryWorkbench: React.FC = () => {
                   </p>
                   <ul className="mt-0.5 space-y-0.5">
                     {results.warnings.map((w, i) => (
-                      <li key={i} className="text-[11px] text-on-surface-variant leading-relaxed break-words">{w}</li>
+                      <li key={i} className="text-[11px] text-on-surface-variant leading-relaxed wrap-break-word">{w}</li>
                     ))}
                   </ul>
                 </div>
@@ -2399,9 +2399,9 @@ const QueryWorkbench: React.FC = () => {
                   <div className="flex items-start gap-3 p-3 rounded-lg border border-error/30 bg-error/10" role="alert">
                     <span className="material-symbols-outlined text-error text-base mt-0.5 shrink-0">error</span>
                     <div className="flex-1 min-w-0">
-                      <p className="text-error font-semibold text-sm break-words">{queryError.title}</p>
+                      <p className="text-error font-semibold text-sm wrap-break-word">{queryError.title}</p>
                       {errorHeadline(queryError.raw, queryError.title, queryError.hint) && (
-                        <p className="font-mono text-[12px] text-on-surface mt-1 break-words">
+                        <p className="font-mono text-[12px] text-on-surface mt-1 wrap-break-word">
                           {errorHeadline(queryError.raw, queryError.title, queryError.hint)}
                         </p>
                       )}

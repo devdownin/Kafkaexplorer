@@ -39,20 +39,20 @@ export const ProposalCard: React.FC<ProposalCardProps> = ({ response, actionLabe
         </button>
       </div>
       {verdict.detail && (
-        <p className="mt-1.5 text-on-surface-variant break-words">{verdict.detail}</p>
+        <p className="mt-1.5 text-on-surface-variant wrap-break-word">{verdict.detail}</p>
       )}
-      {response.explanation && <p className="mt-1.5 text-on-surface break-words">{response.explanation}</p>}
+      {response.explanation && <p className="mt-1.5 text-on-surface wrap-break-word">{response.explanation}</p>}
       {response.sql && (
         <div className={original ? 'mt-2 grid gap-2 md:grid-cols-2' : 'mt-2'}>
           {original && (
             <div className="min-w-0">
               <p className="text-[10px] uppercase tracking-wide text-outline mb-1">Before</p>
-              <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-surface-container p-2 rounded border border-outline-variant max-h-40 overflow-auto">{original}</pre>
+              <pre className="font-mono text-[11px] whitespace-pre-wrap wrap-break-word bg-surface-container p-2 rounded border border-outline-variant max-h-40 overflow-auto">{original}</pre>
             </div>
           )}
           <div className="min-w-0">
             {original && <p className="text-[10px] uppercase tracking-wide text-outline mb-1">Proposed</p>}
-            <pre className="font-mono text-[11px] whitespace-pre-wrap break-words bg-surface-container p-2 rounded border border-outline-variant max-h-40 overflow-auto">{response.sql}</pre>
+            <pre className="font-mono text-[11px] whitespace-pre-wrap wrap-break-word bg-surface-container p-2 rounded border border-outline-variant max-h-40 overflow-auto">{response.sql}</pre>
           </div>
         </div>
       )}

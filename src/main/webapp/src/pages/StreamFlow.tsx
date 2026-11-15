@@ -1129,7 +1129,7 @@ const StreamFlow: React.FC = () => {
           {hasResult && nodes.length > 0 && (
             <svg
               ref={svgRef}
-              className="w-full h-full select-none focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+              className="w-full h-full select-none focus:outline-hidden focus-visible:ring-1 focus-visible:ring-primary/60"
               style={{ cursor: 'grab', touchAction: 'none' }}
               role="application"
               tabIndex={0}

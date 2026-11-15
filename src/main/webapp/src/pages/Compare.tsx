@@ -48,7 +48,7 @@ const MessageCard: React.FC<{
     return (
       <div className="rounded-lg border border-outline-variant bg-surface-container-low p-3">
         {coords}
-        <pre className="font-mono text-[12px] text-on-surface whitespace-pre-wrap break-words">
+        <pre className="font-mono text-[12px] text-on-surface whitespace-pre-wrap wrap-break-word">
           {text || <span className="text-outline italic">empty payload</span>}
         </pre>
       </div>
@@ -143,7 +143,7 @@ const TopicPane: React.FC<{
           value={topic}
           onChange={e => setTopic(e.target.value)}
           aria-label={`Topic ${side}`}
-          className="bg-transparent border-none text-on-surface font-medium p-0 focus:outline-none text-[13px] cursor-pointer max-w-full truncate"
+          className="bg-transparent border-none text-on-surface font-medium p-0 focus:outline-hidden text-[13px] cursor-pointer max-w-full truncate"
         >
           {topics.map(t => <option key={t} value={t} className="bg-surface-container text-on-surface">{t}</option>)}
         </select>

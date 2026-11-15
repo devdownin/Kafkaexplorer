@@ -59,7 +59,7 @@ export const Switch: FC<SwitchProps> = ({
       // Tailwind de reprendre ce padding sur la hauteur déclarée.
       'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full box-content py-0.5',
       'transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+      'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary/50',
       checked ? 'bg-primary' : 'bg-surface-container-highest',
       className,
     )}

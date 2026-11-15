@@ -93,7 +93,7 @@ const EntityNode: React.FC<{
       role="button"
       aria-pressed={selected}
       aria-label={`${entity.id}, ${entity.columns.length} columns, ${exactCount}`}
-      className="cursor-pointer focus:outline-none"
+      className="cursor-pointer focus:outline-hidden"
       style={{ opacity: dimmed ? 0.15 : 1, transition: 'opacity 0.15s' }}
       onClick={onClick}
       onKeyDown={e => {
@@ -1044,7 +1044,7 @@ const DataModel: React.FC = () => {
               onChange={e => setFilter(e.target.value)}
               placeholder="Filter the list below — demo.orders.* works too"
               aria-label="Filter topics"
-              className="bg-transparent outline-none text-xs text-on-surface w-full placeholder:text-outline"
+              className="bg-transparent outline-hidden text-xs text-on-surface w-full placeholder:text-outline"
             />
           </div>
           {filterHint && (
@@ -1174,7 +1174,7 @@ const DataModel: React.FC = () => {
                   onChange={e => setColumnQuery(e.target.value)}
                   placeholder="Highlight a field…"
                   aria-label="Highlight a field across entities"
-                  className="bg-transparent outline-none text-xs text-on-surface w-full placeholder:text-outline"
+                  className="bg-transparent outline-hidden text-xs text-on-surface w-full placeholder:text-outline"
                 />
                 {columnQuery && (
                   <button onClick={() => setColumnQuery('')} aria-label="Clear field highlight"
@@ -1206,7 +1206,7 @@ const DataModel: React.FC = () => {
                 id="dm-density"
                 value={density}
                 onChange={e => setDensity(e.target.value as DensityChoice)}
-                className="w-full bg-surface-container-low border border-outline-variant rounded-md px-2 py-1.5 text-xs text-on-surface outline-none focus:border-primary/40"
+                className="w-full bg-surface-container-low border border-outline-variant rounded-md px-2 py-1.5 text-xs text-on-surface outline-hidden focus:border-primary/40"
               >
                 <option value="auto">Auto — fit for readability</option>
                 <option value="comfortable">Comfortable — widest, most columns</option>
@@ -1260,7 +1260,7 @@ const DataModel: React.FC = () => {
                         onChange={e => setSetAsideFilter(e.target.value)}
                         placeholder="Filter these — demo.iot.* works too"
                         aria-label="Filter entities with no deduced relation"
-                        className="bg-transparent outline-none text-xs text-on-surface w-full placeholder:text-outline"
+                        className="bg-transparent outline-hidden text-xs text-on-surface w-full placeholder:text-outline"
                       />
                       {setAsideFilter && (
                         <button onClick={() => setSetAsideFilter('')}
@@ -1294,7 +1294,7 @@ const DataModel: React.FC = () => {
                           /* Le nom accessible du groupe porte déjà le domaine et son compte ;
                              laisser lire l'en-tête en plus les dirait deux fois. */
                           <p aria-hidden="true"
-                            className="sticky top-0 z-[1] flex items-center gap-1.5 px-2 py-1 bg-surface-container-low/95 backdrop-blur-sm text-[10px] text-on-surface-variant">
+                            className="sticky top-0 z-[1] flex items-center gap-1.5 px-2 py-1 bg-surface-container-low/95 backdrop-blur-xs text-[10px] text-on-surface-variant">
                             <span className="w-2 h-2 rounded-sm shrink-0 border"
                               style={{
                                 backgroundColor: tintOf(group.entities[0].topic).header,
@@ -1481,7 +1481,7 @@ const DataModel: React.FC = () => {
                 onChange={e => setSaveName(e.target.value)}
                 placeholder="Name this selection…"
                 aria-label="Name this selection"
-                className="flex-1 min-w-0 bg-surface-container-low border border-outline-variant rounded-md px-2 py-1 text-xs text-on-surface outline-none focus:border-primary/40 placeholder:text-outline"
+                className="flex-1 min-w-0 bg-surface-container-low border border-outline-variant rounded-md px-2 py-1 text-xs text-on-surface outline-hidden focus:border-primary/40 placeholder:text-outline"
               />
               <Button type="submit" variant="ghost" size="sm"
                 disabled={saveName.trim() === '' || selection.length === 0}>
@@ -1685,7 +1685,7 @@ const DataModel: React.FC = () => {
               width={MINIMAP_W} height={MINIMAP_H}
               role="button" tabIndex={0}
               aria-label="Graph overview — click to move the view"
-              className="block cursor-pointer focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+              className="block cursor-pointer focus:outline-hidden focus-visible:ring-1 focus-visible:ring-primary/60"
               onClick={e => {
                 const box = e.currentTarget.getBoundingClientRect();
                 const { layout } = minimap;
@@ -1784,7 +1784,7 @@ const DataModel: React.FC = () => {
         {model && graphEntities.length > 0 && (
           <svg
             ref={svgRef}
-            className="w-full h-full select-none focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+            className="w-full h-full select-none focus:outline-hidden focus-visible:ring-1 focus-visible:ring-primary/60"
             style={{ cursor: 'grab', touchAction: 'none' }}
             role="application"
             tabIndex={0}
@@ -1825,7 +1825,7 @@ const DataModel: React.FC = () => {
                     tabIndex={dim ? -1 : 0}
                     role="button"
                     aria-label={describeRelation(relation)}
-                    className="focus:outline-none"
+                    className="focus:outline-hidden"
                     onMouseEnter={e => { if (!isPanning.current) showTip(e.clientX, e.clientY); }}
                     onMouseLeave={() => setEdgeTip(null)}
                     onFocus={e => {

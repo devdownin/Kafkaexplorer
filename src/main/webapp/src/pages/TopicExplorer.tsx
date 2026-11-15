@@ -1376,7 +1376,7 @@ const TopicExplorer: React.FC = () => {
                     onChange={e => setHitFilter(e.target.value)}
                     placeholder="Filter these results…"
                     aria-label="Filter the results already fetched"
-                    className="h-7 w-52 pl-7 pr-2 rounded-md bg-surface-container border border-outline-variant text-[12px] text-on-surface placeholder:text-outline focus:outline-none focus:border-primary/60"
+                    className="h-7 w-52 pl-7 pr-2 rounded-md bg-surface-container border border-outline-variant text-[12px] text-on-surface placeholder:text-outline focus:outline-hidden focus:border-primary/60"
                   />
                 </div>
               </div>

@@ -58,7 +58,7 @@ export const ResultsGrid = React.memo(function ResultsGrid({
   const span = columns.length + (showRowKind ? 1 : 0);
   return (
     <table className={cn('w-full text-left border-collapse', virtualized && 'table-fixed')}>
-      <thead className="sticky top-0 bg-surface-container-high/90 backdrop-blur-sm z-10">
+      <thead className="sticky top-0 bg-surface-container-high/90 backdrop-blur-xs z-10">
         <tr>
           {showRowKind && (
             <th scope="col" style={{ width: '2.5rem' }}

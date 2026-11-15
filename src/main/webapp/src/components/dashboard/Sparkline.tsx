@@ -111,7 +111,7 @@ const Sparkline: React.FC<SparklineProps> = ({ topic, activity, loading, scale =
         onBlur={() => setHovered(null)}
         aria-label={`${label} ${describeBucketLink(activity, target)}`}
         title={label}
-        className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        className="rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary"
       >
         <svg
           width={WIDTH}

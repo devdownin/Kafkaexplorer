@@ -122,7 +122,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
         <div className="p-3 border-b border-outline-variant/60 bg-primary/5 flex items-center gap-2">
           <span className="material-symbols-outlined text-on-surface-variant text-base">search</span>
           <input
-            className="flex-1 bg-transparent text-sm outline-none placeholder-on-surface-variant"
+            className="flex-1 bg-transparent text-sm outline-hidden placeholder-on-surface-variant"
             placeholder="Filter the list below — demo.orders.* works too"
             value={filter}
             onChange={e => setFilter(e.target.value)}

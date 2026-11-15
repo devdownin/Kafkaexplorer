@@ -207,7 +207,7 @@ const SchemaValidationPanel: React.FC<SchemaValidationPanelProps> = ({
                     placeholder="$.fieldPath"
                     aria-invalid={problem ? true : undefined}
                     aria-describedby={problem ? `${id}-error` : undefined}
-                    className={`flex-1 min-w-0 bg-surface-container-low border rounded-md px-2.5 py-1.5 text-xs font-mono text-on-surface outline-none ${
+                    className={`flex-1 min-w-0 bg-surface-container-low border rounded-md px-2.5 py-1.5 text-xs font-mono text-on-surface outline-hidden ${
                       problem ? 'border-error focus:border-error' : 'border-outline-variant focus:border-primary/50'
                     }`}
                   />

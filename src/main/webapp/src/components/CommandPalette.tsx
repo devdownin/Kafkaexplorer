@@ -154,7 +154,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
             onChange={e => { setQuery(e.target.value); setActive(0); }}
             placeholder="Search pages, topics, tables or actions…"
             aria-label="Search"
-            className="flex-1 bg-transparent border-none outline-none text-[14px] text-on-surface placeholder:text-outline"
+            className="flex-1 bg-transparent border-none outline-hidden text-[14px] text-on-surface placeholder:text-outline"
           />
           <kbd className="text-[10px] text-outline border border-outline-variant rounded px-1.5 py-0.5">Esc</kbd>
         </div>

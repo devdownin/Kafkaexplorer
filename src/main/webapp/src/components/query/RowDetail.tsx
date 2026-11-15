@@ -77,7 +77,7 @@ export const RowDetail: React.FC<RowDetailProps> = ({
               </button>
             </div>
             <pre className={cn(
-              'mt-1 text-[11px] font-mono whitespace-pre-wrap break-words leading-relaxed',
+              'mt-1 text-[11px] font-mono whitespace-pre-wrap wrap-break-word leading-relaxed',
               isNull ? 'text-outline italic' : 'text-on-surface',
             )}>{text}</pre>
           </div>

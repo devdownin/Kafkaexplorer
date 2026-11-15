@@ -89,8 +89,8 @@ describe('ConfirmDialog / useConfirm', () => {
     await userEvent.click(screen.getByRole('button', { name: 'trigger' }));
 
     const dialog = await screen.findByRole('dialog');
-    expect(dialog.querySelector('h2')!.className).toMatch(/break-words/);
-    expect(dialog.querySelector('p')!.className).toMatch(/break-words/);
+    expect(dialog.querySelector('h2')!.className).toMatch(/wrap-break-word/);
+    expect(dialog.querySelector('p')!.className).toMatch(/wrap-break-word/);
   });
 
   it('still cancels when the backdrop is clicked', async () => {
