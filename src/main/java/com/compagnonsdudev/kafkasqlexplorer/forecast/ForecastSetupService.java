@@ -183,8 +183,8 @@ public class ForecastSetupService {
     var p = m.templateParams() == null ? Map.<String, Object>of() : m.templateParams();
     var topics = strings(p, "topic", "leftTopic", "rightTopic", "sourceTopic", "targetTopic");
     var groups = strings(p, "group");
-    // Produced offsets are published as a gauge but only ever grow: forecast them as a rate.
-    boolean counter = "COUNTER".equals(m.type()) || "PRODUCED_OFFSETS".equals(p.get("measurement"));
+    // The kind history records them under, so the transformation chosen here is one preparation accepts.
+    boolean counter = "COUNTER".equals(MetricObservation.semanticKind(m));
     return new Candidate(m.id(), m.name(), MetricObservation.definitionVersion(m), MetricObservation.unit(m),
         counter ? "COUNTER_RATE" : "GAUGE_MEAN", topics, groups, blockers.isEmpty(), enrolled,
         List.copyOf(blockers), suggestedStepMillis(m));

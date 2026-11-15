@@ -130,6 +130,14 @@ an arrival counter. For counter rates, the extra preceding bucket is read, decre
 the input invalidate the context, and missing predecessors do not produce zero rates. A flat
 counter produces a measured zero rate. The output unit becomes `<source unit>/second`.
 All gauge transformations reject a scalar `COUNTER`; counter rates accept only its scalar `value`.
+The kind checked here is the one the journal records (`MetricObservation.semanticKind`), and the
+forecast assistant derives its transformation from the same function. `KAFKA_CLUSTER_COUNT`'s
+`PRODUCED_OFFSETS` is the case that needs it: that template accepts only `GAUGE`, the end offsets
+only ever grow, and history recorded them under the metric's type — so the assistant proposed
+`COUNTER_RATE`, the approval succeeded, and every point was then refused as `INVALID_DATA`
+(*Unverified quality or incompatible transformation*), with no forecast ever produced and the
+produce-rate covariate unusable. They are recorded as `COUNTER` now. History written before that
+carries `GAUGE`, so such a series reads `SCOPE_CHANGED` until those rows leave its context window.
 Sampled SUMMARY/HISTOGRAM components may be explicitly treated as gauges. Means of the known
 `p95*`, `avg*` and `matchRate` components are refused: this does not reconstruct a global
 percentile, average or ratio. Counts of disjoint arrival windows and numerator/denominator ratio

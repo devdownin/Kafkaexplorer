@@ -20,7 +20,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
+- **A produced-offsets forecast is produced at last.** `KAFKA_CLUSTER_COUNT` / `PRODUCED_OFFSETS`
+  was recorded in history as a `GAUGE` — the only type that template accepts — while the forecast
+  assistant, rightly, proposed it as a `COUNTER_RATE`. Preparation then refused every point as
+  `INVALID_DATA`, so the series was approved and never forecast, from the page as from
+  `POST /api/forecasts/series`, and the produce-rate covariate the TimesFM note documents could not
+  be used either. Both sides now read one function, `MetricObservation.semanticKind`, and such
+  observations are recorded as `COUNTER`. History written before this reads `SCOPE_CHANGED` until
+  it leaves the series' context window. Found by the Convergence suite's forecast bench against a
+  real stack; the existing preparation tests built their observations by hand with the kind the
+  journal never wrote, and the new test goes through the journal.
 
 ## [2.4.1] — 2026-11-13
 

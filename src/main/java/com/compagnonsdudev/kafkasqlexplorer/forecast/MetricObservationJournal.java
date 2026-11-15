@@ -135,7 +135,7 @@ public final class MetricObservationJournal {
     private MetricObservation point(MetricConfig m, String version, String component, Map<String, String> labels,
         String unit, String run, long at, Double value, String quality, Map<String, Object> coverage) {
         return MetricObservation.create(properties.getClusterId(), m.id(), version, component, labels,
-            unit, m.type() == null ? "GAUGE" : m.type(), run, at, value, quality, coverage);
+            unit, MetricObservation.semanticKind(m), run, at, value, quality, coverage);
     }
 
     @PostConstruct
