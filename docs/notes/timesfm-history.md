@@ -138,6 +138,11 @@ only ever grow, and history recorded them under the metric's type — so the ass
 (*Unverified quality or incompatible transformation*), with no forecast ever produced and the
 produce-rate covariate unusable. They are recorded as `COUNTER` now. History written before that
 carries `GAUGE`, so such a series reads `SCOPE_CHANGED` until those rows leave its context window.
+The labels follow the same rule: the series id an approval computes uses
+`MetricService.pinnedLabels`, the map the refresh row itself is built from (`topic` and `group` for
+a time lag, `operation`, `left_topic` and `right_topic` for a count delta, `source_topic` and
+`target_topic` for a transit latency). Computed apart, a count delta was approved under an
+unlabelled id that no observation ever carried.
 Sampled SUMMARY/HISTOGRAM components may be explicitly treated as gauges. Means of the known
 `p95*`, `avg*` and `matchRate` components are refused: this does not reconstruct a global
 percentile, average or ratio. Counts of disjoint arrival windows and numerator/denominator ratio

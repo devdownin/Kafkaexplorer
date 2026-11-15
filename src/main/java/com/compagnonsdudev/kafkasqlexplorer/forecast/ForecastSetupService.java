@@ -262,10 +262,9 @@ public class ForecastSetupService {
    * This template emits its pinned source identifiers as labels even without labelFields. Include
    * them so a series resolves the observations captured by MetricService.
    */
+  /** The labels history records the series under: the refresh row's own, never a second reading. */
   private static Map<String, String> labels(MetricConfig m) {
-    return "CONSUMER_TIME_LAG".equals(m.templateType())
-        ? Map.of("topic", String.valueOf(m.templateParams().get("topic")),
-                 "group", String.valueOf(m.templateParams().get("group"))) : Map.of();
+    return MetricService.pinnedLabels(m);
   }
 
   public record CovariateRequest(String targetSeriesId, String metricId, String definitionVersion,

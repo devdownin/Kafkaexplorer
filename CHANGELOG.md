@@ -20,6 +20,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A count-delta or transit-latency forecast finds its history.** A `TOPIC_COUNT_DELTA` refresh row
+  carries `operation`, `left_topic` and `right_topic`, a `TOPIC_TRANSIT_LATENCY` row `source_topic`
+  and `target_topic`, and history records them as the series' labels — while the approval computed
+  the series id without any (only `CONSUMER_TIME_LAG`'s were named). The approved series was never
+  the one recorded: an eligible candidate, approved, then `No observations in the requested
+  context` for ever. `MetricService.pinnedLabels` is now the one reading — the refresh rows are
+  built from it and the approval and covariate export compute their ids from it. Found by the same
+  bench; `MetricServiceTest` checks the approved id against the captured observation, as it already
+  did for the time-lag case.
 - **A produced-offsets forecast is produced at last.** `KAFKA_CLUSTER_COUNT` / `PRODUCED_OFFSETS`
   was recorded in history as a `GAUGE` — the only type that template accepts — while the forecast
   assistant, rightly, proposed it as a `COUNTER_RATE`. Preparation then refused every point as
