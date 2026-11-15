@@ -152,7 +152,9 @@ const suggestions: MetricSuggestions = {
   notes: [],
 };
 
-const DISABLED_FORECASTS = { enabled: false, state: 'DISABLED', series: [] };
+const DISABLED_FORECASTS = { enabled: false, state: 'DISABLED', series: [], shadowEnabled: false, modelAvailable: false };
+/** The pilot on and a model configured: creating a forecast is possible, none exists yet. */
+const READY_FORECASTS = { enabled: true, state: 'AVAILABLE', series: [], shadowEnabled: false, modelAvailable: true };
 
 function stubApi(metrics: MetricConfig[], proposals: MetricSuggestion[] = [suggestion], forecasts: unknown = DISABLED_FORECASTS) {
   mockedAxios.get.mockImplementation((url: string) => {
@@ -192,7 +194,7 @@ beforeEach(() => {
 
 describe('Metrics page', () => {
   it('opens the forecast assistant from the matching metric card and aborts it on close', async () => {
-    stubApi([templateMetric]); const user = userEvent.setup(); await renderPage();
+    stubApi([templateMetric], [suggestion], READY_FORECASTS); const user = userEvent.setup(); await renderPage();
     await user.click(await screen.findByRole('button', { name: 'Prepare a forecast' }));
     // Opened for that metric, the assistant starts at its sources (METRICS-FORECAST-UX-AUDIT.md U4).
     expect(await screen.findByText(/Step 2 of 2/)).toBeTruthy();
@@ -201,6 +203,27 @@ describe('Metrics page', () => {
     expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/forecasts/configuration', expect.anything(), expect.anything());
     await user.click(screen.getByRole('button', { name: 'Close forecast preparation' }));
     expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
+  });
+  /*
+   * Without a forecasting model nothing can calculate a forecast, so no way of creating one is
+   * offered: not the card's button, not the assistant, not the panel's "Configure a forecast". The
+   * panel stays, and says why.
+   */
+  it('offers no way to create a forecast when no forecasting model is configured', async () => {
+    stubApi([templateMetric], [suggestion], { ...READY_FORECASTS, modelAvailable: false });
+    await renderPage();
+
+    expect(await screen.findByText(/No forecasting model is configured/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Prepare a forecast' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Configure a forecast' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Prepare a forecast' })).toBeNull();
+  });
+  it('offers none either while the pilot itself is off', async () => {
+    stubApi([templateMetric]);
+    await renderPage();
+
+    expect(await screen.findByText(/Forecast pilot disabled/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Prepare a forecast' })).toBeNull();
   });
   it('shows where a forecast stands on its card instead of offering to prepare another', async () => {
     stubApi([templateMetric], [suggestion], { enabled: true, state: 'AVAILABLE', series: [{ seriesId: 'a'.repeat(64), metricId: templateMetric.id,

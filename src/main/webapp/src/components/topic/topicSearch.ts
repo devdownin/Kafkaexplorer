@@ -1372,6 +1372,48 @@ export function valuesAtPath(samples: TopicMessage[], path: string, max = 12): s
   return [...seen];
 }
 
+/**
+ * Les noms de headers que portent des messages déjà chargés, triés.
+ *
+ * Même rôle que la liste des chemins en mode Field, avec une différence de nature : un schéma
+ * se déduit du payload, alors que les headers n'en font partie d'aucun — leurs noms ne se
+ * lisent que sur les enregistrements eux-mêmes. Les échantillons et les hits déjà ramenés sont
+ * donc la seule source sans requête de plus, et la liste est une aide, pas un inventaire : un
+ * header que ces messages ne portent pas peut exister sur le topic, d'où la saisie qui reste libre.
+ */
+export function headerNames(messages: TopicMessage[], max = 50): string[] {
+  const seen = new Set<string>();
+  for (const message of messages) {
+    for (const name of Object.keys(message.headers ?? {})) {
+      if (name) seen.add(name);
+    }
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b)).slice(0, max);
+}
+
+/**
+ * Les valeurs qu'un header porte dans ces messages. Le nom se résout comme le fait le serveur
+ * (`MessageMatcher.matchesHeader`) : exact d'abord, puis sans tenir compte de la casse — sinon
+ * la liste proposerait des valeurs pour `Correlation-Id` que la recherche, elle, lirait sous
+ * `correlation-id`, ou inversement. Un header sans valeur n'en propose pas.
+ */
+export function valuesAtHeader(messages: TopicMessage[], name: string, max = 12): string[] {
+  const wanted = name.trim();
+  if (!wanted) return [];
+  const seen = new Set<string>();
+  for (const message of messages) {
+    const headers = message.headers ?? {};
+    const key = wanted in headers
+      ? wanted
+      : Object.keys(headers).find(k => k.toLowerCase() === wanted.toLowerCase());
+    const value = key === undefined ? null : headers[key];
+    if (value === null || value === undefined) continue;
+    seen.add(value);
+    if (seen.size >= max) break;
+  }
+  return [...seen];
+}
+
 // ── Recherches épinglées ──────────────────────────────────────────────────
 
 export const PINNED_KEY = 'kse:topic-search-pinned';

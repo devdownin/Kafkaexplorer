@@ -137,6 +137,16 @@ class ForecastPilotShadowTest {
         .thenReturn(List.of(timestral(context, 1, SHADOW_REVISION)));
   }
 
+  /**
+   * The model is the client the configuration built: no TimesFM client, no model — and Timestral,
+   * a shadow only ever built under the same switch, is not one on its own.
+   */
+  @Test
+  void aModelIsAvailableOnlyWhenTheForecastingClientExists() {
+    assertTrue(new ForecastPilotService(props, store, preparation, client, meters).modelAvailable());
+    assertFalse(new ForecastPilotService(props, store, preparation, null, meters).modelAvailable());
+  }
+
   @Test
   void withoutAShadowClientNothingShadowIsReadOrWritten() throws Exception {
     pilot = new ForecastPilotService(props, store, preparation, client, meters);

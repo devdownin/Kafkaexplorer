@@ -40,6 +40,10 @@ public final class ForecastEligibility {
     if (m.labelFields() != null && !m.labelFields().isEmpty())
       blockers.add("Labelled metrics require a separately approved series; the assistant supports unlabelled values");
     if ("FLINK_MANAGED_JOB".equals(m.executionMode())) blockers.add("Managed jobs do not capture scalar observations");
+    // Read within a row ceiling, a records count is recorded as limited scope on every refresh: said
+    // here, before approval, rather than as INVALID_DATA once the series is approved.
+    if ("TOPIC_COUNT_DELTA".equals(m.templateType()) && !"OFFSETS".equals(MetricService.countMode(m)))
+      blockers.add("A count delta read record by record is bounded and never forecast; count by OFFSETS (countBy) to forecast it");
     return List.copyOf(blockers);
   }
 }

@@ -130,10 +130,31 @@ an arrival counter. For counter rates, the extra preceding bucket is read, decre
 the input invalidate the context, and missing predecessors do not produce zero rates. A flat
 counter produces a measured zero rate. The output unit becomes `<source unit>/second`.
 All gauge transformations reject a scalar `COUNTER`; counter rates accept only its scalar `value`.
+The kind checked here is the one the journal records (`MetricObservation.semanticKind`), and the
+forecast assistant derives its transformation from the same function. `KAFKA_CLUSTER_COUNT`'s
+`PRODUCED_OFFSETS` is the case that needs it: that template accepts only `GAUGE`, the end offsets
+only ever grow, and history recorded them under the metric's type — so the assistant proposed
+`COUNTER_RATE`, the approval succeeded, and every point was then refused as `INVALID_DATA`
+(*Unverified quality or incompatible transformation*), with no forecast ever produced and the
+produce-rate covariate unusable. They are recorded as `COUNTER` now. History written before that
+carries `GAUGE`, so such a series reads `SCOPE_CHANGED` until those rows leave its context window.
+The labels follow the same rule: the series id an approval computes uses
+`MetricService.pinnedLabels`, the map the refresh row itself is built from (`topic` and `group` for
+a time lag, `operation`, `left_topic` and `right_topic` for a count delta, `source_topic` and
+`target_topic` for a transit latency). Computed apart, a count delta was approved under an
+unlabelled id that no observation ever carried.
 Sampled SUMMARY/HISTOGRAM components may be explicitly treated as gauges. Means of the known
 `p95*`, `avg*` and `matchRate` components are refused: this does not reconstruct a global
 percentile, average or ratio. Counts of disjoint arrival windows and numerator/denominator ratio
 aggregation require additional source-window metadata and are not implemented here.
+
+A template's `scopeNote` makes an observation `LIMITED_SCOPE` unless its summary states
+`complete: true`. The note is written for two reasons — to state a limit (a time lag missing
+partitions, a latency read within a row ceiling) and to explain a method (a count delta by offsets,
+both whole logs at one instant) — and only the template knows which. `CONSUMER_TIME_LAG` and
+`TOPIC_COUNT_DELTA` state it; a template that does not stays limited, which is the safe reading. A
+count delta counted by records is bounded and therefore never complete: `ForecastEligibility`
+refuses it before approval rather than letting it be approved into `INVALID_DATA`.
 
 Preparation sorts observations, removes identical retries and refuses conflicting retry payloads
 or different collection runs at the same timestamp. It verifies canonical series identity,

@@ -1500,7 +1500,17 @@ public class MetricService {
     }
 
     /** Offsets when both sides ask the question offsets answer, records otherwise. */
-    private String resolveCountMode(Map<String, Object> params, String leftTopic, String rightTopic) {
+    /**
+     * How a {@code TOPIC_COUNT_DELTA} counts, from its definition alone — the refresh and the
+     * forecast assistant read the same answer. Only {@code OFFSETS} sees each whole log at one
+     * instant; {@code RECORDS} reads within a row ceiling, so it is complete by construction never.
+     */
+    public static String countMode(MetricConfig config) {
+        Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
+        return resolveCountMode(params, getStringParam(params, "leftTopic", ""), getStringParam(params, "rightTopic", ""));
+    }
+
+    private static String resolveCountMode(Map<String, Object> params, String leftTopic, String rightTopic) {
         String requested = getStringParam(params, "countBy", "AUTO").toUpperCase(Locale.ROOT);
         if (!"AUTO".equals(requested)) return requested;
         if (leftTopic.isBlank() || rightTopic.isBlank()) return "RECORDS";
@@ -1606,15 +1616,16 @@ public class MetricService {
         // moves mints a new time series per scrape — see isReservedColumn.
         row.put("__left_value", left);
         row.put("__right_value", right);
-        row.put("operation", operation);
-        addIfPresent(row, "left_topic", params.get("leftTopic"));
-        addIfPresent(row, "right_topic", params.get("rightTopic"));
+        row.putAll(pinnedLabels(config));
 
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("leftValue", left);
         summary.put("rightValue", right);
         summary.put("operation", operation);
         summary.put("countedBy", countBy);
+        // Explicit rather than inferred from the note, which is always written: it explains the
+        // method as often as it states a limit, and history reads its mere presence as "limited".
+        summary.put("complete", "OFFSETS".equals(countBy) && read.warnings().isEmpty());
         summary.put("window", window);
         if (windowed) {
             summary.put("leftTotal", leftTotal);
@@ -1855,9 +1866,7 @@ public class MetricService {
         List<Double> latencies = observations.stream().map(LatencyObservation::latencyMs).toList();
 
         double avgLatencyMs = latencies.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
-        Map<String, Object> sharedLabels = new LinkedHashMap<>();
-        addIfPresent(sharedLabels, "source_topic", params.get("sourceTopic"));
-        addIfPresent(sharedLabels, "target_topic", params.get("targetTopic"));
+        Map<String, Object> sharedLabels = new LinkedHashMap<>(pinnedLabels(config));
 
         List<Map<String, Object>> rows = new ArrayList<>();
         if ("GAUGE".equalsIgnoreCase(config.type())) {
@@ -2101,7 +2110,7 @@ public class MetricService {
         return String.valueOf(value);
     }
 
-    private String getStringParam(Map<String, Object> params, String key, String defaultValue) {
+    private static String getStringParam(Map<String, Object> params, String key, String defaultValue) {
         Object value = params.get(key);
         return value == null || String.valueOf(value).isBlank() ? defaultValue : String.valueOf(value);
     }
@@ -2130,10 +2139,40 @@ public class MetricService {
         }
     }
 
-    private void addIfPresent(Map<String, Object> target, String key, Object value) {
-        if (value != null && !String.valueOf(value).isBlank()) {
-            target.put(key, value);
+    /**
+     * The labels a template's refresh row carries that its configuration pins, so they are the same
+     * on every refresh. History records them as the series' labels, and a forecast approval has to
+     * name the same ones: `ForecastSetupService` computes the series id from this map. A
+     * `TOPIC_COUNT_DELTA` row carried `operation`, `left_topic` and `right_topic` while the approval
+     * computed its id without them, so the approved series was never the one recorded and stayed
+     * at "No observations" for ever.
+     */
+    public static Map<String, String> pinnedLabels(MetricConfig config) {
+        Map<String, Object> params = config.templateParams() != null ? config.templateParams() : Map.of();
+        Map<String, String> labels = new LinkedHashMap<>();
+        switch (String.valueOf(config.templateType())) {
+            case "CONSUMER_TIME_LAG" -> {
+                labels.put("topic", String.valueOf(params.get("topic")));
+                labels.put("group", String.valueOf(params.get("group")));
+            }
+            case "TOPIC_COUNT_DELTA" -> {
+                Object operation = params.get("operation");
+                labels.put("operation", (operation == null || String.valueOf(operation).isBlank()
+                    ? "LEFT_MINUS_RIGHT" : String.valueOf(operation)).toUpperCase(Locale.ROOT));
+                putIfPresent(labels, "left_topic", params.get("leftTopic"));
+                putIfPresent(labels, "right_topic", params.get("rightTopic"));
+            }
+            case "TOPIC_TRANSIT_LATENCY" -> {
+                putIfPresent(labels, "source_topic", params.get("sourceTopic"));
+                putIfPresent(labels, "target_topic", params.get("targetTopic"));
+            }
+            default -> { }
         }
+        return labels;
+    }
+
+    private static void putIfPresent(Map<String, String> target, String key, Object value) {
+        if (value != null && !String.valueOf(value).isBlank()) target.put(key, String.valueOf(value));
     }
 
     @Scheduled(fixedRateString = "${explorer.metrics-refresh-rate:30000}")

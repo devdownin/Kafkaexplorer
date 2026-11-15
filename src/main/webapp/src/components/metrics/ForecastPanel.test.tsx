@@ -127,6 +127,15 @@ describe('ForecastPanel', () => {
     expect(onConfigure).toHaveBeenCalledOnce();
     expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
   });
+  it('says so, and offers no way to configure, when no forecasting model is configured', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts/preparation'
+      ? { checkedAt: 1, probed: false, checks: [] }
+      : { enabled: true, state: 'AVAILABLE', series: [], shadowEnabled: false, modelAvailable: false } }));
+    render(<ForecastPanel />);
+    expect(await screen.findByText(/No forecasting model is configured/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Configure a forecast' })).toBeNull();
+    expect(screen.queryByText(/Configure approved series, PostgreSQL history and TimesFM/)).toBeNull();
+  });
   it('hands every polled status to the page for its cards', async () => {
     const status = seriesWith(blocked);
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));

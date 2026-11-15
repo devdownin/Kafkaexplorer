@@ -58,7 +58,10 @@ keeps the export-only path). Database and model readiness alone do not make a me
    MCP tool availability comes from the server's actual published catalogue; agent connectivity
    must be verified from the agent itself.
 2. Choose **Configure a forecast**, or **Prepare a forecast** on a metric card: both open the same
-   assistant on the Metrics page. The candidate catalogue shows metadata eligibility and history
+   assistant on the Metrics page. **Both are offered only when a forecasting model is configured**
+   (`explorer.forecasting.inference.enabled`, TimesFM) and the pilot is on; without one the page
+   offers neither and the panel says so. Timestral is not an alternative — it is the shadow scored
+   beside TimesFM and exists only under the same switch. The candidate catalogue shows metadata eligibility and history
    enrollment separately. Unknown units, raw SQL scope, labelled values, non-scalar types, managed
    jobs and collection errors block the assistant. Correct the metric before proceeding. Every
    supported template fixes its unit: latencies are `milliseconds`, a cluster count `topics` or

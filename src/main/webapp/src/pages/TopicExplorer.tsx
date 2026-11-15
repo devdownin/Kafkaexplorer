@@ -61,7 +61,7 @@ import {
   sortHits,
   splitForHighlight,
   togglePinned,
-  valuesAtPath,
+  valuesAtPath, valuesAtHeader, headerNames,
   withRecord,
   validateCriteria,
   writeAdvancedOpen,
@@ -1146,10 +1146,23 @@ const TopicExplorer: React.FC = () => {
   const showHeaders = useMemo(
     () => (searchActive && ranCriteria ? revealsHeaders(ranCriteria) : false),
     [searchActive, ranCriteria]);
-  /** Valeurs déjà observées au chemin choisi — tirées de l'échantillon, sans requête de plus. */
+  /**
+   * Les messages dont les suggestions sont tirées : l'échantillon, et les hits d'une recherche
+   * déjà ramenée — un header que l'échantillon ne porte pas apparaît souvent dans ce qu'on vient
+   * de trouver. Aucune requête de plus.
+   */
+  const suggestionSource = useMemo(
+    () => [...(data?.samples ?? []), ...hits],
+    [data, hits]);
+  /** Valeurs déjà observées au chemin ou au header choisi — tirées de ces messages. */
   const fieldValues = useMemo(
-    () => (criteria.mode === 'FIELD' ? valuesAtPath(data?.samples ?? [], criteria.field) : []),
-    [criteria.mode, criteria.field, data]);
+    () => (criteria.mode === 'FIELD' ? valuesAtPath(data?.samples ?? [], criteria.field)
+      : criteria.mode === 'HEADER' ? valuesAtHeader(suggestionSource, criteria.field)
+      : []),
+    [criteria.mode, criteria.field, data, suggestionSource]);
+  const knownHeaderNames = useMemo(
+    () => (criteria.mode === 'HEADER' ? headerNames(suggestionSource) : []),
+    [criteria.mode, suggestionSource]);
   const announcement = announceResult(searching, coverage, ranCriteria, hits.length);
   // Écrire la ref pendant le rendu marche, mais c'est un effet de bord dans une fonction qui
   // doit rester pure — et `react-hooks/refs` a raison de le dire.
@@ -1240,6 +1253,7 @@ const TopicExplorer: React.FC = () => {
             pinned={pinned}
             onTogglePin={togglePin}
             fieldValues={fieldValues}
+            headerNames={knownHeaderNames}
             following={following}
             onToggleFollow={() => setFollowing(!following)}
             followAvailable={searchActive && canFollow(searchResult?.nextCursor)}

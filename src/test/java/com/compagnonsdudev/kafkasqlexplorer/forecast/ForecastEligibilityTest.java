@@ -28,4 +28,18 @@ class ForecastEligibilityTest {
         List.of("Labelled metrics require a separately approved series; the assistant supports unlabelled values"),
         ForecastEligibility.blockers(delta("orders", List.of("region"))));
   }
+
+  @Test
+  void aCountDeltaReadRecordByRecordIsRefusedBeforeApproval() {
+    String blocker = "A count delta read record by record is bounded and never forecast; count by OFFSETS (countBy) to forecast it";
+    var filtered = new MetricConfig("m", "Gap", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(),
+        null, "TOPIC_COUNT_DELTA", Map.of("leftTopic", "orders", "rightTopic", "orders.dlq",
+            "leftSql", "SELECT COUNT(*) AS metric_value FROM orders WHERE status = 'OK'"),
+        "TEMPLATE_BOUNDED_SCAN", null, List.of());
+    assertEquals(List.of(blocker), ForecastEligibility.blockers(filtered));
+    var explicit = new MetricConfig("m", "Gap", "GAUGE", null, null, null, null, null, null, null, List.of(), Map.of(),
+        null, "TOPIC_COUNT_DELTA", Map.of("leftTopic", "orders", "rightTopic", "orders.dlq", "countBy", "RECORDS"),
+        "TEMPLATE_BOUNDED_SCAN", null, List.of());
+    assertEquals(List.of(blocker), ForecastEligibility.blockers(explicit));
+  }
 }

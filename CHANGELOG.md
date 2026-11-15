@@ -20,6 +20,45 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.5.0] — 2026-11-15
+
+- **A count delta counted by offsets is forecast.** Every `TOPIC_COUNT_DELTA` writes a `scopeNote`,
+  and history recorded any summary carrying one as `LIMITED_SCOPE` — so no count delta was ever
+  forecast, while the assistant listed it eligible and let it be approved (`INVALID_DATA`, for
+  ever). A note explains the method as often as it states a limit: a count by offsets reads each
+  whole log at one instant. The template now says so with `complete` (true for `OFFSETS` without a
+  warning), as `CONSUMER_TIME_LAG` already did, and history treats a note as a limit only when
+  `complete` is not true. A count delta read record by record stays limited — it is bounded by its
+  row ceiling — and the assistant now refuses it before approval, naming `countBy: OFFSETS`.
+  Found by the Convergence suite's forecast bench; the test reads the summary the refresh writes
+  rather than one written for it.
+
+## [0.3.0] — 2026-11-15
+
+- **A count-delta or transit-latency forecast finds its history.** A `TOPIC_COUNT_DELTA` refresh row
+  carries `operation`, `left_topic` and `right_topic`, a `TOPIC_TRANSIT_LATENCY` row `source_topic`
+  and `target_topic`, and history records them as the series' labels — while the approval computed
+  the series id without any (only `CONSUMER_TIME_LAG`'s were named). The approved series was never
+  the one recorded: an eligible candidate, approved, then `No observations in the requested
+  context` for ever. `MetricService.pinnedLabels` is now the one reading — the refresh rows are
+  built from it and the approval and covariate export compute their ids from it. Found by the same
+  bench; `MetricServiceTest` checks the approved id against the captured observation, as it already
+  did for the time-lag case.
+- **A produced-offsets forecast is produced at last.** `KAFKA_CLUSTER_COUNT` / `PRODUCED_OFFSETS`
+  was recorded in history as a `GAUGE` — the only type that template accepts — while the forecast
+  assistant, rightly, proposed it as a `COUNTER_RATE`. Preparation then refused every point as
+  `INVALID_DATA`, so the series was approved and never forecast, from the page as from
+  `POST /api/forecasts/series`, and the produce-rate covariate the TimesFM note documents could not
+  be used either. Both sides now read one function, `MetricObservation.semanticKind`, and such
+  observations are recorded as `COUNTER`. History written before this reads `SCOPE_CHANGED` until
+  it leaves the series' context window. Found by the Convergence suite's forecast bench against a
+  real stack; the existing preparation tests built their observations by hand with the kind the
+  journal never wrote, and the new test goes through the journal.
+
+## [2.4.1] — 2026-11-13
+
 - **A fully local AI stack in one command: `bin/local-ai-stack.sh`.** `compose/local-ai.yml`
   layers on `compose/forecasts.yml` and `compose/llama-cpp.yml` and fills in what they leave to
   the operator: Qwen 2.5 7B Instruct (Q4_K_M, pinned by revision and SHA-256) as the model for
@@ -2750,7 +2789,10 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.4...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/devdownin/Kafkaexplorer/compare/v0.3.0...v2.5.0
+[0.3.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.4.1...v0.3.0
+[2.4.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.4...v2.4.1
 [2.3.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.3...v2.3.4
 [2.3.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.1...v2.3.2

@@ -90,7 +90,12 @@ public final class MetricObservationJournal {
             String quality = failed ? "UNMEASURED" : "OBSERVED";
             if (!failed && (summary == null || "RAW_SQL".equals(metric.templateType()) || metric.templateType() == null))
                 quality = "UNVERIFIED_SCOPE";
-            if (!failed && summary != null && (summary.containsKey("scopeNote")
+            // A note limits the scope unless the template states its read complete: some notes only
+            // explain the method (a count by offsets), and their presence alone made every such
+            // series unforecastable while the assistant called it eligible.
+            boolean notedLimit = summary != null && summary.containsKey("scopeNote")
+                && !Boolean.TRUE.equals(summary.get("complete"));
+            if (!failed && summary != null && (notedLimit
                 || Boolean.TRUE.equals(summary.get("truncated")) || Boolean.TRUE.equals(summary.get("partial"))
                 || summary.get("warnings") instanceof List<?> w && !w.isEmpty())) quality = "LIMITED_SCOPE";
             if (!failed && metric.labelFields() != null && !metric.labelFields().isEmpty()) quality = "UNVERIFIED_LABELS";
@@ -135,7 +140,7 @@ public final class MetricObservationJournal {
     private MetricObservation point(MetricConfig m, String version, String component, Map<String, String> labels,
         String unit, String run, long at, Double value, String quality, Map<String, Object> coverage) {
         return MetricObservation.create(properties.getClusterId(), m.id(), version, component, labels,
-            unit, m.type() == null ? "GAUGE" : m.type(), run, at, value, quality, coverage);
+            unit, MetricObservation.semanticKind(m), run, at, value, quality, coverage);
     }
 
     @PostConstruct
