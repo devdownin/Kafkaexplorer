@@ -1,0 +1,39 @@
+# The local LLM with no download at start: Gemma 4 E4B is inside the image.
+#
+#   docker compose -f docker-compose.yml -f compose/llama-cpp.yml -f compose/llama-cpp-offline.yml up -d
+#
+# An overlay of `compose/llama-cpp.yml`, like `compose/forecast-offline.yml` is of `forecasts.yml`:
+# alone on the base it names services with no image. What it changes there, and only that:
+#
+#   * `llama-cpp` runs `ghcr.io/devdownin/kex-llm` (`services/llama-cpp/Dockerfile`, published by
+#     `.github/workflows/llm-image.yml`). `build:` stays, so `docker compose build llama-cpp` makes
+#     the same image from a checkout, which needs the Hub once, at build time.
+#   * the `llama_cpp_models` volume is not mounted: it would hide the baked weights under an empty
+#     directory, and nothing needs to write them any more. The entrypoint script is in the image.
+#   * the one-shot download service moves to the `download` profile.
+#
+# The model, its name and the context window are the image's; `LLAMA_CPP_MODEL_FILE` and friends
+# set in `.env` for the downloading stack do not move them here. Pulling the images is the only
+# network use left, and `docker save` / `docker load` carries them to a host with no registry
+# access. Gemma 4 is Apache-2.0: no licence condition travels with this image
+# (services/llama-cpp/licenses/NOTICE.md). It is ~5.5 GB.
+services:
+  llama-cpp:
+    image: ghcr.io/devdownin/kex-llm:${LLM_IMAGE_TAG:-0.3.0}
+    build:
+      # From the first file's directory, as `forecasts.yml` does for `./services/timesfm`: Compose
+      # resolves every relative path against it, not against this file.
+      context: .
+      dockerfile: services/llama-cpp/Dockerfile
+    pull_policy: missing
+    volumes: !reset []
+    environment:
+      LLAMA_CPP_MODEL_FILE: gemma-4-E4B-it-Q4_K_M.gguf
+      LLAMA_CPP_MODEL_NAME: gemma-4-e4b-it
+
+  llama-cpp-model:
+    profiles: ["download"]
+
+  explorer:
+    environment:
+      CLAUDE_MODEL: gemma-4-e4b-it

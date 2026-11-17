@@ -674,6 +674,37 @@ header says so. `services/timesfm/licenses/NOTICE.md` is the statement.
 built or booted outside CI. The Timestral revision and digest were checked against the Hub
 (`49b2640…`, `dfc83c62…`); the offline check and the compose resolution run, the boot does not.
 
+## The local LLM with no download at start
+
+`compose/llama-cpp-offline.yml` is an overlay of `compose/llama-cpp.yml` (checked on that one
+combination, by `docs/llm-offline-check.py`) that runs `ghcr.io/devdownin/kex-llm`:
+`services/llama-cpp/Dockerfile`, the pinned llama.cpp build **by digest** plus the model
+`EMBEDDED-LLM-SCOPE.md` retained for both Process Mining and the assistant — Gemma 4 E4B, Q4_K_M,
+**Apache-2.0**, downloaded at the Hub revision the Dockerfile names and checked against its SHA-256
+at build time. The entrypoint is `scripts/llama-cpp/serve.sh`, the file the downloading stack
+mounts, so the Dockerfile is built from the **repository root** (`Dockerfile.dockerignore` trims
+that context to two paths) rather than copying it. The overlay drops the `llama_cpp_models` volume
+(an empty named volume there would hide the baked weights), moves `llama-cpp-model` to the
+`download` profile, and states the model name once more; everything else — provider, window, prompt
+budget, timeout, assistant on — is `llama-cpp.yml`'s.
+
+**CI boots it with `--network none`** (`llm-offline` in `ci.yml`): it waits for `/health`, then
+asks for a completion and asserts the answer is not empty — healthy says the weights loaded, an
+answer says they work. The job is **gated by a diff inside its steps**, not a `paths:` filter (a
+skipped required check blocks a merge for ever), because it pulls a 5 GB model; it always runs on a
+push to `main`. **Published by its own workflow** (`llm-image.yml`), GHCR and amd64 only, with **no
+build cache**: the weights are one 5 GB layer, and `type=gha` would spend half the repository's
+10 GB cache quota on it. Tags follow `forecast-image.yml`: a `v*` tag publishes the version, and
+`workflow_dispatch` with a `tag` publishes exactly that one.
+
+Unlike `kex-forecast`, **no licence condition travels with this image**: Gemma 3 was under Google's
+own terms and Gemma 4 is Apache-2.0, which is what `EMBEDDED-LLM-SCOPE.md` §3 already weighed for
+an AGPL project. `services/llama-cpp/licenses/NOTICE.md` carries the attributions.
+
+**Not verified here:** the authoring environment had no Docker daemon, so the image has not been
+built or booted outside CI; the model digest was checked against the Hub at the pinned revision,
+and the overlay resolves.
+
 ## The SQL & metric assistant in the stacks
 
 `explorer.assistant.enabled` ships **false**, because `claude.provider` ships as a hosted gateway

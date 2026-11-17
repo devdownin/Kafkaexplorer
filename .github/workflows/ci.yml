@@ -485,6 +485,77 @@ jobs:
             -f docker-compose.yml -f compose/forecasts.yml -f compose/image.yml -f compose/ci.yml \
             down -v --remove-orphans
 
+  # The local LLM image carries a 5 GB model, so it is built and booted only when something it
+  # depends on changes (the Dockerfile, the entrypoint, the overlay, this job) and on every push to
+  # main. The same test as forecast-stack's offline step, for the same reason: `--network none` is
+  # the whole assertion. Not a `paths:` filter on the workflow, which would make the job SKIP and
+  # a required check that skips blocks a merge for ever; the steps are gated instead.
+  llm-offline:
+    name: Offline LLM image — build and boot with no network
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Does this change touch the image?
+        id: diff
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != 'pull_request' ]; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git diff --name-only '${{ github.event.pull_request.base.sha }}'...HEAD > changed.txt
+          if grep -qE '^(services/llama-cpp/|scripts/llama-cpp/serve\.sh$|compose/llama-cpp|docs/llm-offline-check\.py$|\.github/workflows/(ci|llm-image)\.yml$)' changed.txt; then
+            echo "touched=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "touched=false" >> "$GITHUB_OUTPUT"
+            echo "· nothing the offline LLM image depends on changed — not building it"
+          fi
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+        if: steps.diff.outputs.touched == 'true'
+      - name: Build the offline LLM image (weights baked in)
+        if: steps.diff.outputs.touched == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: services/llama-cpp/Dockerfile
+          load: true
+          tags: llm-ci-offline:ci
+      - name: Start it with no network, and make it answer
+        if: steps.diff.outputs.touched == 'true'
+        run: |
+          set -euo pipefail
+          # A small window: the 16 384 default is sized for Process Mining's prompt, and a CI
+          # runner has no use for that KV cache.
+          docker run -d --name llm-offline --network none -e LLAMA_CPP_CONTEXT=4096 llm-ci-offline:ci
+          for i in $(seq 1 120); do
+            if docker exec llm-offline curl -sf http://127.0.0.1:8080/health >/dev/null 2>&1; then
+              echo "healthy after ~$((i * 5)) s with no network"; break
+            fi
+            if [ "$i" = 120 ]; then
+              echo "::error::the offline LLM image never became healthy"; docker logs --tail 100 llm-offline; exit 1
+            fi
+            sleep 5
+          done
+          # Healthy says the weights loaded; an answer says they work. Greedy, so the same
+          # prompt gives the same words, and the assertion is only that there are some.
+          docker exec llm-offline curl -sf http://127.0.0.1:8080/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"gemma-4-e4b-it","messages":[{"role":"user","content":"Answer with one word: what colour is the sky?"}],"max_tokens":16,"temperature":0}' \
+            > answer.json
+          python3 - <<'PY'
+          import json
+          choice = json.load(open('answer.json'))['choices'][0]['message']
+          text = (choice.get('content') or '').strip()
+          assert text, f'the model answered nothing: {choice}'
+          print('answer:', text)
+          PY
+          docker exec llm-offline test -s /licenses/NOTICE.md
+      - name: Remove the container
+        if: always()
+        run: docker rm -f llm-offline || true
+
   release-image:
     name: Build and boot the release image
     needs: build
@@ -849,6 +920,13 @@ jobs:
           # shellcheck disable=SC2086 - the combination is a deliberate word list.
           docker compose $OFFLINE config --format json | python3 docs/forecast-offline-check.py
           named="$named compose/forecast-offline.yml"
+
+          # And for the offline LLM, an overlay of compose/llama-cpp.yml.
+          LLM_OFFLINE="-f docker-compose.yml -f compose/llama-cpp.yml -f compose/llama-cpp-offline.yml"
+          echo "· $LLM_OFFLINE"
+          # shellcheck disable=SC2086 - the combination is a deliberate word list.
+          docker compose $LLM_OFFLINE config --format json | python3 docs/llm-offline-check.py
+          named="$named compose/llama-cpp-offline.yml"
 
           # Every compose file in the tree is named above, as a base or as somebody's overlay.
           # A new one added without a line there would be checked by nothing, which is the
