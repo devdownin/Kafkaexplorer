@@ -58,8 +58,12 @@ public class ForecastSetupService {
   public record Candidate(String metricId, String name, String definitionVersion, String unit,
       String transformation, List<String> topics, List<String> groups, boolean eligible,
       boolean enrolled, List<String> blockers, long suggestedStepMillis) {}
+  /**
+   * {@code minimumContextPoints} is the floor a first forecast waits for, so the assistant can say
+   * how long that is at the interval being chosen instead of promising "once enough points exist".
+   */
   public record Candidates(List<Candidate> metrics, int total, boolean truncated, String clusterId, String collectorId,
-      String applyUnavailable) {}
+      String applyUnavailable, int minimumContextPoints) {}
   public record DraftRequest(String metricId, String definitionVersion, String environment, String unit,
       String clusterId, String collectorId, List<String> topics, List<String> groups, long stepMillis,
       int horizon, Double threshold, String direction, boolean confirmed, String seasonality) {}
@@ -166,7 +170,7 @@ public class ForecastSetupService {
     var all = metrics.getAllMetrics();
     return new Candidates(all.stream().sorted(java.util.Comparator.comparing(MetricConfig::id))
         .limit(100).map(this::candidate).toList(), all.size(), all.size() > 100, root.getHistory().getClusterId(),
-        root.getHistory().getCollectorId(), applyUnavailable());
+        root.getHistory().getCollectorId(), applyUnavailable(), SeriesPreparationProfile.MIN_CONTEXT_POINTS);
   }
 
   private Candidate candidate(MetricConfig m) {

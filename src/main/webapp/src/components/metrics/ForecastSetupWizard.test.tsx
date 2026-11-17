@@ -10,21 +10,26 @@ const EXPORT_ONLY = 'Runtime approval is off (explorer.forecasting.pilot.runtime
 const metric = { metricId: 'lag', name: 'Lag', definitionVersion: 'version', unit: 'milliseconds', transformation: 'GAUGE_MEAN',
   topics: ['orders'], groups: ['worker'], eligible: true, enrolled: false, blockers: [], suggestedStepMillis: 60000 };
 describe('ForecastSetupWizard', () => {
-  beforeEach(() => { vi.clearAllMocks(); vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1, truncated: false, clusterId: 'existing', collectorId: 'collector', applyUnavailable: EXPORT_ONLY } }); });
+  beforeEach(() => { vi.clearAllMocks(); vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1, truncated: false, clusterId: 'existing', collectorId: 'collector', applyUnavailable: EXPORT_ONLY, minimumContextPoints: 128 } }); });
   afterEach(cleanup);
   async function sources() {
     const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);
-    await user.selectOptions(await screen.findByLabelText('Candidate metric'), 'lag');
-    await user.click(screen.getByRole('button', { name: 'Continue to sources' })); return user;
+    // Choosing the metric is what reveals the form: there is no second step to continue to.
+    await user.selectOptions(await screen.findByLabelText('Metric'), 'lag'); return user;
   }
-  it('shows metadata blockers and refuses to continue', async () => {
+  it('shows metadata blockers in place of the form', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [{ ...metric, eligible: false, blockers: ['Set a known unit'] }], total: 1 } });
     const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);
-    await user.selectOptions(await screen.findByLabelText('Candidate metric'), 'lag');
+    await user.selectOptions(await screen.findByLabelText('Metric'), 'lag');
     expect(screen.getByText('Set a known unit')).toBeTruthy();
     // The option names the blocker itself, not a generic "metadata missing" whatever the cause.
     expect(screen.getByRole('option', { name: 'Lag · Set a known unit' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Continue to sources' })).toBeDisabled(); expect(axios.post).not.toHaveBeenCalled();
+    expect(screen.getByRole('group', { name: 'What blocks this metric' })).toHaveTextContent('cannot be forecast yet');
+    expect(screen.queryByRole('checkbox')).toBeNull(); expect(screen.queryByLabelText('Environment')).toBeNull();
+  });
+  it('names a configurable metric alone, and says only what stands in the way of another', async () => {
+    render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);
+    expect(await screen.findByRole('option', { name: 'Lag' })).toBeTruthy();
   });
   it('validates all fields before review and uses existing collector identities', async () => {
     const user = await sources();
@@ -61,9 +66,8 @@ describe('ForecastSetupWizard', () => {
   });
   it('prefills the requested metric and known sources without approving an export', async () => {
     render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
-    // Opened for one eligible metric, it starts at its sources (METRICS-FORECAST-UX-AUDIT.md U4).
-    expect(await screen.findByText(/Step 2 of 2/)).toBeTruthy();
-    expect(screen.getByRole('list', { name: 'All source topics: selected' })).toHaveTextContent('orders');
+    // Opened for one eligible metric, its sources are there at once (METRICS-FORECAST-UX-AUDIT.md U4).
+    expect(await screen.findByRole('list', { name: 'All source topics: selected' })).toHaveTextContent('orders');
     expect(screen.getByRole('list', { name: 'All consumer groups (optional): selected' })).toHaveTextContent('worker');
     expect(screen.getByRole('checkbox')).not.toBeChecked();
     expect(screen.getByRole('button', { name: 'Validate and export' })).toBeDisabled();
@@ -73,13 +77,13 @@ describe('ForecastSetupWizard', () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [{ ...metric, eligible: false, blockers: ['Set a known unit'] }], total: 1 } });
     render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
     expect(await screen.findByText('Set a known unit')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Continue to sources' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Validate and export' })).toBeNull();
     expect(axios.post).not.toHaveBeenCalled();
   });
   it('does not select another metric when the requested one is absent', async () => {
     render(<ConfirmProvider><ForecastSetupWizard initialMetricId="missing" /></ConfirmProvider>);
     expect(await screen.findByRole('alert')).toHaveTextContent('Selected metric is absent');
-    expect(screen.getByLabelText('Candidate metric')).toHaveValue('');
+    expect(screen.getByLabelText('Metric')).toHaveValue('');
     expect(axios.post).not.toHaveBeenCalled();
   });
   it('aborts catalogue reads on close', () => {
@@ -134,8 +138,9 @@ describe('ForecastSetupWizard', () => {
     expect(screen.queryByText(/Exports the selected series/)).toBeNull();
     expect(screen.queryByText(/Starts the forecast directly/)).toBeNull();
     answer({ data: { metrics: [metric], total: 1, truncated: false, applyUnavailable: EXPORT_ONLY } });
-    expect(await screen.findByText(EXPORT_ONLY)).toBeTruthy();
-    expect(screen.getByText(/Exports the selected series/)).toBeTruthy();
+    // Said beside the button it explains, once a metric gives the form a button.
+    await userEvent.setup().selectOptions(await screen.findByLabelText('Metric'), 'lag');
+    expect(screen.getByText(/Exports the selected series/)).toHaveTextContent(EXPORT_ONLY);
   });
   it('lets the operator configure another metric once one is exported', async () => {
     vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: [] } });
@@ -143,8 +148,8 @@ describe('ForecastSetupWizard', () => {
     await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
     expect(await screen.findByRole('heading', { name: 'Configuration ready' })).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Configure another metric' }));
-    expect(screen.getByRole('heading', { name: 'Step 1 of 2 · Choose a metric' })).toBeTruthy();
-    expect(screen.getByLabelText('Candidate metric')).toHaveValue('');
+    expect(screen.queryByRole('heading', { name: 'Configuration ready' })).toBeNull();
+    expect(screen.getByLabelText('Metric')).toHaveValue('');
   });
   it('numbers the steps after export and offers a copy beside the download', async () => {
     vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: ['Merge the file', 'Restart'] } });
@@ -175,20 +180,20 @@ describe('ForecastSetupWizard', () => {
   });
   it('starts the forecast directly when the deployment allows it, without a file', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [{ ...metric, suggestedStepMillis: 300000 }], total: 1, truncated: false,
-      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null } });
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 } });
     vi.mocked(axios.post).mockResolvedValue({ data: { seriesId: 'id' } });
     const onApplied = vi.fn();
     const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard onApplied={onApplied} /></ConfirmProvider>);
-    await user.selectOptions(await screen.findByLabelText('Candidate metric'), 'lag');
-    await user.click(screen.getByRole('button', { name: 'Continue to sources' }));
-    expect(screen.getByText('Step 2 of 2 · Confirm and start')).toBeTruthy();
+    await user.selectOptions(await screen.findByLabelText('Metric'), 'lag');
     expect(screen.getByLabelText('Sampling interval')).toHaveValue('300000');
     expect(screen.getByRole('button', { name: 'Start forecasting' })).toBeDisabled();
     await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Start forecasting' }));
     expect(await screen.findByText('Forecast started for Lag.')).toBeTruthy();
     expect(axios.post).toHaveBeenCalledWith('/api/forecasts/series', expect.objectContaining({ metricId: 'lag', stepMillis: 300000, confirmed: true }),
       expect.objectContaining({ timeout: 10000 }));
-    expect(onApplied).toHaveBeenCalledOnce();
+    // The series it started, so the page can show that one; and when its first forecast is due.
+    expect(onApplied).toHaveBeenCalledExactlyOnceWith('id');
+    expect(screen.getByRole('status')).toHaveTextContent('first forecast follows after 128 points, ~11 h of history');
     expect(screen.queryByRole('button', { name: 'Download forecasts.yml' })).toBeNull();
   });
   it('still offers the export beside a direct start', async () => {
@@ -202,9 +207,35 @@ describe('ForecastSetupWizard', () => {
   it('keeps everything with a sound default folded away', async () => {
     await sources();
     const details = screen.getByText('Advanced: sampling, horizon, threshold and history identities').closest('details')!;
-    for (const label of ['Sampling interval', 'Repeating cycle', 'Forecast horizon (points)', 'Optional threshold in forecast output units', 'History cluster ID'])
+    for (const label of ['Sampling interval', 'Repeating cycle', 'Forecast horizon (points)', 'Threshold (optional)', 'History cluster ID'])
       expect(details.contains(screen.getByLabelText(label))).toBe(true);
     expect(details.contains(screen.getByLabelText('Environment'))).toBe(false);
+  });
+
+  it('summarises what the defaults give, and follows the fold that changes them', async () => {
+    const user = await sources();
+    const summary = screen.getByLabelText('Forecast summary');
+    for (const text of ['Average per interval', 'milliseconds', '1 minute', '30 minutes', '128 points', '~2 h of history, recorded from now'])
+      expect(summary).toHaveTextContent(text);
+    // The pilot's terms stay out of the page.
+    expect(summary).not.toHaveTextContent('GAUGE_MEAN');
+    await user.selectOptions(screen.getByLabelText('Sampling interval'), '300000');
+    await user.selectOptions(screen.getByLabelText('Repeating cycle'), 'DAILY');
+    // One whole cycle when it is longer than the floor: 288 five-minute points in a day.
+    for (const text of ['5 minutes', 'Daily cycle', '2.5 hours', '288 points', '~24 h of history'])
+      expect(summary).toHaveTextContent(text);
+  });
+  it('omits the first-forecast estimate from a server that does not state the floor', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [{ ...metric, enrolled: true }], total: 1, truncated: false, applyUnavailable: null } });
+    await sources();
+    expect(screen.getByLabelText('Forecast summary')).not.toHaveTextContent('points,');
+    expect(screen.getByLabelText('Forecast summary')).toHaveTextContent('First forecast after—');
+  });
+  it('makes starting the one primary action, with no step to go back to', async () => {
+    await sources();
+    expect(screen.getByRole('button', { name: 'Validate and export' })).toHaveAttribute('type', 'submit');
+    expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
+    expect(screen.queryByText(/Step \d of/)).toBeNull();
   });
 
   // METRICS-FORECAST-UX-AUDIT.md B6: a metric that already has a series is named, and cannot be chosen.
