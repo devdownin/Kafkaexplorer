@@ -665,6 +665,24 @@ the panel, a configured one does not. **The panel then shows the series that was
 (`onApplied(seriesId)` → `ForecastPanel`'s `focus`): it used to stay on the first series of the
 list, so the answer to "Start forecasting" was another metric's chart.
 
+**The assistant reads the metric's own history, and asks in time rather than points.** Choosing a
+metric (or an interval) reads `GET /api/forecasts/candidates/{metricId}/history?stepMillis=` —
+`ForecastSetupService.historyPreview`, the same series identity the approval would derive, so the
+preview is the series that would start. It draws the recorded points under the summary and says
+how many of the first forecast's points exist, or the preparation's own reason when there is
+nothing to draw. Two proposals come out of the same read: the repeating cycle (`detectCycle`:
+autocorrelation at the daily and hourly lags, longest first, only when the history covers one and
+a half cycles and the correlation clears 0.5 — scaled by n / (n − lag), since an unscaled sum read
+a perfect 288-lag cycle over 512 points as 0.44 and never found a daily pattern) and a threshold
+(1.5× the latest recorded value, a button, never written for the operator). **A cycle the operator
+chose is never replaced.** The horizon is a duration (`Looks ahead`: 15 minutes to 12 hours, only
+those the interval carries in 1 to 60 points); the environment sits under **Advanced**. The
+panel's chart draws from `forecastColors.ts` — the app's own tokens, where it used Tailwind's stock
+green, amber and indigo — and shows 60, 180 or all 512 context points. **`/progress` is read only
+where its answer is on screen**: the threshold line on the chart (`SeriesView.thresholdConfigured`)
+or the open "Summary" fold, which removes the third request of the 30-second cycle for a series
+with neither (METRICS-FORECAST-UX-AUDIT.md P2).
+
 **A metric card says where its forecast stands.** `forecastStage.ts` turns a series of the
 panel's status into one line — collecting history against the points a first forecast needs,
 observing against the quality block, ready to approve, approved, degraded, or the reason it is

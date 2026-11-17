@@ -37,6 +37,14 @@ public class ForecastSetupController {
     catch (IllegalArgumentException e) { return ResponseEntity.badRequest().body(new Problem(e.getMessage())); }
     catch (Exception e) { return ResponseEntity.status(503).body(new Problem("Forecast persistence is unavailable")); }
   }
+  /** The history a metric already has at one sampling interval, for the assistant's preview. */
+  @GetMapping("/candidates/{metricId}/history")
+  public ResponseEntity<ForecastSetupService.HistoryPreview> history(@PathVariable String metricId,
+      @RequestParam(defaultValue = "60000") long stepMillis) {
+    try { return ResponseEntity.ok(setup.historyPreview(metricId, stepMillis)); }
+    catch (IllegalArgumentException e) { return ResponseEntity.notFound().build(); }
+    catch (Exception e) { return ResponseEntity.status(503).build(); }
+  }
   @DeleteMapping("/series/{seriesId}")
   public ResponseEntity<?> withdraw(@PathVariable String seriesId) {
     try { setup.withdraw(seriesId); return ResponseEntity.noContent().build(); }

@@ -226,7 +226,7 @@ describe('Metrics page', () => {
   });
   it('shows where a forecast stands on its card instead of offering to prepare another', async () => {
     stubApi([templateMetric], [suggestion], { enabled: true, state: 'AVAILABLE', series: [{ seriesId: 'a'.repeat(64), metricId: templateMetric.id,
-      environment: 'local', stepMillis: 60000, minimumContextPoints: 128, withdrawable: true,
+      environment: 'local', stepMillis: 60000, minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
       activation: { eligible: false, reason: 'No forecast', blockPoints: 0, blockPointsRequired: 180, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
       result: { state: 'WARMING_UP', strategy: 'UNAVAILABLE', visibility: 'SHADOW', reason: 'Collecting history', forecast: null, quality: null,
         baselineMae: {}, evaluatedPoints: 0, context: { status: 'WARMING_UP', observedPoints: 68, points: [], outputUnit: 'milliseconds' } } }] });

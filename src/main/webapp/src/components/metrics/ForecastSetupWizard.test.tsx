@@ -36,13 +36,12 @@ describe('ForecastSetupWizard', () => {
     expect(screen.getByLabelText('History cluster ID')).toHaveValue('existing');
     await user.clear(screen.getByLabelText('Environment'));
     await user.click(screen.getByRole('button', { name: 'Remove orders' }));
-    await user.clear(screen.getByLabelText('Forecast horizon (points)')); await user.type(screen.getByLabelText('Forecast horizon (points)'), '61');
     await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: 'Validate and export' }));
-    expect(screen.getByLabelText('Environment')).toHaveFocus();
-    expect(screen.getByLabelText('Environment')).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByText('Add every source topic.')).toBeTruthy();
-    expect(screen.getByLabelText('Forecast horizon (points)')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Environment')).toHaveAttribute('aria-invalid', 'true');
+    // Environment is folded away; a bad one opens the fold and takes focus all the same.
+    expect(screen.getByLabelText('Environment').closest('details')).toHaveAttribute('open');
     expect(axios.post).not.toHaveBeenCalled();
   });
   it('requires the source attestation, and only it, before validating a configuration', async () => {
@@ -90,16 +89,25 @@ describe('ForecastSetupWizard', () => {
     vi.mocked(axios.get).mockReturnValue(new Promise(() => {})); const view = render(<ForecastSetupWizard />);
     const options = vi.mocked(axios.get).mock.calls[0][1]; view.unmount(); expect(options?.signal?.aborted).toBe(true);
   });
-  it('offers sampling intervals by name and states the horizon as a duration', async () => {
+  it('asks how far ahead in time, and offers only the durations the interval can carry', async () => {
     const user = await sources();
+    const ahead = screen.getByLabelText('Looks ahead');
+    // A minute carries up to 60 points: an hour at most.
+    expect([...ahead.querySelectorAll('option')].map(o => o.textContent)).toEqual(['15 minutes', '30 minutes', '1 hour']);
+    await user.selectOptions(ahead, String(3600000));
+    expect(screen.getByLabelText('Forecast summary')).toHaveTextContent('60 minutes');
+    // Five minutes carry five hours; the hour chosen stays.
     await user.selectOptions(screen.getByLabelText('Sampling interval'), '300000');
-    expect(screen.getByText('Forecasts 2.5 hours ahead')).toBeTruthy();
-    await user.clear(screen.getByLabelText('Forecast horizon (points)')); await user.type(screen.getByLabelText('Forecast horizon (points)'), '6');
-    expect(screen.getByText('Forecasts 30 minutes ahead')).toBeTruthy();
+    expect(ahead).toHaveValue('3600000');
+    expect(screen.getByLabelText('Forecast summary')).toHaveTextContent('12 points');
+    expect([...ahead.querySelectorAll('option')].map(o => o.textContent)).toContain('2 hours');
+    // Back to thirty seconds: an hour is 120 points, so the longest that fits takes its place.
+    await user.selectOptions(screen.getByLabelText('Sampling interval'), '30000');
+    expect(ahead).toHaveValue('1800000');
   });
   it('keeps the history identities folded away, and opens them when one is invalid', async () => {
     const user = await sources();
-    const details = screen.getByText('Advanced: sampling, horizon, threshold and history identities').closest('details');
+    const details = screen.getByText('Advanced: interval, horizon, threshold, environment and history identities').closest('details');
     expect(details).not.toHaveAttribute('open');
     await user.clear(screen.getByLabelText('History collector ID'));
     await user.click(screen.getByRole('checkbox'));
@@ -206,10 +214,12 @@ describe('ForecastSetupWizard', () => {
   });
   it('keeps everything with a sound default folded away', async () => {
     await sources();
-    const details = screen.getByText('Advanced: sampling, horizon, threshold and history identities').closest('details')!;
-    for (const label of ['Sampling interval', 'Repeating cycle', 'Forecast horizon (points)', 'Threshold (optional)', 'History cluster ID'])
+    const details = screen.getByText('Advanced: interval, horizon, threshold, environment and history identities').closest('details')!;
+    for (const label of ['Sampling interval', 'Repeating cycle', 'Looks ahead', 'Threshold (optional)', 'History cluster ID', 'Environment'])
       expect(details.contains(screen.getByLabelText(label))).toBe(true);
-    expect(details.contains(screen.getByLabelText('Environment'))).toBe(false);
+    // What stays outside it is the metric and the sources: the two things with no sound default.
+    expect(details.contains(screen.getByLabelText('Metric'))).toBe(false);
+    expect(details.contains(screen.getByLabelText('All source topics'))).toBe(false);
   });
 
   it('summarises what the defaults give, and follows the fold that changes them', async () => {
@@ -222,7 +232,7 @@ describe('ForecastSetupWizard', () => {
     await user.selectOptions(screen.getByLabelText('Sampling interval'), '300000');
     await user.selectOptions(screen.getByLabelText('Repeating cycle'), 'DAILY');
     // One whole cycle when it is longer than the floor: 288 five-minute points in a day.
-    for (const text of ['5 minutes', 'Daily cycle', '2.5 hours', '288 points', '~24 h of history'])
+    for (const text of ['5 minutes', 'Daily cycle', '30 minutes', '6 points', '288 points', '~24 h of history'])
       expect(summary).toHaveTextContent(text);
   });
   it('omits the first-forecast estimate from a server that does not state the floor', async () => {
@@ -236,6 +246,49 @@ describe('ForecastSetupWizard', () => {
     expect(screen.getByRole('button', { name: 'Validate and export' })).toHaveAttribute('type', 'submit');
     expect(screen.queryByRole('button', { name: 'Back' })).toBeNull();
     expect(screen.queryByText(/Step \d of/)).toBeNull();
+  });
+
+  // The history the metric already has, read at the chosen interval.
+  const HISTORY = { status: 'READY', reason: 'Ready', observedPoints: 300, requiredPoints: 128, unit: 'milliseconds',
+    suggestedSeasonality: 'DAILY', correlation: 0.91,
+    points: Array.from({ length: 40 }, (_, i) => ({ endAt: 1_000_000 + i * 60000, value: 100 + i, imputed: false, samples: 1 })) };
+  function withHistory(history: unknown) {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: String(url).endsWith('/history') ? history
+      : { metrics: [{ ...metric, suggestedStepMillis: 300000 }], total: 1, truncated: false, clusterId: 'existing', collectorId: 'collector',
+        applyUnavailable: null, minimumContextPoints: 128 } }));
+  }
+  it('previews the recorded history at the interval, and says how much of the first forecast it covers', async () => {
+    withHistory(HISTORY); await sources();
+    const figure = await screen.findByRole('figure', { name: 'Recorded history' });
+    expect(figure).toHaveTextContent('300 of the 128 points a first forecast needs');
+    expect(vi.mocked(axios.get)).toHaveBeenCalledWith('/api/forecasts/candidates/lag/history',
+      expect.objectContaining({ params: { stepMillis: 300000 } }));
+  });
+  it('says why there is nothing to draw instead of an empty chart', async () => {
+    withHistory({ ...HISTORY, status: 'WARMING_UP', reason: 'Collecting history: 3 of the 128 points', points: [], suggestedSeasonality: null, correlation: null });
+    await sources();
+    expect(await screen.findByRole('figure', { name: 'Recorded history' })).toHaveTextContent('Collecting history: 3 of the 128 points');
+  });
+  it('proposes the cycle the history shows, unless the operator has chosen one', async () => {
+    withHistory(HISTORY); await sources();
+    await vi.waitFor(() => expect(screen.getByLabelText('Repeating cycle')).toHaveValue('DAILY'));
+    expect(screen.getByLabelText('Forecast summary')).toHaveTextContent('Daily cycle, found in the history');
+    cleanup(); vi.clearAllMocks();
+    withHistory(HISTORY);
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);
+    await user.selectOptions(await screen.findByLabelText('Metric'), 'lag');
+    await user.selectOptions(screen.getByLabelText('Repeating cycle'), 'NONE');
+    await user.selectOptions(screen.getByLabelText('Sampling interval'), '900000');
+    await vi.waitFor(() => expect(vi.mocked(axios.get)).toHaveBeenCalledWith(expect.stringContaining('/history'), expect.objectContaining({ params: { stepMillis: 900000 } })));
+    expect(screen.getByLabelText('Repeating cycle')).toHaveValue('NONE');
+  });
+  it('offers a threshold from the latest recorded value, in the unit of the series', async () => {
+    withHistory({ ...HISTORY, suggestedSeasonality: null }); const user = await sources();
+    const use = await screen.findByRole('button', { name: 'Use 209 (1.5× latest)' });
+    await user.click(use);
+    expect(screen.getByLabelText('Threshold (optional)')).toHaveValue('209');
+    // Once a threshold is written the offer goes, so it cannot overwrite a choice.
+    expect(screen.queryByRole('button', { name: /1.5× latest/ })).toBeNull();
   });
 
   // METRICS-FORECAST-UX-AUDIT.md B6: a metric that already has a series is named, and cannot be chosen.

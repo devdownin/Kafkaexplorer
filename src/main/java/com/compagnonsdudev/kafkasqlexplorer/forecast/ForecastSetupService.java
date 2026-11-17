@@ -64,6 +64,77 @@ public class ForecastSetupService {
    */
   public record Candidates(List<Candidate> metrics, int total, boolean truncated, String clusterId, String collectorId,
       String applyUnavailable, int minimumContextPoints) {}
+  /**
+   * What a metric's recorded history looks like at one sampling interval, before anything is
+   * approved: the points to draw, how many of the first forecast's needed points exist, and the
+   * repeating cycle the points themselves show (`NONE`, `HOURLY` or `DAILY`; null when too short
+   * to say). `correlation` is the autocorrelation at that cycle's lag, so the page can say how
+   * sure the suggestion is rather than only what it is.
+   */
+  public record HistoryPreview(String status, String reason, int observedPoints, int requiredPoints,
+      String unit, List<PreparedMetricSeries.Point> points, String suggestedSeasonality, Double correlation) {}
+
+  /** Autocorrelation above which a cycle is worth proposing: a weaker one is noise at this length. */
+  static final double CYCLE_CORRELATION = 0.5;
+
+  public HistoryPreview historyPreview(String metricId, long stepMillis) throws Exception {
+    var m = metrics.getAllMetrics().stream().filter(v -> v.id().equals(metricId)).findFirst()
+        .orElseThrow(() -> new IllegalArgumentException("Unknown metric"));
+    if (!STEPS.contains(stepMillis)) throw new IllegalArgumentException("Unsupported sampling interval");
+    var c = candidate(m);
+    var prep = preparation.getIfAvailable();
+    int need = SeriesPreparationProfile.MIN_CONTEXT_POINTS;
+    if (!c.eligible() || prep == null)
+      return new HistoryPreview("UNAVAILABLE", prep == null ? "History is not recorded on this deployment"
+          : "This metric cannot be forecast yet", 0, need, c.unit(), List.of(), null, null);
+    var h = root.getHistory();
+    // The identity the approval derives, so the preview reads the very series it would start.
+    String version = MetricObservation.collectedVersion(m, kafka.getBootstrapServers(), h.getCollectorId());
+    String id = MetricObservation.seriesId(h.getClusterId(), version, m.id(), "value", labels(m));
+    var profile = new SeriesPreparationProfile(stepMillis, 512, SeriesPreparationProfile.Transformation.valueOf(c.transformation()));
+    var prepared = prep.prepare(id, version, c.unit(), System.currentTimeMillis(), profile);
+    var measured = prepared.points().stream().filter(pt -> pt.value() != null).toList();
+    var shown = measured.subList(Math.max(0, measured.size() - 240), measured.size());
+    String[] cycle = detectCycle(measured.stream().map(PreparedMetricSeries.Point::value).toList(), stepMillis);
+    return new HistoryPreview(prepared.status().name(), prepared.reason(), prepared.observedPoints(), need,
+        prepared.outputUnit() == null ? c.unit() : prepared.outputUnit(), List.copyOf(shown),
+        cycle == null ? null : cycle[0], cycle == null ? null : Double.valueOf(cycle[1]));
+  }
+
+  /**
+   * The longest of HOURLY / DAILY whose lag the history covers one and a half times and whose
+   * autocorrelation clears {@link #CYCLE_CORRELATION}; {"NONE", r} when neither does, null when no
+   * cycle fits the history at all. Longest first: a daily pattern is also correlated one hour apart.
+   */
+  static String[] detectCycle(List<Double> values, long stepMillis) {
+    String[] found = null; double best = 0;
+    boolean fitted = false;
+    for (var cycle : List.of(Map.entry("DAILY", 86_400_000L), Map.entry("HOURLY", 3_600_000L))) {
+      long period = cycle.getValue();
+      if (period % stepMillis != 0) continue;
+      int lag = (int) (period / stepMillis);
+      if (lag < 2 || lag > 512 || values.size() < lag * 3 / 2) continue;
+      fitted = true;
+      double r = autocorrelation(values, lag);
+      if (r >= CYCLE_CORRELATION && found == null) { found = new String[] {cycle.getKey(), String.valueOf(r)}; }
+      best = Math.max(best, r);
+    }
+    if (found != null) return found;
+    return fitted ? new String[] {"NONE", String.valueOf(best)} : null;
+  }
+
+  static double autocorrelation(List<Double> v, int lag) {
+    int n = v.size();
+    double mean = v.stream().mapToDouble(Double::doubleValue).average().orElse(0);
+    double variance = 0, covariance = 0;
+    for (int i = 0; i < n; i++) variance += Math.pow(v.get(i) - mean, 2);
+    if (variance == 0) return 0;
+    for (int i = lag; i < n; i++) covariance += (v.get(i) - mean) * (v.get(i - lag) - mean);
+    // Fewer pairs enter the sum at a long lag: scaled back up, a 288-lag cycle over 512 points reads
+    // 0.44 instead of 1 and a daily pattern is never found.
+    return covariance / variance * n / (n - lag);
+  }
+
   public record DraftRequest(String metricId, String definitionVersion, String environment, String unit,
       String clusterId, String collectorId, List<String> topics, List<String> groups, long stepMillis,
       int horizon, Double threshold, String direction, boolean confirmed, String seasonality) {}

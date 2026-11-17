@@ -142,6 +142,20 @@ const STATES = {
       },
       close: ESCAPE,
     },
+    {
+      // L'assistant de prévision : quatre tuiles de résumé, deux colonnes de sources et un graphique
+      // d'historique, trois dispositions qui ne se resserrent pas toutes au même point.
+      name: 'forecast-assistant',
+      viewports: ['phone', 'tablet', 'desktop'],
+      open: async page => {
+        await page.getByRole('button', { name: 'Prepare a forecast' }).first().click();
+        await page.getByRole('img', { name: 'Recorded history chart' }).waitFor({ timeout: 5000 });
+      },
+      close: async page => {
+        await page.getByRole('button', { name: 'Close forecast preparation' }).click();
+        await page.waitForTimeout(200);
+      },
+    },
     /*
      * Il y avait ici un état « liste de topics dépliée ». Il est retiré, et le mesurer est ce
      * qui l'a décidé : avec le catalogue de démo, ses options ne tronquent à aucune des trois
@@ -247,6 +261,7 @@ const UNREACHABLE_BUDGET = {
   'dead-letter·open': 0,
   'metrics': 0,
   'metrics·editor': 2,
+  'metrics·forecast-assistant': 0,
   'cluster': 2,
   /*
    * L'unique ligne est le point de la pastille de connexion — `span 18>12`, classe
@@ -308,6 +323,7 @@ const TARGET_BUDGET = {
   'audit': 23,
   'metrics': 7,
   'metrics·editor': 7,
+  'metrics·forecast-assistant': 7,
   'cluster': 1,
   /*
    * 15 à la première mesure, dont **13 étaient les `<input>` `sr-only` des groupes radio de cette
