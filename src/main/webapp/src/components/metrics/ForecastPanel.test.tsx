@@ -254,6 +254,16 @@ describe('ForecastPanel', () => {
     expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).not.toContain('/api/forecasts');
   });
 
+  it('shows the series the assistant just started, not whichever is first', async () => {
+    const two = seriesWith(ready);
+    const started = { ...two.series[0], seriesId: 'b'.repeat(64), metricId: 'started' };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...two, series: [two.series[0], started] } : {} }));
+    const view = render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    expect(await screen.findByLabelText('Series')).toHaveValue('a'.repeat(64));
+    view.rerender(<ConfirmProvider><ForecastPanel focus={'b'.repeat(64)} refresh={1} /></ConfirmProvider>);
+    await vi.waitFor(() => expect(screen.getByLabelText('Series')).toHaveValue('b'.repeat(64)));
+  });
+
   // METRICS-FORECAST-UX-AUDIT.md B2: an unreadable series says so, and the others stay listed.
   it('names a series the server could not read instead of losing the list', async () => {
     const status = seriesWith(ready);

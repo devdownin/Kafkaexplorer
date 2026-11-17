@@ -69,7 +69,9 @@ function isProgress(data: Progress | undefined, seriesId: string): data is Progr
     && data.requiredPoints === 512 && Array.isArray(data.topics) && Array.isArray(data.groups);
 }
 
-export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
+export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }: {
+  /** A series to show: the one the assistant just started, which was otherwise left behind the first. */
+  focus?: string;
   onConfigure?: () => void;
   /** Receives every status the panel polls, so the page can show it on the cards without a second poll. */
   onStatus?: (status: ForecastStatus | null) => void;
@@ -80,7 +82,10 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [progressError, setProgressError] = useState('');
   const [shadow, setShadow] = useState<{ seriesId: string; view: ShadowView } | null>(null);
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected] = useState(focus);
+  // Followed during render rather than in an effect: it takes hold once the list carries the series.
+  const [seenFocus, setSeenFocus] = useState(focus);
+  if (focus !== seenFocus) { setSeenFocus(focus); if (focus) setSelected(focus); }
   const [error, setError] = useState('');
   // A refusal belongs to the button that was clicked and must outlive the next poll: sharing
   // `error` with the poll made it vanish within 30 s, and a failing poll overwrite it.

@@ -30,7 +30,7 @@ export function NameListField({ id, label, names, onChange, topics = false, erro
           : <Input {...p} value={draft} onChange={e => setDraft(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); add(); } }} />}
       </Field>
-      <Button onClick={add} disabled={!draft.trim()} aria-label={`Add to ${label}`}>Add</Button>
+      <Button variant="secondary" onClick={add} disabled={!draft.trim()} aria-label={`Add to ${label}`}>Add</Button>
     </div>
     {/* Under the field and its label (B7): above them, a chip read as a name with no title. */}
     {names.length > 0 && <ul className="flex flex-wrap gap-2" aria-label={`${label}: selected`}>

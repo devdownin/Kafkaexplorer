@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Preparing a forecast is one screen.** The assistant was two steps with a **Continue to sources**
+  that decided nothing and a **Back** drawn as the primary action beside a disabled **Start
+  forecasting**. Choosing a metric now reveals the form; four tiles state what the defaults give —
+  the forecast value in plain words, the interval, how far ahead, and how many points a first
+  forecast waits for with the time that is (`GET /api/forecasts/candidates` now carries
+  `minimumContextPoints`) — and the panel then shows the series that was just started instead of
+  the first of the list.
 - **A count delta counted by offsets is forecast.** Every `TOPIC_COUNT_DELTA` writes a `scopeNote`,
   and history recorded any summary carrying one as `LIMITED_SCOPE` — so no count delta was ever
   forecast, while the assistant listed it eligible and let it be approved (`INVALID_DATA`, for

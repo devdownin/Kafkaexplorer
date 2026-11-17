@@ -1731,6 +1731,7 @@ export interface ForecastCandidates {
   clusterId: string;
   collectorId: string;
   applyUnavailable: string | null;
+  minimumContextPoints: number;
 }
 /** @java ForecastSetupService.DraftRequest */
 export interface ForecastDraftRequest {

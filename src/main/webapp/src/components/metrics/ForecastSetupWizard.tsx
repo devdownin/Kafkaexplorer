@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import axios from 'axios';
-import { Button, Checkbox, Field, Input, Select } from '../ui';
+import { Badge, Button, Checkbox, Field, Input, Select } from '../ui';
 import type { ForecastApplied, ForecastCandidate, ForecastCandidates, ForecastDraft, ForecastDraftRequest } from '../../api/types';
 import { copyText } from '../../clipboard';
 import { NameListField } from './NameListField';
+import { about } from './forecastStage';
 
 /** Every option keeps 513 buckets inside the default 30-day history retention the server checks. */
 const CADENCES = [{ value: '30000', label: '30 seconds' }, { value: '60000', label: '1 minute' },
@@ -21,13 +22,17 @@ const seasonFits = (period: number, cadence: number) =>
 /** The server's suggestion when the assistant offers it, the minute otherwise. */
 const cadenceFor = (c: ForecastCandidate | null) =>
   CADENCES.some(o => Number(o.value) === c?.suggestedStepMillis) ? String(c!.suggestedStepMillis) : '60000';
+/** The pilot's terms stay in the API; the page says what the forecast value is. */
+const TRANSFORMATION: Record<string, string> = { COUNTER_RATE: 'Rate per second', GAUGE_MEAN: 'Average per interval' };
 function span(millis: number) {
   if (!Number.isFinite(millis) || millis <= 0) return '';
   const minutes = millis / 60000;
   return minutes < 120 ? `${+minutes.toFixed(1)} minutes` : `${+(minutes / 60).toFixed(1)} hours`;
 }
 export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetricIds = [] }: {
-  initialMetricId?: string; onApplied?: () => void;
+  initialMetricId?: string;
+  /** Receives the series that was started, so the page can show it rather than whichever is first. */
+  onApplied?: (seriesId: string) => void;
   /**
    * Metrics that already have a series (METRICS-FORECAST-UX-AUDIT.md B6): offered as configurable,
    * they were refused only after the attestation and the submit, with a pointer to a deployment
@@ -37,7 +42,6 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
 }) {
   const [candidates, setCandidates] = useState<ForecastCandidates | null>(null);
   const [selected, setSelected] = useState<ForecastCandidate | null>(null);
-  const [step, setStep] = useState(1);
   const [environment, setEnvironment] = useState('local');
   const [clusterId, setClusterId] = useState('local');
   const [collectorId, setCollectorId] = useState('kafkaexplorer');
@@ -73,9 +77,9 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
           setCandidates(data);
           if (initialMetricId) {
             const candidate = data.metrics.find(m => m.metricId === initialMetricId);
-            // Opened from a card, the metric is chosen already: step 1 only asked to confirm it
-            // (METRICS-FORECAST-UX-AUDIT.md U4). A metric with a blocker stays there, with it.
-            if (candidate) { take(candidate); if (candidate.eligible) setStep(2); }
+            // Opened from a card, the metric is chosen already and the form is under it at once
+            // (METRICS-FORECAST-UX-AUDIT.md U4). A metric with a blocker shows the blocker instead.
+            if (candidate) take(candidate);
             else setError('Selected metric is absent from the candidate catalogue. Reload or choose a listed metric.');
           }
           if (data.clusterId) setClusterId(data.clusterId);
@@ -123,7 +127,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
       if (mode === 'apply') {
         const { data } = await axios.post<ForecastApplied>('/api/forecasts/series', request, options);
         if (typeof data?.seriesId !== 'string') throw new Error('Invalid approval response');
-        if (!abort.current?.signal.aborted) { setApplied(data); onApplied?.(); }
+        if (!abort.current?.signal.aborted) { setApplied(data); onApplied?.(data.seriesId); }
       } else {
         const { data } = await axios.post<ForecastDraft>('/api/forecasts/configuration', request, options);
         if (typeof data?.configuration !== 'string' || !Array.isArray(data.instructions)) throw new Error('Invalid configuration response');
@@ -149,86 +153,114 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
   // The flow ended: the form and its Back button are gone, and the only way to configure another
   // metric was to close the assistant and reopen it.
   function startOver() {
-    take(null); setStep(1); setDraft(null); setApplied(null); setApproved(false); setCopied(false);
+    take(null); setDraft(null); setApplied(null); setApproved(false); setCopied(false);
     setError(''); setErrors({}); setAdvanced(false);
   }
-  return <div className="border border-outline-variant rounded-md p-4 space-y-3" aria-label="Forecast configuration assistant">
-    <h4 className="font-semibold">{done ? (applied ? 'Forecast started' : 'Configuration ready')
-      : `Step ${step} of 2 · ${step === 1 ? 'Choose a metric' : canApply ? 'Confirm and start' : 'Confirm and export'}`}</h4>
-    {/* Nothing is said about the mode before the catalogue answers: `applyUnavailable` is unknown
-        until then, and the export wording shown meanwhile was replaced by the other one. */}
-    {candidates && <p className="text-sm">{canApply ? 'Starts the forecast directly, from the history already collected; no file and no restart.'
-      : 'Exports the selected series while preserving existing approvals. Review and merge the file before restarting.'}</p>}
-    {candidates?.applyUnavailable && <p className="text-sm">{candidates.applyUnavailable}</p>}
-    {error && <p role="alert">{error}</p>}
-    {step === 1 && <>
-      {!candidates && !error && <p>Loading candidate metrics…</p>}
-      {candidates && <>
-        <p>{candidates.total} metric(s){candidates.truncated ? '; showing the first 100' : ''}. Eligibility describes metadata; history and quality are checked separately.</p>
-        <Field label="Candidate metric">{p => <Select {...p} value={selected?.metricId ?? ''} onChange={e => choose(e.target.value)}>
-          <option value="">Choose a metric</option>{candidates.metrics.map(c => {
-            const forecast = forecastMetricIds.includes(c.metricId);
-            return <option key={c.metricId} value={c.metricId} disabled={forecast}>{c.name || c.metricId} · {forecast
-              ? 'already forecast' : c.eligible ? 'configurable' : c.blockers[0] ?? 'not configurable'}</option>;
-          })}
-        </Select>}</Field>
-        {selected && <>
-          <p>Unit: {selected.unit} · {selected.transformation} · {selected.enrolled ? 'History recorded' : 'History not recorded yet'}</p>
-          <ul>{selected.blockers.map(b => <li key={b}>{b}</li>)}</ul>
-          <Button disabled={!selected.eligible} onClick={() => setStep(2)}>Continue to sources</Button>
-        </>}
-      </>}
+  const seasonPoints = (SEASONALITIES.find(o => o.value === seasonality)?.period ?? 0) / Number(cadence);
+  // A first forecast waits for the floor, or for one whole cycle when that is longer — the server's rule.
+  const firstPoints = Number.isFinite(candidates?.minimumContextPoints) ? Math.max(candidates!.minimumContextPoints, seasonPoints) : null;
+  const firstSpan = firstPoints === null ? '' : `${about(firstPoints, Number(cadence))} of history`;
+  const ahead = span(Number(cadence) * Number(horizon));
+  /*
+   * One screen (it was two steps): the metric, then what has no sound default — the environment,
+   * the sources, the attestation. Choosing a metric is what reveals the rest, so "Continue to
+   * sources" and "Back" asked for a click that decided nothing, and Back was drawn as the primary
+   * action beside a disabled Start.
+   */
+  return <div className="card p-5 space-y-4" aria-label="Forecast configuration assistant">
+    {done && <h4 className="font-semibold">{applied ? 'Forecast started' : 'Configuration ready'}</h4>}
+    {error && <p role="alert" className="text-sm text-error">{error}</p>}
+    {!candidates && !error && <p className="text-sm text-on-surface-variant">Loading candidate metrics…</p>}
+    {candidates && !done && <>
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <Field label="Metric" description={candidates.truncated ? `Showing the first 100 of ${candidates.total} metrics.` : undefined}>
+          {p => <Select {...p} value={selected?.metricId ?? ''} onChange={e => choose(e.target.value)}>
+            <option value="">Choose a metric</option>{candidates.metrics.map(c => {
+              const forecast = forecastMetricIds.includes(c.metricId);
+              // Only what stands in the way is said: "configurable" on every other line was noise.
+              const note = forecast ? 'already forecast' : c.eligible ? '' : c.blockers[0] ?? 'not configurable';
+              return <option key={c.metricId} value={c.metricId} disabled={forecast}>{c.name || c.metricId}{note && ` · ${note}`}</option>;
+            })}
+          </Select>}</Field>
+        {selected?.eligible && <Field id="forecast-environment" label="Environment" error={errors.environment}>
+          {p => <Input {...p} form="forecast-setup" value={environment} onChange={e => setEnvironment(e.target.value)} />}</Field>}
+      </div>
+      {selected && !selected.eligible && <div role="group" aria-label="What blocks this metric"
+        className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm space-y-1">
+        <p className="font-medium">This metric cannot be forecast yet.</p>
+        <ul className="list-disc pl-5">{selected.blockers.map(b => <li key={b}>{b}</li>)}</ul>
+      </div>}
     </>}
-    {step === 2 && !done && <form onSubmit={e => { e.preventDefault(); void submit(canApply ? 'apply' : 'export'); }} className="space-y-3">
-      <p>{selected?.name || selected?.metricId} · {unit} · {selected?.transformation}. Forecasts {span(Number(cadence) * Number(horizon))} ahead from one sample every {cadenceLabel}; SHADOW first, no alert sent.</p>
-      <Field id="forecast-environment" label="Environment" error={errors.environment}>{p => <Input {...p} value={environment} onChange={e => setEnvironment(e.target.value)} />}</Field>
-      <NameListField id="forecast-topics" label="All source topics" names={topics} onChange={setTopics} topics error={errors.topics}
-        description="Verify every SQL dependency; suggestions are not a complete provenance attestation." />
-      <NameListField id="forecast-groups" label="All consumer groups (optional)" names={groups} onChange={setGroups} error={errors.groups} />
-      <details open={advanced} onToggle={e => setAdvanced(e.currentTarget.open)}>
-        <summary>Advanced: sampling, horizon, threshold and history identities</summary>
-        <div className="grid gap-3 sm:grid-cols-2 pt-2">
-          <Field id="forecast-unit" label="Captured unit" error={errors.unit} description="Change the metric metadata first to change its unit.">{p => <Input {...p} value={unit} readOnly />}</Field>
+    {candidates && selected?.eligible && !done && <form id="forecast-setup" onSubmit={e => { e.preventDefault(); void submit(canApply ? 'apply' : 'export'); }} className="space-y-4">
+      {/* What the defaults are, without opening the fold that changes them. */}
+      <dl className="grid grid-cols-2 lg:grid-cols-4 gap-px overflow-hidden rounded-lg border border-outline-variant bg-outline-variant text-sm" aria-label="Forecast summary">
+        {[['Forecast value', TRANSFORMATION[selected.transformation] ?? selected.transformation, selected.transformation === 'COUNTER_RATE' ? `${unit} per second` : unit],
+          ['One point every', cadenceLabel, seasonality === 'NONE' ? 'No repeating cycle' : `${SEASONALITIES.find(o => o.value === seasonality)?.label} cycle`],
+          ['Looks ahead', ahead || '—', `${horizon} points`],
+          ['First forecast after', firstPoints === null ? '—' : `${firstPoints} points`,
+            firstSpan && `${firstSpan}${selected.enrolled ? '; what is already recorded counts' : ', recorded from now'}`],
+        ].map(([label, value, hint]) => <div key={label} className="bg-surface-container px-3 py-2">
+          <dt className="text-[11px] uppercase tracking-wide text-on-surface-variant">{label}</dt>
+          <dd className="font-medium tabular-nums">{value}</dd>
+          {hint && <dd className="text-xs text-on-surface-variant">{hint}</dd>}
+        </div>)}
+      </dl>
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">Sources this metric reads</legend>
+        <p className="text-xs text-on-surface-variant">Prefilled from the metric's template. Check them against its SQL: a source left out is a dependency the forecast will not know about.</p>
+        <div className="grid gap-3 md:grid-cols-2 items-start">
+          <NameListField id="forecast-topics" label="All source topics" names={topics} onChange={setTopics} topics error={errors.topics} />
+          <NameListField id="forecast-groups" label="All consumer groups (optional)" names={groups} onChange={setGroups} error={errors.groups} />
+        </div>
+      </fieldset>
+      <details open={advanced} onToggle={e => setAdvanced(e.currentTarget.open)} className="text-sm">
+        <summary className="cursor-pointer text-on-surface-variant">Advanced: sampling, horizon, threshold and history identities</summary>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 pt-3">
           <Field id="forecast-cadence" label="Sampling interval" description="Suggested from how often the metric is collected.">{p => <Select {...p} value={cadence} onChange={e => {
             setCadence(e.target.value);
             const period = SEASONALITIES.find(o => o.value === seasonality)?.period ?? 0;
             if (!seasonFits(period, Number(e.target.value))) setSeasonality('NONE');
           }}>
             {CADENCES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</Select>}</Field>
-          <Field id="forecast-seasonality" label="Repeating cycle"
-            description="A daily or hourly pattern gives the forecast a seasonal baseline to beat and a seasonal fallback.">{p => <Select {...p} value={seasonality} onChange={e => setSeasonality(e.target.value)}>
-            {SEASONALITIES.filter(o => seasonFits(o.period, Number(cadence))).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</Select>}</Field>
           <Field id="forecast-horizon" label="Forecast horizon (points)" error={errors.horizon}
-            description={span(Number(cadence) * Number(horizon)) && `Forecasts ${span(Number(cadence) * Number(horizon))} ahead`}>{p => <Input {...p} inputMode="numeric" value={horizon} onChange={e => setHorizon(e.target.value)} />}</Field>
-          <Field id="forecast-threshold" label="Optional threshold in forecast output units" error={errors.threshold} description={selected?.transformation === 'COUNTER_RATE' ? `${unit} per second` : unit}>{p => <Input {...p} inputMode="decimal" value={threshold} onChange={e => setThreshold(e.target.value)} />}</Field>
+            description={ahead && `Forecasts ${ahead} ahead`}>{p => <Input {...p} inputMode="numeric" value={horizon} onChange={e => setHorizon(e.target.value)} />}</Field>
+          <Field id="forecast-seasonality" label="Repeating cycle"
+            description="Gives the forecast a seasonal baseline to beat, and a seasonal fallback.">{p => <Select {...p} value={seasonality} onChange={e => setSeasonality(e.target.value)}>
+            {SEASONALITIES.filter(o => seasonFits(o.period, Number(cadence))).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</Select>}</Field>
+          <Field id="forecast-unit" label="Captured unit" error={errors.unit} description="Set on the metric itself.">{p => <Input {...p} value={unit} readOnly />}</Field>
+          <Field id="forecast-threshold" label="Threshold (optional)" error={errors.threshold}
+            description={`In ${selected.transformation === 'COUNTER_RATE' ? `${unit} per second` : unit}; drawn on the chart.`}>{p => <Input {...p} inputMode="decimal" value={threshold} onChange={e => setThreshold(e.target.value)} />}</Field>
           <Field label="Threshold direction">{p => <Select {...p} value={direction} onChange={e => setDirection(e.target.value)}><option value="ABOVE">Above</option><option value="BELOW">Below</option></Select>}</Field>
           <Field id="forecast-clusterId" label="History cluster ID" error={errors.clusterId} description="Prefilled from the running collector.">{p => <Input {...p} value={clusterId} onChange={e => setClusterId(e.target.value)} />}</Field>
           <Field id="forecast-collectorId" label="History collector ID" error={errors.collectorId}>{p => <Input {...p} value={collectorId} onChange={e => setCollectorId(e.target.value)} />}</Field>
         </div>
       </details>
-      <label className="flex gap-2 items-start"><Checkbox checked={approved} onChange={setApproved} />I reviewed the semantics and confirm every source topic and consumer group.</label>
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={() => { setStep(1); setApproved(false); }}>Back</Button>
-        <Button type="submit" disabled={!approved || busy}>{canApply ? 'Start forecasting' : 'Validate and export'}</Button>
+      <label className="flex gap-2 items-center text-sm"><Checkbox checked={approved} onChange={setApproved} />I confirm these are all the topics and consumer groups this metric reads.</label>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="submit" disabled={!approved || busy} loading={busy}>{canApply ? 'Start forecasting' : 'Validate and export'}</Button>
         {canApply && <Button variant="ghost" disabled={!approved || busy} onClick={() => void submit('export')}>Export YAML instead</Button>}
+        <Badge title="SHADOW">Starts in observation</Badge>
       </div>
+      <p className="text-xs text-on-surface-variant">{canApply
+        ? 'Starts directly, from the history already collected: no file, no restart. Nothing is alerted or sent, and you approve it once its quality checks pass.'
+        : <>Exports the selected series while preserving existing approvals. Review and merge the file before restarting. {candidates.applyUnavailable}</>}</p>
     </form>}
-    {applied && <div role="status" className="space-y-1">
+    {applied && <div role="status" className="space-y-2 text-sm">
       <p className="font-semibold">Forecast started for {selected?.name || selected?.metricId}.</p>
-      <p>It reads the history already collected: the first forecast follows once enough points exist, then quality is judged over realised values before approval is offered.</p>
-      <Button onClick={startOver}>Configure another metric</Button>
+      <p>It is now the series shown in Metrics Forecast below. {firstSpan ? `Its first forecast follows after ${firstPoints} points, ${firstSpan}` : 'Its first forecast follows once enough points exist'}; then quality is judged over realised values before approval is offered.</p>
+      <Button variant="secondary" onClick={startOver}>Configure another metric</Button>
     </div>}
     {draft && <>
       <h5 className="font-semibold">Next steps</h5>
-      <ol className="list-decimal pl-5 space-y-1">
+      <ol className="list-decimal pl-5 space-y-1 text-sm">
         <li>Download or copy the configuration below.</li>
         {draft.instructions.map(i => <li key={i}>{i}</li>)}
         <li>Come back to Metrics Forecast: history progress appears here once the restarted pilot collects.</li>
       </ol>
-      <pre className="overflow-auto max-h-80 text-xs">{draft.configuration}</pre>
+      <pre className="overflow-auto max-h-80 text-xs rounded-lg bg-surface-container p-3">{draft.configuration}</pre>
       <div className="flex flex-wrap gap-2">
         <Button onClick={download}>Download forecasts.yml</Button>
-        <Button variant="ghost" onClick={() => void copyConfiguration()}>{copied ? 'Configuration copied' : 'Copy configuration'}</Button>
+        <Button variant="secondary" onClick={() => void copyConfiguration()}>{copied ? 'Configuration copied' : 'Copy configuration'}</Button>
         <Button variant="ghost" onClick={startOver}>Configure another metric</Button>
       </div>
     </>}

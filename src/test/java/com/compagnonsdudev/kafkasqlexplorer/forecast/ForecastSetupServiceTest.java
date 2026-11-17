@@ -110,6 +110,8 @@ class ForecastSetupServiceTest {
     assertTrue(c.eligible()); assertFalse(c.enrolled()); assertEquals("milliseconds", c.unit());
     assertEquals(List.of("orders"), c.topics()); assertEquals(List.of("worker"), c.groups());
     assertFalse(setup.candidates().toString().contains("credential"));
+    // The floor a first forecast waits for, so the assistant can say how long that is.
+    assertEquals(SeriesPreparationProfile.MIN_CONTEXT_POINTS, setup.candidates().minimumContextPoints());
     metric = metric("RAW_SQL", Map.of(), List.of("tenant"));
     c = setup.candidates().metrics().getFirst(); assertFalse(c.eligible()); assertEquals(3, c.blockers().size());
     verifyNoInteractions(history, client, pilot, preparation);
