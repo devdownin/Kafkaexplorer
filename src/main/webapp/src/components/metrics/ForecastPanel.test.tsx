@@ -11,7 +11,7 @@ vi.mock('axios', () => ({ default: { get: vi.fn(), put: vi.fn(), delete: vi.fn()
 const ready: ForecastActivationReadiness = { eligible: true, reason: null, blockPoints: 0, blockPointsRequired: 120, lastBlockPassed: true, failedBlocks: 0, failedBlocksToDegrade: 2 };
 const blocked = { ...ready, eligible: false, reason: 'The first quality block holds 40 of 120 realised points', blockPoints: 40, lastBlockPassed: null };
 const seriesWith = (activation: ForecastActivationReadiness, state = 'READY') => ({ enabled: true, state: 'AVAILABLE', series: [{ seriesId: 'a'.repeat(64), metricId: 'metric', environment: 'production',
-  stepMillis: 60000, minimumContextPoints: 128, withdrawable: false,
+  stepMillis: 60000, minimumContextPoints: 128, withdrawable: false, thresholdConfigured: false,
   result: { state, strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'ready', context: { status: 'READY', observedPoints: 512, points: [], outputUnit: 'messages' },
     forecast: { points: [] }, quality: null, baselineMae: {}, evaluatedPoints: 0 }, activation }] });
 describe('ForecastPanel', () => {
@@ -97,19 +97,22 @@ describe('ForecastPanel', () => {
       missingPoints: 472, imputedPoints: 0, checkedAt: 1, nextScheduledAt: 100, stepMillis: 60000, horizon: 30,
       topics: ['orders'], groups: [], breach: null, breachState: 'NOT_CONFIGURED' };
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: String(url).endsWith('/progress') ? progress : seriesWith(ready) }));
-    render(<ForecastPanel />);
-    expect(await screen.findByText(/40 \/ 512 observed points/)).toBeTruthy();
+    const user = userEvent.setup(); render(<ForecastPanel />);
+    const path = `/api/forecasts/${'a'.repeat(64)}`;
+    await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).toContain(`${path}/shadow`));
     // The preparation diagnostic is read once on mount; the list carries no history points
-    // (METRICS-FORECAST-UX-AUDIT.md P1), so the series shown is read on its own.
+    // (METRICS-FORECAST-UX-AUDIT.md P1), so the series shown is read on its own. Its progress is read
+    // only once something shows it (P2): no threshold is configured and the summary is closed.
     expect(vi.mocked(axios.get).mock.calls.map(call => call[0]).filter(url => url !== '/api/forecasts/preparation'))
-      .toEqual(['/api/forecasts', `/api/forecasts/${'a'.repeat(64)}`,
-        `/api/forecasts/${'a'.repeat(64)}/progress`, `/api/forecasts/${'a'.repeat(64)}/shadow`]);
+      .toEqual(['/api/forecasts', path, `${path}/shadow`]);
+    await user.click(screen.getByText('Summary, history and sources'));
+    expect(await screen.findByText(/40 \/ 512 observed points/)).toBeTruthy();
   });
   it('never asks for a shadow the list says is not configured', async () => {
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: String(url).endsWith('/progress') ? {} : { ...seriesWith(ready), shadowEnabled: false } }));
     render(<ForecastPanel />);
     await screen.findByRole('button', { name: 'Approve after quality checks' });
-    await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.some(c => String(c[0]).endsWith('/progress'))).toBe(true));
+    await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.some(c => String(c[0]) === `/api/forecasts/${'a'.repeat(64)}`)).toBe(true));
     expect(vi.mocked(axios.get).mock.calls.some(c => String(c[0]).endsWith('/shadow'))).toBe(false);
   });
   it('offers the raw result as a copy, not as a page of JSON', async () => {
@@ -262,6 +265,19 @@ describe('ForecastPanel', () => {
     expect(await screen.findByLabelText('Series')).toHaveValue('a'.repeat(64));
     view.rerender(<ConfirmProvider><ForecastPanel focus={'b'.repeat(64)} refresh={1} /></ConfirmProvider>);
     await vi.waitFor(() => expect(screen.getByLabelText('Series')).toHaveValue('b'.repeat(64)));
+  });
+
+  it('lets the chart show more of the 512-point context', async () => {
+    const base = seriesWith(ready);
+    const points = Array.from({ length: 200 }, (_, i) => ({ endAt: 1_000_000 + i * 60000, value: i, imputed: false, samples: 1 }));
+    const view = { ...base, series: [{ ...base.series[0], result: { ...base.series[0].result, context: { ...base.series[0].result.context, points } } }] };
+    vi.mocked(axios.get).mockImplementation(() => Promise.resolve({ data: view }));
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    const choice = await screen.findByLabelText('History shown');
+    expect([...choice.querySelectorAll('option')].map(o => o.textContent)).toEqual(
+      ['Last 60 points · ~60 min', 'Last 180 points · ~3 h', 'Last 512 points · ~9 h']);
+    await user.selectOptions(choice, '180');
+    expect(choice).toHaveValue('180');
   });
 
   // METRICS-FORECAST-UX-AUDIT.md B2: an unreadable series says so, and the others stay listed.

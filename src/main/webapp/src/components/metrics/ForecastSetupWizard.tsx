@@ -4,16 +4,26 @@ import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import axios from 'axios';
 import { Badge, Button, Checkbox, Field, Input, Select } from '../ui';
-import type { ForecastApplied, ForecastCandidate, ForecastCandidates, ForecastDraft, ForecastDraftRequest } from '../../api/types';
+import { CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts';
+import type { ForecastApplied, ForecastCandidate, ForecastCandidates, ForecastDraft, ForecastDraftRequest, ForecastHistoryPreview } from '../../api/types';
 import { copyText } from '../../clipboard';
 import { NameListField } from './NameListField';
 import { about } from './forecastStage';
+import { FORECAST_COLORS } from './forecastColors';
 
 /** Every option keeps 513 buckets inside the default 30-day history retention the server checks. */
 const CADENCES = [{ value: '30000', label: '30 seconds' }, { value: '60000', label: '1 minute' },
   { value: '300000', label: '5 minutes' }, { value: '900000', label: '15 minutes' }];
 /** Fields with a sound default, folded away; one that fails validation opens the fold. */
-const ADVANCED = new Set(['horizon', 'threshold', 'clusterId', 'collectorId']);
+const ADVANCED = new Set(['environment', 'threshold', 'clusterId', 'collectorId']);
+/** How far ahead is asked in time: the points follow from the interval, and only the ones that fit are offered. */
+const AHEADS = [{ ms: 900000, label: '15 minutes' }, { ms: 1800000, label: '30 minutes' }, { ms: 3600000, label: '1 hour' },
+  { ms: 7200000, label: '2 hours' }, { ms: 21600000, label: '6 hours' }, { ms: 43200000, label: '12 hours' }];
+const aheadFits = (ms: number, cadence: number) => ms % cadence === 0 && ms / cadence >= 1 && ms / cadence <= 60;
+/** The same duration when the new interval carries it, else the closest shorter one that fits. */
+const aheadFor = (ms: number, cadence: number) => aheadFits(ms, cadence) ? ms
+  : AHEADS.filter(o => aheadFits(o.ms, cadence) && o.ms <= ms).pop()?.ms ?? AHEADS.find(o => aheadFits(o.ms, cadence))?.ms ?? ms;
+const round = (v: number) => +v.toPrecision(3);
 /** The server computes the season from the same rule: a whole number of samples, 2 to 512. */
 const SEASONALITIES = [{ value: 'NONE', label: 'None', period: 0 }, { value: 'HOURLY', label: 'Hourly', period: 3600000 },
   { value: 'DAILY', label: 'Daily', period: 86400000 }];
@@ -50,7 +60,10 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
   const [groups, setGroups] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const [cadence, setCadence] = useState('60000');
-  const [horizon, setHorizon] = useState('30');
+  const [ahead, setAhead] = useState(1800000);
+  const [preview, setPreview] = useState<ForecastHistoryPreview | null>(null);
+  // A cycle the operator chose is never replaced by the one the history suggests.
+  const cycleTouched = useRef(false);
   const [seasonality, setSeasonality] = useState('NONE');
   const [threshold, setThreshold] = useState('');
   const [direction, setDirection] = useState('ABOVE');
@@ -63,9 +76,11 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
   const [advanced, setAdvanced] = useState(false);
   const abort = useRef<AbortController | null>(null);
   const canApply = candidates?.applyUnavailable === null;
+  const horizon = Math.max(1, Math.round(ahead / Number(cadence)));
   function take(c: ForecastCandidate | null) {
     setSelected(c); setUnit(c?.unit ?? ''); setTopics(c?.topics ?? []); setGroups(c?.groups ?? []);
-    const next = cadenceFor(c); setCadence(next);
+    const next = cadenceFor(c); setCadence(next); setAhead(a => aheadFor(a, Number(next)));
+    cycleTouched.current = false; setPreview(null);
     setSeasonality(cycle => seasonFits(SEASONALITIES.find(o => o.value === cycle)?.period ?? 0, Number(next)) ? cycle : 'NONE');
   }
   useEffect(() => {
@@ -88,6 +103,25 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
       }).catch(() => { if (!controller.signal.aborted) setError('Candidate catalogue unavailable.'); });
     return () => controller.abort();
   }, [initialMetricId]);
+  /*
+   * What the metric's recorded history looks like at this interval — read when a metric or an
+   * interval is chosen, never on a keystroke. It answers three questions the form used to leave to
+   * guesswork: is there enough history, what cycle does it show, and what is a threshold worth here.
+   */
+  const metricId = selected?.eligible ? selected.metricId : '';
+  useEffect(() => {
+    if (!metricId) return;
+    const controller = new AbortController();
+    axios.get<ForecastHistoryPreview>(`/api/forecasts/candidates/${encodeURIComponent(metricId)}/history`,
+      { params: { stepMillis: Number(cadence) }, signal: controller.signal, timeout: 10000 })
+      .then(({ data }) => {
+        if (controller.signal.aborted || !Array.isArray(data?.points) || typeof data.status !== 'string') return;
+        setPreview(data);
+        const cycle = data.suggestedSeasonality;
+        if (!cycleTouched.current && (cycle === 'DAILY' || cycle === 'HOURLY')) setSeasonality(cycle);
+      }).catch(() => { if (!controller.signal.aborted) setPreview(null); });
+    return () => controller.abort();
+  }, [metricId, cadence]);
   function choose(metricId: string) {
     take(candidates?.metrics.find(m => m.metricId === metricId) ?? null);
     setDraft(null); setApplied(null); setApproved(false); setCopied(false);
@@ -103,7 +137,6 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
     if (topics.length && missingTopics.length) next.topics = `Keep every topic the metric reads: ${missingTopics.join(', ')}.`;
     const missingGroups = (selected?.groups ?? []).filter(g => !groups.includes(g));
     if (missingGroups.length) next.groups = `Keep every consumer group the metric reads: ${missingGroups.join(', ')}.`;
-    if (!Number.isInteger(Number(horizon)) || Number(horizon) < 1 || Number(horizon) > 60) next.horizon = 'Use 1–60 forecast points.';
     if (threshold.trim() && !Number.isFinite(Number(threshold))) next.threshold = 'Use a finite threshold.';
     setErrors(next);
     const first = Object.keys(next)[0];
@@ -160,7 +193,10 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
   // A first forecast waits for the floor, or for one whole cycle when that is longer — the server's rule.
   const firstPoints = Number.isFinite(candidates?.minimumContextPoints) ? Math.max(candidates!.minimumContextPoints, seasonPoints) : null;
   const firstSpan = firstPoints === null ? '' : `${about(firstPoints, Number(cadence))} of history`;
-  const ahead = span(Number(cadence) * Number(horizon));
+  const aheadText = span(ahead);
+  const lastValue = preview?.points[preview.points.length - 1]?.value ?? null;
+  const suggestedThreshold = lastValue !== null && lastValue > 0 ? round(lastValue * 1.5) : null;
+  const found = preview?.suggestedSeasonality === seasonality && seasonality !== 'NONE';
   /*
    * One screen (it was two steps): the metric, then what has no sound default — the environment,
    * the sources, the attestation. Choosing a metric is what reveals the rest, so "Continue to
@@ -172,7 +208,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
     {error && <p role="alert" className="text-sm text-error">{error}</p>}
     {!candidates && !error && <p className="text-sm text-on-surface-variant">Loading candidate metrics…</p>}
     {candidates && !done && <>
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      <div>
         <Field label="Metric" description={candidates.truncated ? `Showing the first 100 of ${candidates.total} metrics.` : undefined}>
           {p => <Select {...p} value={selected?.metricId ?? ''} onChange={e => choose(e.target.value)}>
             <option value="">Choose a metric</option>{candidates.metrics.map(c => {
@@ -182,8 +218,6 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
               return <option key={c.metricId} value={c.metricId} disabled={forecast}>{c.name || c.metricId}{note && ` · ${note}`}</option>;
             })}
           </Select>}</Field>
-        {selected?.eligible && <Field id="forecast-environment" label="Environment" error={errors.environment}>
-          {p => <Input {...p} form="forecast-setup" value={environment} onChange={e => setEnvironment(e.target.value)} />}</Field>}
       </div>
       {selected && !selected.eligible && <div role="group" aria-label="What blocks this metric"
         className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm space-y-1">
@@ -195,8 +229,8 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
       {/* What the defaults are, without opening the fold that changes them. */}
       <dl className="grid grid-cols-2 lg:grid-cols-4 gap-px overflow-hidden rounded-lg border border-outline-variant bg-outline-variant text-sm" aria-label="Forecast summary">
         {[['Forecast value', TRANSFORMATION[selected.transformation] ?? selected.transformation, selected.transformation === 'COUNTER_RATE' ? `${unit} per second` : unit],
-          ['One point every', cadenceLabel, seasonality === 'NONE' ? 'No repeating cycle' : `${SEASONALITIES.find(o => o.value === seasonality)?.label} cycle`],
-          ['Looks ahead', ahead || '—', `${horizon} points`],
+          ['One point every', cadenceLabel, seasonality === 'NONE' ? 'No repeating cycle' : `${SEASONALITIES.find(o => o.value === seasonality)?.label} cycle${found ? ', found in the history' : ''}`],
+          ['Looks ahead', aheadText || '—', `${horizon} points`],
           ['First forecast after', firstPoints === null ? '—' : `${firstPoints} points`,
             firstSpan && `${firstSpan}${selected.enrolled ? '; what is already recorded counts' : ', recorded from now'}`],
         ].map(([label, value, hint]) => <div key={label} className="bg-surface-container px-3 py-2">
@@ -205,6 +239,20 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
           {hint && <dd className="text-xs text-on-surface-variant">{hint}</dd>}
         </div>)}
       </dl>
+      {preview && <figure className="space-y-1" aria-label="Recorded history">
+        <figcaption className="text-xs text-on-surface-variant">{preview.points.length > 1
+          ? `Recorded history at ${cadenceLabel}: ${preview.observedPoints} of the ${preview.requiredPoints} points a first forecast needs.`
+          : preview.reason}</figcaption>
+        {preview.points.length > 1 && <div style={{ height: 110 }} role="img" aria-label="Recorded history chart">
+          <ResponsiveContainer><ComposedChart data={preview.points}>
+            <CartesianGrid stroke={FORECAST_COLORS.band} strokeOpacity={0.15} vertical={false} />
+            <XAxis dataKey="endAt" type="number" domain={['dataMin', 'dataMax']} hide />
+            <YAxis width={44} domain={[0, (max: number) => Math.max(max, Number(threshold) || 0)]} tick={{ fontSize: 10, fill: FORECAST_COLORS.band }} />
+            <Line dataKey="value" stroke={FORECAST_COLORS.observed} dot={false} strokeWidth={1.5} isAnimationActive={false} />
+            {threshold.trim() && Number.isFinite(Number(threshold)) && <ReferenceLine y={Number(threshold)} stroke={FORECAST_COLORS.warning} strokeDasharray="4 4" />}
+          </ComposedChart></ResponsiveContainer>
+        </div>}
+      </figure>}
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium">Sources this metric reads</legend>
         <p className="text-xs text-on-surface-variant">Prefilled from the metric's template. Check them against its SQL: a source left out is a dependency the forecast will not know about.</p>
@@ -214,22 +262,26 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
         </div>
       </fieldset>
       <details open={advanced} onToggle={e => setAdvanced(e.currentTarget.open)} className="text-sm">
-        <summary className="cursor-pointer text-on-surface-variant">Advanced: sampling, horizon, threshold and history identities</summary>
+        <summary className="cursor-pointer py-1 text-on-surface-variant">Advanced: interval, horizon, threshold, environment and history identities</summary>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 pt-3">
           <Field id="forecast-cadence" label="Sampling interval" description="Suggested from how often the metric is collected.">{p => <Select {...p} value={cadence} onChange={e => {
             setCadence(e.target.value);
             const period = SEASONALITIES.find(o => o.value === seasonality)?.period ?? 0;
             if (!seasonFits(period, Number(e.target.value))) setSeasonality('NONE');
+            setAhead(a => aheadFor(a, Number(e.target.value)));
           }}>
             {CADENCES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</Select>}</Field>
-          <Field id="forecast-horizon" label="Forecast horizon (points)" error={errors.horizon}
-            description={ahead && `Forecasts ${ahead} ahead`}>{p => <Input {...p} inputMode="numeric" value={horizon} onChange={e => setHorizon(e.target.value)} />}</Field>
+          <Field id="forecast-ahead" label="Looks ahead" description={`${horizon} points at this interval`}>{p => <Select {...p} value={ahead} onChange={e => setAhead(Number(e.target.value))}>
+            {AHEADS.filter(o => aheadFits(o.ms, Number(cadence))).map(o => <option key={o.ms} value={o.ms}>{o.label}</option>)}</Select>}</Field>
+          <Field id="forecast-environment" label="Environment" error={errors.environment} description="A label for where this series runs.">{p => <Input {...p} value={environment} onChange={e => setEnvironment(e.target.value)} />}</Field>
           <Field id="forecast-seasonality" label="Repeating cycle"
-            description="Gives the forecast a seasonal baseline to beat, and a seasonal fallback.">{p => <Select {...p} value={seasonality} onChange={e => setSeasonality(e.target.value)}>
+            description={found ? `Found in the history (correlation ${round(preview?.correlation ?? 0)}).` : 'Gives the forecast a seasonal baseline to beat, and a seasonal fallback.'}>{p => <Select {...p} value={seasonality} onChange={e => { cycleTouched.current = true; setSeasonality(e.target.value); }}>
             {SEASONALITIES.filter(o => seasonFits(o.period, Number(cadence))).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</Select>}</Field>
           <Field id="forecast-unit" label="Captured unit" error={errors.unit} description="Set on the metric itself.">{p => <Input {...p} value={unit} readOnly />}</Field>
           <Field id="forecast-threshold" label="Threshold (optional)" error={errors.threshold}
-            description={`In ${selected.transformation === 'COUNTER_RATE' ? `${unit} per second` : unit}; drawn on the chart.`}>{p => <Input {...p} inputMode="decimal" value={threshold} onChange={e => setThreshold(e.target.value)} />}</Field>
+            description={<>In {selected.transformation === 'COUNTER_RATE' ? `${unit} per second` : unit}
+              {lastValue !== null && <>; latest recorded {round(lastValue)}. {suggestedThreshold !== null && !threshold.trim()
+                && <Button variant="ghost" size="sm" className="h-6 px-1.5 underline" onClick={() => setThreshold(String(suggestedThreshold))}>Use {suggestedThreshold} (1.5× latest)</Button>}</>}</>}>{p => <Input {...p} inputMode="decimal" value={threshold} onChange={e => setThreshold(e.target.value)} />}</Field>
           <Field label="Threshold direction">{p => <Select {...p} value={direction} onChange={e => setDirection(e.target.value)}><option value="ABOVE">Above</option><option value="BELOW">Below</option></Select>}</Field>
           <Field id="forecast-clusterId" label="History cluster ID" error={errors.clusterId} description="Prefilled from the running collector.">{p => <Input {...p} value={clusterId} onChange={e => setClusterId(e.target.value)} />}</Field>
           <Field id="forecast-collectorId" label="History collector ID" error={errors.collectorId}>{p => <Input {...p} value={collectorId} onChange={e => setCollectorId(e.target.value)} />}</Field>

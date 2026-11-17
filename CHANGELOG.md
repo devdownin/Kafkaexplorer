@@ -20,6 +20,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The forecast assistant reads the metric's history.** `GET /api/forecasts/candidates/{id}/history`
+  returns the recorded points at the chosen interval; the assistant draws them, proposes the
+  repeating cycle they show (autocorrelation at the daily and hourly lags) and a threshold from the
+  latest value, asks how far ahead in time, and folds the environment away. The panel's chart uses
+  the app's palette and can show 60, 180 or 512 points, and `/progress` is no longer read for a
+  series whose answer is not on screen (`thresholdConfigured` joins the series view).
 - **Preparing a forecast is one screen.** The assistant was two steps with a **Continue to sources**
   that decided nothing and a **Back** drawn as the primary action beside a disabled **Start
   forecasting**. Choosing a metric now reveals the form; four tiles state what the defaults give —

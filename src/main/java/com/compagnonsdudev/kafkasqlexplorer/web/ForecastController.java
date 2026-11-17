@@ -26,6 +26,8 @@ public class ForecastController {
       long stepMillis,
       int minimumContextPoints,
       boolean withdrawable,
+      /** Whether a threshold is configured: the one thing the chart needs from `/progress`. */
+      boolean thresholdConfigured,
       /** Why this series could not be read; the other series are answered anyway. */
       String error) {}
 
@@ -78,7 +80,7 @@ public class ForecastController {
     try {
       var result = p.get(id);
       return new SeriesView(id, s.metricId(), s.environment(), full ? result : withoutHistory(result),
-          p.readiness(id, result), s.profile().stepMillis(), p.minimumContextPoints(s), p.isWithdrawable(id), null);
+          p.readiness(id, result), s.profile().stepMillis(), p.minimumContextPoints(s), p.isWithdrawable(id), s.threshold() != null, null);
     } catch (Exception e) {
       org.slf4j.LoggerFactory.getLogger(ForecastController.class)
           .warn("Forecast series {} could not be read: {}", id, e.toString());
@@ -92,7 +94,7 @@ public class ForecastController {
             false, error, 0, 0, null, 0, ForecastQualityWindow.FAILED_BLOCKS_TO_DEGRADE);
       }
       return new SeriesView(id, s.metricId(), s.environment(), null, activation, s.profile().stepMillis(),
-          p.minimumContextPoints(s), p.isWithdrawable(id), error);
+          p.minimumContextPoints(s), p.isWithdrawable(id), s.threshold() != null, error);
     }
   }
 
