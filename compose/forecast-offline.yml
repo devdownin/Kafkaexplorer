@@ -1,0 +1,47 @@
+# Forecasts with no download at start: TimesFM 2.5 and Timestral-28M (the Mistral AI model, scored
+# as a shadow beside it) come inside the image, so nothing in the stack needs a route to the Hub.
+#
+#   TIMESFM_TOKEN="$(openssl rand -hex 32)" FORECAST_POSTGRES_PASSWORD="$(openssl rand -hex 32)" \
+#   docker compose -f docker-compose.yml -f compose/forecasts.yml -f compose/forecast-offline.yml up -d
+#
+# An overlay of `compose/forecasts.yml`, like `compose/local-ai.yml`: alone on the base it names
+# services with no image. What it changes there, and only that:
+#
+#   * `timesfm` runs `ghcr.io/devdownin/kex-forecast` (the `offline` target of
+#     `services/timesfm/Dockerfile`, published by `.github/workflows/forecast-image.yml`). The
+#     `build:` block stays, so `docker compose build timesfm` makes the same image from a checkout,
+#     which needs the Hub once, at build time.
+#   * the `timesfm_models` volume is not mounted. It would hide the baked-in checkpoints under an
+#     empty directory, and read-only weights need no persistence.
+#   * the one-shot download service moves to the `prefetch` profile and `timesfm` stops waiting
+#     for it: there is nothing left for it to fetch.
+#   * the Timestral pin is the baked one and the shadow is on, since the image carries it.
+#
+# Pulling the images is the only network use left, and `docker compose pull` does it ahead of
+# time; `docker save` / `docker load` carries the five images to a host with no registry access.
+#
+# **Licence.** The image carries Timestral-28M under Mistral AI's modified MIT licence, which
+# withdraws its rights from a company whose monthly revenue exceeded USD 20 million. Running
+# this overlay is accepting that; TimesFM alone (Apache-2.0) is
+# `compose/forecasts.yml` without it. See services/timesfm/licenses/NOTICE.md.
+services:
+  timesfm:
+    image: ghcr.io/devdownin/kex-forecast:${FORECAST_IMAGE_TAG:-0.3.0}
+    build:
+      target: offline
+    pull_policy: missing
+    volumes: !reset []
+    depends_on: !reset {}
+    environment:
+      # Overrides compose/timesfm.yml's empty defaults, which would switch the baked shadow off.
+      # The same values as the Dockerfile's build arguments: change them together.
+      TIMESTRAL_REVISION: ${TIMESTRAL_REVISION:-49b26409ac87b5935539a5d8ffe7f397b720db47}
+      TIMESTRAL_SHA256: ${TIMESTRAL_SHA256:-dfc83c6220937ce5fc6687b35a4df94cd25e28a2cfe6fb92a23dad6301b2015d}
+      HF_HUB_OFFLINE: "1"
+
+  forecast-model-prefetch:
+    profiles: ["prefetch"]
+
+  explorer:
+    environment:
+      EXPLORER_FORECASTING_INFERENCE_SHADOW_ENABLED: ${TIMESTRAL_SHADOW_ENABLED:-true}
