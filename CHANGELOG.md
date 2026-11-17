@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.6.0] — 2026-11-17
+
 - **The local LLM can start with no download.** `compose/llama-cpp-offline.yml` runs
   `ghcr.io/devdownin/kex-llm`, a new image of llama.cpp with Gemma 4 E4B (Q4_K_M, Apache-2.0, the
   model retained for Process Mining and the assistant) baked in and checked against its pinned
@@ -2809,7 +2813,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/devdownin/Kafkaexplorer/compare/v0.3.0...v2.6.0
 [0.3.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.4.1...v0.3.0
 [2.4.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.4...v2.4.1
 [2.3.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.3...v2.3.4
