@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The offline forecast overlay can no longer be used without its base.** Run as
+  `-f docker-compose.yml -f compose/forecast-offline.yml`, it started a bare `timesfm` beside an Explorer
+  with no inference, no history and no credentials, and the panel read "The forecast stack is not
+  running". It now fails at `config` ("depends on undefined service forecast-postgres"), and
+  `bin/forecast-stack.sh --offline` runs the three files with the credentials file.
 - **The local LLM can start with no download.** `compose/llama-cpp-offline.yml` runs
   `ghcr.io/devdownin/kex-llm`, a new image of llama.cpp with Gemma 4 E4B (Q4_K_M, Apache-2.0, the
   model retained for Process Mining and the assistant) baked in and checked against its pinned

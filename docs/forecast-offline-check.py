@@ -23,6 +23,7 @@ assert worker['build']['target'] == 'offline', 'A local build must make the same
 assert not any(v['target'] == worker['environment']['TIMESFM_CACHE_DIR'] for v in worker.get('volumes', [])), \
     'No volume may cover the baked-in model directory'
 assert 'forecast-model-prefetch' not in worker.get('depends_on', {}), 'The worker must not wait for a download'
+assert 'forecast-postgres' in worker.get('depends_on', {}), 'The tripwire that refuses this overlay without compose/forecasts.yml'
 # `config` leaves out a service in a profile nobody enabled, which is exactly the point.
 assert 'forecast-model-prefetch' not in services, 'The one-shot download must be off by default'
 assert worker['environment']['HF_HUB_OFFLINE'] == '1', 'The Hub client must be refused, not merely unused'

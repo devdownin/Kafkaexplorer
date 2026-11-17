@@ -54,11 +54,15 @@ keeps the export-only path). Database and model readiness alone do not make a me
 start with no route to the Hub, use the image that carries them:
 
 ```bash
-docker compose --env-file .forecast-stack/.env \
-  -f docker-compose.yml -f compose/forecasts.yml -f compose/forecast-offline.yml pull
-docker compose --env-file .forecast-stack/.env \
-  -f docker-compose.yml -f compose/forecasts.yml -f compose/forecast-offline.yml up -d
+bin/forecast-stack.sh --offline
 ```
+
+It generates the credentials once, pulls the image and starts the stack. By hand, the same thing is
+`bin/forecast-stack.sh --prepare-only` and then
+`docker compose --env-file .forecast-stack/.env -f docker-compose.yml -f compose/forecasts.yml -f compose/forecast-offline.yml up -d`
+— **all three files, and the credentials file**: the overlay only retargets what `compose/forecasts.yml`
+defines, and without either of them the Explorer starts with no inference and the panel reads
+"The forecast stack is not running".
 
 Pulling the images is then the only network use (`docker save` / `docker load` carries them to a
 host with no registry access). It also scores Timestral-28M beside TimesFM by default. **Timestral's

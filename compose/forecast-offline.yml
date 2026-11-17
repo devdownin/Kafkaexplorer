@@ -1,8 +1,15 @@
 # Forecasts with no download at start: TimesFM 2.5 and Timestral-28M (the Mistral AI model, scored
 # as a shadow beside it) come inside the image, so nothing in the stack needs a route to the Hub.
 #
-#   TIMESFM_TOKEN="$(openssl rand -hex 32)" FORECAST_POSTGRES_PASSWORD="$(openssl rand -hex 32)" \
-#   docker compose -f docker-compose.yml -f compose/forecasts.yml -f compose/forecast-offline.yml up -d
+#   bin/forecast-stack.sh --offline
+#
+# which is `--prepare-only` (the credentials and the configuration directory, generated once under
+# .forecast-stack/) followed by
+#
+#   docker compose --env-file .forecast-stack/.env \
+#     -f docker-compose.yml -f compose/forecasts.yml -f compose/forecast-offline.yml up -d
+#
+# Both files are needed: this one only retargets what compose/forecasts.yml defines.
 #
 # An overlay of `compose/forecasts.yml`, like `compose/local-ai.yml`: alone on the base it names
 # services with no image. What it changes there, and only that:
@@ -31,7 +38,15 @@ services:
       target: offline
     pull_policy: missing
     volumes: !reset []
-    depends_on: !reset {}
+    # Replaces the wait for the download service. It names `forecast-postgres` on purpose, though the
+    # worker does not read the database: that service exists only in compose/forecasts.yml, so this
+    # overlay used WITHOUT it fails at `config` with "undefined service" instead of starting a bare
+    # `timesfm` beside an Explorer that has no inference, no history and no credentials (the panel
+    # then reads "The forecast stack is not running"). `bin/forecast-stack.sh --offline` is the
+    # command that cannot get this wrong.
+    depends_on: !override
+      forecast-postgres:
+        condition: service_healthy
     environment:
       # Overrides compose/timesfm.yml's empty defaults, which would switch the baked shadow off.
       # The same values as the Dockerfile's build arguments: change them together.
