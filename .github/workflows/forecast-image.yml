@@ -63,9 +63,11 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
-          # `github.repository` keeps its casing and a container reference must be lowercase;
-          # metadata-action normalises it, which is why the suffix is appended here.
-          images: ghcr.io/${{ github.repository }}-forecast
+          # The name `compose/forecast-offline.yml` pulls. It was derived as
+          # `<repository>-forecast`, which published `kafkaexplorer-forecast`: a name the
+          # compose file never referenced, and one `docs/check-image-pins.py` would take for
+          # the Explorer's own image. metadata-action lowercases the owner.
+          images: ghcr.io/${{ github.repository_owner }}/kex-forecast
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
