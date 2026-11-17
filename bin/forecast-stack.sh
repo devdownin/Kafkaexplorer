@@ -4,10 +4,16 @@
 set -euo pipefail
 repo_dir=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo_dir"
-if [[ $# -gt 1 || ($# -eq 1 && $1 != --prepare-only) ]]; then
-  echo 'Usage: bin/forecast-stack.sh [--prepare-only]' >&2
-  exit 2
-fi
+prepare_only=0
+offline=0
+for arg in "$@"; do
+  case "$arg" in
+    --prepare-only) prepare_only=1 ;;
+    # The models come inside the image (compose/forecast-offline.yml): nothing is downloaded at start.
+    --offline) offline=1 ;;
+    *) echo 'Usage: bin/forecast-stack.sh [--prepare-only] [--offline]' >&2; exit 2 ;;
+  esac
+done
 umask 077
 state_dir=.forecast-stack
 mkdir -p "$state_dir/config"
@@ -33,14 +39,29 @@ fi
 # under the private state directory and are never mounted as configuration.
 chmod 755 "$state_dir/config"
 chmod 644 "$state_dir/config/forecasts.yml"
-if [[ ${1:-} == --prepare-only ]]; then
+if [[ $prepare_only == 1 ]]; then
   echo 'Prepared .forecast-stack/config/forecasts.yml and private credentials; no containers started.'
   exit 0
 fi
 command -v docker >/dev/null || { echo 'Docker with Compose v2 is required. Files are prepared; install Docker and rerun.' >&2; exit 1; }
-echo 'Starting local forecasts: first run downloads the pinned model; TimesFM defaults to 4 CPUs / 8 GiB.'
+files=(-f docker-compose.yml -f compose/forecasts.yml)
+if [[ $offline == 1 ]]; then
+  files+=(-f compose/forecast-offline.yml)
+  echo 'Starting local forecasts from the offline image: TimesFM and Timestral are inside it, nothing is downloaded at start.'
+  echo 'The Timestral weights are under a licence that excludes companies above USD 20 M monthly revenue: services/timesfm/licenses/NOTICE.md.'
+else
+  echo 'Starting local forecasts: first run downloads the pinned model; TimesFM defaults to 4 CPUs / 8 GiB.'
+fi
 echo 'Open http://localhost:8080, Metrics, and choose Prepare a forecast on a metric card; it starts without a restart.'
 echo 'MCP URL: http://localhost:8080/mcp. The bearer credential is in .forecast-stack/.env.'
-docker compose --env-file "$state_dir/.env" -f docker-compose.yml -f compose/forecasts.yml up -d --build
+compose=(docker compose --env-file "$state_dir/.env" "${files[@]}")
+if [[ $offline == 1 ]]; then
+  # Not `--build`: it would rebuild the worker from its Dockerfile, which downloads the models from the Hub.
+  # A tag that is not published yet is built locally by `up` instead, which needs the Hub once.
+  "${compose[@]}" pull timesfm || echo 'The offline image could not be pulled; `up` will build it locally (this needs the Hub once).' >&2
+  "${compose[@]}" up -d
+else
+  "${compose[@]}" up -d --build
+fi
 # Bind-file contents do not change Compose service hashes; Spring reads an exported forecasts.yml at startup.
-exec docker compose --env-file "$state_dir/.env" -f docker-compose.yml -f compose/forecasts.yml restart explorer
+exec "${compose[@]}" restart explorer
