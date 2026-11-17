@@ -1,0 +1,4 @@
+# The build context is the repository root and this image reads two paths of it.
+*
+!scripts/llama-cpp/serve.sh
+!services/llama-cpp/licenses

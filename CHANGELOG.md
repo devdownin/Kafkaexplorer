@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The local LLM can start with no download.** `compose/llama-cpp-offline.yml` runs
+  `ghcr.io/devdownin/kex-llm`, a new image of llama.cpp with Gemma 4 E4B (Q4_K_M, Apache-2.0, the
+  model retained for Process Mining and the assistant) baked in and checked against its pinned
+  SHA-256 at build time. A new workflow publishes it, and CI boots it with `--network none` and
+  waits for a real completion. No licence condition travels with it.
 - **The forecast stack can start with no download.** `compose/forecast-offline.yml` runs
   `ghcr.io/devdownin/kex-forecast`, the new `offline` target of `services/timesfm/Dockerfile`, with
   TimesFM 2.5 and Timestral-28M (Mistral AI, scored as a shadow) baked in and verified against their
