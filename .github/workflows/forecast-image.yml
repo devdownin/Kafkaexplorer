@@ -73,7 +73,15 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=latest,enable=${{ github.event_name == 'push' && !contains(github.ref_name, '-') }}
+          # Stated here, not only in the Dockerfile: labels passed to the build override the
+          # Dockerfile's LABELs, and metadata-action's defaults (title `Kafkaexplorer`, licence
+          # `AGPL-3.0` read from the repository, an empty description) were what got published —
+          # a licence field that omitted Apache-2.0 and Timestral, and no warning at all.
+          # Keep the description identical to the Dockerfile's.
           labels: |
+            org.opencontainers.image.title=kex-forecast
+            org.opencontainers.image.description=TimesFM 2.5 and Timestral-28M (shadow) forecast service with both checkpoints baked in; starts with no network access. WARNING: includes Timestral-28M (Mistral AI), whose licence excludes companies above USD 20M monthly revenue - see /licenses.
+            org.opencontainers.image.licenses=AGPL-3.0-or-later AND Apache-2.0 AND LicenseRef-Timestral-Modified-MIT
             org.opencontainers.image.documentation=https://github.com/devdownin/Kafkaexplorer/blob/main/services/timesfm/licenses/NOTICE.md
 
       - name: Build and push
