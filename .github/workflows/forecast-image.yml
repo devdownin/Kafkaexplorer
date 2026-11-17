@@ -96,6 +96,9 @@ jobs:
           {
             echo "### Forecast image"
             echo
+            echo "> **Licence warning.** This image carries Timestral-28M (Mistral AI), whose modified MIT"
+            echo "> licence excludes companies above USD 20 M monthly revenue. See \`services/timesfm/licenses/NOTICE.md\`."
+            echo
             echo "Digest: \`${{ steps.build.outputs.digest }}\`"
             echo
             echo '```'

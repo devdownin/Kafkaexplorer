@@ -42,7 +42,7 @@ RUN /app/.venv/bin/python -m kex_timesfm.prefetch
 ENV HF_HUB_OFFLINE=1
 COPY --chown=10001:10001 licenses /licenses
 LABEL org.opencontainers.image.title="kex-forecast" \
-      org.opencontainers.image.description="TimesFM 2.5 and Timestral-28M (shadow) forecast service with both checkpoints baked in; starts with no network access." \
+      org.opencontainers.image.description="TimesFM 2.5 and Timestral-28M (shadow) forecast service with both checkpoints baked in; starts with no network access. WARNING: includes Timestral-28M (Mistral AI), whose licence excludes companies above USD 20M monthly revenue - see /licenses." \
       org.opencontainers.image.licenses="AGPL-3.0-or-later AND Apache-2.0 AND LicenseRef-Timestral-Modified-MIT"
 EXPOSE 8000
 # No `uv run` here: it would resolve the environment again at start, which is network access
