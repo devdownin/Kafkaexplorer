@@ -634,6 +634,46 @@ Hugging Face’s auxiliary cache (Xet metadata and logs) also needs writable sto
 `cache_dir=/models` to `hf_hub_download` alone does not relocate Xet: its default under
 `/app/.cache` fails when the TimesFM container root filesystem is read-only.
 
+## The forecast stack with no download at start
+
+`compose/forecast-offline.yml` is an overlay of `compose/forecasts.yml` (like `local-ai.yml`, it
+only retargets services that file defines, so it is checked on that one combination, by
+`docs/forecast-offline-check.py`) that runs `ghcr.io/devdownin/kex-forecast`: the `offline` target
+of `services/timesfm/Dockerfile`, with TimesFM 2.5 **and** Timestral-28M (Mistral AI) inside the
+image. The default image downloads on first start through `kex_timesfm.prefetch`; the offline one
+runs that same prefetch **at build time**, so the SHA-256 checks that guard the volume guard the
+image, and a pin that stops matching fails the build rather than a start. After it, `HF_HUB_OFFLINE=1`
+and a `CMD` that calls `/app/.venv/bin/uvicorn` directly: `uv run` would resolve the environment
+again at start, which is network access. The overlay does four things and nothing else: it points
+`timesfm` at the image (keeping `build:` with `target: offline`, so a checkout builds the same
+thing), **drops the `/models` volume** (an empty named volume mounted there hides the baked
+checkpoints — the one way to break this silently), moves the prefetch service to the `prefetch`
+profile and removes the worker's wait for it, and sets the Timestral pin and the shadow on.
+The Dockerfile's build arguments and the overlay's defaults are the same two values; change them together.
+
+**CI runs it with the network removed.** The `forecast-stack` job builds the target and starts it
+with `--network none --read-only`, then waits for `/health/ready` *and* `/health/shadow/ready` —
+the second is what proves the Timestral checkpoint loaded from the image, since a shadow worker
+that fails stays its own failure and the primary alone would answer. It also asserts the licence
+files are in the image.
+
+**Published by its own workflow** (`forecast-image.yml`), not a job of `release.yml`: GHCR only,
+linux/amd64 only, and a failure there must not fail an Explorer release. A `v*` tag publishes the
+version (and `latest` when stable); `workflow_dispatch` with a `tag` publishes exactly that tag from
+the branch it runs on, which is how the version `FORECAST_IMAGE_TAG` defaults to can exist before
+the next release.
+
+**The licence is the real constraint, not the build.** Timestral's modified MIT licence permits
+redistribution with its notice, which travels in `/licenses`, but withdraws every right from a
+company whose monthly revenue exceeded USD 20 million. An image that carries the weights therefore
+carries that condition to everyone who runs it, which is why the default stack still downloads and
+leaves the acceptance to the operator, why this image is not on Docker Hub, and why the overlay's
+header says so. `services/timesfm/licenses/NOTICE.md` is the statement.
+
+**Not verified here:** the authoring environment had no Docker daemon, so the image has not been
+built or booted outside CI. The Timestral revision and digest were checked against the Hub
+(`49b2640…`, `dfc83c62…`); the offline check and the compose resolution run, the boot does not.
+
 ## The SQL & metric assistant in the stacks
 
 `explorer.assistant.enabled` ships **false**, because `claude.provider` ships as a hosted gateway

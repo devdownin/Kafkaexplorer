@@ -48,6 +48,23 @@ so the context of a forecast decided later is already filling. It also enables r
 the assistant starts a forecast without a file or a restart (`FORECAST_RUNTIME_APPROVAL=false`
 keeps the export-only path). Database and model readiness alone do not make a metric forecastable.
 
+### Without access to the Hugging Face Hub
+
+`bin/forecast-stack.sh` downloads the two model checkpoints at first start. For a host that must
+start with no route to the Hub, use the image that carries them:
+
+```bash
+docker compose --env-file .forecast-stack/.env \
+  -f docker-compose.yml -f compose/forecasts.yml -f compose/forecast-offline.yml pull
+docker compose --env-file .forecast-stack/.env \
+  -f docker-compose.yml -f compose/forecasts.yml -f compose/forecast-offline.yml up -d
+```
+
+Pulling the images is then the only network use (`docker save` / `docker load` carries them to a
+host with no registry access). It also scores Timestral-28M beside TimesFM by default. **Timestral's
+licence is not open source:** it excludes companies above USD 20 M monthly revenue; read
+[`services/timesfm/licenses/NOTICE.md`](../services/timesfm/licenses/NOTICE.md) before using it.
+
 ## Configure and approve
 
 1. Open **Metrics Forecast** and read the preparation checklist. When durable history and TimesFM are

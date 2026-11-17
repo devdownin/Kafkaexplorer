@@ -20,6 +20,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The forecast stack can start with no download.** `compose/forecast-offline.yml` runs
+  `ghcr.io/devdownin/kex-forecast`, the new `offline` target of `services/timesfm/Dockerfile`, with
+  TimesFM 2.5 and Timestral-28M (Mistral AI, scored as a shadow) baked in and verified against their
+  pinned SHA-256 at build time. A new workflow publishes it (GHCR, amd64), and CI boots it with
+  `--network none` and waits for both models to be ready. Timestral's licence excludes companies
+  above USD 20 M monthly revenue and travels with the image (`services/timesfm/licenses/`).
 - **The forecast assistant reads the metric's history.** `GET /api/forecasts/candidates/{id}/history`
   returns the recorded points at the chosen interval; the assistant draws them, proposes the
   repeating cycle they show (autocorrelation at the daily and hourly lags) and a threshold from the

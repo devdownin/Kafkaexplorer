@@ -423,6 +423,41 @@ jobs:
           tags: forecast-ci-timesfm:ci
           cache-from: type=gha,scope=timesfm-cpu
           cache-to: type=gha,mode=max,scope=timesfm-cpu
+      # What the offline overlay promises, run rather than asserted: both checkpoints are in the
+      # image, so the service loads them with no network at all. `--network none` is the whole
+      # test — a download attempt, from the HF client or from `uv`, fails the readiness below.
+      - name: Build the offline forecast image (checkpoints baked in)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: services/timesfm
+          target: offline
+          load: true
+          tags: forecast-ci-offline:ci
+          cache-from: type=gha,scope=timesfm-offline
+          cache-to: type=gha,mode=max,scope=timesfm-offline
+      - name: Start the offline image with no network
+        run: |
+          set -euo pipefail
+          docker run -d --name forecast-offline --network none --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,size=512m --cpus 2 --memory 6g \
+            -e TIMESFM_TOKEN="$(openssl rand -hex 32)" -e TIMESFM_THREADS=2 \
+            forecast-ci-offline:ci
+          for path in /health/ready /health/shadow/ready; do
+            for i in $(seq 1 90); do
+              if docker exec forecast-offline python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000$path', timeout=3).read()" 2>/dev/null; then
+                echo "$path answered after ~$((i * 5)) s with no network"; continue 2
+              fi
+              sleep 5
+            done
+            echo "::error::$path never answered from the offline image"
+            docker logs --tail 100 forecast-offline
+            exit 1
+          done
+          # The licence notices travel with the weights.
+          docker exec forecast-offline test -s /licenses/TIMESTRAL-28M-LICENSE.txt
+      - name: Remove the offline container
+        if: always()
+        run: docker rm -f forecast-offline || true
       - name: Check CI fixture and MCP parser contracts
         run: python3 -m unittest discover -s ci -p 'test_*.py'
       - name: Start isolated forecast stack
@@ -806,6 +841,14 @@ jobs:
           # shellcheck disable=SC2086 - the combination is a deliberate word list.
           docker compose $LOCAL_AI config --format json | python3 docs/local-ai-stack-check.py
           named="$named compose/local-ai.yml"
+
+          # The same shape, for the overlay that bakes the models in: it only retargets services
+          # compose/forecasts.yml defines. Its contract is checked on the resolved model.
+          OFFLINE="-f docker-compose.yml -f compose/forecasts.yml -f compose/forecast-offline.yml"
+          echo "· $OFFLINE"
+          # shellcheck disable=SC2086 - the combination is a deliberate word list.
+          docker compose $OFFLINE config --format json | python3 docs/forecast-offline-check.py
+          named="$named compose/forecast-offline.yml"
 
           # Every compose file in the tree is named above, as a base or as somebody's overlay.
           # A new one added without a line there would be checked by nothing, which is the
