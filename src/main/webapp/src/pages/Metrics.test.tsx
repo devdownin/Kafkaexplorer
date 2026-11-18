@@ -159,7 +159,7 @@ const READY_FORECASTS = { enabled: true, state: 'AVAILABLE', series: [], shadowE
 function stubApi(metrics: MetricConfig[], proposals: MetricSuggestion[] = [suggestion], forecasts: unknown = DISABLED_FORECASTS) {
   mockedAxios.get.mockImplementation((url: string) => {
     if (url === '/api/forecasts') return Promise.resolve({ data: forecasts });
-    if (url === '/api/forecasts/candidates') return Promise.resolve({ data: { metrics: metrics.map(metric => ({ metricId: metric.id, name: metric.name, definitionVersion: 'canonical', unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received', 'demo.orders.2.validated'], groups: [], eligible: true, enrolled: false, blockers: [] })), total: metrics.length, truncated: false } });
+    if (url === '/api/forecasts/candidates') return Promise.resolve({ data: { metrics: metrics.map(metric => ({ metricId: metric.id, name: metric.name, definitionVersion: 'canonical', unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received', 'demo.orders.2.validated'], groups: [], eligible: true, enrolled: false, blockers: [], suggestedStepMillis: 60000 })), total: metrics.length, truncated: false, applyUnavailable: null, clusterId: 'local', collectorId: 'kafkaexplorer', minimumContextPoints: 128 } });
     if (url === '/api/metrics') return Promise.resolve({ data: metrics });
     if (url === '/api/metrics/metadata') return Promise.resolve({ data: {} });
     if (url === '/api/metrics/templates') return Promise.resolve({ data: [] });
@@ -224,6 +224,44 @@ describe('Metrics page', () => {
     expect(await screen.findByText(/Forecast pilot disabled/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Prepare a forecast' })).toBeNull();
   });
+  it('disables forecast preparation when the backend marks a metric ineligible', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const get = mockedAxios.get.getMockImplementation()!;
+    mockedAxios.get.mockImplementation((url: string, config?: unknown) => {
+      if (url === '/api/forecasts/candidates') return Promise.resolve({ data: {
+        metrics: [{ metricId: templateMetric.id, name: templateMetric.name, definitionVersion: 'v1',
+          unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received'],
+          groups: [], eligible: false, enrolled: false, blockers: ['Unsupported metric transformation'],
+          suggestedStepMillis: 60000 }],
+        applyUnavailable: null, clusterId: 'local', collectorId: 'kafkaexplorer',
+        minimumContextPoints: 128, total: 1, truncated: false,
+      } });
+      return get(url, config);
+    });
+    await renderPage();
+    expect(await screen.findByText('Unsupported metric transformation')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+    expect(screen.queryByRole('heading', { name: 'Prepare a forecast' })).toBeNull();
+  });
+
+  it('disables forecast preparation when the backend cannot apply a forecast', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const get = mockedAxios.get.getMockImplementation()!;
+    mockedAxios.get.mockImplementation((url: string, config?: unknown) => {
+      if (url === '/api/forecasts/candidates') return Promise.resolve({ data: {
+        metrics: [{ metricId: templateMetric.id, name: templateMetric.name, definitionVersion: 'v1',
+          unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received'],
+          groups: [], eligible: true, enrolled: false, blockers: [], suggestedStepMillis: 60000 }],
+        applyUnavailable: 'Forecast storage is not configured', clusterId: 'local',
+        collectorId: 'kafkaexplorer', minimumContextPoints: 128, total: 1, truncated: false,
+      } });
+      return get(url, config);
+    });
+    await renderPage();
+    expect(await screen.findByText('Forecast storage is not configured')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+  });
+
   it('shows where a forecast stands on its card instead of offering to prepare another', async () => {
     stubApi([templateMetric], [suggestion], { enabled: true, state: 'AVAILABLE', series: [{ seriesId: 'a'.repeat(64), metricId: templateMetric.id,
       environment: 'local', stepMillis: 60000, minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
