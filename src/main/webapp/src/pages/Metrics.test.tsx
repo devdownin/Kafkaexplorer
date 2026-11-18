@@ -227,7 +227,7 @@ describe('Metrics page', () => {
   it('disables forecast preparation when the backend marks a metric ineligible', async () => {
     stubApi([templateMetric], [suggestion], READY_FORECASTS);
     const get = mockedAxios.get.getMockImplementation()!;
-    mockedAxios.get.mockImplementation((url: string, config?: unknown) => {
+    mockedAxios.get.mockImplementation((url: string) => {
       if (url === '/api/forecasts/candidates') return Promise.resolve({ data: {
         metrics: [{ metricId: templateMetric.id, name: templateMetric.name, definitionVersion: 'v1',
           unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received'],
@@ -247,7 +247,7 @@ describe('Metrics page', () => {
   it('disables forecast preparation when the backend cannot apply a forecast', async () => {
     stubApi([templateMetric], [suggestion], READY_FORECASTS);
     const get = mockedAxios.get.getMockImplementation()!;
-    mockedAxios.get.mockImplementation((url: string, config?: unknown) => {
+    mockedAxios.get.mockImplementation((url: string) => {
       if (url === '/api/forecasts/candidates') return Promise.resolve({ data: {
         metrics: [{ metricId: templateMetric.id, name: templateMetric.name, definitionVersion: 'v1',
           unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received'],
