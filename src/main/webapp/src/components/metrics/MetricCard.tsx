@@ -37,12 +37,14 @@ export const MetricCard: React.FC<{
   onDelete: () => void;
   onRefresh: () => void;
   onPrepareForecast?: () => void;
+  /** Reason returned by candidate validation, or why it cannot be checked yet. */
+  forecastUnavailableReason?: string;
   /** Where this metric's forecast stands; absent when it has none, and the card offers to prepare one. */
   forecast?: ForecastStageSummary;
   /** Forecast points come from the already-polled /api/forecasts status; no per-card API calls. */
   forecastSeries?: ForecastSeriesView;
   refreshing: boolean;
-}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecast, forecastSeries }) => {
+}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries }) => {
   const { toast } = useToast();
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
@@ -406,10 +408,15 @@ export const MetricCard: React.FC<{
         <span className="font-semibold">Forecast</span><Badge tone={forecast.tone}>{forecast.label}</Badge><span>{forecast.detail}</span>
       </div> : null}
       {(forecast || onPrepareForecast) && <div className="px-4 pb-2">
-        <Button variant="ghost" disabled={Boolean(forecast)} onClick={onPrepareForecast}
-          title={forecast ? 'A forecast already exists for this metric' : undefined}>
-          Prepare a forecast
-        </Button>
+        <span title={forecast ? 'A forecast already exists for this metric' : forecastUnavailableReason}
+          className="inline-flex" aria-label={forecastUnavailableReason || undefined}>
+          <Button variant="ghost" disabled={Boolean(forecast || forecastUnavailableReason)} onClick={onPrepareForecast}>
+            Prepare a forecast
+          </Button>
+        </span>
+        {!forecast && forecastUnavailableReason && (
+          <p className="text-[10px] text-on-surface-variant mt-1" role="note">{forecastUnavailableReason}</p>
+        )}
       </div>}
       {/* Footer */}
       <div className="px-4 py-1.5 flex items-center justify-between border-t border-primary/5">

@@ -23,7 +23,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS } from '../api/requestTimeout';
 // La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
 import type {
-  AuditHistory, ForecastStatus, MetricConfig, MetricLabelPreview, MetricSuggestion, MetricSuggestions, MetricTemplateDescriptor,
+  AuditHistory, ForecastCandidates, ForecastStatus, MetricConfig, MetricLabelPreview, MetricSuggestion, MetricSuggestions, MetricTemplateDescriptor,
   MetricTestResponse, TableMetadata,
 } from '../api/types';
 import { hasRunningMetric } from './metricsHealth';
@@ -171,6 +171,28 @@ const Metrics: React.FC = () => {
    * worse than one that is simply absent for the first second.
    */
   const canCreateForecast = Boolean(forecastStatus?.enabled && forecastStatus.modelAvailable !== false);
+  const [forecastCandidates, setForecastCandidates] = useState<ForecastCandidates | null>(null);
+  const [forecastCandidatesError, setForecastCandidatesError] = useState(false);
+  // Only the backend can rule on metric eligibility. A missing or failed catalogue disables
+  // preparation rather than opening an assistant which cannot start a forecast.
+  useEffect(() => {
+    if (!canCreateForecast) { setForecastCandidates(null); setForecastCandidatesError(false); return; }
+    const controller = new AbortController();
+    setForecastCandidates(null);
+    setForecastCandidatesError(false);
+    axios.get<ForecastCandidates>('/api/forecasts/candidates',
+      { signal: controller.signal, timeout: 10000 })
+      .then(({ data }) => {
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(data?.metrics)) { setForecastCandidatesError(true); return; }
+        setForecastCandidates(data);
+      })
+      .catch(() => { if (!controller.signal.aborted) setForecastCandidatesError(true); });
+    return () => controller.abort();
+  }, [canCreateForecast, forecastRevision]);
+  const candidatesByMetric = useMemo(() => new Map(
+    forecastCandidates?.metrics.map(candidate => [candidate.metricId, candidate] as const) ?? [],
+  ), [forecastCandidates]);
   const forecastStages = useMemo(() => {
     const stages = new Map<string, ReturnType<typeof forecastStage>>();
     // A metric forecast in two environments shows the first, as the panel's selector does.
@@ -955,8 +977,29 @@ const Metrics: React.FC = () => {
               onRefresh={() => handleRefreshOne(metric.id)}
               refreshing={refreshingId === metric.id}
               onPrepareForecast={canCreateForecast
-                ? () => setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1 }))
+                ? () => {
+                    const candidate = candidatesByMetric.get(metric.id);
+                    if (!candidate?.eligible || !candidate.topics.length
+                      || forecastCandidates?.applyUnavailable !== null
+                      || forecastMetricIds.includes(metric.id)) return;
+                    setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1 }));
+                  }
                 : undefined}
+              forecastUnavailableReason={canCreateForecast ? (
+                forecastCandidatesError ? 'Forecast eligibility could not be verified. Retry after reloading.'
+                  : !forecastCandidates ? 'Checking forecast eligibility…'
+                    : forecastCandidates.applyUnavailable !== null
+                      ? forecastCandidates.applyUnavailable || 'Forecast creation is currently unavailable.'
+                      : !candidatesByMetric.has(metric.id)
+                        ? forecastCandidates.truncated
+                          ? 'Metric not included in the candidate catalogue (catalogue truncated).'
+                          : 'Metric is not available as a forecast candidate.'
+                        : !candidatesByMetric.get(metric.id)!.eligible
+                          ? candidatesByMetric.get(metric.id)!.blockers.join('; ') || 'Metric cannot be forecast.'
+                          : !candidatesByMetric.get(metric.id)!.topics.length
+                            ? 'This metric has no forecastable source topics.'
+                            : undefined
+              ) : undefined}
               forecast={forecastStages.get(metric.id) ?? (createdForecastMetricId === metric.id
                 ? { stage: 'WAITING', label: 'Started', tone: 'neutral', detail: 'Waiting for the first forecast cycle' }
                 : undefined)}
