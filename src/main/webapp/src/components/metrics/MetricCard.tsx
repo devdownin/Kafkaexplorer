@@ -195,9 +195,9 @@ export const MetricCard: React.FC<{
       <div className="px-3 pb-2">
         {chartData.length > 0 ? (() => {
           const vals = observed.filter(Number.isFinite);
-          const minV = Math.min(...vals);
-          const maxV = Math.max(...vals);
-          const plotted = rateForecast ? vals : [...vals, ...forecastPoints.map(p => p.q50)];
+          const minV = Math.min(...(vals.length ? vals : forecastPoints.map(p => p.q50)));
+          const maxV = Math.max(...(vals.length ? vals : forecastPoints.map(p => p.q50)));
+          const plotted = rateForecast && vals.length ? vals : [...vals, ...forecastPoints.map(p => p.q50)];
           const plotMin = Math.min(...plotted);
           const plotMax = Math.max(...plotted);
           const pad = (maxV - minV) * 0.15 || 1;
@@ -226,7 +226,7 @@ export const MetricCard: React.FC<{
                     fill={`url(#grad-${metric.id})`} dot={false}
                     activeDot={{ r: 3, fill: strokeColor, strokeWidth: 0 }} isAnimationActive={false} />
                   {forecastPoints.length > 0 && <Line yAxisId={rateForecast ? 'forecast' : 'observed'}
-                    type="monotone" dataKey="predicted" stroke={FORECAST_COLORS.median}
+                    type="monotone" dataKey="predicted" stroke={FORECAST_COLORS.forecast}
                     strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls={false}
                     isAnimationActive={false} />}
                   <Tooltip cursor={{ stroke: strokeColor, strokeWidth: 1, strokeOpacity: 0.3 }}
@@ -236,7 +236,7 @@ export const MetricCard: React.FC<{
                       const value = point.kind === 'forecast' ? point.predicted : point.v;
                       return typeof value === 'number' ? (
                         <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[10px] font-mono"
-                          style={{ color: point.kind === 'forecast' ? FORECAST_COLORS.median : strokeColor }}>
+                          style={{ color: point.kind === 'forecast' ? FORECAST_COLORS.forecast : strokeColor }}>
                           <div>{point.kind === 'forecast' ? 'Forecast' : 'Observed'}: {value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
                           {point.kind === 'forecast' && point.at && <div>{new Date(point.at).toLocaleString()}</div>}
                         </div>
@@ -247,7 +247,7 @@ export const MetricCard: React.FC<{
               </ResponsiveContainer>
               {forecastPoints.length > 0 && <div className="flex flex-wrap gap-3 px-3 pt-1.5 text-[10px] font-mono" aria-label="Metric chart legend">
                 <span className="text-on-surface-variant flex items-center gap-1"><span className="w-3 h-0.5" style={{ background: strokeColor }} />Observed</span>
-                <span className="flex items-center gap-1" style={{ color: FORECAST_COLORS.median }}><span className="w-3 border-t-2 border-dashed" style={{ borderColor: FORECAST_COLORS.median }} />Forecast{rateForecast ? ' (per second)' : ''}</span>
+                <span className="flex items-center gap-1" style={{ color: FORECAST_COLORS.forecast }}><span className="w-3 border-t-2 border-dashed" style={{ borderColor: FORECAST_COLORS.forecast }} />Forecast{rateForecast ? ' (per second)' : ''}</span>
               </div>}
               <div className="flex items-center justify-between px-3 py-1.5 border-t border-primary/5 text-[10px] font-mono">
                 <span className="text-outline">min <span className="text-on-surface-variant">{minV.toLocaleString(undefined, { maximumFractionDigits: 1 })}</span></span>
