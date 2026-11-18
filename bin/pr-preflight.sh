@@ -10,5 +10,5 @@ cd src/main/webapp
 npm ci
 npm run build
 npm run lint
-npm test -- --run
+npm test
 echo '==> PR preflight passed'
