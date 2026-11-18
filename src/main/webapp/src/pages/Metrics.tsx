@@ -171,23 +171,31 @@ const Metrics: React.FC = () => {
    * worse than one that is simply absent for the first second.
    */
   const canCreateForecast = Boolean(forecastStatus?.enabled && forecastStatus.modelAvailable !== false);
-  const [forecastCandidates, setForecastCandidates] = useState<ForecastCandidates | null>(null);
-  const [forecastCandidatesError, setForecastCandidatesError] = useState(false);
-  // Only the backend can rule on metric eligibility. A missing or failed catalogue disables
-  // preparation rather than opening an assistant which cannot start a forecast.
+  // Tie each response to the revision that requested it. This avoids synchronous state
+  // resets in an effect (react-hooks/set-state-in-effect), and ignores stale catalogues
+  // immediately when a forecast is created or the pilot becomes unavailable.
+  const [candidateLookup, setCandidateLookup] = useState<{
+    revision: number; data: ForecastCandidates | null; error: boolean;
+  } | null>(null);
+  const forecastCandidates = canCreateForecast && candidateLookup?.revision === forecastRevision
+    ? candidateLookup.data : null;
+  const forecastCandidatesError = canCreateForecast && candidateLookup?.revision === forecastRevision
+    ? candidateLookup.error : false;
+  // Only the backend can rule on metric eligibility. Fail closed until its answer arrives.
   useEffect(() => {
-    if (!canCreateForecast) { setForecastCandidates(null); setForecastCandidatesError(false); return; }
+    if (!canCreateForecast) return;
     const controller = new AbortController();
-    setForecastCandidates(null);
-    setForecastCandidatesError(false);
     axios.get<ForecastCandidates>('/api/forecasts/candidates',
       { signal: controller.signal, timeout: 10000 })
       .then(({ data }) => {
         if (controller.signal.aborted) return;
-        if (!Array.isArray(data?.metrics)) { setForecastCandidatesError(true); return; }
-        setForecastCandidates(data);
+        setCandidateLookup({ revision: forecastRevision,
+          data: Array.isArray(data?.metrics) ? data : null,
+          error: !Array.isArray(data?.metrics) });
       })
-      .catch(() => { if (!controller.signal.aborted) setForecastCandidatesError(true); });
+      .catch(() => {
+        if (!controller.signal.aborted) setCandidateLookup({ revision: forecastRevision, data: null, error: true });
+      });
     return () => controller.abort();
   }, [canCreateForecast, forecastRevision]);
   const candidatesByMetric = useMemo(() => new Map(
