@@ -236,7 +236,7 @@ describe('Metrics page', () => {
         applyUnavailable: null, clusterId: 'local', collectorId: 'kafkaexplorer',
         minimumContextPoints: 128, total: 1, truncated: false,
       } });
-      return get(url, config);
+      return get(url);
     });
     await renderPage();
     expect(await screen.findByText('Unsupported metric transformation')).toBeInTheDocument();
@@ -255,7 +255,7 @@ describe('Metrics page', () => {
         applyUnavailable: 'Forecast storage is not configured', clusterId: 'local',
         collectorId: 'kafkaexplorer', minimumContextPoints: 128, total: 1, truncated: false,
       } });
-      return get(url, config);
+      return get(url);
     });
     await renderPage();
     expect(await screen.findByText('Forecast storage is not configured')).toBeInTheDocument();
