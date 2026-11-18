@@ -1059,6 +1059,9 @@ export const forecastCandidates = {
   total: 2, truncated: false, clusterId: 'local', collectorId: 'kafkaexplorer', applyUnavailable: null, minimumContextPoints: 128,
 };
 
+/** POST /api/forecasts/series — runtime creation from the selected metric card. */
+export const forecastApplied = { seriesId: FORECAST_ID };
+
 /** GET /api/forecasts/candidates/{metricId}/history — 240 recorded points with a daily-looking swell. */
 export const forecastHistory = {
   status: 'READY', reason: 'Ready', observedPoints: 240, requiredPoints: 128, unit: 'messages',
