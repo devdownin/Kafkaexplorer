@@ -20,7 +20,7 @@ vi.mock('recharts', async original => {
 const id = 'a'.repeat(64);
 const forecast = { points: [1, 2, 3].map(i => ({ at: 1000 + i * 60000, central: 10, q10: 8, q50: 10, q90: 12 })) };
 const status = { enabled: true, state: 'AVAILABLE', series: [{ seriesId: id, metricId: 'm', environment: 'e',
-  stepMillis: 60000, minimumContextPoints: 32, withdrawable: false,
+  stepMillis: 60000, minimumContextPoints: 32, withdrawable: false, thresholdConfigured: true,
   activation: { eligible: false, reason: 'not yet', blockPoints: 0, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
   result: { key: 'k', state: 'READY', strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'ok', quality: null, baselineMae: {}, evaluatedPoints: 0,
     context: { status: 'READY', observedPoints: 3, outputUnit: 'ms', points: [0, 1, 2].map(i => ({ endAt: i * 60000, value: 9, imputed: false, samples: 1 })) },

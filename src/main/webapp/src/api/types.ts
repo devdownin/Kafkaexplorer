@@ -1631,6 +1631,8 @@ export interface ForecastSeriesView {
   stepMillis: number;
   minimumContextPoints: number;
   withdrawable: boolean;
+  /** Whether a threshold is configured: the one thing the chart needs from `/progress`. */
+  thresholdConfigured: boolean;
   /** Why this series could not be read; `result` is then null and the other series are unaffected. */
   error?: string | null;
 }
@@ -1731,6 +1733,18 @@ export interface ForecastCandidates {
   clusterId: string;
   collectorId: string;
   applyUnavailable: string | null;
+  minimumContextPoints: number;
+}
+/** @java ForecastSetupService.HistoryPreview */
+export interface ForecastHistoryPreview {
+  status: string;
+  reason: string;
+  observedPoints: number;
+  requiredPoints: number;
+  unit: string;
+  points: ForecastHistoryPoint[];
+  suggestedSeasonality: string | null;
+  correlation: number | null;
 }
 /** @java ForecastSetupService.DraftRequest */
 export interface ForecastDraftRequest {

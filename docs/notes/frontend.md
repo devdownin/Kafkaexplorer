@@ -596,8 +596,8 @@ le libre — et il tient indépendamment du réseau.
 ## Guided forecast preparation
 
 `ForecastPanel` retains its persisted-result poll and activation confirmation. `ForecastPreparation`
-loads metadata diagnostics and offers explicit dependency probes; `ForecastSetupWizard` separates
-candidate selection, source declaration, and attestation/confirmation before server validation.
+loads metadata diagnostics and offers explicit dependency probes; `ForecastSetupWizard` takes
+the metric, its declared sources and the attestation on one screen before server validation.
 Every asynchronous request has cancellation and a timeout, including unmount during confirmation.
 Units come from the collector; all field errors are collected and the first invalid field receives
 focus. Existing cluster/collector identities seed the form. No credentials enter browser drafts.
@@ -642,15 +642,46 @@ comma-separated string prefilled from the catalogue, where a stray comma or a ty
 declared source nobody reads; and the export ends with numbered next steps and a copy button
 beside the download, since the file is usually pasted into a deployment's configuration.
 
-**The assistant is two steps, and the second asks only what has no sound default.** Choosing a
-metric, then: the environment, the sources and the attestation. The sampling interval (suggested
-by the server as the smallest offered that holds two collections of the metric), the cycle, the
-horizon, the threshold and the history identities sit under **Advanced**, which opens by itself
-when one of them is invalid. Where the deployment allows runtime approval
-(`Candidates.applyUnavailable` is `null`), the primary action is **Start forecasting** — the same
-validation as the export, then `POST /api/forecasts/series` — and the export remains beside it; a
-series started that way has **Stop forecasting this series** in the panel, a configured one does
-not.
+**The assistant is one screen, and it asks only what has no sound default.** It was two steps:
+choose a metric, press **Continue to sources**, then the environment, the sources and the
+attestation, with a **Back** button. The first step decided nothing the selector had not already
+decided, and Back — the default `Button` variant — was drawn as the primary action beside a
+disabled **Start forecasting**. Choosing a metric now reveals the form under it, and opened from a
+card the form is simply there. A metric with a blocker shows the blocker in place of the form; the
+selector annotates only what stands in the way (`already forecast`, the first blocker), since
+"configurable" on every other line was noise. The sampling interval (suggested by the server as the
+smallest offered that holds two collections of the metric), the cycle, the horizon, the threshold
+and the history identities sit under **Advanced**, which opens by itself when one of them is
+invalid — and **a four-tile summary states what those defaults give without opening the fold**:
+the forecast value in plain words (`Rate per second`, never `COUNTER_RATE`), the interval, how far
+ahead, and how many points a first forecast waits for with the time that is at this interval.
+That last tile is `Candidates.minimumContextPoints` (the server's floor) or one whole cycle when
+longer — `ForecastPilotService.minimumContextPoints`' rule, read from the response rather than
+restated as a constant; a server that does not state it gets a dash, not a guess. Where the
+deployment allows runtime approval (`Candidates.applyUnavailable` is `null`), the primary action is
+**Start forecasting** — the same validation as the export, then `POST /api/forecasts/series` — and
+the export remains beside it; a series started that way has **Stop forecasting this series** in
+the panel, a configured one does not. **The panel then shows the series that was just started**
+(`onApplied(seriesId)` → `ForecastPanel`'s `focus`): it used to stay on the first series of the
+list, so the answer to "Start forecasting" was another metric's chart.
+
+**The assistant reads the metric's own history, and asks in time rather than points.** Choosing a
+metric (or an interval) reads `GET /api/forecasts/candidates/{metricId}/history?stepMillis=` —
+`ForecastSetupService.historyPreview`, the same series identity the approval would derive, so the
+preview is the series that would start. It draws the recorded points under the summary and says
+how many of the first forecast's points exist, or the preparation's own reason when there is
+nothing to draw. Two proposals come out of the same read: the repeating cycle (`detectCycle`:
+autocorrelation at the daily and hourly lags, longest first, only when the history covers one and
+a half cycles and the correlation clears 0.5 — scaled by n / (n − lag), since an unscaled sum read
+a perfect 288-lag cycle over 512 points as 0.44 and never found a daily pattern) and a threshold
+(1.5× the latest recorded value, a button, never written for the operator). **A cycle the operator
+chose is never replaced.** The horizon is a duration (`Looks ahead`: 15 minutes to 12 hours, only
+those the interval carries in 1 to 60 points); the environment sits under **Advanced**. The
+panel's chart draws from `forecastColors.ts` — the app's own tokens, where it used Tailwind's stock
+green, amber and indigo — and shows 60, 180 or all 512 context points. **`/progress` is read only
+where its answer is on screen**: the threshold line on the chart (`SeriesView.thresholdConfigured`)
+or the open "Summary" fold, which removes the third request of the 30-second cycle for a series
+with neither (METRICS-FORECAST-UX-AUDIT.md P2).
 
 **A metric card says where its forecast stands.** `forecastStage.ts` turns a series of the
 panel's status into one line — collecting history against the points a first forecast needs,

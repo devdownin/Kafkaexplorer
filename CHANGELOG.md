@@ -20,10 +20,35 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
-
-## [2.5.0] — 2026-11-15
-
+- **The offline forecast overlay can no longer be used without its base.** Run as
+  `-f docker-compose.yml -f compose/forecast-offline.yml`, it started a bare `timesfm` beside an Explorer
+  with no inference, no history and no credentials, and the panel read "The forecast stack is not
+  running". It now fails at `config` ("depends on undefined service forecast-postgres"), and
+  `bin/forecast-stack.sh --offline` runs the three files with the credentials file.
+- **The local LLM can start with no download.** `compose/llama-cpp-offline.yml` runs
+  `ghcr.io/devdownin/kex-llm`, a new image of llama.cpp with Gemma 4 E4B (Q4_K_M, Apache-2.0, the
+  model retained for Process Mining and the assistant) baked in and checked against its pinned
+  SHA-256 at build time. A new workflow publishes it, and CI boots it with `--network none` and
+  waits for a real completion. No licence condition travels with it.
+- **The forecast stack can start with no download.** `compose/forecast-offline.yml` runs
+  `ghcr.io/devdownin/kex-forecast`, the new `offline` target of `services/timesfm/Dockerfile`, with
+  TimesFM 2.5 and Timestral-28M (Mistral AI, scored as a shadow) baked in and verified against their
+  pinned SHA-256 at build time. A new workflow publishes it (GHCR, amd64), and CI boots it with
+  `--network none` and waits for both models to be ready. Timestral's licence excludes companies
+  above USD 20 M monthly revenue and travels with the image (`services/timesfm/licenses/`).
+- **The forecast assistant reads the metric's history.** `GET /api/forecasts/candidates/{id}/history`
+  returns the recorded points at the chosen interval; the assistant draws them, proposes the
+  repeating cycle they show (autocorrelation at the daily and hourly lags) and a threshold from the
+  latest value, asks how far ahead in time, and folds the environment away. The panel's chart uses
+  the app's palette and can show 60, 180 or 512 points, and `/progress` is no longer read for a
+  series whose answer is not on screen (`thresholdConfigured` joins the series view).
+- **Preparing a forecast is one screen.** The assistant was two steps with a **Continue to sources**
+  that decided nothing and a **Back** drawn as the primary action beside a disabled **Start
+  forecasting**. Choosing a metric now reveals the form; four tiles state what the defaults give —
+  the forecast value in plain words, the interval, how far ahead, and how many points a first
+  forecast waits for with the time that is (`GET /api/forecasts/candidates` now carries
+  `minimumContextPoints`) — and the panel then shows the series that was just started instead of
+  the first of the list.
 - **A count delta counted by offsets is forecast.** Every `TOPIC_COUNT_DELTA` writes a `scopeNote`,
   and history recorded any summary carrying one as `LIMITED_SCOPE` — so no count delta was ever
   forecast, while the assistant listed it eligible and let it be approved (`INVALID_DATA`, for

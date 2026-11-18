@@ -8,7 +8,7 @@ const filling: ForecastActivationReadiness = { eligible: false, reason: 'The fir
   blockPoints: 40, blockPointsRequired: 180, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 };
 function series(result: Partial<ForecastRecord> | null, activation: Partial<ForecastActivationReadiness> = {}): ForecastSeriesView {
   return { seriesId: 'a'.repeat(64), metricId: 'lag', environment: 'local', stepMillis: 60000, minimumContextPoints: 128,
-    withdrawable: true, activation: { ...filling, ...activation },
+    withdrawable: true, thresholdConfigured: false, activation: { ...filling, ...activation },
     result: result && { state: 'READY', strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'ready', forecast: { points: [] },
       context: { status: 'READY', observedPoints: 512 }, ...result } as ForecastRecord };
 }
@@ -91,7 +91,7 @@ describe('forecastTimeline', () => {
 describe('an unreadable series', () => {
   it('is blocked with the reason, on the card and on the timeline', () => {
     const view = { seriesId: 's', metricId: 'm', environment: 'e', result: null, stepMillis: 60000, minimumContextPoints: 32,
-      withdrawable: false, error: 'could not be read',
+      withdrawable: false, thresholdConfigured: false, error: 'could not be read',
       activation: { eligible: false, reason: null, blockPoints: 0, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 } };
     expect(forecastStage(view)).toMatchObject({ stage: 'BLOCKED', label: 'Unreadable', detail: 'could not be read' });
     expect(forecastTimeline(view)[0]).toMatchObject({ state: 'failed', detail: 'could not be read' });

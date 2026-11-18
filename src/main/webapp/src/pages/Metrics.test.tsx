@@ -159,7 +159,7 @@ const READY_FORECASTS = { enabled: true, state: 'AVAILABLE', series: [], shadowE
 function stubApi(metrics: MetricConfig[], proposals: MetricSuggestion[] = [suggestion], forecasts: unknown = DISABLED_FORECASTS) {
   mockedAxios.get.mockImplementation((url: string) => {
     if (url === '/api/forecasts') return Promise.resolve({ data: forecasts });
-    if (url === '/api/forecasts/candidates') return Promise.resolve({ data: { metrics: metrics.map(metric => ({ metricId: metric.id, name: metric.name, definitionVersion: 'canonical', unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received', 'demo.orders.2.validated'], groups: [], eligible: true, enrolled: false, blockers: [] })), total: metrics.length, truncated: false } });
+    if (url === '/api/forecasts/candidates') return Promise.resolve({ data: { metrics: metrics.map(metric => ({ metricId: metric.id, name: metric.name, definitionVersion: 'canonical', unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received', 'demo.orders.2.validated'], groups: [], eligible: true, enrolled: false, blockers: [], suggestedStepMillis: 60000 })), total: metrics.length, truncated: false, applyUnavailable: null, clusterId: 'local', collectorId: 'kafkaexplorer', minimumContextPoints: 128 } });
     if (url === '/api/metrics') return Promise.resolve({ data: metrics });
     if (url === '/api/metrics/metadata') return Promise.resolve({ data: {} });
     if (url === '/api/metrics/templates') return Promise.resolve({ data: [] });
@@ -196,9 +196,8 @@ describe('Metrics page', () => {
   it('opens the forecast assistant from the matching metric card and aborts it on close', async () => {
     stubApi([templateMetric], [suggestion], READY_FORECASTS); const user = userEvent.setup(); await renderPage();
     await user.click(await screen.findByRole('button', { name: 'Prepare a forecast' }));
-    // Opened for that metric, the assistant starts at its sources (METRICS-FORECAST-UX-AUDIT.md U4).
-    expect(await screen.findByText(/Step 2 of 2/)).toBeTruthy();
-    expect(screen.getByRole('list', { name: 'All source topics: selected' })).toBeTruthy();
+    // Opened for that metric, its sources are there at once (METRICS-FORECAST-UX-AUDIT.md U4).
+    expect(await screen.findByRole('list', { name: 'All source topics: selected' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Prepare a forecast' })).toHaveFocus();
     expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/forecasts/configuration', expect.anything(), expect.anything());
     await user.click(screen.getByRole('button', { name: 'Close forecast preparation' }));
@@ -225,9 +224,47 @@ describe('Metrics page', () => {
     expect(await screen.findByText(/Forecast pilot disabled/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Prepare a forecast' })).toBeNull();
   });
+  it('disables forecast preparation when the backend marks a metric ineligible', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const get = mockedAxios.get.getMockImplementation()!;
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/forecasts/candidates') return Promise.resolve({ data: {
+        metrics: [{ metricId: templateMetric.id, name: templateMetric.name, definitionVersion: 'v1',
+          unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received'],
+          groups: [], eligible: false, enrolled: false, blockers: ['Unsupported metric transformation'],
+          suggestedStepMillis: 60000 }],
+        applyUnavailable: null, clusterId: 'local', collectorId: 'kafkaexplorer',
+        minimumContextPoints: 128, total: 1, truncated: false,
+      } });
+      return get(url);
+    });
+    await renderPage();
+    expect(await screen.findByText('Unsupported metric transformation')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+    expect(screen.queryByRole('heading', { name: 'Prepare a forecast' })).toBeNull();
+  });
+
+  it('disables forecast preparation when the backend cannot apply a forecast', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const get = mockedAxios.get.getMockImplementation()!;
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/forecasts/candidates') return Promise.resolve({ data: {
+        metrics: [{ metricId: templateMetric.id, name: templateMetric.name, definitionVersion: 'v1',
+          unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received'],
+          groups: [], eligible: true, enrolled: false, blockers: [], suggestedStepMillis: 60000 }],
+        applyUnavailable: 'Forecast storage is not configured', clusterId: 'local',
+        collectorId: 'kafkaexplorer', minimumContextPoints: 128, total: 1, truncated: false,
+      } });
+      return get(url);
+    });
+    await renderPage();
+    expect(await screen.findByText('Forecast storage is not configured')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+  });
+
   it('shows where a forecast stands on its card instead of offering to prepare another', async () => {
     stubApi([templateMetric], [suggestion], { enabled: true, state: 'AVAILABLE', series: [{ seriesId: 'a'.repeat(64), metricId: templateMetric.id,
-      environment: 'local', stepMillis: 60000, minimumContextPoints: 128, withdrawable: true,
+      environment: 'local', stepMillis: 60000, minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
       activation: { eligible: false, reason: 'No forecast', blockPoints: 0, blockPointsRequired: 180, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
       result: { state: 'WARMING_UP', strategy: 'UNAVAILABLE', visibility: 'SHADOW', reason: 'Collecting history', forecast: null, quality: null,
         baselineMae: {}, evaluatedPoints: 0, context: { status: 'WARMING_UP', observedPoints: 68, points: [], outputUnit: 'milliseconds' } } }] });
@@ -235,7 +272,28 @@ describe('Metrics page', () => {
     const status = await screen.findByLabelText(`Forecast status of ${templateMetric.name}`);
     expect(status).toHaveTextContent('Collecting');
     expect(status).toHaveTextContent('History 68 / 128 points · first forecast in ~60 min');
-    expect(screen.queryByRole('button', { name: 'Prepare a forecast' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+  });
+  it('extends the selected metric chart with a distinguishable forecast and disables preparation', async () => {
+    const historyEndAt = Date.now();
+    const forecastSeries = {
+      seriesId: 'b'.repeat(64), metricId: templateMetric.id, environment: 'local',
+      stepMillis: 60000, minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+      activation: { eligible: false, reason: 'Collecting quality evidence', blockPoints: 0,
+        blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: { state: 'READY', strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'Forecast ready',
+        context: { status: 'READY', observedPoints: 128, outputUnit: 'milliseconds',
+          profile: { transformation: 'GAUGE_MEAN', stepMillis: 60000, contextPoints: 512 }, points: [] },
+        forecast: { historyEndAt, points: [
+          { at: historyEndAt + 60000, central: 405, q50: 405, q10: 390, q90: 425 },
+          { at: historyEndAt + 120000, central: 415, q50: 415, q10: 400, q90: 435 },
+        ] }, quality: null },
+    };
+    stubApi([templateMetric], [suggestion], { ...READY_FORECASTS, series: [forecastSeries] });
+    await renderPage();
+    expect(await screen.findByLabelText('Metric chart legend')).toHaveTextContent('Observed');
+    expect(screen.getByLabelText('Metric chart legend')).toHaveTextContent('Forecast');
+    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
   });
   it('renders a template metric, whose SQL is null by construction', async () => {
     stubApi([templateMetric]);

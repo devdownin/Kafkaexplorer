@@ -1021,7 +1021,7 @@ const forecastActivation = { eligible: false, reason: '24 of the 30 realised poi
 /** GET /api/forecasts/{seriesId} — the series on screen, its 512 context points included. */
 export const forecastSeries = {
   seriesId: FORECAST_ID, metricId: 'm-hop-latency', environment: 'local', result: forecastResult,
-  activation: forecastActivation, stepMillis: FORECAST_STEP, minimumContextPoints: 32, withdrawable: true, error: null,
+  activation: forecastActivation, stepMillis: FORECAST_STEP, minimumContextPoints: 32, withdrawable: true, thresholdConfigured: true, error: null,
 };
 
 /** GET /api/forecasts — the list is a summary: the same row without its history points. */
@@ -1044,6 +1044,32 @@ export const forecastProgress = {
     modelRevision: '1d952420fba87f3c6dee4f240de0f1a0fbc790e3', inputFingerprint: 'i-ci', profileFingerprint: 'p-ci',
   },
   breachState: 'EVALUATED',
+};
+
+/** GET /api/forecasts/candidates — the two demo metrics; the one with a series is offered greyed out. */
+export const forecastCandidates = {
+  metrics: [
+    { metricId: 'm-hop-latency', name: 'gauge_latency_demo_orders_3_enriched_to_demo_orders_4_transformed', definitionVersion: 'v1',
+      unit: 'milliseconds', transformation: 'GAUGE_MEAN', topics: ['demo.orders.3.enriched', 'demo.orders.4.transformed'], groups: [],
+      eligible: true, enrolled: true, blockers: [], suggestedStepMillis: 60000 },
+    { metricId: 'm-orders-volume', name: 'gauge_volume_demo_orders_1_received', definitionVersion: 'v1',
+      unit: 'messages', transformation: 'GAUGE_MEAN', topics: ['demo.orders.1.received'], groups: [],
+      eligible: true, enrolled: true, blockers: [], suggestedStepMillis: 60000 },
+  ],
+  total: 2, truncated: false, clusterId: 'local', collectorId: 'kafkaexplorer', applyUnavailable: null, minimumContextPoints: 128,
+};
+
+/** POST /api/forecasts/series — runtime creation from the selected metric card. */
+export const forecastApplied = { seriesId: FORECAST_ID };
+
+/** GET /api/forecasts/candidates/{metricId}/history — 240 recorded points with a daily-looking swell. */
+export const forecastHistory = {
+  status: 'READY', reason: 'Ready', observedPoints: 240, requiredPoints: 128, unit: 'messages',
+  suggestedSeasonality: null, correlation: 0.31,
+  points: Array.from({ length: 240 }, (_, i) => ({
+    endAt: forecastEnd - (239 - i) * FORECAST_STEP,
+    value: Math.round(320 + 90 * Math.sin(i / 19) + 25 * Math.sin(i / 5.3)), imputed: false, samples: 1,
+  })),
 };
 
 /**

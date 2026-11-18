@@ -9,6 +9,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCatalogService;
 import com.compagnonsdudev.kafkasqlexplorer.service.MetricService;
 import com.compagnonsdudev.kafkasqlexplorer.web.ForecastSetupController;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -110,6 +111,8 @@ class ForecastSetupServiceTest {
     assertTrue(c.eligible()); assertFalse(c.enrolled()); assertEquals("milliseconds", c.unit());
     assertEquals(List.of("orders"), c.topics()); assertEquals(List.of("worker"), c.groups());
     assertFalse(setup.candidates().toString().contains("credential"));
+    // The floor a first forecast waits for, so the assistant can say how long that is.
+    assertEquals(SeriesPreparationProfile.MIN_CONTEXT_POINTS, setup.candidates().minimumContextPoints());
     metric = metric("RAW_SQL", Map.of(), List.of("tenant"));
     c = setup.candidates().metrics().getFirst(); assertFalse(c.eligible()); assertEquals(3, c.blockers().size());
     verifyNoInteractions(history, client, pilot, preparation);
@@ -334,5 +337,25 @@ class ForecastSetupServiceTest {
     assertEquals(setup.draft(valid()).seriesId(), applied.seriesId(), "Approving and exporting name the same series");
     root.getHistory().setEnrollEligible(false);
     assertThrows(IllegalArgumentException.class, () -> setup.apply(valid()), "A metric nobody records cannot be forecast");
+  }
+
+  @Test void proposesTheLongestCycleTheHistoryShows() {
+    // Five-minute points over two and a half days with a daily sine: 288 per day.
+    var daily = new ArrayList<Double>();
+    for (int i = 0; i < 512; i++) daily.add(100 + 40 * Math.sin(2 * Math.PI * i / 288));
+    var found = ForecastSetupService.detectCycle(daily, 300_000L);
+    assertEquals("DAILY", found[0]); assertTrue(Double.parseDouble(found[1]) > 0.5);
+    // The same values a minute apart repeat every 288 minutes, not every hour: no cycle claimed.
+    assertEquals("NONE", ForecastSetupService.detectCycle(daily, 60_000L)[0]);
+    // A short history covers no whole cycle at all, so nothing is said.
+    assertNull(ForecastSetupService.detectCycle(daily.subList(0, 90), 30_000L));
+  }
+
+  @Test void claimsNoCycleForNoise() {
+    var noise = new ArrayList<Double>(); var random = new java.util.Random(7);
+    for (int i = 0; i < 512; i++) noise.add(random.nextDouble());
+    assertEquals("NONE", ForecastSetupService.detectCycle(noise, 300_000L)[0]);
+    // A flat series has no variance to correlate: zero, not NaN.
+    assertEquals(0.0, ForecastSetupService.autocorrelation(java.util.Collections.nCopies(400, 5.0), 12));
   }
 }

@@ -1,0 +1,109 @@
+# Publishes the local LLM with its weights baked in: Gemma 4 E4B (Apache-2.0) on llama.cpp.
+#
+# `compose/llama-cpp-offline.yml` runs it, so a deployment with no route to the Hub starts the
+# local LLM with `docker compose up`. The weights are downloaded here, once, by the image build
+# (`services/llama-cpp/Dockerfile`), and checked against a pinned SHA-256: a file that stops
+# matching fails this workflow, not a start.
+#
+# Its own workflow, like forecast-image.yml and for the same reasons: it rebuilds on a model pin
+# rather than on a JAR, and a failure here must not mark an Explorer release as failed.
+# `workflow_dispatch` publishes exactly the tag it is given, from the branch it is run on: that is
+# how `compose/llama-cpp-offline.yml`'s pinned default exists before the next release tag does.
+# A tag push publishes the version and, when stable, `latest`. GHCR only, linux/amd64 only.
+#
+# No build cache, deliberately: the weights are one 5 GB layer, and `type=gha` would spend half of
+# the repository's 10 GB cache quota on it, evicting the caches every other job depends on.
+name: Publish the local LLM image
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to publish, as X.Y.Z (the version compose/llama-cpp-offline.yml defaults to)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: llm-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build and push the offline LLM image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check the requested tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          # Through `env`, never interpolated into the script: an input is attacker-shaped text.
+          [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag must be X.Y.Z, got '$TAG'"; exit 1; }
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/kex-llm
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && !contains(github.ref_name, '-') }}
+          # Stated here, not only in the Dockerfile: labels passed to the build override the
+          # Dockerfile's LABELs, and metadata-action's defaults (title `Kafkaexplorer`, the
+          # repository's licence, an empty description) are what would be published otherwise.
+          # Keep the description identical to the Dockerfile's.
+          labels: |
+            org.opencontainers.image.title=kex-llm
+            org.opencontainers.image.description=Gemma 4 E4B (Q4_K_M, Apache-2.0) on llama.cpp, with the weights baked in; starts with no network access.
+            org.opencontainers.image.licenses=AGPL-3.0-or-later AND Apache-2.0 AND MIT
+            org.opencontainers.image.documentation=https://github.com/devdownin/Kafkaexplorer/blob/main/services/llama-cpp/licenses/NOTICE.md
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          # The repository root: the entrypoint script is scripts/llama-cpp/serve.sh, shared with
+          # compose/llama-cpp.yml. Dockerfile.dockerignore trims the context to what is read.
+          context: .
+          file: services/llama-cpp/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Summarise
+        run: |
+          {
+            echo "### Local LLM image"
+            echo
+            echo "Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

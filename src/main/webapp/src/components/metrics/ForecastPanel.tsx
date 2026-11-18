@@ -14,7 +14,8 @@ import { ForecastProgress } from './ForecastProgress';
 import { ForecastShadowComparison } from './ForecastShadowComparison';
 import { isShadowComparison, type ShadowView } from './shadowModels';
 import { ForecastTimeline } from './ForecastTimeline';
-import { forecastStage } from './forecastStage';
+import { about, forecastStage } from './forecastStage';
+import { FORECAST_COLORS } from './forecastColors';
 
 /**
  * READY only says a forecast was produced, not that it can be approved: a green badge beside a
@@ -69,7 +70,9 @@ function isProgress(data: Progress | undefined, seriesId: string): data is Progr
     && data.requiredPoints === 512 && Array.isArray(data.topics) && Array.isArray(data.groups);
 }
 
-export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
+export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }: {
+  /** A series to show: the one the assistant just started, which was otherwise left behind the first. */
+  focus?: string;
   onConfigure?: () => void;
   /** Receives every status the panel polls, so the page can show it on the cards without a second poll. */
   onStatus?: (status: ForecastStatus | null) => void;
@@ -80,11 +83,18 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [progressError, setProgressError] = useState('');
   const [shadow, setShadow] = useState<{ seriesId: string; view: ShadowView } | null>(null);
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected] = useState(focus);
+  // Followed during render rather than in an effect: it takes hold once the list carries the series.
+  const [seenFocus, setSeenFocus] = useState(focus);
+  if (focus !== seenFocus) { setSeenFocus(focus); if (focus) setSelected(focus); }
   const [error, setError] = useState('');
   // A refusal belongs to the button that was clicked and must outlive the next poll: sharing
   // `error` with the poll made it vanish within 30 s, and a failing poll overwrite it.
   const [action, setAction] = useState<{ source: 'approve' | 'withdraw' | 'copy'; text: string } | null>(null);
+  /** How much of the 512-point context the chart draws: a forecast is judged against more than the last hour. */
+  const [shown, setShown] = useState(60);
+  /** P2: `/progress` is read only where its answer is on screen — the threshold on the chart, or the open summary. */
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -118,6 +128,7 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
   // The list says whether a shadow exists at all: asking each series for one answered a 404 that
   // the browser wrote into the console of every Metrics page (PAGES-SIMPLICITY-AUDIT.md X1).
   const shadowConfigured = status?.shadowEnabled !== false;
+  const wantProgress = summaryOpen || Boolean(status?.series.find(s => s.seriesId === seriesId)?.thresholdConfigured);
   useEffect(() => {
     if (!seriesId) return;
     // A series that answered 404 has no shadow configured: asking again every tick answers the same.
@@ -129,7 +140,7 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
         // Anything else keeps the list's summary on screen rather than a blank panel.
         if (data?.seriesId === seriesId && data.activation && !signal.aborted) setDetail(data);
       } catch { /* the summary from the list stays */ }
-      try {
+      if (wantProgress) try {
         const { data: next } = await axios.get<Progress>(`${path}/progress`, { signal, timeout: 10000 });
         if (!isProgress(next, seriesId)) throw new Error('Invalid progress response');
         if (!signal.aborted) { setProgress(next); setProgressError(''); }
@@ -150,7 +161,7 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
       }
       if (!signal.aborted) setShadow({ seriesId, view });
     });
-  }, [seriesId, revision, refresh, shadowConfigured]);
+  }, [seriesId, revision, refresh, shadowConfigured, wantProgress]);
   const listed = status?.series.find(s => s.seriesId === seriesId);
   // The detail is the same row with its history: preferred once it is about the series shown.
   const series = listed && detail?.seriesId === listed.seriesId ? detail : listed;
@@ -158,7 +169,7 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
   const seriesProgress = progress?.seriesId === series?.seriesId ? progress : null;
   const chart = [
     // An imputed point is a filled gap, not a measurement: drawn apart, never in "Observed" (B4).
-    ...(result?.context.points.slice(-60).map(p => p.imputed ? { at: p.endAt, imputed: p.value } : { at: p.endAt, actual: p.value }) ?? []),
+    ...(result?.context.points.slice(-shown).map(p => p.imputed ? { at: p.endAt, imputed: p.value } : { at: p.endAt, actual: p.value }) ?? []),
     ...(result?.forecast?.points.map(p => ({ at: p.at, median: p.q50, floor: p.q10, band: p.q90 - p.q10, q10: p.q10, q90: p.q90 })) ?? []),
   ];
   // Fifteen-minute steps over sixty history and sixty forecast points cover a day and more: a tick
@@ -235,6 +246,11 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
       {series?.error && <p role="alert">{series.error}</p>}
 
       {result?.forecast ? <>
+        <div className="flex justify-end">
+          <Field label="History shown" className="w-56">{p => <Select {...p} value={shown} onChange={e => setShown(Number(e.target.value))}>
+            {[60, 180, 512].map(n => <option key={n} value={n}>Last {n} points · {about(n, series?.stepMillis ?? 60000)}</option>)}
+          </Select>}</Field>
+        </div>
         <div style={{ height: 260 }} role="img" aria-label="Measured history and forecast">
           <ResponsiveContainer><ComposedChart data={chart}>
             <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={tick} />
@@ -252,12 +268,12 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
                 inside `<>…</>`, so the band and its legend entry were never drawn
                 (METRICS-FORECAST-UX-AUDIT.md B1). */}
             {result.strategy === 'TIMESFM' && <Area dataKey="floor" stackId="interval" stroke="none" fill="transparent" tooltipType="none" legendType="none" isAnimationActive={false} />}
-            {result.strategy === 'TIMESFM' && <Area dataKey="band" stackId="interval" stroke="none" fill="#64748b" fillOpacity={0.2} name="80 % interval" isAnimationActive={false} />}
-            <Line dataKey="actual" stroke="#16a34a" dot={false} name="Observed" isAnimationActive={false} />
-            {anyImputed && <Line dataKey="imputed" stroke="#d97706" strokeDasharray="2 3" dot={{ r: 2, fill: '#d97706', stroke: 'none' }} legendType="circle" name="Imputed (gap filled)" isAnimationActive={false} />}
-            <Line dataKey="median" stroke="#6366f1" strokeDasharray="6 3" dot={false} name={result.strategy === 'TIMESFM' ? 'Median forecast' : 'Baseline forecast'} isAnimationActive={false} />
-            {threshold && <ReferenceLine y={threshold.threshold} ifOverflow="extendDomain" stroke="#d97706" strokeDasharray="4 4"
-              label={{ value: `Threshold ${threshold.direction === 'ABOVE' ? '≥' : '≤'} ${threshold.threshold}`, position: 'insideTopRight', fill: '#d97706', fontSize: 11 }} />}
+            {result.strategy === 'TIMESFM' && <Area dataKey="band" stackId="interval" stroke="none" fill={FORECAST_COLORS.band} fillOpacity={0.2} name="80 % interval" isAnimationActive={false} />}
+            <Line dataKey="actual" stroke={FORECAST_COLORS.observed} dot={false} name="Observed" isAnimationActive={false} />
+            {anyImputed && <Line dataKey="imputed" stroke={FORECAST_COLORS.warning} strokeDasharray="2 3" dot={{ r: 2, fill: FORECAST_COLORS.warning, stroke: 'none' }} legendType="circle" name="Imputed (gap filled)" isAnimationActive={false} />}
+            <Line dataKey="median" stroke={FORECAST_COLORS.forecast} strokeDasharray="6 3" dot={false} name={result.strategy === 'TIMESFM' ? 'Median forecast' : 'Baseline forecast'} isAnimationActive={false} />
+            {threshold && <ReferenceLine y={threshold.threshold} ifOverflow="extendDomain" stroke={FORECAST_COLORS.warning} strokeDasharray="4 4"
+              label={{ value: `Threshold ${threshold.direction === 'ABOVE' ? '≥' : '≤'} ${threshold.threshold}`, position: 'insideTopRight', fill: FORECAST_COLORS.warning, fontSize: 11 }} />}
           </ComposedChart></ResponsiveContainer>
         </div>
         <p className="text-xs text-on-surface-variant"><span>{result.reason}</span> {result.strategy === 'TIMESFM'
@@ -280,7 +296,7 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0 }: {
 
       {series && <ForecastTimeline series={series} />}
 
-      <details><summary>Summary, history and sources</summary>
+      <details onToggle={e => setSummaryOpen(e.currentTarget.open)}><summary>Summary, history and sources</summary>
         {series && <ForecastProgress progress={seriesProgress} error={progressError} result={result} />}
       </details>
       {result && <details><summary>Quality details and baselines</summary>

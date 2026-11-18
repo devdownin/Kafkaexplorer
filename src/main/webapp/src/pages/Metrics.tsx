@@ -23,7 +23,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS } from '../api/requestTimeout';
 // La forme vit dans api/types.ts, où check-api-types.py la résout contre le record Java —
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
 import type {
-  AuditHistory, ForecastStatus, MetricConfig, MetricLabelPreview, MetricSuggestion, MetricSuggestions, MetricTemplateDescriptor,
+  AuditHistory, ForecastCandidates, ForecastStatus, MetricConfig, MetricLabelPreview, MetricSuggestion, MetricSuggestions, MetricTemplateDescriptor,
   MetricTestResponse, TableMetadata,
 } from '../api/types';
 import { hasRunningMetric } from './metricsHealth';
@@ -157,6 +157,13 @@ const Metrics: React.FC = () => {
   // The panel's own poll feeds the cards: one request for both, not one per card.
   const [forecastStatus, setForecastStatus] = useState<ForecastStatus | null>(null);
   const [forecastRevision, setForecastRevision] = useState(0);
+  // The series the assistant just started: the panel shows it, not whichever series is first.
+  const [forecastFocus, setForecastFocus] = useState('');
+  // The creation response arrives before the next /api/forecasts poll: disable the card at once.
+  const [createdForecastMetricId, setCreatedForecastMetricId] = useState('');
+  const forecastMetricIds = useMemo(() => [
+    ...new Set([...(forecastStatus?.series.map(s => s.metricId) ?? []), ...(createdForecastMetricId ? [createdForecastMetricId] : [])]),
+  ], [forecastStatus, createdForecastMetricId]);
   /**
    * Whether a forecast can be created at all: the pilot is on and a forecasting model is configured
    * (TimesFM; Timestral is only its shadow). Known only once the status has been read, and a status
@@ -164,11 +171,38 @@ const Metrics: React.FC = () => {
    * worse than one that is simply absent for the first second.
    */
   const canCreateForecast = Boolean(forecastStatus?.enabled && forecastStatus.modelAvailable !== false);
+  const [forecastCandidates, setForecastCandidates] = useState<ForecastCandidates | null>(null);
+  const [forecastCandidatesError, setForecastCandidatesError] = useState(false);
+  // Only the backend can rule on metric eligibility. A missing or failed catalogue disables
+  // preparation rather than opening an assistant which cannot start a forecast.
+  useEffect(() => {
+    if (!canCreateForecast) { setForecastCandidates(null); setForecastCandidatesError(false); return; }
+    const controller = new AbortController();
+    setForecastCandidates(null);
+    setForecastCandidatesError(false);
+    axios.get<ForecastCandidates>('/api/forecasts/candidates',
+      { signal: controller.signal, timeout: 10000 })
+      .then(({ data }) => {
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(data?.metrics)) { setForecastCandidatesError(true); return; }
+        setForecastCandidates(data);
+      })
+      .catch(() => { if (!controller.signal.aborted) setForecastCandidatesError(true); });
+    return () => controller.abort();
+  }, [canCreateForecast, forecastRevision]);
+  const candidatesByMetric = useMemo(() => new Map(
+    forecastCandidates?.metrics.map(candidate => [candidate.metricId, candidate] as const) ?? [],
+  ), [forecastCandidates]);
   const forecastStages = useMemo(() => {
     const stages = new Map<string, ReturnType<typeof forecastStage>>();
     // A metric forecast in two environments shows the first, as the panel's selector does.
     for (const s of forecastStatus?.series ?? []) if (!stages.has(s.metricId)) stages.set(s.metricId, forecastStage(s));
     return stages;
+  }, [forecastStatus]);
+  const forecastSeriesByMetric = useMemo(() => {
+    const series = new Map<string, ForecastStatus['series'][number]>();
+    for (const s of forecastStatus?.series ?? []) if (!series.has(s.metricId)) series.set(s.metricId, s);
+    return series;
   }, [forecastStatus]);
   useEffect(() => {
     if (!forecastRequest) return;
@@ -943,9 +977,33 @@ const Metrics: React.FC = () => {
               onRefresh={() => handleRefreshOne(metric.id)}
               refreshing={refreshingId === metric.id}
               onPrepareForecast={canCreateForecast
-                ? () => setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1 }))
+                ? () => {
+                    const candidate = candidatesByMetric.get(metric.id);
+                    if (!candidate?.eligible || !candidate.topics.length
+                      || forecastCandidates?.applyUnavailable !== null
+                      || forecastMetricIds.includes(metric.id)) return;
+                    setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1 }));
+                  }
                 : undefined}
-              forecast={forecastStages.get(metric.id)}
+              forecastUnavailableReason={canCreateForecast ? (
+                forecastCandidatesError ? 'Forecast eligibility could not be verified. Retry after reloading.'
+                  : !forecastCandidates ? 'Checking forecast eligibility…'
+                    : forecastCandidates.applyUnavailable !== null
+                      ? forecastCandidates.applyUnavailable || 'Forecast creation is currently unavailable.'
+                      : !candidatesByMetric.has(metric.id)
+                        ? forecastCandidates.truncated
+                          ? 'Metric not included in the candidate catalogue (catalogue truncated).'
+                          : 'Metric is not available as a forecast candidate.'
+                        : !candidatesByMetric.get(metric.id)!.eligible
+                          ? candidatesByMetric.get(metric.id)!.blockers.join('; ') || 'Metric cannot be forecast.'
+                          : !candidatesByMetric.get(metric.id)!.topics.length
+                            ? 'This metric has no forecastable source topics.'
+                            : undefined
+              ) : undefined}
+              forecast={forecastStages.get(metric.id) ?? (createdForecastMetricId === metric.id
+                ? { stage: 'WAITING', label: 'Started', tone: 'neutral', detail: 'Waiting for the first forecast cycle' }
+                : undefined)}
+              forecastSeries={forecastSeriesByMetric.get(metric.id)}
             />
           )) : (
             <div className="col-span-full text-center py-12 text-on-surface-variant text-sm">
@@ -959,14 +1017,25 @@ const Metrics: React.FC = () => {
           Au-dessus des gabarits génériques, parce qu'une proposition qui nomme un topic de ce
           cluster et la mesure dont elle sort vaut mieux qu'un COUNT(*) sur la première table
           trouvée — et en dessous des métriques existantes, qui restent le sujet de la page. */}
-      {canCreateForecast && forecastRequest && <section aria-labelledby="metric-forecast-preparation" className="space-y-3">
-        <h3 id="metric-forecast-preparation" tabIndex={-1}>Prepare a forecast</h3>
-        <Button variant="ghost" onClick={() => setForecastRequest(null)}>Close forecast preparation</Button>
+      {canCreateForecast && forecastRequest && <section aria-labelledby="metric-forecast-preparation" className="space-y-3 scroll-mt-20">
+        <div className="flex items-center justify-between gap-3">
+          <h3 id="metric-forecast-preparation" tabIndex={-1} className="text-lg font-semibold outline-none">Prepare a forecast</h3>
+          <Button variant="ghost" size="sm" icon="close" onClick={() => setForecastRequest(null)}>Close forecast preparation</Button>
+        </div>
         <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId}
-          onApplied={() => setForecastRevision(v => v + 1)}
-          forecastMetricIds={forecastStatus?.series.map(s => s.metricId) ?? []} />
+          onApplied={seriesId => {
+            if (forecastRequest.metricId) setCreatedForecastMetricId(forecastRequest.metricId);
+            setForecastFocus(seriesId);
+            setForecastRevision(v => v + 1);
+          }}
+          forecastMetricIds={forecastMetricIds} />
       </section>}
-      <ForecastPanel refresh={forecastRevision} onStatus={setForecastStatus}
+      <ForecastPanel refresh={forecastRevision} focus={forecastFocus} onStatus={status => {
+        setForecastStatus(status);
+        // Once the server lists the new series, its status becomes authoritative. A later
+        // withdrawal can then re-enable the metric's Prepare action.
+        setCreatedForecastMetricId(id => id && status?.series.some(series => series.metricId === id) ? '' : id);
+      }}
         onConfigure={canCreateForecast
           ? () => setForecastRequest(previous => ({ sequence: (previous?.sequence ?? 0) + 1 }))
           : undefined} />

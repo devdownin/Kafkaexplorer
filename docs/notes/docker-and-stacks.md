@@ -634,6 +634,77 @@ Hugging Face’s auxiliary cache (Xet metadata and logs) also needs writable sto
 `cache_dir=/models` to `hf_hub_download` alone does not relocate Xet: its default under
 `/app/.cache` fails when the TimesFM container root filesystem is read-only.
 
+## The forecast stack with no download at start
+
+`compose/forecast-offline.yml` is an overlay of `compose/forecasts.yml` (like `local-ai.yml`, it
+only retargets services that file defines, so it is checked on that one combination, by
+`docs/forecast-offline-check.py`) that runs `ghcr.io/devdownin/kex-forecast`: the `offline` target
+of `services/timesfm/Dockerfile`, with TimesFM 2.5 **and** Timestral-28M (Mistral AI) inside the
+image. The default image downloads on first start through `kex_timesfm.prefetch`; the offline one
+runs that same prefetch **at build time**, so the SHA-256 checks that guard the volume guard the
+image, and a pin that stops matching fails the build rather than a start. After it, `HF_HUB_OFFLINE=1`
+and a `CMD` that calls `/app/.venv/bin/uvicorn` directly: `uv run` would resolve the environment
+again at start, which is network access. The overlay does four things and nothing else: it points
+`timesfm` at the image (keeping `build:` with `target: offline`, so a checkout builds the same
+thing), **drops the `/models` volume** (an empty named volume mounted there hides the baked
+checkpoints — the one way to break this silently), moves the prefetch service to the `prefetch`
+profile and removes the worker's wait for it, and sets the Timestral pin and the shadow on.
+The Dockerfile's build arguments and the overlay's defaults are the same two values; change them together.
+
+**CI runs it with the network removed.** The `forecast-stack` job builds the target and starts it
+with `--network none --read-only`, then waits for `/health/ready` *and* `/health/shadow/ready` —
+the second is what proves the Timestral checkpoint loaded from the image, since a shadow worker
+that fails stays its own failure and the primary alone would answer. It also asserts the licence
+files are in the image.
+
+**Published by its own workflow** (`forecast-image.yml`), not a job of `release.yml`: GHCR only,
+linux/amd64 only, and a failure there must not fail an Explorer release. A `v*` tag publishes the
+version (and `latest` when stable); `workflow_dispatch` with a `tag` publishes exactly that tag from
+the branch it runs on, which is how the version `FORECAST_IMAGE_TAG` defaults to can exist before
+the next release.
+
+**The licence is the real constraint, not the build.** Timestral's modified MIT licence permits
+redistribution with its notice, which travels in `/licenses`, but withdraws every right from a
+company whose monthly revenue exceeded USD 20 million. An image that carries the weights therefore
+carries that condition to everyone who runs it, which is why the default stack still downloads and
+leaves the acceptance to the operator, why this image is not on Docker Hub, and why the overlay's
+header says so. `services/timesfm/licenses/NOTICE.md` is the statement.
+
+**Not verified here:** the authoring environment had no Docker daemon, so the image has not been
+built or booted outside CI. The Timestral revision and digest were checked against the Hub
+(`49b2640…`, `dfc83c62…`); the offline check and the compose resolution run, the boot does not.
+
+## The local LLM with no download at start
+
+`compose/llama-cpp-offline.yml` is an overlay of `compose/llama-cpp.yml` (checked on that one
+combination, by `docs/llm-offline-check.py`) that runs `ghcr.io/devdownin/kex-llm`:
+`services/llama-cpp/Dockerfile`, the pinned llama.cpp build **by digest** plus the model
+`EMBEDDED-LLM-SCOPE.md` retained for both Process Mining and the assistant — Gemma 4 E4B, Q4_K_M,
+**Apache-2.0**, downloaded at the Hub revision the Dockerfile names and checked against its SHA-256
+at build time. The entrypoint is `scripts/llama-cpp/serve.sh`, the file the downloading stack
+mounts, so the Dockerfile is built from the **repository root** (`Dockerfile.dockerignore` trims
+that context to two paths) rather than copying it. The overlay drops the `llama_cpp_models` volume
+(an empty named volume there would hide the baked weights), moves `llama-cpp-model` to the
+`download` profile, and states the model name once more; everything else — provider, window, prompt
+budget, timeout, assistant on — is `llama-cpp.yml`'s.
+
+**CI boots it with `--network none`** (`llm-offline` in `ci.yml`): it waits for `/health`, then
+asks for a completion and asserts the answer is not empty — healthy says the weights loaded, an
+answer says they work. The job is **gated by a diff inside its steps**, not a `paths:` filter (a
+skipped required check blocks a merge for ever), because it pulls a 5 GB model; it always runs on a
+push to `main`. **Published by its own workflow** (`llm-image.yml`), GHCR and amd64 only, with **no
+build cache**: the weights are one 5 GB layer, and `type=gha` would spend half the repository's
+10 GB cache quota on it. Tags follow `forecast-image.yml`: a `v*` tag publishes the version, and
+`workflow_dispatch` with a `tag` publishes exactly that one.
+
+Unlike `kex-forecast`, **no licence condition travels with this image**: Gemma 3 was under Google's
+own terms and Gemma 4 is Apache-2.0, which is what `EMBEDDED-LLM-SCOPE.md` §3 already weighed for
+an AGPL project. `services/llama-cpp/licenses/NOTICE.md` carries the attributions.
+
+**Not verified here:** the authoring environment had no Docker daemon, so the image has not been
+built or booted outside CI; the model digest was checked against the Hub at the pinned revision,
+and the overlay resolves.
+
 ## The SQL & metric assistant in the stacks
 
 `explorer.assistant.enabled` ships **false**, because `claude.provider` ships as a hosted gateway

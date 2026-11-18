@@ -139,6 +139,17 @@ const SCREENS = [
     },
     anchor: 'section[aria-label="Metrics Forecast"]',
   },
+  {
+    // From a metric card, a forecast is now created directly: capture the confirmed result,
+    // not the previous manual assistant form, which no longer appears on successful creation.
+    name: 'metrics-forecast-assistant',
+    url: '/metrics',
+    settle: async page => {
+      await page.locator('button:enabled').filter({ hasText: 'Prepare a forecast' }).first().click();
+      await page.getByText('Forecast started for gauge_volume_demo_orders_1_received.').waitFor();
+    },
+    anchor: 'section[aria-labelledby="metric-forecast-preparation"]',
+  },
 ];
 
 /**

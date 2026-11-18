@@ -142,6 +142,20 @@ const STATES = {
       },
       close: ESCAPE,
     },
+    {
+      // A metric card now starts a forecast automatically; measure its resulting confirmation,
+      // not the historical manual configuration form.
+      name: 'forecast-assistant',
+      viewports: ['phone', 'tablet', 'desktop'],
+      open: async page => {
+        await page.locator('button:enabled').filter({ hasText: 'Prepare a forecast' }).first().click();
+        await page.getByText('Forecast started for gauge_volume_demo_orders_1_received.').waitFor({ timeout: 5000 });
+      },
+      close: async page => {
+        await page.getByRole('button', { name: 'Close forecast preparation' }).click();
+        await page.waitForTimeout(200);
+      },
+    },
     /*
      * Il y avait ici un état « liste de topics dépliée ». Il est retiré, et le mesurer est ce
      * qui l'a décidé : avec le catalogue de démo, ses options ne tronquent à aucune des trois
@@ -247,6 +261,7 @@ const UNREACHABLE_BUDGET = {
   'dead-letter·open': 0,
   'metrics': 0,
   'metrics·editor': 2,
+  'metrics·forecast-assistant': 0,
   'cluster': 2,
   /*
    * L'unique ligne est le point de la pastille de connexion — `span 18>12`, classe
@@ -308,6 +323,7 @@ const TARGET_BUDGET = {
   'audit': 23,
   'metrics': 7,
   'metrics·editor': 7,
+  'metrics·forecast-assistant': 7,
   'cluster': 1,
   /*
    * 15 à la première mesure, dont **13 étaient les `<input>` `sr-only` des groupes radio de cette
