@@ -59,7 +59,7 @@ const AnomalyFeed: React.FC<AnomalyFeedProps> = ({ anomalies }) => {
             }`}
           >
             {/* Severity dot */}
-            <span className={`mt-1.5 flex-shrink-0 h-2 w-2 rounded-full ${
+            <span className={`mt-1.5 shrink-0 h-2 w-2 rounded-full ${
               severityDot[anomaly.severity] ?? 'bg-outline'
             }`} />
 

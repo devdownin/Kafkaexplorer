@@ -119,7 +119,7 @@ export const ProcessModelPanel: React.FC<{ model: ProcessModel | null | undefine
               <tbody>
                 {model.edges.map(e => (
                   <tr key={`${e.from}→${e.to}`} className="border-t border-outline-variant/40">
-                    <td className="py-1 pr-3 text-on-surface break-words">
+                    <td className="py-1 pr-3 text-on-surface wrap-break-word">
                       <span className="font-mono">{e.from}</span>
                       <span aria-hidden="true" className="text-on-surface-variant"> → </span>
                       <span className="font-mono">{e.to}</span>
@@ -161,10 +161,10 @@ export const ProcessModelPanel: React.FC<{ model: ProcessModel | null | undefine
             {model.variants.map(v => (
               <li key={v.path.join('→')} className="text-xs">
                 <div className="flex items-baseline gap-2">
-                  <span className="font-mono tabular-nums text-on-surface w-16 flex-shrink-0">
+                  <span className="font-mono tabular-nums text-on-surface w-16 shrink-0">
                     {share(v.cases, model.cases)}
                   </span>
-                  <span className="text-on-surface-variant break-words">
+                  <span className="text-on-surface-variant wrap-break-word">
                     {v.path.join(' → ')}
                   </span>
                 </div>
@@ -185,10 +185,10 @@ export const ProcessModelPanel: React.FC<{ model: ProcessModel | null | undefine
           <ul className="text-xs text-on-surface-variant space-y-0.5">
             {model.ends.map(e => (
               <li key={e.activity} className="flex items-baseline gap-2">
-                <span className="font-mono tabular-nums w-16 flex-shrink-0 text-on-surface">
+                <span className="font-mono tabular-nums w-16 shrink-0 text-on-surface">
                   {share(e.cases, model.cases)}
                 </span>
-                <span className="font-mono break-words">{e.activity}</span>
+                <span className="font-mono wrap-break-word">{e.activity}</span>
               </li>
             ))}
           </ul>

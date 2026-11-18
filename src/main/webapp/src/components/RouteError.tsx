@@ -61,7 +61,7 @@ const RouteError: FC = () => {
         error
       </span>
       <h1 className="mt-4 text-lg font-semibold text-on-surface">This page failed to load</h1>
-      <p className="mt-1 text-[13px] text-on-surface-variant max-w-lg break-words">{message}</p>
+      <p className="mt-1 text-[13px] text-on-surface-variant max-w-lg wrap-break-word">{message}</p>
       <div className="mt-5 flex items-center gap-2">
         <Button onClick={() => window.location.reload()}>Reload</Button>
         <Button variant="ghost" onClick={() => { window.location.href = '/'; }}>

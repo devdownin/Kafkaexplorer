@@ -551,7 +551,7 @@ const Audit: React.FC = () => {
           <span className="material-symbols-outlined text-[20px] text-error shrink-0">report</span>
           <div className="min-w-0">
             <span className="text-[11px] font-bold text-error uppercase tracking-widest">Audit failed</span>
-            <p className="text-on-surface mt-1 leading-relaxed break-words">
+            <p className="text-on-surface mt-1 leading-relaxed wrap-break-word">
               {stats.error ?? 'The audit stopped before producing a report.'}
             </p>
             {stats.errorType && (
@@ -1084,7 +1084,7 @@ const Audit: React.FC = () => {
                   <div className="p-4 flex items-start gap-2 overflow-x-auto">
                     {flow.steps.map((step, idx) => (
                       <React.Fragment key={step.topicName}>
-                        <div className="flex-shrink-0 bg-surface-container-high border border-outline-variant rounded-lg p-3 min-w-[140px]">
+                        <div className="shrink-0 bg-surface-container-high border border-outline-variant rounded-lg p-3 min-w-[140px]">
                           <Link to={`/topic/${encodeURIComponent(step.topicName)}`} className="font-mono text-[12px] font-medium text-on-surface hover:text-primary hover:underline block truncate" title={step.topicName}>
                             {step.topicName}
                           </Link>
@@ -1099,7 +1099,7 @@ const Audit: React.FC = () => {
                           )}
                         </div>
                         {idx < flow.steps.length - 1 && (
-                          <span className="material-symbols-outlined text-outline self-center flex-shrink-0">arrow_forward</span>
+                          <span className="material-symbols-outlined text-outline self-center shrink-0">arrow_forward</span>
                         )}
                       </React.Fragment>
                     ))}

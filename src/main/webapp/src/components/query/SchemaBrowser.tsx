@@ -161,7 +161,7 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
   const shownSaved = useMemo(() => savedQueries.filter(sq =>
     !q || sq.name.toLowerCase().includes(q) || sq.sql.toLowerCase().includes(q)), [savedQueries, q]);
   return (
-  <aside ref={ref} className="relative flex-shrink-0 flex flex-col border-r border-outline-variant/60 bg-surface-container-low" style={{ width }}>
+  <aside ref={ref} className="relative shrink-0 flex flex-col border-r border-outline-variant/60 bg-surface-container-low" style={{ width }}>
     {/* Sidebar drag handle */}
     <div
       role="separator"
@@ -206,7 +206,7 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
               <span aria-hidden="true" className="material-symbols-outlined text-warning text-[14px] mt-px shrink-0">warning</span>
               <p className="text-[11px] text-on-surface-variant leading-snug min-w-0">
                 <span className="font-semibold text-warning">Kafka: </span>
-                <span className="break-words">{schema.kafkaError}</span>
+                <span className="wrap-break-word">{schema.kafkaError}</span>
               </p>
             </div>
           )}
@@ -215,7 +215,7 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
               <span aria-hidden="true" className="material-symbols-outlined text-warning text-[14px] mt-px shrink-0">warning</span>
               <p className="text-[11px] text-on-surface-variant leading-snug min-w-0">
                 <span className="font-semibold text-warning">Flink: </span>
-                <span className="break-words">{schema.flinkError}</span>
+                <span className="wrap-break-word">{schema.flinkError}</span>
               </p>
             </div>
           )}

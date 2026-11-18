@@ -166,7 +166,7 @@ const NodeShape: React.FC<{
 
   return (
     <g
-      className="cursor-pointer focus:outline-none"
+      className="cursor-pointer focus:outline-hidden"
       // Chaque nœud est atteignable au clavier : la sélection ouvre le panneau de détails, et
       // elle n'existait qu'à la souris.
       tabIndex={0}
@@ -385,7 +385,7 @@ const Lineage: React.FC = () => {
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               placeholder="Search nodes…"
-              className="bg-transparent outline-none text-xs text-on-surface w-full placeholder:text-outline"
+              className="bg-transparent outline-hidden text-xs text-on-surface w-full placeholder:text-outline"
             />
             {searchTerm && (
               <button onClick={() => setSearchTerm('')} className="text-outline hover:text-on-surface">
@@ -548,7 +548,7 @@ const Lineage: React.FC = () => {
         {!isEmpty && (
           <svg
             ref={svgRef}
-            className="w-full h-full select-none focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
+            className="w-full h-full select-none focus:outline-hidden focus-visible:ring-1 focus-visible:ring-primary/60"
             style={{ cursor: 'grab', touchAction: 'none' }}
             role="application"
             tabIndex={0}
@@ -556,7 +556,7 @@ const Lineage: React.FC = () => {
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
-            onPointerLeave={onPointerUp}
+            onLostPointerCapture={onPointerUp}
             onKeyDown={onGraphKeyDown}
             // Cliquer le fond désélectionne, comme sur le graphe de Stream Flow.
             onClick={e => { if (e.target === e.currentTarget) setSelectedNode(null); }}

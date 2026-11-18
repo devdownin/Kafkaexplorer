@@ -76,7 +76,7 @@ export const ErrorPanel: FC<ErrorPanelProps> = ({ error, onRetry, action, onDism
           )}
 
           {rawOpen && showRaw && (
-            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-container/60 p-2 font-mono text-[11px] text-on-surface-variant">
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap wrap-break-word rounded bg-surface-container/60 p-2 font-mono text-[11px] text-on-surface-variant">
               {error.raw}
             </pre>
           )}

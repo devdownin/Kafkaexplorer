@@ -166,7 +166,7 @@ const CoverageNotice: React.FC<{ coverage: ProcessMiningCoverage | null | undefi
         ? 'border-warning/30 bg-warning/5'
         : 'border-outline-variant/60 bg-surface-container/40'
     }`}>
-      <span aria-hidden="true" className={`material-symbols-outlined text-lg flex-shrink-0 ${
+      <span aria-hidden="true" className={`material-symbols-outlined text-lg shrink-0 ${
         tone === 'failed' ? 'text-error' : tone === 'partial' ? 'text-warning' : 'text-on-surface-variant'
       }`}>
         {tone === 'complete' ? 'fact_check' : 'rule'}
@@ -178,10 +178,10 @@ const CoverageNotice: React.FC<{ coverage: ProcessMiningCoverage | null | undefi
           <ul className="mt-1.5 space-y-1">
             {summary.notes.map((note, i) => (
               <li key={i} className="text-[11px] text-on-surface-variant leading-snug flex items-start gap-1.5">
-                <span aria-hidden="true" className="material-symbols-outlined text-[13px] mt-0.5 flex-shrink-0">
+                <span aria-hidden="true" className="material-symbols-outlined text-[13px] mt-0.5 shrink-0">
                   arrow_right
                 </span>
-                <span className="break-words">{note}</span>
+                <span className="wrap-break-word">{note}</span>
               </li>
             ))}
           </ul>
@@ -796,7 +796,7 @@ const ProcessMining: React.FC = () => {
           gagne. Synchroniser écraserait une saisie en cours — le dire laisse le choix. */}
       {draftConflict && (
         <div className="bg-warning/5 border border-warning/30 rounded-xl p-3 flex items-start gap-3">
-          <span aria-hidden="true" className="material-symbols-outlined text-warning text-lg flex-shrink-0">tab_duplicate</span>
+          <span aria-hidden="true" className="material-symbols-outlined text-warning text-lg shrink-0">tab_duplicate</span>
           <p className="text-xs text-on-surface-variant">
             This pipeline is also open in another tab, which has just written its own draft.
             Whichever tab writes last is the one that will be restored — this one keeps what is on
@@ -809,7 +809,7 @@ const ProcessMining: React.FC = () => {
           passe pour l'état courant, alors qu'il date de la visite précédente. */}
       {resumeNotice && (
         <div className="bg-primary/5 border border-primary/20 rounded-xl p-3 flex items-start gap-3">
-          <span aria-hidden="true" className="material-symbols-outlined text-primary text-lg flex-shrink-0">history</span>
+          <span aria-hidden="true" className="material-symbols-outlined text-primary text-lg shrink-0">history</span>
           <p className="text-xs text-on-surface-variant">{resumeNotice}</p>
           <button
             type="button"
@@ -850,7 +850,7 @@ const ProcessMining: React.FC = () => {
                 <p className={`text-xs mt-1.5 flex items-start gap-1.5 ${
                   policy.tone === 'open' ? 'text-warning' : 'text-on-surface-variant'
                 }`}>
-                  <span aria-hidden="true" className="material-symbols-outlined text-sm flex-shrink-0">
+                  <span aria-hidden="true" className="material-symbols-outlined text-sm shrink-0">
                     {policy.tone === 'local' || policy.tone === 'restricted' ? 'lock' : 'policy'}
                   </span>
                   <span><span className="font-medium">{policy.label}.</span> {policy.detail}</span>
@@ -867,18 +867,18 @@ const ProcessMining: React.FC = () => {
               )}
               {llmInfo.llmConfigurationProblem && (
                 <p className="text-xs mt-2 flex items-start gap-1.5 text-warning">
-                  <span aria-hidden="true" className="material-symbols-outlined text-sm flex-shrink-0">
+                  <span aria-hidden="true" className="material-symbols-outlined text-sm shrink-0">
                     warning
                   </span>
-                  <span className="break-words">{llmInfo.llmConfigurationProblem}</span>
+                  <span className="wrap-break-word">{llmInfo.llmConfigurationProblem}</span>
                 </p>
               )}
               {llmTest && (
                 <p className={`text-xs mt-2 flex items-start gap-1.5 ${llmTest.ok ? 'text-success' : 'text-error'}`}>
-                  <span aria-hidden="true" className="material-symbols-outlined text-sm flex-shrink-0">
+                  <span aria-hidden="true" className="material-symbols-outlined text-sm shrink-0">
                     {llmTest.ok ? 'check_circle' : 'error'}
                   </span>
-                  <span className="break-words">{llmTest.message}</span>
+                  <span className="wrap-break-word">{llmTest.message}</span>
                 </p>
               )}
             </div>
@@ -896,7 +896,7 @@ const ProcessMining: React.FC = () => {
       {/* Error banner */}
       {error && (
         <div className="bg-error/10 border border-error/30 rounded-xl p-4 flex items-start gap-3">
-          <span className="material-symbols-outlined text-error text-lg flex-shrink-0">error</span>
+          <span className="material-symbols-outlined text-error text-lg shrink-0">error</span>
           <div>
             <p className="text-sm font-semibold text-error">Error</p>
             <p className="text-xs text-error mt-0.5">{error}</p>
@@ -1128,7 +1128,7 @@ const ProcessMining: React.FC = () => {
                     l'apparence de celle qui a été configurée. */}
                 {liveMappingApplied === false && (
                   <div className="bg-warning/10 border border-warning/30 rounded-xl p-3 flex items-start gap-3">
-                    <span aria-hidden="true" className="material-symbols-outlined text-warning text-lg flex-shrink-0">link_off</span>
+                    <span aria-hidden="true" className="material-symbols-outlined text-warning text-lg shrink-0">link_off</span>
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-warning">Field mapping not applied</p>
                       <p className="text-xs text-warning/90 mt-0.5">
@@ -1172,7 +1172,7 @@ const ProcessMining: React.FC = () => {
                     the counters simply stopping is not a message. */}
                 {liveStarted && !liveConnected && (
                   <div className="bg-surface-container border border-outline-variant rounded-xl p-3 flex items-start gap-3">
-                    <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-lg flex-shrink-0">pause_circle</span>
+                    <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-lg shrink-0">pause_circle</span>
                     <p className="text-xs text-on-surface-variant">
                       Live monitoring is stopped — what is shown below is the last window analysed.
                       Resume starts a new session, which begins reading from the end of each topic.
@@ -1184,16 +1184,16 @@ const ProcessMining: React.FC = () => {
                     il se lit en ambre, à côté de l'erreur et jamais à sa place. */}
                 {liveBudgetNotice && (
                   <div className="bg-warning/10 border border-warning/30 rounded-xl p-3 flex items-start gap-3">
-                    <span aria-hidden="true" className="material-symbols-outlined text-warning text-lg flex-shrink-0">savings</span>
+                    <span aria-hidden="true" className="material-symbols-outlined text-warning text-lg shrink-0">savings</span>
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-warning">Session spend limit</p>
-                      <p className="text-xs text-warning/90 mt-0.5 break-words">{liveBudgetNotice}</p>
+                      <p className="text-xs text-warning/90 mt-0.5 wrap-break-word">{liveBudgetNotice}</p>
                     </div>
                     <button
                       type="button"
                       aria-label="Dismiss"
                       onClick={() => setLiveBudgetNotice(null)}
-                      className="ml-auto text-warning hover:text-warning/80 flex-shrink-0"
+                      className="ml-auto text-warning hover:text-warning/80 shrink-0"
                     >
                       <span aria-hidden="true" className="material-symbols-outlined text-base">close</span>
                     </button>
@@ -1201,10 +1201,10 @@ const ProcessMining: React.FC = () => {
                 )}
                 {liveError && (
                   <div className="bg-error/10 border border-error/30 rounded-xl p-3 flex items-start gap-3">
-                    <span aria-hidden="true" className="material-symbols-outlined text-error text-lg flex-shrink-0">error</span>
+                    <span aria-hidden="true" className="material-symbols-outlined text-error text-lg shrink-0">error</span>
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-error">Last window could not be analysed</p>
-                      <p className="text-xs text-error/90 mt-0.5 break-words">{liveError}</p>
+                      <p className="text-xs text-error/90 mt-0.5 wrap-break-word">{liveError}</p>
                       <p className="text-[11px] text-on-surface-variant mt-1">
                         Ingestion continues; the next window will be analysed as usual.
                       </p>
@@ -1213,7 +1213,7 @@ const ProcessMining: React.FC = () => {
                       type="button"
                       aria-label="Dismiss"
                       onClick={() => setLiveError(null)}
-                      className="ml-auto text-error hover:text-error/80 flex-shrink-0"
+                      className="ml-auto text-error hover:text-error/80 shrink-0"
                     >
                       <span aria-hidden="true" className="material-symbols-outlined text-base">close</span>
                     </button>
@@ -1319,7 +1319,7 @@ const ProcessMining: React.FC = () => {
                             {s.sourceFile ?? 'unknown source'}
                           </span>
                           {s.score != null && (
-                            <span className="text-[10px] text-on-surface-variant flex-shrink-0">
+                            <span className="text-[10px] text-on-surface-variant shrink-0">
                               score {s.score.toFixed(3)}
                             </span>
                           )}
@@ -1343,7 +1343,7 @@ const ProcessMining: React.FC = () => {
                     <ul className="space-y-1.5">
                       {snapshotResult.hypotheses.map((h, i) => (
                         <li key={i} className="flex items-start gap-2 text-sm text-on-surface">
-                          <span className="material-symbols-outlined text-primary text-sm mt-0.5 flex-shrink-0">
+                          <span className="material-symbols-outlined text-primary text-sm mt-0.5 shrink-0">
                             lightbulb
                           </span>
                           {h}
@@ -1361,7 +1361,7 @@ const ProcessMining: React.FC = () => {
                     <ul className="space-y-1.5">
                       {snapshotResult.blindSpots.map((bs, i) => (
                         <li key={i} className="flex items-start gap-2 text-sm text-on-surface">
-                          <span className="material-symbols-outlined text-warning text-sm mt-0.5 flex-shrink-0">
+                          <span className="material-symbols-outlined text-warning text-sm mt-0.5 shrink-0">
                             visibility_off
                           </span>
                           {bs}

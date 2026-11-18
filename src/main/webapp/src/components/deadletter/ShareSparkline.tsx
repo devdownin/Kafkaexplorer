@@ -114,7 +114,7 @@ const ShareSparkline: React.FC<ShareSparklineProps> = ({ topic, source, series, 
         onPointerMove={e => setHovered(bucketAt(e.clientX, e.currentTarget))}
         onPointerLeave={() => setHovered(null)}
         onBlur={() => setHovered(null)}
-        className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default"
+        className="rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-default"
       >
         <svg
           width={WIDTH}

@@ -156,7 +156,10 @@ export function useGraphViewport(options: GraphViewportOptions = {}): GraphViewp
   }, [viewport, zoomAround]);
 
   const onPointerDown = useCallback((e: ReactPointerEvent<SVGSVGElement>) => {
-    if (ignoreDragOn && (e.target as Element).closest(ignoreDragOn)) return;
+    const target = e.target as Element;
+    if (ignoreDragOn && target.closest(ignoreDragOn)) return;
+    // Keep the drag active past the SVG edge while preserving clicks on the initial target.
+    target.setPointerCapture(e.pointerId);
     isPanning.current = true;
     dragged.current = false;
     lastPos.current = { x: e.clientX, y: e.clientY };

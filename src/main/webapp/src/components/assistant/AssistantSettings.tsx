@@ -59,17 +59,17 @@ export const AssistantSettings: React.FC<AssistantSettingsProps> = ({ contextWin
         <>
           <div className="flex items-center gap-2 flex-wrap">
             <Badge tone={help.tone} dot>{help.label}</Badge>
-            <span className="text-on-surface-variant break-words">{describeAssistantEffective(status)}</span>
+            <span className="text-on-surface-variant wrap-break-word">{describeAssistantEffective(status)}</span>
           </div>
-          <p className="text-on-surface-variant break-words">{help.detail}</p>
-          {help.howToEnable && <p className="font-mono text-[11.5px] text-on-surface-variant break-words">{help.howToEnable}</p>}
+          <p className="text-on-surface-variant wrap-break-word">{help.detail}</p>
+          {help.howToEnable && <p className="font-mono text-[11.5px] text-on-surface-variant wrap-break-word">{help.howToEnable}</p>}
           <div className="flex items-center gap-3 flex-wrap">
             <Button type="button" size="sm" variant="outline" icon={testing ? undefined : 'network_check'}
               loading={testing} disabled={testing} onClick={() => void test()}>
               {testing ? 'Testing the assistant model…' : 'Test the assistant model'}
             </Button>
             {result && (
-              <span role="status" className={`break-words ${result.ok ? 'text-success' : 'text-error'}`}>{result.message}</span>
+              <span role="status" className={`wrap-break-word ${result.ok ? 'text-success' : 'text-error'}`}>{result.message}</span>
             )}
           </div>
         </>

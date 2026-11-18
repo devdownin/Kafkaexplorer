@@ -893,7 +893,7 @@ const Config: React.FC = () => {
             depuis `pingDetail`, cette page lisait le booléen.
           */}
           {!config.isConnected && config.connectionError && (
-            <p className="text-xs text-on-surface-variant/80 mt-0.5 break-words">
+            <p className="text-xs text-on-surface-variant/80 mt-0.5 wrap-break-word">
               {config.connectionError}
             </p>
           )}
@@ -1162,7 +1162,7 @@ const Config: React.FC = () => {
               {config.llmConfigurationProblem && (
                 <p className="flex items-start gap-2 text-warning">
                   <span aria-hidden="true" className="material-symbols-outlined text-[16px] mt-px">warning</span>
-                  <span className="break-words">
+                  <span className="wrap-break-word">
                     The configuration in force cannot call a model: {config.llmConfigurationProblem}
                   </span>
                 </p>
@@ -1172,7 +1172,7 @@ const Config: React.FC = () => {
                   <span aria-hidden="true" className="material-symbols-outlined text-[16px] mt-px">
                     {config.llmStructuredOutputActive ? 'data_object' : 'help'}
                   </span>
-                  <span className="break-words">
+                  <span className="wrap-break-word">
                     {config.llmStructuredOutputActive
                       ? 'Answers are constrained by a JSON schema on this provider.'
                       : 'Answers are not constrained by a JSON schema here — the reply is parsed '
@@ -1507,7 +1507,7 @@ const Config: React.FC = () => {
               <span className="material-symbols-outlined text-[16px] mt-0.5">
                 {llmTestResult.ok ? 'check_circle' : 'error'}
               </span>
-              <span className="break-words">{llmTestResult.message}</span>
+              <span className="wrap-break-word">{llmTestResult.message}</span>
             </div>
           )}
 
@@ -1537,7 +1537,7 @@ const Config: React.FC = () => {
                       {note.tone === 'warning' ? 'warning'
                         : note.tone === 'ok' ? 'check_circle' : 'help'}
                     </span>
-                    <span className="break-words text-on-surface-variant">{note.text}</span>
+                    <span className="wrap-break-word text-on-surface-variant">{note.text}</span>
                   </li>
                 ))}
               </ul>

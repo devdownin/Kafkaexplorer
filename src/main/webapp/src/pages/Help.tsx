@@ -485,7 +485,7 @@ GROUP BY window_start, window_end`}
               <Badge tone="primary">{kind.name}</Badge>
               {/* Wrap plutôt que défiler : une signature d'une ligne coupée en plein milieu ne
                   s'enseigne pas, et personne ne pense à faire défiler une carte. */}
-              <pre className="font-mono text-[11px] text-on-surface-variant leading-relaxed whitespace-pre-wrap break-words">{kind.signature}</pre>
+              <pre className="font-mono text-[11px] text-on-surface-variant leading-relaxed whitespace-pre-wrap wrap-break-word">{kind.signature}</pre>
               <p className="text-[12px] text-on-surface leading-relaxed">{kind.use}</p>
               {kind.caveat && (
                 <p className="text-[11.5px] text-warning/90 leading-relaxed">{kind.caveat}</p>
@@ -513,7 +513,7 @@ GROUP BY window_start, window_end`}
         <div className="space-y-3">
           {ERROR_GUIDE.map((entry) => (
             <Card key={entry.message} padding="md">
-              <p className="font-mono text-[11.5px] text-error mb-2 break-words">{entry.message}</p>
+              <p className="font-mono text-[11.5px] text-error mb-2 wrap-break-word">{entry.message}</p>
               <p className="text-[12px] text-on-surface leading-relaxed">{entry.meaning}</p>
               <p className="text-[12px] text-on-surface-variant leading-relaxed mt-1.5 flex gap-2">
                 <span className="material-symbols-outlined text-success text-[15px] mt-px shrink-0">lightbulb</span>
@@ -543,7 +543,7 @@ GROUP BY window_start, window_end`}
                   <Badge tone={assistantHelp.tone} dot>{assistantHelp.label}</Badge>
                   <p className="mt-1 text-[12px] text-on-surface-variant leading-relaxed">{assistantHelp.detail}</p>
                   {assistantHelp.howToEnable && (
-                    <p className="mt-1 text-[11.5px] text-on-surface-variant leading-relaxed font-mono break-words">{assistantHelp.howToEnable}</p>
+                    <p className="mt-1 text-[11.5px] text-on-surface-variant leading-relaxed font-mono wrap-break-word">{assistantHelp.howToEnable}</p>
                   )}
                 </div>
               )}
