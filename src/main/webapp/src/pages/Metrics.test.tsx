@@ -236,6 +236,27 @@ describe('Metrics page', () => {
     expect(status).toHaveTextContent('History 68 / 128 points · first forecast in ~60 min');
     expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
   });
+  it('extends the selected metric chart with a distinguishable forecast and disables preparation', async () => {
+    const historyEndAt = Date.now();
+    const forecastSeries = {
+      seriesId: 'b'.repeat(64), metricId: templateMetric.id, environment: 'local',
+      stepMillis: 60000, minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+      activation: { eligible: false, reason: 'Collecting quality evidence', blockPoints: 0,
+        blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: { state: 'READY', strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'Forecast ready',
+        context: { status: 'READY', observedPoints: 128, outputUnit: 'milliseconds',
+          profile: { transformation: 'GAUGE_MEAN', stepMillis: 60000, contextPoints: 512 }, points: [] },
+        forecast: { historyEndAt, points: [
+          { at: historyEndAt + 60000, central: 405, q50: 405, q10: 390, q90: 425 },
+          { at: historyEndAt + 120000, central: 415, q50: 415, q10: 400, q90: 435 },
+        ] }, quality: null },
+    };
+    stubApi([templateMetric], [suggestion], { ...READY_FORECASTS, series: [forecastSeries] });
+    await renderPage();
+    expect(await screen.findByLabelText('Metric chart legend')).toHaveTextContent('Observed');
+    expect(screen.getByLabelText('Metric chart legend')).toHaveTextContent('Forecast');
+    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+  });
   it('renders a template metric, whose SQL is null by construction', async () => {
     stubApi([templateMetric]);
     await renderPage();
