@@ -987,7 +987,12 @@ const Metrics: React.FC = () => {
           }}
           forecastMetricIds={forecastMetricIds} />
       </section>}
-      <ForecastPanel refresh={forecastRevision} focus={forecastFocus} onStatus={setForecastStatus}
+      <ForecastPanel refresh={forecastRevision} focus={forecastFocus} onStatus={status => {
+        setForecastStatus(status);
+        // Once the server lists the new series, its status becomes authoritative. A later
+        // withdrawal can then re-enable the metric's Prepare action.
+        setCreatedForecastMetricId(id => id && status?.series.some(series => series.metricId === id) ? '' : id);
+      }}
         onConfigure={canCreateForecast
           ? () => setForecastRequest(previous => ({ sequence: (previous?.sequence ?? 0) + 1 }))
           : undefined} />
