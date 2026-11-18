@@ -34,7 +34,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Fast, actionable feedback before Maven, Docker and screenshot jobs consume runners.
+  # Authors can run the same gate locally: bash bin/pr-preflight.sh.
+  pr-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+    - name: Set up Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: src/main/webapp/package-lock.json
+    - name: Frontend and documentation preflight
+      run: bash bin/pr-preflight.sh
+
   build:
+    needs: pr-preflight
     runs-on: ubuntu-latest
     # The suite finishes in ~2 minutes. Without a cap, a wedged Flink test or a
     # container that never becomes healthy runs into GitHub's 360-minute default.
