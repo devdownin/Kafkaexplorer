@@ -159,7 +159,11 @@ const Metrics: React.FC = () => {
   const [forecastRevision, setForecastRevision] = useState(0);
   // The series the assistant just started: the panel shows it, not whichever series is first.
   const [forecastFocus, setForecastFocus] = useState('');
-  const forecastMetricIds = useMemo(() => forecastStatus?.series.map(s => s.metricId) ?? [], [forecastStatus]);
+  // The creation response arrives before the next /api/forecasts poll: disable the card at once.
+  const [createdForecastMetricId, setCreatedForecastMetricId] = useState('');
+  const forecastMetricIds = useMemo(() => [
+    ...new Set([...(forecastStatus?.series.map(s => s.metricId) ?? []), ...(createdForecastMetricId ? [createdForecastMetricId] : [])]),
+  ], [forecastStatus, createdForecastMetricId]);
   /**
    * Whether a forecast can be created at all: the pilot is on and a forecasting model is configured
    * (TimesFM; Timestral is only its shadow). Known only once the status has been read, and a status
@@ -172,6 +176,11 @@ const Metrics: React.FC = () => {
     // A metric forecast in two environments shows the first, as the panel's selector does.
     for (const s of forecastStatus?.series ?? []) if (!stages.has(s.metricId)) stages.set(s.metricId, forecastStage(s));
     return stages;
+  }, [forecastStatus]);
+  const forecastSeriesByMetric = useMemo(() => {
+    const series = new Map<string, ForecastStatus['series'][number]>();
+    for (const s of forecastStatus?.series ?? []) if (!series.has(s.metricId)) series.set(s.metricId, s);
+    return series;
   }, [forecastStatus]);
   useEffect(() => {
     if (!forecastRequest) return;
@@ -948,7 +957,10 @@ const Metrics: React.FC = () => {
               onPrepareForecast={canCreateForecast
                 ? () => setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1 }))
                 : undefined}
-              forecast={forecastStages.get(metric.id)}
+              forecast={forecastStages.get(metric.id) ?? (createdForecastMetricId === metric.id
+                ? { stage: 'WAITING', label: 'Started', tone: 'neutral', detail: 'Waiting for the first forecast cycle' }
+                : undefined)}
+              forecastSeries={forecastSeriesByMetric.get(metric.id)}
             />
           )) : (
             <div className="col-span-full text-center py-12 text-on-surface-variant text-sm">
@@ -968,7 +980,11 @@ const Metrics: React.FC = () => {
           <Button variant="ghost" size="sm" icon="close" onClick={() => setForecastRequest(null)}>Close forecast preparation</Button>
         </div>
         <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId}
-          onApplied={seriesId => { setForecastFocus(seriesId); setForecastRevision(v => v + 1); }}
+          onApplied={seriesId => {
+            if (forecastRequest.metricId) setCreatedForecastMetricId(forecastRequest.metricId);
+            setForecastFocus(seriesId);
+            setForecastRevision(v => v + 1);
+          }}
           forecastMetricIds={forecastMetricIds} />
       </section>}
       <ForecastPanel refresh={forecastRevision} focus={forecastFocus} onStatus={setForecastStatus}
