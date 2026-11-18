@@ -148,7 +148,7 @@ const STATES = {
       name: 'forecast-assistant',
       viewports: ['phone', 'tablet', 'desktop'],
       open: async page => {
-        await page.getByRole('button', { name: 'Prepare a forecast' }).first().click();
+        await page.locator('button:enabled').filter({ hasText: 'Prepare a forecast' }).first().click();
         await page.getByText('Forecast started for gauge_volume_demo_orders_1_received.').waitFor({ timeout: 5000 });
       },
       close: async page => {
