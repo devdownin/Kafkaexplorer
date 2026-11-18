@@ -234,7 +234,7 @@ describe('Metrics page', () => {
     const status = await screen.findByLabelText(`Forecast status of ${templateMetric.name}`);
     expect(status).toHaveTextContent('Collecting');
     expect(status).toHaveTextContent('History 68 / 128 points · first forecast in ~60 min');
-    expect(screen.queryByRole('button', { name: 'Prepare a forecast' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
   });
   it('renders a template metric, whose SQL is null by construction', async () => {
     stubApi([templateMetric]);
