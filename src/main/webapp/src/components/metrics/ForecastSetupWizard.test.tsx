@@ -17,6 +17,36 @@ describe('ForecastSetupWizard', () => {
     // Choosing the metric is what reveals the form: there is no second step to continue to.
     await user.selectOptions(await screen.findByLabelText('Metric'), 'lag'); return user;
   }
+  it('creates a forecast directly when opened from an eligible metric card', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1, truncated: false,
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 } });
+    vi.mocked(axios.post).mockResolvedValue({ data: { seriesId: 'forecast-lag' } });
+    const onApplied = vi.fn();
+    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" onApplied={onApplied} /></ConfirmProvider>);
+    expect(await screen.findByText('Forecast started for Lag.')).toBeTruthy();
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(axios.post).toHaveBeenCalledWith('/api/forecasts/series', expect.objectContaining({
+      metricId: 'lag', definitionVersion: 'version', unit: 'milliseconds',
+      clusterId: 'existing', collectorId: 'collector', topics: ['orders'], groups: ['worker'],
+      stepMillis: 60000, horizon: 30, seasonality: 'NONE', confirmed: true,
+    }), expect.objectContaining({ timeout: 10000 }));
+    expect(onApplied).toHaveBeenCalledWith('forecast-lag');
+  });
+  it('keeps the editable assistant if automatic creation is refused', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1,
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 } });
+    vi.mocked(axios.post).mockRejectedValue({ response: { data: { reason: 'History not available' } } });
+    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('History not available');
+    expect(screen.getByRole('button', { name: 'Start forecasting' })).toBeTruthy();
+  });
+  it('does not automatically create a series already present', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1,
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null } });
+    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" forecastMetricIds={['lag']} /></ConfirmProvider>);
+    expect(await screen.findByRole('option', { name: /already forecast/ })).toBeDisabled();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
   it('shows metadata blockers in place of the form', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [{ ...metric, eligible: false, blockers: ['Set a known unit'] }], total: 1 } });
     const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);

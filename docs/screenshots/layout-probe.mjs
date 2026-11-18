@@ -143,13 +143,13 @@ const STATES = {
       close: ESCAPE,
     },
     {
-      // L'assistant de prévision : quatre tuiles de résumé, deux colonnes de sources et un graphique
-      // d'historique, trois dispositions qui ne se resserrent pas toutes au même point.
+      // A metric card now starts a forecast automatically; measure its resulting confirmation,
+      // not the historical manual configuration form.
       name: 'forecast-assistant',
       viewports: ['phone', 'tablet', 'desktop'],
       open: async page => {
         await page.getByRole('button', { name: 'Prepare a forecast' }).first().click();
-        await page.getByRole('img', { name: 'Recorded history chart' }).waitFor({ timeout: 5000 });
+        await page.getByText('Forecast started for gauge_volume_demo_orders_1_received.').waitFor({ timeout: 5000 });
       },
       close: async page => {
         await page.getByRole('button', { name: 'Close forecast preparation' }).click();

@@ -49,6 +49,8 @@ const API = [
   [m => m.startsWith('/api/topic/') && m.endsWith('/consumers'), () => F.topicConsumers],
   [m => m.startsWith('/api/topic/'), () => F.topicDetail],
   [m => m === '/api/forecasts', () => F.forecastStatus],
+  // Card-driven creation uses this route before the screenshot can show the started state.
+  [m => m === '/api/forecasts/series', () => F.forecastApplied],
   [m => m === '/api/forecasts/candidates', () => F.forecastCandidates],
   [m => /^\/api\/forecasts\/candidates\/[^/]+\/history$/.test(m), () => F.forecastHistory],
   [m => /^\/api\/forecasts\/[a-f0-9]{64}\/progress$/.test(m), () => F.forecastProgress],

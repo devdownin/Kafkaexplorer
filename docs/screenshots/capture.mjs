@@ -140,14 +140,13 @@ const SCREENS = [
     anchor: 'section[aria-label="Metrics Forecast"]',
   },
   {
-    // The assistant that starts a forecast: opened from a metric's card, as an operator does, and
-    // waited on the recorded-history chart — the one part that arrives from a second request.
+    // From a metric card, a forecast is now created directly: capture the confirmed result,
+    // not the previous manual assistant form, which no longer appears on successful creation.
     name: 'metrics-forecast-assistant',
     url: '/metrics',
     settle: async page => {
       await page.getByRole('button', { name: 'Prepare a forecast' }).first().click();
-      await page.getByRole('figure', { name: 'Recorded history' }).waitFor();
-      await page.getByRole('img', { name: 'Recorded history chart' }).waitFor();
+      await page.getByText('Forecast started for gauge_volume_demo_orders_1_received.').waitFor();
     },
     anchor: 'section[aria-labelledby="metric-forecast-preparation"]',
   },

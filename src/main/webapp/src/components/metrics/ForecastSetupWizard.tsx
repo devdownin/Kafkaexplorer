@@ -75,6 +75,10 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
   const [busy, setBusy] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const abort = useRef<AbortController | null>(null);
+  // A click on a metric card is an explicit request to create its forecast. StrictMode and
+  // catalogue refreshes must never submit that request twice.
+  const autoStarted = useRef(false);
+  const [autoCreating, setAutoCreating] = useState(false);
   const canApply = candidates?.applyUnavailable === null;
   const horizon = Math.max(1, Math.round(ahead / Number(cadence)));
   function take(c: ForecastCandidate | null) {
@@ -86,22 +90,61 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
   useEffect(() => {
     const controller = new AbortController(); abort.current = controller;
     axios.get<ForecastCandidates>('/api/forecasts/candidates', { signal: controller.signal, timeout: 10000 })
-      .then(({ data }) => {
-        if (!controller.signal.aborted) {
-          if (!Array.isArray(data?.metrics)) { setError('Candidate catalogue unavailable.'); return; }
-          setCandidates(data);
-          if (initialMetricId) {
-            const candidate = data.metrics.find(m => m.metricId === initialMetricId);
-            // Opened from a card, the metric is chosen already and the form is under it at once
-            // (METRICS-FORECAST-UX-AUDIT.md U4). A metric with a blocker shows the blocker instead.
-            if (candidate) take(candidate);
-            else setError('Selected metric is absent from the candidate catalogue. Reload or choose a listed metric.');
-          }
-          if (data.clusterId) setClusterId(data.clusterId);
-          if (data.collectorId) setCollectorId(data.collectorId);
+      .then(async ({ data }) => {
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(data?.metrics)) { setError('Candidate catalogue unavailable.'); return; }
+        setCandidates(data);
+        if (data.clusterId) setClusterId(data.clusterId);
+        if (data.collectorId) setCollectorId(data.collectorId);
+        if (!initialMetricId) return;
+        const candidate = data.metrics.find(m => m.metricId === initialMetricId);
+        if (!candidate) {
+          setError('Selected metric is absent from the candidate catalogue. Reload or choose a listed metric.');
+          return;
+        }
+        take(candidate);
+        // The card's "Prepare a forecast" action creates the series, not merely a draft.
+        // The candidate catalogue supplies the exact definition version and source dependencies;
+        // no second copy of the metric or manually entered SQL is needed.
+        if (autoStarted.current || forecastMetricIds.includes(candidate.metricId)) return;
+        if (!candidate.eligible || !candidate.topics.length || data.applyUnavailable !== null) return;
+        autoStarted.current = true;
+        setAutoCreating(true);
+        setBusy(true);
+        const stepMillis = Number(cadenceFor(candidate));
+        const request: ForecastDraftRequest = {
+          metricId: candidate.metricId,
+          definitionVersion: candidate.definitionVersion,
+          environment: 'local',
+          unit: candidate.unit,
+          clusterId: data.clusterId || 'local',
+          collectorId: data.collectorId || 'kafkaexplorer',
+          topics: candidate.topics,
+          groups: candidate.groups,
+          stepMillis,
+          horizon: Math.max(1, Math.round(aheadFor(1800000, stepMillis) / stepMillis)),
+          threshold: null,
+          direction: 'ABOVE',
+          confirmed: true,
+          seasonality: 'NONE',
+        };
+        try {
+          const { data: result } = await axios.post<ForecastApplied>('/api/forecasts/series', request,
+            { signal: controller.signal, timeout: 10000 });
+          if (typeof result?.seriesId !== 'string') throw new Error('Invalid forecast response');
+          if (!controller.signal.aborted) { setApplied(result); onApplied?.(result.seriesId); }
+        } catch (e) {
+          if (!controller.signal.aborted) setError(axios.isAxiosError(e) && typeof e.response?.data?.reason === 'string'
+            ? `Automatic creation failed: ${e.response.data.reason}. Review the configuration below.`
+            : 'Automatic creation failed. Review the configuration below and retry.');
+        } finally {
+          if (!controller.signal.aborted) { setAutoCreating(false); setBusy(false); }
         }
       }).catch(() => { if (!controller.signal.aborted) setError('Candidate catalogue unavailable.'); });
     return () => controller.abort();
+    // This effect belongs to the chosen card metric. Parent callbacks and forecast status can
+    // change during polling, but restarting this request would abort an in-flight creation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialMetricId]);
   /*
    * What the metric's recorded history looks like at this interval — read when a metric or an
@@ -206,6 +249,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
   return <div className="card p-5 space-y-4" aria-label="Forecast configuration assistant">
     {done && <h4 className="font-semibold">{applied ? 'Forecast started' : 'Configuration ready'}</h4>}
     {error && <p role="alert" className="text-sm text-error">{error}</p>}
+    {autoCreating && <p role="status" className="text-sm text-on-surface-variant">Creating forecast from the selected metric…</p>}
     {!candidates && !error && <p className="text-sm text-on-surface-variant">Loading candidate metrics…</p>}
     {candidates && !done && <>
       <div>
@@ -225,7 +269,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
         <ul className="list-disc pl-5">{selected.blockers.map(b => <li key={b}>{b}</li>)}</ul>
       </div>}
     </>}
-    {candidates && selected?.eligible && !done && <form id="forecast-setup" onSubmit={e => { e.preventDefault(); void submit(canApply ? 'apply' : 'export'); }} className="space-y-4">
+    {candidates && selected?.eligible && !done && !autoCreating && <form id="forecast-setup" onSubmit={e => { e.preventDefault(); void submit(canApply ? 'apply' : 'export'); }} className="space-y-4">
       {/* What the defaults are, without opening the fold that changes them. */}
       <dl className="grid grid-cols-2 lg:grid-cols-4 gap-px overflow-hidden rounded-lg border border-outline-variant bg-outline-variant text-sm" aria-label="Forecast summary">
         {[['Forecast value', TRANSFORMATION[selected.transformation] ?? selected.transformation, selected.transformation === 'COUNTER_RATE' ? `${unit} per second` : unit],
