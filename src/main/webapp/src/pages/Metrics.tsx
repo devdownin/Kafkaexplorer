@@ -191,7 +191,7 @@ const Metrics: React.FC = () => {
     return () => controller.abort();
   }, [canCreateForecast, forecastRevision]);
   const candidatesByMetric = useMemo(() => new Map(
-    forecastCandidates?.metrics.map(candidate => [candidate.metricId, candidate]) ?? [],
+    forecastCandidates?.metrics.map(candidate => [candidate.metricId, candidate] as const) ?? [],
   ), [forecastCandidates]);
   const forecastStages = useMemo(() => {
     const stages = new Map<string, ReturnType<typeof forecastStage>>();
