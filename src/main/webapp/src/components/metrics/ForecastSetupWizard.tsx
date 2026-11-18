@@ -142,6 +142,9 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
         }
       }).catch(() => { if (!controller.signal.aborted) setError('Candidate catalogue unavailable.'); });
     return () => controller.abort();
+    // This effect belongs to the chosen card metric. Parent callbacks and forecast status can
+    // change during polling, but restarting this request would abort an in-flight creation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialMetricId]);
   /*
    * What the metric's recorded history looks like at this interval — read when a metric or an
