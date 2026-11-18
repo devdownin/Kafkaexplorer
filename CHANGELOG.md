@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.6.3] — 2026-11-18
+
 - **The offline forecast overlay can no longer be used without its base.** Run as
   `-f docker-compose.yml -f compose/forecast-offline.yml`, it started a bare `timesfm` beside an Explorer
   with no inference, no history and no credentials, and the panel read "The forecast stack is not
@@ -2814,7 +2818,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.6.3...HEAD
+[2.6.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.5.0...v2.6.3
 [2.5.0]: https://github.com/devdownin/Kafkaexplorer/compare/v0.3.0...v2.5.0
 [0.3.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.4.1...v0.3.0
 [2.4.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.4...v2.4.1
