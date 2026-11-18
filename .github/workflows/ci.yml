@@ -41,6 +41,11 @@ jobs:
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        # check-image-pins.py compares the compose pin with the latest release tag.
+        # A shallow PR checkout has no tags and makes the preflight fail on every PR.
+        fetch-depth: 0
+        fetch-tags: true
     - name: Set up Node.js
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
