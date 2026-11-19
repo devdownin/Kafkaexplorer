@@ -648,7 +648,7 @@ for i in $(seq 0 179); do
   buffer "demo.metrics.requests" \
     "source-system:DEMO-METRICS,event-type:minute.aggregate,produced-at:${EVENT_TIME}000" \
     "minute-$i" \
-    "{\\"event_time\\":$EVENT_TIME,\\"service\\":\\"checkout\\",\\"phase\\":\\"$PHASE\\",\\"requests\\":$REQUESTS,\\"errors\\":$ERRORS,\\"latency_ms\\":$LATENCY_MS}"
+    "{\"event_time\":$EVENT_TIME,\"service\":\"checkout\",\"phase\":\"$PHASE\",\"requests\":$REQUESTS,\"errors\":$ERRORS,\"latency_ms\":$LATENCY_MS}"
 done
 
 # ---------------------------------------------------------------------------
