@@ -293,7 +293,11 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
       {series?.error && <p role="alert">{series.error}</p>}
 
       {result?.forecast ? <>
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-wrap gap-2" aria-label="Forecast export">
+            <Button onClick={() => exportForecast('csv')}>Export CSV</Button>
+            <Button onClick={() => exportForecast('json')}>Export JSON</Button>
+          </div>
           <Field label="History shown" className="w-56">{p => <Select {...p} value={shown} onChange={e => setShown(Number(e.target.value))}>
             {[60, 180, 512].map(n => <option key={n} value={n}>Last {n} points · {about(n, series?.stepMillis ?? 60000)}</option>)}
           </Select>}</Field>
