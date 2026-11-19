@@ -1437,13 +1437,13 @@ const Metrics: React.FC = () => {
                 </div>
 
                 {/* Right: tabbed editors */}
-                <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
 
                   {/* Tabs */}
-                  <div role="tablist" aria-label="Metric definition" className="flex items-center border-b border-outline-variant/60 bg-primary/5 px-4 gap-1">
+                  <div role="tablist" aria-label="Metric definition" className="flex min-w-0 items-center overflow-x-auto border-b border-outline-variant/60 bg-primary/5 px-2 sm:px-4 gap-1">
                     {(['metric', 'ddl'] as const).map(tab => (
                       <button key={tab} type="button" role="tab" aria-selected={editorTab === tab} onClick={() => setEditorTab(tab)}
-                        className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${
+                        className={`shrink-0 px-3 sm:px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${
                           editorTab === tab
                             ? 'border-primary text-primary'
                             : 'border-transparent text-on-surface-variant hover:text-on-surface'
