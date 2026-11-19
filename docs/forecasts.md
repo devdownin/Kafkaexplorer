@@ -69,6 +69,47 @@ host with no registry access). It also scores Timestral-28M beside TimesFM by de
 licence is not open source:** it excludes companies above USD 20 M monthly revenue; read
 [`services/timesfm/licenses/NOTICE.md`](../services/timesfm/licenses/NOTICE.md) before using it.
 
+## Windows: one-command Docker Compose startup
+
+From a Windows Command Prompt or PowerShell in the repository root, with Docker Desktop
+running (Compose v2):
+
+```bat
+run.bat
+run.bat ps
+run.bat logs explorer timesfm forecast-postgres
+run.bat config
+run.bat down
+```
+
+`run.bat` invokes the bundled `run.ps1` in a single PowerShell process; it does not
+change system execution policy and requires no Git Bash or OpenSSL. It starts the same
+`docker-compose.yml` + `compose/forecasts.yml` stack as `bin/forecast-stack.sh`,
+including PostgreSQL history, the authenticated TimesFM CPU service, runtime approvals
+and the Kafka demo broker. The first start builds the Explorer and TimesFM images,
+downloads the pinned checkpoint and waits on Compose's PostgreSQL/TimesFM health
+dependencies. On success the UI is at http://localhost:8080 (or `EXPLORER_PORT`).
+
+On first use the launcher creates `.forecast-stack/.env` with random persistent
+`FORECAST_POSTGRES_PASSWORD`, `TIMESFM_TOKEN`, and `EXPLORER_MCP_AUTH_TOKEN`
+values and creates `.forecast-stack/config/forecasts.yml` if missing. Neither file
+is overwritten on subsequent starts. Existing process environment variables take
+precedence over the root `.env`, then the generated private file, then built-in
+defaults. The launcher explicitly defaults `BIND_ADDR=127.0.0.1`,
+`EXPLORER_PORT=8080`, `KAFKA_PORT=9092`,
+`FORECAST_ENVIRONMENTS=local`, `FORECAST_CLUSTER_ID=local`,
+`FORECAST_COLLECTOR_ID=kafkaexplorer`, `FORECAST_RUNTIME_APPROVAL=true`,
+`TIMESFM_THREADS=4`, `TIMESFM_CPUS=4.0`,
+`TIMESFM_MEM_LIMIT=8g`, `TIMESFM_TIMEOUT=35s` and
+`TIMESTRAL_SHADOW_ENABLED=false`, along with the remaining Compose inputs.
+See `.env.example` to override any value. Timestral is deliberately **not**
+enabled automatically because of its separate model licence.
+
+`run.bat config` validates the merged Compose files without starting containers;
+`run.bat down` preserves downloaded models and forecast history volumes. A
+healthy container does not imply that every metric already has enough historical
+samples to produce a prediction. The Metrics page reports per-metric readiness.
+
 ## Configure and approve
 
 1. Open **Metrics Forecast** and read the preparation checklist. When durable history and TimesFM are
