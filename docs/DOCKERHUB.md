@@ -370,7 +370,7 @@ Ports, one plan for the three: **8080** Kafka SQL Explorer · **8081** Kex-anHar
 
 ## Forecast from a metric
 
-On the **Metrics** page, **Prepare a forecast** uses the selected existing metric rather than creating a duplicate metric. The action is disabled when the metric is ineligible or once its forecast has been prepared. Observations and the projected segment are visually distinguished on the chart; predictions are not measured samples. Use `bin/forecast-stack.sh` for PostgreSQL-backed history and TimesFM inference. See the [guided forecast setup](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md) for prerequisites and approval.
+In **Metrics**, **Prepare a forecast** reuses the selected metric. Disabled actions indicate ineligible or already prepared metrics. Charts distinguish observations from predictions. Start the stack with `bin/forecast-stack.sh`; see the [forecast guide](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md).
 
 ## 📚 More
 
