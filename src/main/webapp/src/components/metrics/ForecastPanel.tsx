@@ -187,6 +187,45 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
           .map(([name, mae]) => ({ name, mae })),
       ].sort((a, b) => a.mae - b.mae)
     : [];
+  // Lot 3: annotations are descriptive only, never an anomaly detector or a new model verdict.
+  const forecastPoints = result?.forecast?.points ?? [];
+  const firstPrediction = forecastPoints[0]?.q50;
+  const lastPrediction = forecastPoints[forecastPoints.length - 1]?.q50;
+  const forecastChange = firstPrediction !== undefined && lastPrediction !== undefined
+    ? lastPrediction - firstPrediction : null;
+  const trend = forecastChange === null ? null
+    : Math.abs(forecastChange) < Math.max(1e-9, Math.abs(firstPrediction ?? 0) * 0.01)
+      ? 'approximately stable' : forecastChange > 0 ? 'rising' : 'falling';
+  const predictedOutside = threshold && forecastPoints.length
+    ? forecastPoints.filter(p => threshold.direction === 'ABOVE'
+      ? p.q50 >= threshold.threshold : p.q50 <= threshold.threshold).length : 0;
+  function exportForecast(format: 'csv' | 'json') {
+    if (!result?.forecast || !series) return;
+    const rows = [
+      ...result.context.points.map(p => ({
+        timestamp: new Date(p.endAt).toISOString(), kind: p.imputed ? 'imputed' : 'observed',
+        value: p.value, q10: null, q50: null, q90: null,
+      })),
+      ...result.forecast.points.map(p => ({
+        timestamp: new Date(p.at).toISOString(), kind: 'forecast',
+        value: null, q10: p.q10, q50: p.q50, q90: p.q90,
+      })),
+    ];
+    const columns = ['timestamp', 'kind', 'value', 'q10', 'q50', 'q90'] as const;
+    const content = format === 'json'
+      ? JSON.stringify({ seriesId: series.seriesId, metricId: series.metricId,
+          unit: result.context.outputUnit, strategy: result.strategy, points: rows }, null, 2)
+      : [columns.join(','), ...rows.map(row => columns.map(key => row[key] ?? '').join(','))].join('\\n');
+    const blob = new Blob([content], { type: format === 'json' ? 'application/json' : 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `forecast-${series.seriesId.replace(/[^a-zA-Z0-9_-]/g, '_')}.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
   const tick = (v: number) => spanMs > 24 * 3600 * 1000
     ? new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     : new Date(v).toLocaleTimeString();
@@ -284,6 +323,14 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
               label={{ value: `Threshold ${threshold.direction === 'ABOVE' ? '≥' : '≤'} ${threshold.threshold}`, position: 'insideTopRight', fill: FORECAST_COLORS.warning, fontSize: 11 }} />}
           </ComposedChart></ResponsiveContainer>
         </div>
+        {trend && <div role="note" className="rounded-lg border border-outline-variant p-3 space-y-1">
+          <p className="font-medium">Forecast insights</p>
+          <p>Predicted median is {trend} across {forecastPoints.length} forecast points.
+            {forecastChange !== null && ` Net change: ${forecastChange.toPrecision(4)} ${result.context.outputUnit}.`}</p>
+          {threshold && <p>{predictedOutside} of {forecastPoints.length} predicted median points
+            {predictedOutside === 1 ? ' meets' : ' meet'} the configured threshold.
+            This describes the median only, not the probability of a breach.</p>}
+        </div>}
         <p className="text-xs text-on-surface-variant"><span>{result.reason}</span> {result.strategy === 'TIMESFM'
           ? 'The 80 % interval is nominal, not a guarantee.' : 'A baseline forecast has no interval.'} No alert is sent.</p>
       </> : <p>{result ? result.reason : series?.error ? null : 'No persisted forecast yet.'}</p>}
