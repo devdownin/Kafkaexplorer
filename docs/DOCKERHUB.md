@@ -21,7 +21,7 @@ One container, one URL, no broker-side installation.
 
 ---
 
-**Upcoming UI/UX:** [dashboard and navigation PRs](https://github.com/devdownin/Kafkaexplorer/pulls) — not yet released.
+**UI/UX roadmap:** [PRs #604–#606](https://github.com/devdownin/Kafkaexplorer/pulls) are not yet released.
 
 ## 🚀 Try it in one command
 
