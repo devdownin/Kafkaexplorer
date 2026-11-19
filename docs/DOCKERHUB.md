@@ -368,9 +368,9 @@ docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
 Ports, one plan for the three: **8080** Kafka SQL Explorer · **8081** Kex-anHarness · **8088** / **8089** SpectraLLM UI / API · **9092** Kafka. SpectraLLM's own stack keeps 80 / 8080 when it runs alone; `SPECTRA_UI_PORT=8088 SPECTRA_API_PORT=8089` puts it beside the other two.
 <!-- ecosystem:end -->
 
-## Forecast from a metric
+## Metric forecasts
 
-**Prepare a forecast** in Metrics reuses the selected metric; unavailable or completed actions are disabled. Charts distinguish predictions from observations. See the [forecast guide](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md).
+In Metrics, **Prepare a forecast** reuses a metric. The chart separates predictions from observations. [Setup](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md).
 
 ## 📚 More
 
