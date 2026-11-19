@@ -370,7 +370,7 @@ Ports, one plan for the three: **8080** Kafka SQL Explorer · **8081** Kex-anHar
 
 ## Metric forecasts
 
-In Metrics, **Prepare a forecast** reuses a metric. The chart separates predictions from observations. [Setup](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md).
+**Prepare a forecast** in Metrics extends the observed chart with predictions. [Guide](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md).
 
 ## 📚 More
 
