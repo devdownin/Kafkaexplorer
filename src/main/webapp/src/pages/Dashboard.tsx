@@ -38,6 +38,7 @@ const PAGE_SIZES = [10, 25, 50, 100];
 /** axios n'a pas de délai par défaut : sans ça, un serveur muet laisse la colonne en squelette. */
 const ACTIVITY_TIMEOUT_MS = 20000;
 const TOPIC_COUNT_KEY = 'dashboard.lastTopicCount';
+const PAGE_SIZE_KEY = 'dashboard.pageSize';
 type SortKey = 'name' | 'size' | 'state' | 'lastMessage';
 type SortDir = 'asc' | 'desc';
 
@@ -73,7 +74,10 @@ const Dashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState(() => params.get('q') ?? '');
   const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(() => {
+    const stored = Number(localStorage.getItem(PAGE_SIZE_KEY));
+    return PAGE_SIZES.includes(stored) ? stored : 25;
+  });
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [hideEmpty, setHideEmpty] = useState(() => params.get('empty') === 'true');
@@ -513,6 +517,31 @@ const Dashboard: React.FC = () => {
         />
       </div>
 
+      {/* Prioritise actionable signals without treating topic names as proof of an incident. */}
+      <section aria-label="Diagnostic overview" className="rounded-lg border border-outline-variant bg-surface-container-low p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-on-surface">Diagnostic overview</h2>
+          <span className="text-xs text-on-surface-variant">Based on the latest dashboard snapshot</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+          <div className="rounded-md bg-surface-container p-3">
+            <div className="text-xs text-on-surface-variant">Cluster connection</div>
+            <div className={`font-semibold mt-1 ${data.health ? 'text-success' : 'text-error'}`}>{data.health ? 'Reachable' : 'Unreachable'}</div>
+            {!data.health && <p className="text-xs mt-1 text-on-surface-variant">Check broker connectivity before investigating topic data.</p>}
+          </div>
+          <div className="rounded-md bg-surface-container p-3">
+            <div className="text-xs text-on-surface-variant">Empty topics</div>
+            <div className="font-semibold mt-1 tabular-nums">{data.topics.filter(t => (data.topicSizes[t] ?? 0) === 0).length.toLocaleString()}</div>
+            <button type="button" className="text-xs text-primary hover:underline mt-1" onClick={() => { setHideEmpty(false); setSearchTerm(''); document.getElementById('topics')?.scrollIntoView({ behavior: 'smooth' }); }}>Inspect topics</button>
+          </div>
+          <div className="rounded-md bg-surface-container p-3">
+            <div className="text-xs text-on-surface-variant">Dead-letter topics</div>
+            <div className="font-semibold mt-1 tabular-nums">{data.topics.filter(isDeadLetterTopic).length.toLocaleString()}</div>
+            <Link to="/dead-letter" className="text-xs text-primary hover:underline inline-block mt-1">Open dead-letter explorer</Link>
+          </div>
+        </div>
+      </section>
+
       {/* Topics */}
       <section id="topics" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -620,7 +649,12 @@ const Dashboard: React.FC = () => {
               <Select
                 aria-label="Rows per page"
                 value={pageSize}
-                onChange={e => { setPageSize(Number(e.target.value)); setPage(0); }}
+                onChange={e => {
+                  const size = Number(e.target.value);
+                  setPageSize(size);
+                  localStorage.setItem(PAGE_SIZE_KEY, String(size));
+                  setPage(0);
+                }}
                 className="h-9 w-auto"
               >
                 {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
