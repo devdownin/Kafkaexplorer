@@ -15,12 +15,13 @@
 something you can *see and query*: browse topics, click on a message field, and get a
 runnable Flink SQL query — no DDL to write, no schema to guess, no CLI gymnastics.
 
-One container, one URL, **zero cluster-side installation**: it connects as an ordinary
-Kafka client, so there is nothing to deploy on your brokers.
+One container, one URL, no broker-side installation.
 
 ![The dashboard: every topic, its message count, its state and when it last received something](https://devdownin.github.io/Kafkaexplorer/img/dashboard.png)
 
 ---
+
+**UI/UX roadmap:** [PRs #604–#606](https://github.com/devdownin/Kafkaexplorer/pulls) are not yet released.
 
 ## 🚀 Try it in one command
 
