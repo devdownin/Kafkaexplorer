@@ -639,3 +639,16 @@ its source (`readableFitTransform`; `0` still fits all); `GET /api/forecasts` ca
 (`compose/ollama.yml`, the `OLLAMA` provider), and the paragraphs above keep that name where it is
 what was measured. The local runtime is llama.cpp now: read `compose/llama-cpp.yml` and `LLAMA_CPP`
 for the stack and the provider those findings apply to today.
+
+`METRICS-FORECAST-AUDIT-2.md` (2026-11) is the second pass over metrics and forecasts: the series
+preparer, the quality window, the baselines, the observation journal, the setup assistant's history
+preview and the offline images. It implemented nothing. Its headline is that **the cycle the assistant
+proposes (`detectCycle`) is claimed on 94.5 % of random walks** and applied by default — a raw
+autocorrelation about the global mean is high at every lag of a drifting series — with a half-lag peak
+test simulated to fix it; two silent history cuts (the preview does not normalise the metric the way the
+approval does, and enrolment slots are never released, so the 101st metric of a process is not
+recorded); a threshold suggestion that ignores its direction; and one optimisation worth the most to an
+operator (a single counter reset refuses the whole 512-point context). The checks it ran are in the
+report, including what stayed green (334 Java cases, 1 972 Vitest cases) and the three claims left "to
+verify": an empty `inputs.tag` in the publication workflows on a tag push, the relative paths of
+`compose/llama-cpp.yml`, and one aborted test it did not trace.
