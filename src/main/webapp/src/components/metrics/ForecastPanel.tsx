@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Area, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, Bar, BarChart, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Badge, Button, Field, Select, Table, TableBody, TableHead, TableRow, Td, Th, useConfirm } from '../ui';
 import { copyText } from '../../clipboard';
 import type { BadgeTone } from '../ui';
@@ -179,6 +179,14 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
   const threshold = seriesProgress?.breach?.resultKey === result?.key ? seriesProgress?.breach?.threshold ?? null : null;
   const stage = series ? forecastStage(series) : null;
   const spanMs = chart.length > 1 ? chart[chart.length - 1].at - chart[0].at : 0;
+  const quality = result?.quality;
+  const comparisons = result && quality
+    ? [
+        ...(Number.isFinite(quality.mae) ? [{ name: 'Forecast', mae: quality.mae }] : []),
+        ...Object.entries(result.baselineMae).filter(([, mae]) => Number.isFinite(mae))
+          .map(([name, mae]) => ({ name, mae })),
+      ].sort((a, b) => a.mae - b.mae)
+    : [];
   const tick = (v: number) => spanMs > 24 * 3600 * 1000
     ? new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
     : new Date(v).toLocaleTimeString();
@@ -300,7 +308,24 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
         {series && <ForecastProgress progress={seriesProgress} error={progressError} result={result} />}
       </details>
       {result && <details><summary>Quality details and baselines</summary>
-        {!result.quality ? <p>Realised quality: unmeasured.</p> : <>
+        {!result.quality ? <p>Realised quality: unmeasured; backtesting needs evaluated observations.</p> : <>
+          <div className="grid grid-cols-3 gap-2 my-3" aria-label="Realised backtesting quality">
+            <div><p className="text-xs text-on-surface-variant">Evaluated points</p><strong>{result.evaluatedPoints}</strong></div>
+            <div><p className="text-xs text-on-surface-variant">Realised MAE</p><strong>{Number.isFinite(quality?.mae) ? quality!.mae.toPrecision(4) : 'Unmeasured'}</strong></div>
+            <div><p className="text-xs text-on-surface-variant">80% coverage</p><strong>{Number.isFinite(quality?.q10Q90Coverage) ? (100 * quality!.q10Q90Coverage).toFixed(1) + '%' : 'Unmeasured'}</strong></div>
+          </div>
+          {comparisons.length > 1 && <div role="img" aria-label="Realised forecast and baseline mean absolute error comparison" className="my-3">
+            <p className="text-xs text-on-surface-variant">Realised MAE · lower is better</p>
+            <ResponsiveContainer width="100%" height={Math.max(120, comparisons.length * 42)}>
+              <BarChart data={comparisons} layout="vertical" margin={{ left: 10, right: 20 }}>
+                <XAxis type="number" domain={[0, 'auto']} />
+                <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+                <Tooltip formatter={value => [Number(value).toPrecision(4), 'MAE']} />
+                <Bar dataKey="mae" fill={FORECAST_COLORS.forecast} name="Realised MAE" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>}
+          <p className="text-xs text-on-surface-variant">Historical evaluation, not a guarantee of future accuracy. Compare baselines only when evaluated on equivalent windows.</p>
           <p>MASE {result.quality.mase?.toPrecision(4) ?? 'unmeasured'} · interval coverage {(100 * result.quality.q10Q90Coverage).toFixed(1)}% · interval width {result.quality.meanIntervalWidth.toPrecision(4)} · pinball loss {result.quality.meanPinballLoss.toPrecision(4)}</p>
           <Table><TableHead><TableRow><Th>Baseline</Th><Th>Realised MAE</Th></TableRow></TableHead><TableBody>
             {Object.entries(result.baselineMae).map(([name, mae]) => <TableRow key={name}><Td>{name}</Td><Td>{mae.toPrecision(4)}</Td></TableRow>)}
@@ -310,6 +335,19 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
         {action?.source === 'copy' && <p role="alert">{action.text}</p>}
       </details>}
       <ForecastShadowComparison view={shadow?.seriesId === series?.seriesId ? shadow?.view ?? null : null} />
+      {series && <details><summary>Forecast configuration summary</summary>
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm my-3">
+          <div><dt>Metric</dt><dd className="font-mono break-all">{series.metricId}</dd></div>
+          <div><dt>Environment</dt><dd>{series.environment}</dd></div>
+          <div><dt>Sampling interval</dt><dd>{about(1, series.stepMillis)}</dd></div>
+          <div><dt>Minimum history</dt><dd>{series.minimumContextPoints} points</dd></div>
+          <div><dt>Threshold monitoring</dt><dd>{series.thresholdConfigured ? 'Configured' : 'Not configured'}</dd></div>
+          <div><dt>Approval</dt><dd>{result?.visibility === 'ACTIVE' ? 'Active' : 'Not approved'}</dd></div>
+          {result?.forecast && <div><dt>Model</dt><dd>{result.forecast.modelId} · {result.forecast.modelRevision}</dd></div>}
+          {result?.forecast && <div><dt>Horizon</dt><dd>{about(result.forecast.points.length, series.stepMillis)}</dd></div>}
+        </dl>
+        <p className="text-xs text-on-surface-variant">Read-only effective configuration. Edit sources through the preparation assistant.</p>
+      </details>}
       <details onToggle={e => setPreparationOpen(e.currentTarget.open)}><summary>Preparation and configuration</summary>
         {preparationOpen && <ForecastPreparation onConfigure={onConfigure} />}
       </details>
