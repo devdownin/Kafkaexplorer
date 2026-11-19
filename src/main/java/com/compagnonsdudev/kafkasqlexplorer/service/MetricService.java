@@ -685,6 +685,9 @@ public class MetricService {
         componentHistoryMap.remove(id);
         purgeMeters(id);
         persistTombstone(id);
+        // Its history enrolment slot: without it the hundredth distinct id ever seen ended recording.
+        MetricObservationJournal journal = observationJournal;
+        if (journal != null) journal.forget(id);
     }
 
     /**

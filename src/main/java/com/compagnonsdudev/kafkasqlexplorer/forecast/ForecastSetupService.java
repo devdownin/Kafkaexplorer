@@ -76,6 +76,15 @@ public class ForecastSetupService {
 
   /** Autocorrelation above which a cycle is worth proposing: a weaker one is noise at this length. */
   static final double CYCLE_CORRELATION = 0.5;
+  /**
+   * How far the correlation at the cycle's lag must stand above the one at half that lag. A cycle
+   * is a peak: a sine is +1 at the period and −1 at half of it. A series that merely drifts is
+   * correlated with itself at every lag (94.5 % of random walks cleared {@link #CYCLE_CORRELATION}
+   * alone, METRICS-FORECAST-AUDIT-2.md B1), so a high correlation that is just as high at half the lag
+   * is a trend, not a cycle. Simulated on 300 draws each: 0 % of random walks and of white noise,
+   * 100 % of a daily sine, a trend under an hourly sine and an hourly sawtooth.
+   */
+  static final double CYCLE_PEAK = 0.5;
 
   public HistoryPreview historyPreview(String metricId, long stepMillis) throws Exception {
     var m = metrics.getAllMetrics().stream().filter(v -> v.id().equals(metricId)).findFirst()
@@ -87,6 +96,11 @@ public class ForecastSetupService {
     if (!c.eligible() || prep == null)
       return new HistoryPreview("UNAVAILABLE", prep == null ? "History is not recorded on this deployment"
           : "This metric cannot be forecast yet", 0, need, c.unit(), List.of(), null, null);
+    // As `approval()` does before it derives the identity. The version hashes `type`, `template` and
+    // `execution`, which normalisation fills: from the stored form, a metric that is not canonical
+    // (METRICS-FORECAST-AUDIT-2.md B2) read another series than the one the approval would start.
+    // Eligible means the normalisation above succeeded, so it cannot throw here.
+    m = MetricService.normalizeObservationDefinition(m);
     var h = root.getHistory();
     // The identity the approval derives, so the preview reads the very series it would start.
     String version = MetricObservation.collectedVersion(m, kafka.getBootstrapServers(), h.getCollectorId());
@@ -116,7 +130,8 @@ public class ForecastSetupService {
       if (lag < 2 || lag > 512 || values.size() < lag * 3 / 2) continue;
       fitted = true;
       double r = autocorrelation(values, lag);
-      if (r >= CYCLE_CORRELATION && found == null) { found = new String[] {cycle.getKey(), String.valueOf(r)}; }
+      boolean peak = r >= CYCLE_CORRELATION && r - autocorrelation(values, lag / 2) >= CYCLE_PEAK;
+      if (peak && found == null) { found = new String[] {cycle.getKey(), String.valueOf(r)}; }
       best = Math.max(best, r);
     }
     if (found != null) return found;

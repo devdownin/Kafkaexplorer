@@ -358,4 +358,48 @@ class ForecastSetupServiceTest {
     // A flat series has no variance to correlate: zero, not NaN.
     assertEquals(0.0, ForecastSetupService.autocorrelation(java.util.Collections.nCopies(400, 5.0), 12));
   }
+
+  /** METRICS-FORECAST-AUDIT-2.md B1: a drift is not a cycle. */
+  @Test void aSeriesThatMerelyDriftsHasNoCycle() {
+    var random = new java.util.Random(42); int claimed = 0;
+    for (int run = 0; run < 200; run++) {
+      var walk = new ArrayList<Double>(); double x = 100;
+      for (int i = 0; i < 300; i++) { x += random.nextGaussian(); walk.add(x); }
+      var found = ForecastSetupService.detectCycle(walk, 300_000L);
+      if (found != null && !"NONE".equals(found[0])) claimed++;
+    }
+    // 94.5 % of 400 draws claimed an hourly cycle before the peak test.
+    assertTrue(claimed <= 4, claimed + " of 200 random walks were given a cycle");
+  }
+
+  @Test void aTrendUnderAnHourlyCycleStillShowsTheCycle() {
+    var random = new java.util.Random(3); var found = new ArrayList<String>();
+    for (int run = 0; run < 50; run++) {
+      var v = new ArrayList<Double>();
+      for (int i = 0; i < 300; i++) v.add(0.3 * i + 30 * Math.sin(2 * Math.PI * i / 12) + 3 * random.nextGaussian());
+      found.add(ForecastSetupService.detectCycle(v, 300_000L)[0]);
+    }
+    assertEquals(List.of("HOURLY"), found.stream().distinct().toList());
+  }
+
+  /** METRICS-FORECAST-AUDIT-2.md B2: the preview reads the series the approval would start. */
+  @Test void theHistoryPreviewNormalisesTheMetricLikeTheApproval() throws Exception {
+    // As stored by an older version: no type and no execution mode, which normalisation fills.
+    metric = new MetricConfig("lag", "Consumer lag", null, "private SQL", "description", null, null, 4d, 1L, null,
+        List.of(), Map.of(), null, "CONSUMER_TIME_LAG", Map.of("topic", "orders", "group", "worker"), null, null, List.of());
+    root.getHistory().setClusterId("cluster"); root.getHistory().setCollectorId("collector");
+    var canonical = MetricService.normalizeObservationDefinition(metric);
+    String version = MetricObservation.collectedVersion(canonical, "kafka:29092", "collector");
+    String id = MetricObservation.seriesId("cluster", version, "lag", "value", MetricService.pinnedLabels(canonical));
+    assertNotEquals(version, MetricObservation.collectedVersion(metric, "kafka:29092", "collector"),
+        "the premise: the stored form and the canonical one do not share an identity");
+    var points = new ArrayList<PreparedMetricSeries.Point>();
+    for (int i = 0; i < 5; i++) points.add(new PreparedMetricSeries.Point(60_000L * (i + 1), 10.0 + i, false, 1));
+    when(preparation.prepare(eq(id), eq(version), eq("milliseconds"), anyLong(), any())).thenReturn(new PreparedMetricSeries(
+        PreparedMetricSeries.Status.WARMING_UP, "collecting", id, version, "milliseconds", "milliseconds", 0, 1,
+        new SeriesPreparationProfile(60_000L, 512, SeriesPreparationProfile.Transformation.GAUGE_MEAN), "p", "i", 5, 0, 0, points));
+    var preview = setup.historyPreview("lag", 60_000L);
+    assertEquals(5, preview.points().size());
+    assertEquals("WARMING_UP", preview.status());
+  }
 }

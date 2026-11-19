@@ -1069,6 +1069,15 @@ class MetricServiceTest {
         assertEquals("orders-api", preview.rows().get(0).get("group"));
     }
 
+    /** METRICS-FORECAST-AUDIT-2.md B3: deleting a metric releases its history enrolment slot. */
+    @Test
+    void deletingAMetricReleasesItsHistoryEnrolmentSlot() {
+        var journal = Mockito.mock(com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal.class);
+        service.setObservationJournal(journal);
+        service.delete("some-metric");
+        Mockito.verify(journal).forget("some-metric");
+    }
+
     @Test
     void wizardEnrollmentMatchesTheSeriesActuallyCapturedForConsumerTimeLag() {
         var journal = Mockito.mock(com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal.class);
