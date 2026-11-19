@@ -118,17 +118,17 @@ try {
         'up' {
             Write-Host 'Starting KafkaExplorer, Kafka, PostgreSQL and TimesFM (Docker Compose).'
             Write-Host 'First start downloads the pinned TimesFM model; budget 4 CPUs / 8 GiB for TimesFM.'
-            Invoke-Compose @('config', '--quiet')
-            Invoke-Compose @('up', '-d', '--build')
+            Invoke-Compose -Arguments @('config', '--quiet')
+            Invoke-Compose -Arguments @('up', '-d', '--build')
             # The mounted approval YAML is read at startup; a later edit requires restart.
             Write-Host "KafkaExplorer: http://localhost:$($env:EXPLORER_PORT)"
             Write-Host 'Metrics -> Prepare a forecast. History must accumulate before a prediction is available.'
             Write-Host 'Status: run.bat ps    Logs: run.bat logs explorer timesfm forecast-postgres'
         }
-        'down'   { Invoke-Compose @('down') }
-        'ps'     { Invoke-Compose @('ps') }
-        'logs'   { Invoke-Compose (@('logs', '--tail', '200') + $Services) }
-        'config' { Invoke-Compose @('config', '--quiet'); Write-Host 'Compose configuration valid.' }
+        'down'   { Invoke-Compose -Arguments @('down') }
+        'ps'     { Invoke-Compose -Arguments @('ps') }
+        'logs'   { Invoke-Compose -Arguments (@('logs', '--tail', '200') + $Services) }
+        'config' { Invoke-Compose -Arguments @('config', '--quiet'); Write-Host 'Compose configuration valid.' }
     }
 } catch {
     Write-Error $_
