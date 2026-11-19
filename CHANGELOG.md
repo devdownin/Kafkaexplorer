@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The forecast assistant no longer proposes a cycle for a series that merely drifts.** Its cycle
+  detection read a raw autocorrelation, which is high at every lag of a trending series: 94.5 % of
+  random walks were given an hourly cycle, applied by default. The correlation at the cycle's lag must
+  now also stand 0.5 above the one at half that lag. The history preview now normalises the metric as
+  the approval does (a non-canonical stored form read another series), and deleting a metric gives its
+  history enrolment slot back (the 101st distinct metric of a process was silently not recorded;
+  refusals are now counted in `explorer_forecast_history_enrollment_refused_total`).
 Nothing yet.
 
 ## [2.7.0] — 2026-11-19

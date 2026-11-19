@@ -8,7 +8,9 @@ le panneau côté SPA, les overlays offline, les workflows de publication.
 Premier audit du moteur : `TIMESFM-FORECAST-AUDIT.md` ; de l'UX : `METRICS-FORECAST-UX-AUDIT.md`. Rien
 n'y est re-signalé.
 
-> **Statut.** Rien n'est corrigé : ce rapport n'implémente rien. **Les défauts B1, B2, B4, B5, B6 et U1
+> **Statut.** **B1, B2 et B3 sont corrigés** (PR dédiée, chacun avec un test : sans le correctif, 192 marches
+> aléatoires sur 200 recevaient un cycle et l'aperçu lisait une autre série ; le test de B3 ne compile
+> pas sans `forget`). Le reste n'est pas traité : le rapport n'implémente rien d'autre. **Les défauts B1, B2, B4, B5, B6 et U1
 > viennent de l'assistant et de l'aperçu d'historique ajoutés par la PR #570** — du code récent, écrit
 > sans avoir été éprouvé sur des séries qui dérivent. Chaque constat dit comment il a été établi —
 > **reproduit** (un test jeté ensuite, sortie citée), **lu** (déduit du code, fichier:ligne) ou
@@ -17,9 +19,9 @@ n'y est re-signalé.
 
 | # | Constat | Gravité | Établi |
 |---|---|---|---|
-| B1 | `detectCycle` annonce un cycle sur toute série qui dérive, et l'assistant l'applique | **Haute** | reproduit |
-| B2 | `historyPreview` ne normalise pas la métrique : il peut lire une autre série que l'approbation | Moyenne | reproduit |
-| B3 | Les places d'enrôlement de l'historique ne sont jamais rendues | Moyenne | reproduit |
+| B1 | `detectCycle` annonce un cycle sur toute série qui dérive, et l'assistant l'applique | **Haute** | reproduit, corrigé |
+| B2 | `historyPreview` ne normalise pas la métrique : il peut lire une autre série que l'approbation | Moyenne | reproduit, corrigé |
+| B3 | Les places d'enrôlement de l'historique ne sont jamais rendues | Moyenne | reproduit, corrigé |
 | B4 | Le seuil suggéré ignore la direction : 1,5× la dernière valeur est déjà franchi en « Below » | Basse | reproduit |
 | B5 | L'aperçu garde les données de l'ancien intervalle sous la légende du nouveau | Basse | lu |
 | B6 | Un trou ou un point imputé fausse la détection de cycle | Moyenne | reproduit + lu |
@@ -34,7 +36,7 @@ n'y est re-signalé.
 
 ## Bugs
 
-### B1 — `detectCycle` annonce un cycle sur toute série qui dérive *(haute, reproduit)*
+### B1 — `detectCycle` annonce un cycle sur toute série qui dérive *(haute, reproduit — corrigé)*
 
 `ForecastSetupService.detectCycle` (l. 109) calcule l'autocorrélation brute, centrée sur la moyenne
 globale, à l'écart d'une heure puis d'un jour, et retient le cycle dès que `r ≥ 0,5`
@@ -61,7 +63,7 @@ une alternative : il élimine aussi la sinusoïde quotidienne, simulé à 0 %.)
 **Test** : une marche aléatoire de 300 points à 5 min → `NONE` ; une sinusoïde de 288 points par jour
 sur 512 → `DAILY`.
 
-### B2 — `historyPreview` ne normalise pas la métrique *(moyenne, reproduit)*
+### B2 — `historyPreview` ne normalise pas la métrique *(moyenne, reproduit — corrigé)*
 
 `approval()` normalise d'abord (`ForecastSetupService.java:294`,
 `MetricService.normalizeObservationDefinition`) puis calcule `collectedVersion(m, …)` (l. 311) et
@@ -77,7 +79,7 @@ d'une définition qui n'a pas transité par ces chemins (anciennes ou importées
 **Correction** : `m = normalizeObservationDefinition(m)` en tête de `historyPreview`, comme en l. 294.
 **Test** : `historyPreview` d'une métrique non canonique renvoie les points de la série approuvée.
 
-### B3 — Les places d'enrôlement ne sont jamais rendues *(moyenne, reproduit)*
+### B3 — Les places d'enrôlement ne sont jamais rendues *(moyenne, reproduit — corrigé)*
 
 `MetricObservationJournal.selects` (l. 61–66) inscrit un id dans `autoEnrolled` tant que
 `autoEnrolled + metricIds < MAX_METRICS (100)`. Rien ne le retire : ni la suppression d'une métrique, ni
