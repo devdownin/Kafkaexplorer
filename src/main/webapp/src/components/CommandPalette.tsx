@@ -7,6 +7,9 @@ import { useNavigate } from 'react-router-dom';
 import { NAV_ITEMS, CONFIG_ITEM, HELP_ITEM } from '../navigation';
 import { buildTraceLinkForKey } from '../pages/streamFlowLogic';
 
+const RECENT_TOPICS_KEY = 'commandPalette.recentTopics';
+const MAX_RECENT_TOPICS = 6;
+
 interface CommandPaletteProps {
   onClose: () => void;
   topics: string[];
@@ -18,7 +21,7 @@ interface Command {
   label: string;
   hint?: string;
   icon: string;
-  group: 'Actions' | 'Pages' | 'Topics' | 'Tables';
+  group: 'Actions' | 'Pages' | 'Recent topics' | 'Topics' | 'Tables';
   keywords?: string;
   run: () => void;
 }
@@ -32,6 +35,19 @@ interface Command {
 const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) => {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
+  const [recentTopics, setRecentTopics] = useState<string[]>(() => {
+    try {
+      const stored: unknown = JSON.parse(localStorage.getItem(RECENT_TOPICS_KEY) ?? '[]');
+      return Array.isArray(stored) ? stored.filter((value): value is string => typeof value === 'string').slice(0, MAX_RECENT_TOPICS) : [];
+    } catch { return []; }
+  });
+  const openTopic = (topic: string) => {
+    const updated = [topic, ...recentTopics.filter(t => t !== topic)].slice(0, MAX_RECENT_TOPICS);
+    setRecentTopics(updated);
+    localStorage.setItem(RECENT_TOPICS_KEY, JSON.stringify(updated));
+    navigate(`/topic/${encodeURIComponent(topic)}`);
+    onClose();
+  };
   const [rawActive, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -87,7 +103,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
     const topicCmds: Command[] = q
       ? topics.filter(t => t.toLowerCase().includes(q)).slice(0, 8).map(t => ({
           id: `topic-${t}`, label: t, hint: 'Kafka topic', icon: 'topic', group: 'Topics',
-          run: () => go(`/topic/${t}`),
+          run: () => openTopic(t),
         }))
       : [];
     const tableCmds: Command[] = q
@@ -96,13 +112,17 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
           run: () => go(`/query?sql=${encodeURIComponent(`SELECT * FROM ${t} LIMIT 50`)}`),
         }))
       : [];
-    return [...actions, ...pages, ...topicCmds, ...tableCmds];
+    const recentCmds: Command[] = !q ? recentTopics.filter(t => topics.includes(t)).map(t => ({
+      id: `recent-${t}`, label: t, hint: 'Recently opened topic', icon: 'history', group: 'Recent topics',
+      run: () => openTopic(t),
+    })) : [];
+    return [...actions, ...pages, ...recentCmds, ...topicCmds, ...tableCmds];
     // eslint-disable-next-line react-hooks/exhaustive-deps -- go/navigate are stable
-  }, [query, topics, tables]);
+  }, [query, topics, tables, recentTopics]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
-    if (!q) return commands.filter(c => c.group === 'Actions' || c.group === 'Pages');
+    if (!q) return commands.filter(c => c.group === 'Actions' || c.group === 'Pages' || c.group === 'Recent topics');
     return commands.filter(c =>
       c.label.toLowerCase().includes(q) || c.keywords?.toLowerCase().includes(q) || c.group === 'Topics' || c.group === 'Tables',
     );
@@ -127,7 +147,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
 
   // Sépare les groupes pour l'affichage tout en gardant l'index global continu.
   let runningIndex = -1;
-  const groups: Command['group'][] = ['Actions', 'Pages', 'Topics', 'Tables'];
+  const groups: Command['group'][] = ['Actions', 'Pages', 'Recent topics', 'Topics', 'Tables'];
 
   return (
     <div
