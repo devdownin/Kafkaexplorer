@@ -645,6 +645,7 @@ if (mode === '--sweep') {
           page: name, viewport: vp.name, failed: null,
           bodyOverflows: m.bodyOverflows, tooSmall: m.tooSmall,
           unreachable: m.unreachableCount,
+          clipped: m.clipped,
         });
       };
 
@@ -747,6 +748,10 @@ if (mode === '--check') {
   if (failures.length > 0) {
     console.error('\nLayout check failed:');
     for (const f of failures) console.error(`  - ${f}`);
+    for (const r of checkResults.filter(r => r.unreachable > (UNREACHABLE_BUDGET[r.page] ?? Infinity))) {
+      console.error(`  ${r.page} @ ${r.viewport}: unreachable element details:`);
+      for (const c of r.clipped ?? []) console.error(`    ${c.tag} ${c.scrollW}>${c.clientW} ${c.aria ?? ''} ${c.text} .${c.cls}`);
+    }
     console.error('\nIf the change is deliberate, update TARGET_BUDGET / UNREACHABLE_BUDGET in '
       + 'this file and the tables in MOBILE-LAYOUT-SCOPE.md from a fresh run.');
     process.exit(1);
