@@ -38,6 +38,8 @@ const PAGE_SIZES = [10, 25, 50, 100];
 /** axios n'a pas de délai par défaut : sans ça, un serveur muet laisse la colonne en squelette. */
 const ACTIVITY_TIMEOUT_MS = 20000;
 const TOPIC_COUNT_KEY = 'dashboard.lastTopicCount';
+const SAVED_TOPIC_VIEW_KEY = 'dashboard.savedTopicView';
+interface SavedTopicView { query: string; hideEmpty: boolean; hideDlt: boolean; hideInternal: boolean; }
 type SortKey = 'name' | 'size' | 'state' | 'lastMessage';
 type SortDir = 'asc' | 'desc';
 
@@ -86,6 +88,33 @@ const Dashboard: React.FC = () => {
    */
   const [hideInternal, setHideInternal] = useState(() => params.get('internal') === 'true');
   const { internalPrefix } = useCatalog();
+  const [savedTopicView, setSavedTopicView] = useState<SavedTopicView | null>(() => {
+    try {
+      const value = localStorage.getItem(SAVED_TOPIC_VIEW_KEY);
+      if (!value) return null;
+      const parsed: unknown = JSON.parse(value);
+      if (typeof parsed !== 'object' || parsed === null) return null;
+      const view = parsed as Record<string, unknown>;
+      return typeof view.query === 'string' && typeof view.hideEmpty === 'boolean'
+        && typeof view.hideDlt === 'boolean' && typeof view.hideInternal === 'boolean'
+        ? { query: view.query, hideEmpty: view.hideEmpty, hideDlt: view.hideDlt, hideInternal: view.hideInternal }
+        : null;
+    } catch { return null; }
+  });
+  const saveTopicView = () => {
+    const view = { query: searchTerm, hideEmpty, hideDlt, hideInternal };
+    localStorage.setItem(SAVED_TOPIC_VIEW_KEY, JSON.stringify(view));
+    setSavedTopicView(view);
+  };
+  const restoreTopicView = () => {
+    if (!savedTopicView) return;
+    setSearchTerm(savedTopicView.query);
+    setHideEmpty(savedTopicView.hideEmpty);
+    setHideDlt(savedTopicView.hideDlt);
+    setHideInternal(savedTopicView.hideInternal);
+    setPage(0);
+  };
+
   /** Marquer les topics de reprise — un signalement, pas un filtre : rien n'est retiré. */
   const [markRetry, setMarkRetry] = useState(false);
   /**
@@ -526,6 +555,9 @@ const Dashboard: React.FC = () => {
             )}
           </h2>
           <div className="flex flex-wrap items-center gap-3 justify-end">
+            <button type="button" onClick={saveTopicView} className="h-9 px-3 rounded-md border border-outline-variant text-xs text-on-surface hover:bg-surface-container-high" title="Save the current topic search and filters in this browser">Save view</button>
+            {savedTopicView && <button type="button" onClick={restoreTopicView} className="h-9 px-3 rounded-md border border-outline-variant text-xs text-primary hover:bg-surface-container-high" title="Restore saved topic search and filters">Restore view</button>}
+
             <div className="relative w-full max-w-xs sm:w-64">
               <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[18px] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">search</span>
               <Input
