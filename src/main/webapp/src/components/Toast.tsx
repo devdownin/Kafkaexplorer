@@ -39,11 +39,12 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const mounted = useRef(true);
 
   useEffect(() => {
+    const pendingTimers = timers.current;
     mounted.current = true;
     return () => {
       mounted.current = false;
-      for (const timer of timers.current) clearTimeout(timer);
-      timers.current.clear();
+      for (const timer of pendingTimers) clearTimeout(timer);
+      pendingTimers.clear();
     };
   }, []);
 
