@@ -186,3 +186,11 @@ and requires a READY/TIMESFM/SHADOW result readable through authenticated MCP.
 This verifies integration, not forecasting accuracy, realised quality or activation.
 The ephemeral project's volumes are removed at the end. Run this driver only against
 an isolated disposable stack, never against an existing deployment.
+
+## Forecast directly from an existing metric
+
+On **Metrics**, use **Prepare a forecast** on a compatible metric. The existing metric is the source of the forecast: the assistant reuses its identity, unit and collection configuration instead of asking for a new metric. An ineligible metric has a disabled action; check the preparation diagnostics for missing history, unsupported metric types or unavailable inference.
+
+After successful preparation, the action is disabled to avoid creating a duplicate forecast. The metric chart retains the observed series and extends it with a visually distinct forecast segment; where available, forecast uncertainty is displayed separately from measured values. The forecast is not historical observation, and no threshold or alert is activated automatically. Review the forecast status and quality before enabling operational use.
+
+For a reproducible local environment, run `bin/forecast-stack.sh` and follow the [forecast setup guide](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md). The stack uses PostgreSQL for durable observations and TimesFM for inference; Timestral is a shadow comparison, not an alternative primary inference engine.
