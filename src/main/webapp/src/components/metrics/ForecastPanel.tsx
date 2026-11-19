@@ -336,14 +336,14 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
       </details>}
       <ForecastShadowComparison view={shadow?.seriesId === series?.seriesId ? shadow?.view ?? null : null} />
       {series && <details><summary>Forecast configuration summary</summary>
-        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm my-3">
+        <dl className="grid min-w-0 grid-cols-1 sm:grid-cols-2 gap-2 text-sm my-3 [&>div]:min-w-0">
           <div><dt>Metric</dt><dd className="font-mono break-all">{series.metricId}</dd></div>
           <div><dt>Environment</dt><dd>{series.environment}</dd></div>
           <div><dt>Sampling interval</dt><dd>{about(1, series.stepMillis)}</dd></div>
           <div><dt>Minimum history</dt><dd>{series.minimumContextPoints} points</dd></div>
           <div><dt>Threshold monitoring</dt><dd>{series.thresholdConfigured ? 'Configured' : 'Not configured'}</dd></div>
           <div><dt>Approval</dt><dd>{result?.visibility === 'ACTIVE' ? 'Active' : 'Not approved'}</dd></div>
-          {result?.forecast && <div><dt>Model</dt><dd>{result.forecast.modelId} · {result.forecast.modelRevision}</dd></div>}
+          {result?.forecast && <div><dt>Model</dt><dd className="min-w-0 break-words [overflow-wrap:anywhere]">{result.forecast.modelId} · {result.forecast.modelRevision}</dd></div>}
           {result?.forecast && <div><dt>Horizon</dt><dd>{about(result.forecast.points.length, series.stepMillis)}</dd></div>}
         </dl>
         <p className="text-xs text-on-surface-variant">Read-only effective configuration. Edit sources through the preparation assistant.</p>
