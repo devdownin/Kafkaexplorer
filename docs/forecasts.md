@@ -5,6 +5,16 @@ a configuration assistant, history progress and a forecast summary. The pilot an
 tools are enabled by default, with an empty approved catalogue. No forecast runs until sources,
 durable history and TimesFM are explicitly configured.
 
+## Dashboard investigation and saved views (UI/UX roadmap)
+
+The Dashboard already provides topic search, activity sparklines, refresh controls and `Ctrl+K` navigation. The UI/UX enhancements under review are delivered separately:
+
+- [PR #604](https://github.com/devdownin/Kafkaexplorer/pull/604): diagnostic overview of broker reachability, empty topics and dead-letter topics, with investigation links and remembered table page size.
+- [PR #605](https://github.com/devdownin/Kafkaexplorer/pull/605): save and restore a local topic-filter view (search text, empty/dead-letter/internal-topic visibility).
+- [PR #606](https://github.com/devdownin/Kafkaexplorer/pull/606): recently opened topics in the `Ctrl+K` palette.
+
+These changes are **proposed, not guaranteed to be present in a published image** until their PRs are merged and a new image is released. Saved views and recent topics use browser-local storage, not server-side profiles. They do not change TimesFM configuration or forecast calculation.
+
 ## Companion agent: Kex-anHarness
 
 [Kex-anHarness](https://github.com/devdownin/Kex-anHarness), formerly Kex Agent AI, reads
