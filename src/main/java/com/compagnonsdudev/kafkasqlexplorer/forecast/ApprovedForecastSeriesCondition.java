@@ -11,7 +11,7 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
 /**
  * True when the operator approved at least one forecast series, or may approve one at runtime.
  *
- * <p>The pilot is on by default with an empty catalogue, and its five MCP tools used to be
+ * <p>The pilot is on by default with an empty catalogue, and its MCP tools (six now) used to be
  * registered all the same: listed by {@code tools/list}, described to the model, chosen, and
  * answered with an empty list or {@code OUT_OF_SCOPE}. Bound through {@link Binder}, so a list
  * given in YAML and one given as {@code EXPLORER_FORECASTING_PILOT_SERIES_0_SERIESID} both count.

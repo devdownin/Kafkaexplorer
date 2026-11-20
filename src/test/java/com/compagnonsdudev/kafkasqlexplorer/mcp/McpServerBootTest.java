@@ -74,7 +74,8 @@ class McpServerBootTest {
      */
     static final List<String> FORECAST = List.of(
         "kex_list_forecastable_metrics", "kex_metric_history", "kex_forecast_metric",
-        "kex_get_forecast_quality", "kex_list_predicted_threshold_breaches");
+        "kex_get_forecast_quality", "kex_list_predicted_threshold_breaches",
+        "kex_list_forecast_threshold_reaches");
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {

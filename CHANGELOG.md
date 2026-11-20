@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **MCP: `kex_list_forecast_threshold_reaches`, the card's predicted threshold for an agent.** The only
+  forecast-threshold tool, `kex_list_predicted_threshold_breaches`, judges a series' configured threshold
+  *policy*; the Metrics page and `explorer_forecast_threshold_eta_seconds` read the metric's *own* warning
+  and critical thresholds — so an agent asking "what is about to breach" got a different answer from the
+  screen. The new read-only tool gives one row per authorized series through the same
+  `ForecastThresholdReach`: `REACH` (level, likelihood, instant, seconds until it), `NO_REACH`,
+  `NO_THRESHOLDS`, `NOT_COMPARABLE` (a counter's rate forecast) or `NOT_EVALUATED`, each with its reason,
+  and `PARTIAL_FAILURE` coverage naming the series with nothing to read. The pilot now has six tools.
 - **Docs: Docker Hub, GitHub Pages and READMEs caught up with the forecasts.** The Docker Hub overview
   describes forecasting from a metric card and alerting on `explorer_forecast_threshold_eta_seconds`, and
   stays under its 25,000-byte limit by sending the MCP review configuration to `DOCKERHUB-OPERATIONS.md`,

@@ -304,8 +304,11 @@ public class McpServerConfiguration {
     @Bean
     @ConditionalOnProperty(prefix = "explorer.forecasting.pilot", name = "enabled", havingValue = "true", matchIfMissing = true)
     @Conditional(ApprovedForecastSeriesCondition.class)
-    ForecastMcpTools forecastMcpTools(ForecastPilotService pilot, ToolGuard guard) {
-        return new ForecastMcpTools(pilot, guard);
+    ForecastMcpTools forecastMcpTools(ForecastPilotService pilot, ToolGuard guard,
+                                      ObjectProvider<com.compagnonsdudev.kafkasqlexplorer.service.MetricService> metrics) {
+        // The metrics' own thresholds, for the reach tool; absent in a slice that has no MetricService,
+        // where that one tool answers DEPENDENCY_UNAVAILABLE and the five others are unaffected.
+        return new ForecastMcpTools(pilot, guard, metrics.getIfAvailable());
     }
 
     @Bean

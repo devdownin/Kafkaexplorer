@@ -8,7 +8,7 @@ resource link. This is an additive field: existing clients can ignore it. Source
 describe scope, not a measured incident or a discovered process association.
 
 The pilot is enabled by default. With no approved series, scheduling performs no database or
-model calls and **its five read-only MCP tools are not registered**: they used to be listed by
+model calls and **its six read-only MCP tools are not registered**: they used to be listed by
 `tools/list`, chosen by a model and answered with an empty list or `OUT_OF_SCOPE`. The MCP console
 keeps their rows, hidden with the reason "no approved forecast series", so an operator can see what
 to set (`ApprovedForecastSeriesCondition`; YAML and `EXPLORER_FORECASTING_PILOT_SERIES_0_SERIESID`
@@ -220,11 +220,12 @@ environment and **all** source topics and groups. Unknown ids are OUT_OF_SCOPE. 
 | `kex_forecast_metric` | Persisted forecast, state, strategy, quality and provenance |
 | `kex_get_forecast_quality` | Realised TimesFM metrics, four baseline MAEs, sample count, watermark, current state/strategy and `activation` — the same eligibility verdict and reason the page shows, with the quality block's progress; unmeasured until maturity, the reason then naming what activation waits for |
 | `kex_list_predicted_threshold_breaches` | One row per authorized series: `BREACH`, `NO_BREACH`, `NO_POLICY` or `NOT_EVALUATED`, its reason, and for an evaluated forecast the conservative bound, result key, timestamps, revision and fingerprints |
+| `kex_list_forecast_threshold_reaches` | One row per authorized series read against its metric's **own** warning/critical thresholds — the card's reading and `explorer_forecast_threshold_eta_seconds`'s (`ForecastThresholdReach`): `REACH` (level, `expected`/`possible`, the instant and the seconds until it), `NO_REACH`, `NO_THRESHOLDS`, `NOT_COMPARABLE` (a counter's rate forecast) or `NOT_EVALUATED`, each with its reason; `PARTIAL_FAILURE` coverage names the series with no forecast to read, so their absence never reads as "nothing predicted". Distinct from the policy breaches above, which judge the series' configured threshold policy on the conservative quantile |
 | `kex_get_shadow_comparison` | The shadow comparison `GET /api/forecasts/{id}/shadow` returns, scrubbed, after the same authorization; unmeasured before a compatible shadow row; a `SHADOW_NOT_SERVED` warning on every answer |
 
 **The comparison tool is a toolset of its own** (`ShadowForecastMcpTools`), registered only when
 `ShadowComparisonCondition` holds: the pilot on, a series approved or approvable, and inference and
-`inference.shadow.enabled` both true. Had it been a sixth method beside the five, it would be
+`inference.shadow.enabled` both true. Had it been a seventh method beside the six, it would be
 described to every agent and refuse on most deployments. Withheld, its catalogue row names the
 setting to change, like the others. It reads persisted rows only: no inference, and
 `wouldQualify` answers a question without being able to approve, serve or alert.

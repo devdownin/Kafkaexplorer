@@ -206,7 +206,7 @@ présente la page Prévisions de l’agent et les diagnostics MCP.
 
 Le journal PostgreSQL optionnel capture les métriques sélectionnées et prépare des contextes
 réguliers pour TimesFM. Le service CPU-only utilise l'overlay `compose/timesfm.yml` et un
-checkpoint épinglé. Le pilote et ses cinq outils MCP en lecture seule sont activés par défaut. Sans série approuvée,
+checkpoint épinglé. Le pilote et ses six outils MCP en lecture seule sont activés par défaut. Sans série approuvée,
 le catalogue est vide et aucun appel à la base ou au modèle ne démarre. Une fois l’historique,
 l’inférence et les séries configurés, le pilote planifie les séries explicitement approuvées,
 persiste les prévisions et l'activation opérateur, puis compare les erreurs réalisées à quatre
