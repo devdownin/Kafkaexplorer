@@ -637,7 +637,14 @@ Hugging Face’s auxiliary cache (Xet metadata and logs) also needs writable sto
 ### The forecast demo's overlay: `compose/demo-forecast.yml`
 
 `./demo.sh` layers it after `forecasts.yml` (`demo.ps1` too — the twins name the same files, which
-`docs/check-demo-forecast.py` compares). **Why it exists:** the demo's topics are seeded once and stand
+`docs/check-demo-forecast.py` compares). **`./demo.sh --forecast` (`-Forecast`, `DEMO_MODE=forecast`) starts
+that and nothing else**: the base, Schema Registry, MCP, the forecast stack and this overlay, with
+`demo.yml`, `ecosystem.yml`, `demo-llm.yml` and the SpectraLLM files left out — the agent and the hosted
+model are what want a key, and nothing the demo shows uses them. So the whole command is `./demo.sh
+--forecast`: every variable has a default there, the SQL assistant (which needs that model) defaults to off,
+and the credentials are generated on the first run as ever. The mode is resolved **after** the `.env`
+files, as `DEMO_SPECTRA` is, so a `DEMO_MODE` set there is honoured; the flag outranks it. It leaves the
+default mode, the whole suite, exactly as it was. **Why it exists:** the demo's topics are seeded once and stand
 still, so a metric over them has one value for ever, and a forecast needs 128 recorded points — two hours
 at the minute the Explorer samples. A demo that cannot show its main feature for two hours does not show
 it. Two services, each in an image the stack already pulls:

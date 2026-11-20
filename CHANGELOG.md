@@ -27,7 +27,9 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   recording of each, marked `demo-seed-<n>`, from the same curves. The first is already forecast when the Metrics page
   opens, with its "Warning expected in ~N min" badge; the backlog's is the Forecast button, with its
   hourly cycle found and its first forecast one minute away. `docs/metrics-demo-scenarios.md` tells the
-  story; `docs/check-demo-forecast.py` and the `forecast-stack` CI job hold it.
+  story; `docs/check-demo-forecast.py` and the `forecast-stack` CI job hold it. **`./demo.sh --forecast`
+  (`.\demo.cmd -Forecast`) starts that demo alone**, with nothing to configure: no LLM key, no SpectraLLM,
+  no agent, every variable defaulted.
 - **The SPA's seven open dependency alerts are closed.** `dompurify` (bundled by the Monaco editor,
   five low advisories) to 3.4.17, `minimatch` (ESLint's TypeScript parser, a moderate ReDoS) to
   11.0.5 and `zod` (an ESLint plugin's, memory exhaustion) to 4.6.7, through `overrides` since no

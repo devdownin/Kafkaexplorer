@@ -2,7 +2,14 @@
 
 ## The forecast demo: two live metrics that are forecast from the first minutes
 
-`./demo.sh` (and `.\demo.cmd`) also starts `compose/demo-forecast.yml`. The rest of the demo's topics are
+**Start it with nothing to configure:** `./demo.sh --forecast` (Windows: `.\demo.cmd -Forecast`). That is the
+stack this demo needs and nothing else — Kafka and the demo topics, Schema Registry, the Explorer with MCP,
+PostgreSQL, TimesFM, the live traffic and its seeded history — with every variable defaulted: no LLM key, no
+SpectraLLM weights, no agent. `./demo.sh` alone (the whole suite) starts the same overlay among the rest.
+The first run builds the Explorer and fetches the pinned TimesFM checkpoint; later runs start in seconds.
+`./demo.sh --forecast down | reset | ps | logs [service] | probe` manage it.
+
+The overlay, `compose/demo-forecast.yml`, is what both start. The rest of the demo's topics are
 seeded once and then stand still, so a metric over them reads one value for ever and a forecast has
 nothing to extend; these two are fed continuously, and their history is written ahead so a forecast does
 not wait the two hours (128 recorded points) it would otherwise need.

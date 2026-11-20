@@ -130,7 +130,19 @@ with tempfile.TemporaryDirectory() as tmp:
         if abs(gap - target) > 12:
             problems.append(f'live.sh left {left} - {right} at {gap} where the curve says {target:.0f}')
 
-# 3. Both platforms, and the compose registry, name the overlay.
+# 3. Both platforms, and the compose registry, name the overlay — and layer the same files. The two
+# scripts are twins that nothing else compares; the forecast-only mode (`--forecast` / `-Forecast`)
+# is the newest thing they must agree about.
+compose_files = {name: set(re.findall(r'compose/[\w.-]+\.yml', (ROOT / name).read_text())) for name in ('demo.sh', 'demo.ps1')}
+if compose_files['demo.sh'] != compose_files['demo.ps1']:
+    only_sh = sorted(compose_files['demo.sh'] - compose_files['demo.ps1'])
+    only_ps = sorted(compose_files['demo.ps1'] - compose_files['demo.sh'])
+    problems.append(f'demo.sh and demo.ps1 layer different compose files (only demo.sh: {only_sh}; only demo.ps1: {only_ps})')
+for name, flag in (('demo.sh', '--forecast'), ('demo.ps1', '-Forecast')):
+    text = (ROOT / name).read_text()
+    if flag not in text or 'DEMO_MODE' not in text:
+        problems.append(f'{name} has no {flag} mode (DEMO_MODE=forecast): the forecast demo must start with nothing to configure on both platforms')
+
 for name in ('demo.sh', 'demo.ps1'):
     if 'compose/demo-forecast.yml' not in (ROOT / name).read_text():
         problems.append(f'{name} does not layer compose/demo-forecast.yml: the two scripts must start the same stack')
