@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Compose: one broker definition, one Kafka image.** `compose/spectra-hub.yml` extended nothing and
+  carried its own copy of the broker, its volume fix and the demo seeder; it now `extends` the base's, as
+  `compose/dev.yml` already did. The image is written once (`KAFKA_IMAGE`, default `apache/kafka:4.4.0`,
+  in `.env.example`) instead of in a dozen places. The resolved configuration is unchanged for every
+  stack and overlay combination; `docs/check-image-pins.py` now resolves the YAML alias it is read through.
 - **CI drives the Metrics page against the forecast demo.** `ci/demo-forecast-ui.mjs` runs in the
   `forecast-stack` job after the backend smoke: the list's *Has a forecast* / *No forecast* filters keep
   what the server lists, *Breach predicted (N)* keeps N cards each with its badge, the sort keeps every

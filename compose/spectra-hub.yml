@@ -91,81 +91,33 @@ services:
   # side by side. Compose derives `<project>-<service>-<n>`; address services by service name
   # (`docker compose -f compose/spectra-hub.yml logs kafka`).
 
-  # The apache/kafka image runs as the non-root `appuser`, but Docker creates a fresh named
-  # volume owned by root — chown it once before the broker starts.
+  # The broker, its volume-ownership fix and the demo seeder are the base file's, not copies of
+  # them: `extends` resolves paths against the EXTENDED file's directory, so nothing here needs a
+  # `../`, and what the base reasons about (the grace period, the healthcheck interval, why
+  # CLUSTER_ID is fixed, the image version) is read and maintained in one place — the three
+  # definitions that stood here and in docker-compose.yml had already drifted apart.
   kafka-data-init:
-    image: apache/kafka:4.4.0
-    user: root
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    entrypoint: ["sh", "-c", "chown -R appuser:appuser /var/lib/kafka/data"]
+    extends:
+      file: ../docker-compose.yml
+      service: kafka-data-init
 
   kafka:
-    image: apache/kafka:4.4.0
-    ports:
-      - "${BIND_ADDR:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
-    # A stopping KRaft node flushes its logs and closes the group / share-state coordinators
-    # cleanly. Docker's default grace period is 10s, past which the broker is SIGKILLed
-    # mid-flush and the next start has to recover the log segments.
-    stop_grace_period: 30s
-    restart: unless-stopped
-    # `kafka-broker-api-versions.sh` starts a whole JVM, so the steady-state interval is 30s
-    # and `start_period` covers the boot, where failures do not count against `retries`.
-    # `start_interval` is what makes the boot fast anyway: 3s probing while we are waiting.
+    extends:
+      file: ../docker-compose.yml
+      service: kafka
+    # `start_interval` is what makes the boot fast here: 3s probing while we are waiting, the
+    # base's 30s thereafter. The base does not set it, so this is the one thing this stack adds.
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
       start_interval: 3s
-    environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_PORT:-9092}
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      # Single-node dev: 1 __consumer_offsets partition instead of the default 50
-      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      # Share groups (KIP-932, Kafka 4.1+) state topic on a single node
-      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
-      # The explorer creates its own internal.* topics itself now (InternalTopicProvisioner),
-      # with the cleanup policy each one needs — this is no longer what they depend on. It
-      # stays on for what still relies on it here, such as the .DLT topics Spring Kafka
-      # creates on a failed ingestion.
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      # Fixed KRaft cluster id — the apache/kafka image reads CLUSTER_ID
-      # (KAFKA_CLUSTER_ID would be passed to server.properties and ignored)
-      CLUSTER_ID: "MkU2OhlMTT69sPFvS1n16g"
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    depends_on:
-      kafka-data-init:
-        condition: service_completed_successfully
 
   # 76 demo topics with keys, headers, duplicates and poison records — the dataset the audit,
   # the traces and the window queries are calibrated on. Idempotent: `seed-demo-once.sh` skips
   # when the marker topic `internal.demo.seeded` is already there, so an `up` on an existing
   # volume costs one topic listing instead of replaying ~400 records.
   demo-setup:
-    image: apache/kafka:4.4.0
-    depends_on:
-      kafka:
-        condition: service_healthy
-    volumes:
-      - ../setup-demo.sh:/data/setup-demo.sh
-      - ../seed-demo-once.sh:/data/seed-demo-once.sh
-    # `$$` escapes the `$` for compose interpolation, which this file needs.
-    entrypoint: ["sh", "-c", "sed 's/\\r$$//' /data/seed-demo-once.sh > /tmp/seed-demo-once.sh && sh /tmp/seed-demo-once.sh kafka:29092"]
+    extends:
+      file: ../docker-compose.yml
+      service: demo-setup
 
   # ═══ Kafka Explorer ═════════════════════════════════════════════════════════
 

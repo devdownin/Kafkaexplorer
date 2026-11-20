@@ -1,3 +1,9 @@
+# The broker image, named once. The broker, its volume-ownership fix and the demo seeder all run
+# the apache/kafka image (the seeder for its CLI tools), so they cannot be on different versions
+# of it; `compose/spectra-hub.yml` extends these services rather than redefining them, and
+# `compose/demo-forecast.yml` reads the same variable. KAFKA_IMAGE is documented in .env.example.
+x-kafka-image: &kafka-image ${KAFKA_IMAGE:-apache/kafka:4.4.0}
+
 services:
   # No `container_name`. It is a *daemon-global* name, so two stacks could never run
   # side by side — and these files share it (`kafka`, `kafka-sql-explorer`), which also
@@ -9,7 +15,7 @@ services:
   # the topics you already seeded are still there. Address services by service name:
   # `docker compose logs kafka`, `docker compose exec explorer sh`.
   kafka:
-    image: apache/kafka:4.4.0
+    image: *kafka-image
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${KAFKA_PORT:-9092}:9092"
     # A stopping KRaft node flushes its logs and closes the group / share-state
@@ -73,7 +79,7 @@ services:
   # The apache/kafka image runs as the non-root `appuser`, but Docker creates a
   # fresh named volume owned by root — chown it once before the broker starts.
   kafka-data-init:
-    image: apache/kafka:4.4.0
+    image: *kafka-image
     user: root
     volumes:
       - kafka_data:/var/lib/kafka/data
@@ -117,7 +123,7 @@ services:
     restart: unless-stopped
 
   demo-setup:
-    image: apache/kafka:4.4.0
+    image: *kafka-image
     depends_on:
       kafka:
         condition: service_healthy
