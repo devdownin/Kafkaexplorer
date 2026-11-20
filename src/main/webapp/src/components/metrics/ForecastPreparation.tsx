@@ -38,7 +38,7 @@ const stackMissing = (checks: ForecastPreparationCheck[]) =>
  * The assistant itself lives on the Metrics page, the one place the metric cards also open it: two
  * instances could be open at once, each with its own half-filled form.
  */
-export function ForecastPreparation({ onConfigure }: { onConfigure?: () => void }) {
+export function ForecastPreparation() {
   const [readiness, setReadiness] = useState<ForecastReadiness | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -79,6 +79,8 @@ export function ForecastPreparation({ onConfigure }: { onConfigure?: () => void 
       </span>}
     </div>
     {error && <p role="status">{error}</p>}
+    {/* Every forecast starts from an existing metric: there is no other way in to point to. */}
+    <p className="text-sm text-on-surface-variant">Once the dependencies are ready, press <span className="font-medium">Forecast</span> on a metric card.</p>
 
     {readiness && (missing ? <div role="status" className="space-y-1">
       <p className="font-semibold">The forecast stack is not running.</p>
@@ -100,7 +102,6 @@ export function ForecastPreparation({ onConfigure }: { onConfigure?: () => void 
       {/* Nothing to probe while neither dependency is configured. */}
       {readiness && !missing && untested.length > 0 &&
         <Button disabled={busy} onClick={() => void probe()}>{busy ? 'Testing dependencies…' : 'Test PostgreSQL and TimesFM'}</Button>}
-      {onConfigure && <Button onClick={onConfigure}>Configure a forecast</Button>}
     </div>
 
     {readiness && <details className="text-sm">

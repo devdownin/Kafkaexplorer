@@ -193,13 +193,37 @@ beforeEach(() => {
 });
 
 describe('Metrics page', () => {
-  it('opens the forecast assistant from the matching metric card and aborts it on close', async () => {
-    stubApi([templateMetric], [suggestion], READY_FORECASTS); const user = userEvent.setup(); await renderPage();
+  /*
+   * Every forecast starts from an existing metric, so the card's button creates it outright: no
+   * form opens on success, and the toast says when its first forecast follows.
+   */
+  it('creates the forecast from its card without opening a form', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, body?: unknown) =>
+      url === '/api/forecasts/series' ? Promise.resolve({ data: { seriesId: 'forecast-1' } }) : post(url, body));
+    const user = userEvent.setup(); await renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Forecast' }));
+    expect(await screen.findByText(/Forecast started for gauge_latency_a_to_b\./)).toBeInTheDocument();
+    expect(mockedAxios.post).toHaveBeenCalledWith('/api/forecasts/series',
+      expect.objectContaining({ metricId: templateMetric.id, confirmed: true }), expect.anything());
+    expect(screen.queryByRole('heading', { name: 'Forecast setup' })).toBeNull();
+    expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
+  });
+  it('opens the form for that metric, on the reason, only when the one-click creation stops', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, body?: unknown) => url === '/api/forecasts/series'
+      ? Promise.reject({ response: { data: { reason: 'History not available' } } }) : post(url, body));
+    mockedAxios.isAxiosError.mockReturnValueOnce(true);
+    const user = userEvent.setup(); await renderPage();
     await user.click(await screen.findByRole('button', { name: 'Forecast' }));
     // Opened for that metric, its sources are there at once (METRICS-FORECAST-UX-AUDIT.md U4).
     expect(await screen.findByRole('list', { name: 'All source topics: selected' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Forecast setup' })).toHaveFocus();
-    expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/forecasts/configuration', expect.anything(), expect.anything());
+    expect(screen.getByLabelText('Forecast configuration assistant')).toHaveTextContent('Automatic creation stopped: History not available.');
+    // A template declares its sources: nothing to attest.
+    expect(screen.queryByRole('checkbox', { name: /I confirm these are all the topics/ })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Close forecast setup' }));
     expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
   });
@@ -274,6 +298,21 @@ describe('Metrics page', () => {
     expect(status).toHaveTextContent('History 68 / 128 points · first forecast in ~60 min');
     // The status row stands in for the action: no greyed-out duplicate of it.
     expect(screen.queryByRole('button', { name: 'Forecast' })).toBeNull();
+  });
+  // Every forecast belongs to a card: the card's Details is how the panel is pointed at it.
+  it('points the forecast panel at a card\'s series from its Details button', async () => {
+    const series = (id: string, metricId: string) => ({ seriesId: id, metricId, environment: 'local', stepMillis: 60000,
+      minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+      activation: { eligible: false, reason: 'No forecast', blockPoints: 0, blockPointsRequired: 180, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: { state: 'WARMING_UP', strategy: 'UNAVAILABLE', visibility: 'SHADOW', reason: 'Collecting history', forecast: null, quality: null,
+        baselineMae: {}, evaluatedPoints: 0, context: { status: 'WARMING_UP', observedPoints: 68, points: [], outputUnit: 'milliseconds' } } });
+    const second = { ...templateMetric, id: 'm-2', name: 'gauge_second' };
+    stubApi([templateMetric, second], [suggestion], { enabled: true, state: 'AVAILABLE',
+      series: [series('a'.repeat(64), templateMetric.id), series('b'.repeat(64), second.id)] });
+    const user = userEvent.setup(); await renderPage();
+    expect(await screen.findByLabelText('Forecast series')).toHaveTextContent('gauge_latency_a_to_b');
+    await user.click(screen.getByRole('button', { name: 'Show the forecast of gauge_second' }));
+    await waitFor(() => expect(screen.getByLabelText('Forecast series')).toHaveTextContent('gauge_second'));
   });
   it('extends the selected metric chart with a distinguishable forecast and offers no second one', async () => {
     const historyEndAt = Date.now();
