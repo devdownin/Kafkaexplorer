@@ -38,13 +38,13 @@ Open **http://localhost:8080**.
 The port is published on the loopback interface deliberately — this image ships no
 authentication. See **Before you expose it** below.
 
-No broker at hand? The snippet below starts Kafka 4.3 (KRaft, no Zookeeper) next to it:
+No broker at hand? The snippet below starts Kafka 4.4 (KRaft, no Zookeeper) next to it:
 
 ```yaml
 # docker-compose.yml — throwaway sandbox, broker data is not persisted.
 services:
   kafka:
-    image: apache/kafka:4.3.1
+    image: apache/kafka:4.4.0
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller

@@ -52,7 +52,7 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * End-to-end checks against a real Kafka 4.3 broker (KRaft, native image) that the
+ * End-to-end checks against a real Kafka 4.4 broker (KRaft, native image) that the
  * mocked unit suite cannot cover: the kafka-clients 4.x admin surface used by
  * {@link KafkaAdminService} (metadata quorum, group listing, feature lag), record
  * sampling through the ConsumerRecord copy path, and a KIP-848 consumer actually
@@ -71,7 +71,7 @@ class KafkaClusterIntegrationTest {
      * failed: it happened twice in twelve hours on hosted runners — once here, once on a push to
      * {@code main} — and it takes the whole {@code mvn verify} down with it, this class's own
      * assertions never having run. It was 2, and 2 was not enough: a later pull request lost its
-     * {@code build} job to the same "Container startup failed for image apache/kafka-native:4.3.1"
+     * {@code build} job to the same "Container startup failed for image apache/kafka-native:4.4.0"
      * with 797 tests green beside it, and a manual re-run of the job was all it took to pass.
      * Three attempts is not a claim that three is the right number — it is one more than the
      * count observed to be insufficient, alongside the CI step that now pulls the image before
@@ -92,7 +92,7 @@ class KafkaClusterIntegrationTest {
      * catch.
      */
     @Container
-    static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka-native:4.3.1"))
+    static final KafkaContainer KAFKA = new KafkaContainer(DockerImageName.parse("apache/kafka-native:4.4.0"))
         .withStartupAttempts(3)
         .withStartupTimeout(Duration.ofMinutes(3));
 
