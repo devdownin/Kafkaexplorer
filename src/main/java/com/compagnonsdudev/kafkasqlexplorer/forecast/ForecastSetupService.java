@@ -106,14 +106,30 @@ public class ForecastSetupService {
     String version = MetricObservation.collectedVersion(m, kafka.getBootstrapServers(), h.getCollectorId());
     String id = MetricObservation.seriesId(h.getClusterId(), version, m.id(), "value", labels(m));
     var profile = new SeriesPreparationProfile(stepMillis, 512, SeriesPreparationProfile.Transformation.valueOf(c.transformation()));
-    var prepared = prep.prepare(id, version, c.unit(), System.currentTimeMillis(), profile);
+    long now = System.currentTimeMillis();
+    // Once per closed step, as `progress` is (METRICS-FORECAST-AUDIT-2.md P2): the context cannot
+    // change before the next step closes, and each read was up to 4 097 rows rebuilt into 512 points.
+    String key = id + "|" + stepMillis + "|" + profile.endAt(now);
+    var cached = previewByStep.get(id + "|" + stepMillis);
+    if (cached != null && cached.key().equals(key)) return cached.preview();
+    var prepared = prep.prepare(id, version, c.unit(), now, profile);
     var measured = prepared.points().stream().filter(pt -> pt.value() != null).toList();
     var shown = measured.subList(Math.max(0, measured.size() - 240), measured.size());
-    String[] cycle = detectCycle(measured.stream().map(PreparedMetricSeries.Point::value).toList(), stepMillis);
-    return new HistoryPreview(prepared.status().name(), prepared.reason(), prepared.observedPoints(), need,
+    // On the regular grid, a missing or imputed point as a hole (METRICS-FORECAST-AUDIT-2.md B6):
+    // dropping them compressed time, so a lag no longer meant a duration, and a carried value
+    // added plateaus that correlate with themselves.
+    List<Double> grid = prepared.points().stream()
+        .map(pt -> pt.value() == null || pt.imputed() ? null : pt.value()).toList();
+    String[] cycle = detectCycle(grid, stepMillis);
+    var preview = new HistoryPreview(prepared.status().name(), prepared.reason(), prepared.observedPoints(), need,
         prepared.outputUnit() == null ? c.unit() : prepared.outputUnit(), List.copyOf(shown),
         cycle == null ? null : cycle[0], cycle == null ? null : Double.valueOf(cycle[1]));
+    previewByStep.put(id + "|" + stepMillis, new PreviewEntry(key, preview));
+    return preview;
   }
+  private final java.util.concurrent.ConcurrentHashMap<String, PreviewEntry> previewByStep =
+      new java.util.concurrent.ConcurrentHashMap<>();
+  private record PreviewEntry(String key, HistoryPreview preview) {}
 
   /**
    * The longest of HOURLY / DAILY whose lag the history covers one and a half times and whose
@@ -127,7 +143,8 @@ public class ForecastSetupService {
       long period = cycle.getValue();
       if (period % stepMillis != 0) continue;
       int lag = (int) (period / stepMillis);
-      if (lag < 2 || lag > 512 || values.size() < lag * 3 / 2) continue;
+      long measured = values.stream().filter(java.util.Objects::nonNull).count();
+      if (lag < 2 || lag > 512 || values.size() < lag * 3 / 2 || measured < lag * 3 / 2) continue;
       fitted = true;
       double r = autocorrelation(values, lag);
       boolean peak = r >= CYCLE_CORRELATION && r - autocorrelation(values, lag / 2) >= CYCLE_PEAK;
@@ -138,17 +155,27 @@ public class ForecastSetupService {
     return fitted ? new String[] {"NONE", String.valueOf(best)} : null;
   }
 
+  /**
+   * Autocorrelation on a regular grid where a {@code null} is a hole: only pairs whose two ends were
+   * measured count, and each sum is averaged over what it actually summed. With no hole this is the
+   * earlier formula exactly — (covariance / (n − lag)) / (variance / n).
+   */
   static double autocorrelation(List<Double> v, int lag) {
-    int n = v.size();
-    double mean = v.stream().mapToDouble(Double::doubleValue).average().orElse(0);
-    double variance = 0, covariance = 0;
-    for (int i = 0; i < n; i++) variance += Math.pow(v.get(i) - mean, 2);
+    int n = v.size(), count = 0, pairs = 0;
+    double sum = 0;
+    for (Double x : v) if (x != null) { sum += x; count++; }
+    if (count == 0) return 0;
+    double mean = sum / count, variance = 0, covariance = 0;
+    for (Double x : v) if (x != null) variance += (x - mean) * (x - mean);
     if (variance == 0) return 0;
-    for (int i = lag; i < n; i++) covariance += (v.get(i) - mean) * (v.get(i - lag) - mean);
-    // Fewer pairs enter the sum at a long lag: scaled back up, a 288-lag cycle over 512 points reads
-    // 0.44 instead of 1 and a daily pattern is never found.
-    return covariance / variance * n / (n - lag);
+    for (int i = lag; i < n; i++) {
+      Double a = v.get(i), b = v.get(i - lag);
+      if (a == null || b == null) continue;
+      covariance += (a - mean) * (b - mean); pairs++;
+    }
+    return pairs == 0 ? 0 : (covariance / pairs) / (variance / count);
   }
+
 
   public record DraftRequest(String metricId, String definitionVersion, String environment, String unit,
       String clusterId, String collectorId, List<String> topics, List<String> groups, long stepMillis,

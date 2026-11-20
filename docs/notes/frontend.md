@@ -680,7 +680,7 @@ a perfect 288-lag cycle over 512 points as 0.44 and never found a daily pattern)
 chose is never replaced.** The horizon is a duration (`Looks ahead`: 15 minutes to 12 hours, only
 those the interval carries in 1 to 60 points); the environment sits under **Advanced**. The
 panel's chart draws from `forecastColors.ts` — the app's own tokens, where it used Tailwind's stock
-green, amber and indigo — and shows 60, 180 or all 512 context points. **`/progress` is read only
+green, amber and indigo — and shows 60, 180 or all 512 context points — only those the context can fill. **`/progress` is read only
 where its answer is on screen**: the threshold line on the chart (`SeriesView.thresholdConfigured`)
 or the open "Summary" fold, which removes the third request of the 30-second cycle for a series
 with neither (METRICS-FORECAST-UX-AUDIT.md P2).

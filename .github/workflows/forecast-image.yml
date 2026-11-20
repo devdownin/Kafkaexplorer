@@ -71,7 +71,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ inputs.tag || github.ref_name }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=latest,enable=${{ github.event_name == 'push' && !contains(github.ref_name, '-') }}
           # Stated here, not only in the Dockerfile: labels passed to the build override the
           # Dockerfile's LABELs, and metadata-action's defaults (title `Kafkaexplorer`, licence

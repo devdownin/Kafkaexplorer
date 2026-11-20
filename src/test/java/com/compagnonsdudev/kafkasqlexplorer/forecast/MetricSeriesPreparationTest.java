@@ -110,6 +110,29 @@ class MetricSeriesPreparationTest {
         assertEquals(COUNTER_RESET, prepare(hidden, 180_000, 2, COUNTER_RATE).status());
     }
 
+    /** METRICS-FORECAST-AUDIT-2.md O1: a reset no longer refuses the context once enough follows it. */
+    @Test
+    void aCounterResetStartsTheContextAfterItInsteadOfRefusingIt() {
+        var rows = new ArrayList<MetricObservation>();
+        // 10 messages a step; the source restarts at step 100 and counts from zero again.
+        for (int i = 0; i <= 300; i++)
+            rows.add(point("run" + i, i * STEP + 1000, i < 100 ? 5_000 + i * 10 : (i - 100) * 10, "COUNTER"));
+        var actual = prepare(rows, 301 * STEP, 300, COUNTER_RATE);
+        assertEquals(READY, actual.status(), actual.reason());
+        assertTrue(actual.reason().contains("after a counter reset"), actual.reason());
+        assertTrue(actual.points().getFirst().endAt() > 100 * STEP, "nothing from before the reset");
+        assertTrue(actual.points().size() >= SeriesPreparationProfile.MIN_CONTEXT_POINTS);
+        assertTrue(actual.points().stream().allMatch(p -> Math.abs(p.value() - 10.0 / (STEP / 1000.0)) < 1e-9),
+            "every rate is the counter's own, none spans the reset");
+        // Too little since the reset: still a reset, and it says how far it has got.
+        var recent = new ArrayList<MetricObservation>();
+        for (int i = 0; i <= 300; i++)
+            recent.add(point("run" + i, i * STEP + 1000, i < 250 ? 5_000 + i * 10 : (i - 250) * 10, "COUNTER"));
+        var waiting = prepare(recent, 301 * STEP, 300, COUNTER_RATE);
+        assertEquals(COUNTER_RESET, waiting.status());
+        assertTrue(waiting.reason().contains("collected since"), waiting.reason());
+    }
+
     @Test
     void separatesScopeChangesUnverifiedQualityUnknownUnitAndSemanticMismatch() {
         var rows = gauges(20);

@@ -21,7 +21,8 @@ ARG MODEL_SHA256=85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab8
 
 RUN mkdir -p /models \
  && curl -fL --retry 5 --connect-timeout 30 -o "/models/${MODEL_FILE}" "${MODEL_URL}" \
- && echo "${MODEL_SHA256}  /models/${MODEL_FILE}" | sha256sum -c -
+ && echo "${MODEL_SHA256}  /models/${MODEL_FILE}" | sha256sum -c - \
+ && chmod -R a+rX /models
 
 COPY scripts/llama-cpp/serve.sh /opt/llama-cpp/serve.sh
 COPY services/llama-cpp/licenses /licenses
@@ -37,5 +38,8 @@ LABEL org.opencontainers.image.title="kex-llm" \
       org.opencontainers.image.description="Gemma 4 E4B (Q4_K_M, Apache-2.0) on llama.cpp, with the weights baked in; starts with no network access." \
       org.opencontainers.image.licenses="AGPL-3.0-or-later AND Apache-2.0 AND MIT"
 
+# Not root (METRICS-FORECAST-AUDIT-2.md S1): the server only reads /models and its own binary, and
+# `kex-forecast` already runs as 10001. CI's `llm-offline` job boots this exact user with no network.
+USER 10001:10001
 EXPOSE 8080
 ENTRYPOINT ["/bin/sh", "/opt/llama-cpp/serve.sh"]

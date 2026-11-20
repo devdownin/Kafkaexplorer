@@ -274,8 +274,9 @@ describe('ForecastPanel', () => {
     vi.mocked(axios.get).mockImplementation(() => Promise.resolve({ data: view }));
     const user = userEvent.setup(); render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
     const choice = await screen.findByLabelText('History shown');
+    // 200 points of context: 512 is not offered, since it would draw 200 (METRICS-FORECAST-AUDIT-2.md U1).
     expect([...choice.querySelectorAll('option')].map(o => o.textContent)).toEqual(
-      ['Last 60 points · ~60 min', 'Last 180 points · ~3 h', 'Last 512 points · ~9 h']);
+      ['Last 60 points · ~60 min', 'Last 180 points · ~3 h']);
     await user.selectOptions(choice, '180');
     expect(choice).toHaveValue('180');
   });

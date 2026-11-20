@@ -65,16 +65,23 @@ public final class MetricSeriesPreparer {
         int offset = profile.transformation() == COUNTER_RATE ? 1 : 0;
         var buckets = new ArrayList<List<MetricObservation>>();
         for (int i = 0; i < profile.contextPoints() + offset; i++) buckets.add(new ArrayList<>());
+        // A counter that decreased was reset at its source. The context used to be refused whole,
+        // for as long as the reset stayed inside it — 512 steps, 8.5 h at one minute and over five
+        // days at fifteen (METRICS-FORECAST-AUDIT-2.md O1). It now starts at the last reset: what
+        // came before measures another run of the counter, and is never mixed into a rate.
         Double previousCounter = null;
-        for (var o : selected) {
-            if (o.value() == null) continue;
-            if (profile.transformation() == COUNTER_RATE) {
-                if (o.value() < 0 || (previousCounter != null && o.value() < previousCounter)) {
-                    return result(COUNTER_RESET, "Counter decreased; context crosses a reset", seriesId,
-                        definitionVersion, unit, from, to, profile, policy, fingerprint, List.of(), 0);
-                }
+        long resetAt = Long.MIN_VALUE;
+        if (profile.transformation() == COUNTER_RATE) {
+            for (var o : selected) {
+                if (o.value() == null) continue;
+                if (o.value() < 0) return result(COUNTER_RESET, "Counter value is negative", seriesId,
+                    definitionVersion, unit, from, to, profile, policy, fingerprint, List.of(), 0);
+                if (previousCounter != null && o.value() < previousCounter) resetAt = o.observedAt();
                 previousCounter = o.value();
             }
+        }
+        for (var o : selected) {
+            if (o.value() == null || o.observedAt() < resetAt) continue;
             buckets.get((int) ((o.observedAt() - readFrom) / profile.stepMillis())).add(o);
         }
         var points = new ArrayList<PreparedMetricSeries.Point>();
@@ -127,6 +134,13 @@ public final class MetricSeriesPreparer {
             || (offset == 1 && missing > 0)) {
             status = INSUFFICIENT_HISTORY; reason = "Gaps exceed the preparation policy";
         }
+        if (resetAt != Long.MIN_VALUE && status == WARMING_UP) {
+            // Until enough has been collected since the reset, the series says why it waits.
+            int since = (int) points.stream().filter(p -> p.value() != null).count();
+            return result(COUNTER_RESET, "Counter reset at its source; " + since + " of the "
+                + Math.min(MIN_CONTEXT_POINTS, profile.contextPoints()) + " points a forecast needs collected since",
+                seriesId, definitionVersion, unit, from, to, profile, policy, fingerprint, points, 0);
+        }
         int imputed = 0;
         if (status == READY && missing > 0) {
             Double last = null;
@@ -137,6 +151,7 @@ public final class MetricSeriesPreparer {
             }
             reason = "Short gauge gaps filled using past values only";
         }
+        if (status == READY && resetAt != Long.MIN_VALUE) reason = "Context starts after a counter reset; " + reason.substring(0, 1).toLowerCase(java.util.Locale.ROOT) + reason.substring(1);
         if (status == READY && points.size() < profile.contextPoints())
             reason = "Partial context: " + points.size() + " of " + profile.contextPoints()
                 + " points collected so far; " + reason.substring(0, 1).toLowerCase(java.util.Locale.ROOT) + reason.substring(1);

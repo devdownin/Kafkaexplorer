@@ -166,10 +166,13 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
   // The detail is the same row with its history: preferred once it is about the series shown.
   const series = listed && detail?.seriesId === listed.seriesId ? detail : listed;
   const result = series?.result;
+  // Only the windows the context can fill (METRICS-FORECAST-AUDIT-2.md U1): "Last 512 points" over a
+  // series still collecting its first 130 drew 130 and said 512.
+  const windows = [60, 180, 512].filter(n => n === 60 || n <= (result?.context.points.length ?? 0));
   const seriesProgress = progress?.seriesId === series?.seriesId ? progress : null;
   const chart = [
     // An imputed point is a filled gap, not a measurement: drawn apart, never in "Observed" (B4).
-    ...(result?.context.points.slice(-shown).map(p => p.imputed ? { at: p.endAt, imputed: p.value } : { at: p.endAt, actual: p.value }) ?? []),
+    ...(result?.context.points.slice(-(windows.includes(shown) ? shown : 60)).map(p => p.imputed ? { at: p.endAt, imputed: p.value } : { at: p.endAt, actual: p.value }) ?? []),
     ...(result?.forecast?.points.map(p => ({ at: p.at, median: p.q50, floor: p.q10, band: p.q90 - p.q10, q10: p.q10, q90: p.q90 })) ?? []),
   ];
   // Fifteen-minute steps over sixty history and sixty forecast points cover a day and more: a tick
@@ -298,8 +301,8 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
             <Button onClick={() => exportForecast('csv')}>Export CSV</Button>
             <Button onClick={() => exportForecast('json')}>Export JSON</Button>
           </div>
-          <Field label="History shown" className="w-56">{p => <Select {...p} value={shown} onChange={e => setShown(Number(e.target.value))}>
-            {[60, 180, 512].map(n => <option key={n} value={n}>Last {n} points · {about(n, series?.stepMillis ?? 60000)}</option>)}
+          <Field label="History shown" className="w-56">{p => <Select {...p} value={windows.includes(shown) ? shown : 60} onChange={e => setShown(Number(e.target.value))}>
+            {windows.map(n => <option key={n} value={n}>Last {n} points · {about(n, series?.stepMillis ?? 60000)}</option>)}
           </Select>}</Field>
         </div>
         <div style={{ height: 260 }} role="img" aria-label="Measured history and forecast">

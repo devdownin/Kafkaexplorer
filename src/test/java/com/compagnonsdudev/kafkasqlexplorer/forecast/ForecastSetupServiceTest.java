@@ -402,4 +402,28 @@ class ForecastSetupServiceTest {
     assertEquals(5, preview.points().size());
     assertEquals("WARMING_UP", preview.status());
   }
+
+  /** METRICS-FORECAST-AUDIT-2.md B6: a hole in the history is a hole, not a shorter history. */
+  @Test void holesInTheHistoryDoNotShiftTheCycle() {
+    var grid = new ArrayList<Double>();
+    for (int i = 0; i < 500; i++) grid.add(100 + 40 * Math.sin(2 * Math.PI * i / 288));
+    double full = ForecastSetupService.autocorrelation(grid, 288);
+    for (int i = 150; i < 190; i++) grid.set(i, null); // a collector outage of 40 points
+    var found = ForecastSetupService.detectCycle(grid, 300_000L);
+    assertEquals("DAILY", found[0]);
+    // Dropping the holes read 0.64 here; on the grid the correlation is unchanged in substance.
+    assertTrue(Math.abs(Double.parseDouble(found[1]) - full) < 0.1, found[1] + " vs " + full);
+  }
+
+  /** METRICS-FORECAST-AUDIT-2.md P2: the preview reads the history once per closed step. */
+  @Test void theHistoryPreviewReadsOncePerStep() throws Exception {
+    root.getHistory().setClusterId("cluster"); root.getHistory().setCollectorId("collector");
+    var profile = new SeriesPreparationProfile(900_000L, 512, SeriesPreparationProfile.Transformation.GAUGE_MEAN);
+    when(preparation.prepare(anyString(), anyString(), anyString(), anyLong(), any())).thenReturn(new PreparedMetricSeries(
+        PreparedMetricSeries.Status.WARMING_UP, "collecting", "s", "v", "milliseconds", "milliseconds", 0, 1,
+        profile, "p", "i", 0, 0, 0, List.of()));
+    setup.historyPreview("lag", 900_000L);
+    setup.historyPreview("lag", 900_000L);
+    verify(preparation, times(1)).prepare(anyString(), anyString(), anyString(), anyLong(), any());
+  }
 }

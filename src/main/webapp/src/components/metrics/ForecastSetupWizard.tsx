@@ -61,7 +61,12 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
   const [copied, setCopied] = useState(false);
   const [cadence, setCadence] = useState('60000');
   const [ahead, setAhead] = useState(1800000);
-  const [preview, setPreview] = useState<ForecastHistoryPreview | null>(null);
+  /*
+   * Keyed by the metric and interval it was read for (METRICS-FORECAST-AUDIT-2.md B5): changing the
+   * interval kept the previous interval's points on screen, captioned with the new one, until the
+   * new read answered.
+   */
+  const [previewRead, setPreview] = useState<{ key: string; data: ForecastHistoryPreview } | null>(null);
   // A cycle the operator chose is never replaced by the one the history suggests.
   const cycleTouched = useRef(false);
   const [seasonality, setSeasonality] = useState('NONE');
@@ -152,6 +157,8 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
    * guesswork: is there enough history, what cycle does it show, and what is a threshold worth here.
    */
   const metricId = selected?.eligible ? selected.metricId : '';
+  const previewKey = `${metricId}|${cadence}`;
+  const preview = previewRead?.key === previewKey ? previewRead.data : null;
   useEffect(() => {
     if (!metricId) return;
     const controller = new AbortController();
@@ -159,7 +166,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
       { params: { stepMillis: Number(cadence) }, signal: controller.signal, timeout: 10000 })
       .then(({ data }) => {
         if (controller.signal.aborted || !Array.isArray(data?.points) || typeof data.status !== 'string') return;
-        setPreview(data);
+        setPreview({ key: `${metricId}|${cadence}`, data });
         const cycle = data.suggestedSeasonality;
         if (!cycleTouched.current && (cycle === 'DAILY' || cycle === 'HOURLY')) setSeasonality(cycle);
       }).catch(() => { if (!controller.signal.aborted) setPreview(null); });
@@ -238,7 +245,10 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
   const firstSpan = firstPoints === null ? '' : `${about(firstPoints, Number(cadence))} of history`;
   const aheadText = span(ahead);
   const lastValue = preview?.points[preview.points.length - 1]?.value ?? null;
-  const suggestedThreshold = lastValue !== null && lastValue > 0 ? round(lastValue * 1.5) : null;
+  // Above the latest value for ABOVE, below it for BELOW (METRICS-FORECAST-AUDIT-2.md B4): 1.5× the
+  // latest value as a BELOW threshold is already crossed, a breach on the very first cycle.
+  const suggestionFactor = direction === 'BELOW' ? 0.5 : 1.5;
+  const suggestedThreshold = lastValue !== null && lastValue > 0 ? round(lastValue * suggestionFactor) : null;
   const found = preview?.suggestedSeasonality === seasonality && seasonality !== 'NONE';
   /*
    * One screen (it was two steps): the metric, then what has no sound default — the environment,
@@ -325,7 +335,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
           <Field id="forecast-threshold" label="Threshold (optional)" error={errors.threshold}
             description={<>In {selected.transformation === 'COUNTER_RATE' ? `${unit} per second` : unit}
               {lastValue !== null && <>; latest recorded {round(lastValue)}. {suggestedThreshold !== null && !threshold.trim()
-                && <Button variant="ghost" size="sm" className="h-6 px-1.5 underline" onClick={() => setThreshold(String(suggestedThreshold))}>Use {suggestedThreshold} (1.5× latest)</Button>}</>}</>}>{p => <Input {...p} inputMode="decimal" value={threshold} onChange={e => setThreshold(e.target.value)} />}</Field>
+                && <Button variant="ghost" size="sm" className="h-6 px-1.5 underline" onClick={() => setThreshold(String(suggestedThreshold))}>Use {suggestedThreshold} ({suggestionFactor}× latest)</Button>}</>}</>}>{p => <Input {...p} inputMode="decimal" value={threshold} onChange={e => setThreshold(e.target.value)} />}</Field>
           <Field label="Threshold direction">{p => <Select {...p} value={direction} onChange={e => setDirection(e.target.value)}><option value="ABOVE">Above</option><option value="BELOW">Below</option></Select>}</Field>
           <Field id="forecast-clusterId" label="History cluster ID" error={errors.clusterId} description="Prefilled from the running collector.">{p => <Input {...p} value={clusterId} onChange={e => setClusterId(e.target.value)} />}</Field>
           <Field id="forecast-collectorId" label="History collector ID" error={errors.collectorId}>{p => <Input {...p} value={collectorId} onChange={e => setCollectorId(e.target.value)} />}</Field>

@@ -20,6 +20,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The rest of the second forecast audit.** A counter reset no longer refuses the whole 512-point
+  context: it starts after the last reset once 128 points follow it, and says how far it has got until
+  then. Cycle detection reads the history on its regular grid, a missing or imputed point as a hole,
+  and the preview is computed once per closed step. In the assistant, the threshold suggestion follows
+  its direction (0.5× the latest value for "Below"), and no history is drawn under an interval it was
+  not read at; the panel offers only the windows the context can fill. `kex-llm` runs as uid 10001. The
+  publication workflows no longer depend on an empty `inputs.tag` on a tag push, and
+  `compose/llama-cpp.yml` mounts its scripts from this checkout (`./scripts`, resolved against the first
+  file's directory) — `docs/local-ai-stack-check.py` now refuses a bind mount that is not a file here.
 - **The forecast assistant no longer proposes a cycle for a series that merely drifts.** Its cycle
   detection read a raw autocorrelation, which is high at every lag of a trending series: 94.5 % of
   random walks were given an hourly cycle, applied by default. The correlation at the cycle's lag must
