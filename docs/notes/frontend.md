@@ -758,6 +758,9 @@ being refreshed would otherwise fire for ever; `metricTopics` names the topics a
 reliability badge has a trend beside it (`reliabilityTrend`): the open cohorts' coverage, oldest first,
 called a direction only past five points so two noisy cohorts are not read as one.
 
+**The compact line carries its forecast** (`MetricRow`'s `Sparkline`): the predicted medians continue the
+history, dashed, from the last measured point and on the same step, capped at half the measured points so
+a short history is not squeezed into a corner; none for a `COUNTER_RATE` forecast, a rate beside a counter.
 **The forecasts are read when they can have changed.** A forecast changes only at the pilot's cycle, and
 `/api/forecasts` says when the next one starts (`nextCycleAt`, null while one runs): the page hands the
 panel a new `clock` only when `forecastReadDue` says a read can bring something new — first, while a cycle

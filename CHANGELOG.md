@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Compact layout: the forecast continues the sparkline.** Each line now carries its forecast's median as a
+  dashed continuation of the measured history, from the last measured point and at the same step width;
+  at most half as many predicted points as measured ones, so a short history is not squeezed into a corner
+  (the card's own fix). None for a counter, whose forecast is a rate per second beside a counter's reading.
 - **Forecasts: fewer reads, and more to do with what they say.** The pilot service keeps each series'
   latest record between writes: `GET /api/forecasts` read and decoded every series' whole record (up to
   512 context points) on every poll of every tab, to strip its history; a local write drops the entry, a
