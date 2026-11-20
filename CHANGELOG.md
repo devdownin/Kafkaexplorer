@@ -20,6 +20,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **CI drives the Metrics page against the forecast demo.** `ci/demo-forecast-ui.mjs` runs in the
+  `forecast-stack` job after the backend smoke: the list's *Has a forecast* / *No forecast* filters keep
+  what the server lists, *Breach predicted (N)* keeps N cards each with its badge, the sort keeps every
+  card, and the forecast panel draws the metric's own thresholds. Relations only — never whether the
+  badge is showing, which depends on where the demo's curve is in its cycle.
+
 - **The Metrics page reads at a glance.** The card's disclaimer paragraph is an ⓘ beside a one-line
   legend, its chart is taller (120 px), and "Last checked: 87 % … mean error" became a *Reliable / Fair /
   Watch* badge with the figures one hover away. The Forecast button says what it does on hover and focus
