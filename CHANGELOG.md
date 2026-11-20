@@ -28,6 +28,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the healthy-card colour. In the panel the median starts on the last measurement, the value axis
   fits the data and the threshold instead of starting at zero, and the tooltip is dark.
   `GET /api/forecasts` now keeps the latest 60 context points per series.
+- **Forecast polling no longer decodes what it throws away.** `GET /api/forecasts`, polled every
+  30 s, decoded each series' whole latest result (512-point context included) only to drop the points;
+  the latest result key is now read first and the payload decoded only when it changed, results being
+  immutable. Series preparation hashes each distinct identity once rather than every row (2.45 of
+  10.4 ms per 4 096-row preparation). This closes `METRICS-FORECAST-AUDIT-2.md`.
 - **The rest of the second forecast audit.** A counter reset no longer refuses the whole 512-point
   context: it starts after the last reset once 128 points follow it, and says how far it has got until
   then. Cycle detection reads the history on its regular grid, a missing or imputed point as a hole,

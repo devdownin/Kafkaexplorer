@@ -642,7 +642,7 @@ for the stack and the provider those findings apply to today.
 
 `METRICS-FORECAST-AUDIT-2.md` (2026-11) is the second pass over metrics and forecasts: the series
 preparer, the quality window, the baselines, the observation journal, the setup assistant's history
-preview and the offline images. It implemented nothing; all of it but P1 and P3 was fixed afterwards. Its headline is that **the cycle the assistant
+preview and the offline images. It implemented nothing; all of it was fixed afterwards, P1 by decoding a series' latest result only when its immutable `result_key` changes and P3 by memoising the identity hash per distinct tuple (measured first: 2.45 of 10.4 ms). Its headline is that **the cycle the assistant
 proposes (`detectCycle`) is claimed on 94.5 % of random walks** and applied by default — a raw
 autocorrelation about the global mean is high at every lag of a drifting series — with a half-lag peak
 test simulated to fix it; two silent history cuts (the preview does not normalise the metric the way the

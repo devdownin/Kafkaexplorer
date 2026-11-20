@@ -175,18 +175,45 @@ public final class ForecastPilotStore {
     }
   }
 
+  /**
+   * The latest record of a series, decoded once per result rather than once per read
+   * (METRICS-FORECAST-AUDIT-2.md P1). `GET /api/forecasts` reads every series on every 30-second
+   * poll of every open page, and each read fetched and decoded the whole payload — the 512-point
+   * context included, ~44 KB — for the list to throw the points away. A result is insert-only
+   * (`save` is `ON CONFLICT DO NOTHING`), so its key names its content for good: the key is asked
+   * first, through the series index, and the payload is read and decoded only when it changed.
+   */
   public ForecastRecord latest(Connection c, String id) throws Exception {
+    String key;
     try (var s =
         c.prepareStatement(
-            "SELECT payload FROM kex_forecast_result_v2 WHERE series_id=? ORDER BY history_end"
+            "SELECT result_key FROM kex_forecast_result_v2 WHERE series_id=? ORDER BY history_end"
                 + " DESC,generated_at DESC LIMIT 1")) {
       s.setQueryTimeout(5);
       s.setString(1, id);
       try (var r = s.executeQuery()) {
-        return r.next() ? decode(r.getString(1)) : null;
+        if (!r.next()) return null;
+        key = r.getString(1);
+      }
+    }
+    var cached = latestDecoded.get(id);
+    if (cached != null && cached.key().equals(key)) return cached;
+    try (var s = c.prepareStatement("SELECT payload FROM kex_forecast_result_v2 WHERE result_key=?")) {
+      s.setQueryTimeout(5);
+      s.setString(1, key);
+      try (var r = s.executeQuery()) {
+        if (!r.next()) return null;
+        var decoded = decode(r.getString(1));
+        // One record per series, bounded by the series ever read; the pilot holds at most a few dozen.
+        if (latestDecoded.size() > 1024) latestDecoded.clear();
+        latestDecoded.put(id, decoded);
+        return decoded;
       }
     }
   }
+
+  private final java.util.concurrent.ConcurrentHashMap<String, ForecastRecord> latestDecoded =
+      new java.util.concurrent.ConcurrentHashMap<>();
 
   public ForecastRecord matured(Connection c, String id, long before, long after) throws Exception {
     try (var s =
