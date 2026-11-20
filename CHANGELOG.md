@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The SPA's seven open dependency alerts are closed.** `dompurify` (bundled by the Monaco editor,
+  five low advisories) to 3.4.17, `minimatch` (ESLint's TypeScript parser, a moderate ReDoS) to
+  11.0.5 and `zod` (an ESLint plugin's, memory exhaustion) to 4.6.7, through `overrides` since no
+  parent release carries them yet. Only `dompurify` ships in the application; the other two are
+  build-time. `npm audit` reports none.
 - **Forecast polling no longer decodes what it throws away.** `GET /api/forecasts`, polled every
   30 s, decoded each series' whole latest result (512-point context included) only to drop the points;
   the latest result key is now read first and the payload decoded only when it changed, results being
