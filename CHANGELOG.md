@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Compose: one broker definition, one Kafka image.** `compose/spectra-hub.yml` extended nothing and
+  carried its own copy of the broker, its volume fix and the demo seeder; it now `extends` the base's, as
+  `compose/dev.yml` already did. The image is written once (`KAFKA_IMAGE`, default `apache/kafka:4.4.0`,
+  in `.env.example`) instead of in a dozen places. The resolved configuration is unchanged for every
+  stack and overlay combination; `docs/check-image-pins.py` now resolves the YAML alias it is read through.
 - **Housekeeping: `unused/`.** Two files nothing referenced moved there, path preserved, so a `git mv`
   restores them: `docs/SQL-BOUNDED-FLINK-STUDY.md` and the SPA's `LoadingSpinner.tsx`. Everything else that
   looked orphaned is loaded by convention (workflows, test discovery, issue templates) or named by a note.

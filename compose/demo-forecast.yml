@@ -20,7 +20,7 @@
 services:
 
   demo-live:
-    image: apache/kafka:4.4.0
+    image: ${KAFKA_IMAGE:-apache/kafka:4.4.0}
     depends_on:
       kafka:
         condition: service_healthy

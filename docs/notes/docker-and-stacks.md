@@ -55,6 +55,30 @@ docker compose up -d
 ./setup-demo-peage.sh localhost:9092
 ```
 
+### One broker definition, one image
+
+The broker (`kafka`), its volume-ownership fix (`kafka-data-init`) and the demo seeder
+(`demo-setup`) are defined **once**, in `docker-compose.yml`. `compose/dev.yml` and
+`compose/spectra-hub.yml` `extends` them rather than copying them: the hub stack carried its own
+broker, 32 lines of which had already drifted from the base's (a healthcheck comment here, a
+`start_interval` there), which is how a copy ends. Paths inherited through `extends` resolve
+against the *extended* file's directory, so nothing in the extending file needs a `../`; the hub
+adds only what is its own (`start_interval: 3s`, merged into the base's healthcheck) and the dev
+stack replaces `volumes` with `!override`.
+
+The image is `x-kafka-image: &kafka-image ${KAFKA_IMAGE:-apache/kafka:4.4.0}` at the top of the
+base file, reached as `image: *kafka-image`; `compose/demo-forecast.yml`, the one overlay that runs
+the broker image for its CLI tools, reads the same variable. `docs/check-image-pins.py` resolves
+the alias, so the "nothing floats" rule still reads the real reference (an untagged anchor fails it).
+Bumping Kafka is therefore two lines (`docker-compose.yml`, `compose/demo-forecast.yml`) plus
+`.env.example`, where it used to be twelve. The standalone snippet in `docs/DOCKERHUB.md` and the
+native broker image the Testcontainers test and CI use are separate on purpose: the first
+is copied out of the repository, the second is the native build.
+
+The resolved configuration (`docker compose config`) was compared before and after for the base,
+dev, hub (with every overlay), schema-registry, forecast, demo and limits combinations: identical
+but for the `x-kafka-image` key Compose echoes back.
+
 ### The prompt has to fit the model's window
 
 `process-mining.prompt-char-budget` is 120 000 characters — ~30k tokens — and **the window
