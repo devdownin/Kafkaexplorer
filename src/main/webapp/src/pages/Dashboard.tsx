@@ -561,12 +561,12 @@ const Dashboard: React.FC = () => {
           <div className="rounded-md bg-surface-container p-3">
             <div className="text-xs text-on-surface-variant">Empty topics</div>
             <div className="font-semibold mt-1 tabular-nums">{data.topics.filter(t => (data.topicSizes[t] ?? 0) === 0).length.toLocaleString()}</div>
-            <button type="button" className="text-xs text-primary hover:underline mt-1" onClick={() => { setHideEmpty(false); setSearchTerm(''); document.getElementById('topics')?.scrollIntoView({ behavior: 'smooth' }); }}>Inspect topics</button>
+            <button type="button" className="text-xs text-primary hover:underline mt-1 inline-flex items-center min-h-6" onClick={() => { setHideEmpty(false); setSearchTerm(''); document.getElementById('topics')?.scrollIntoView({ behavior: 'smooth' }); }}>Inspect topics</button>
           </div>
           <div className="rounded-md bg-surface-container p-3">
             <div className="text-xs text-on-surface-variant">Dead-letter topics</div>
             <div className="font-semibold mt-1 tabular-nums">{data.topics.filter(isDeadLetterTopic).length.toLocaleString()}</div>
-            <Link to="/dead-letter" className="text-xs text-primary hover:underline inline-block mt-1">Open dead-letter explorer</Link>
+            <Link to="/dead-letter" className="text-xs text-primary hover:underline inline-flex items-center min-h-6 mt-1">Open dead-letter explorer</Link>
           </div>
         </div>
       </section>
