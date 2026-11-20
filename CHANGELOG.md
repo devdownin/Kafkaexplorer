@@ -25,6 +25,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stays under its 25,000-byte limit by sending the MCP review configuration to `DOCKERHUB-OPERATIONS.md`,
   which already carried it. On the GitHub Pages site, the "work in progress" list named three pull requests
   merged since, and the forecast section still described the retired "Prepare a forecast" flow.
+- **Metrics page: a compact layout, the reliability trend, and what to do about a predicted threshold.**
+  A *Compact* layout shows one line per metric (verdict, value, a plain-SVG sparkline, the forecast's
+  predicted threshold) for deployments with dozens of metrics, remembered in the browser. Beside the
+  Reliable / Fair / Watch badge, the coverage of each open cohort is drawn as a trend and named
+  (improving / steady / degrading), since the badge says where the forecast is, not where it is going.
+  And the predicted-threshold badge offers the Alertmanager rule on `explorer_forecast_threshold_eta_seconds`
+  (paired with collection freshness) and a link to each topic the metric reads.
 
 - **Metrics page: one clock, cards that render only when they change, and what each forecast and refresh
   costs.** The list was read every 15 s while the server recomputes every 30 s, and the forecast panel ran

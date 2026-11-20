@@ -241,6 +241,17 @@ describe('Metrics page', () => {
     expect(await screen.findByLabelText('Why these metrics have no forecast'))
       .toHaveTextContent('1 × Ready: press Forecast on the card');
   });
+  it('shows one line per metric in the compact layout, and remembers the choice in this browser', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const user = userEvent.setup(); await renderPage();
+    await user.click(await screen.findByRole('button', { name: /Compact/ }));
+    const list = screen.getByRole('list', { name: 'Metrics' });
+    expect(within(list).getByLabelText(/gauge_latency_a_to_b: /)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Compact/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(localStorage.getItem('metrics.view')).toBe('compact');
+    await user.click(within(list).getByRole('button', { name: 'Edit gauge_latency_a_to_b' }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
   it('opens the form for that metric, on the reason, only when the one-click creation stops', async () => {
     stubApi([templateMetric], [suggestion], READY_FORECASTS);
     const post = mockedAxios.post.getMockImplementation()!;
