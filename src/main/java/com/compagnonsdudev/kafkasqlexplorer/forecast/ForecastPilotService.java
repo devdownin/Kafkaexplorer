@@ -34,6 +34,21 @@ public final class ForecastPilotService {
   /** The same latch for the shadow, kept apart: its outage must not take TimesFM out, nor the reverse. */
   private volatile TimesFmInferenceException.State shadowOutThisCycle;
 
+  /**
+   * The two database reads a reader's view is made of — the latest record and the activation flag —
+   * kept per series between writes.
+   *
+   * <p>{@code GET /api/forecasts} read and decoded every series' whole record (up to 512 context
+   * points, the forecast, the quality window) on every poll of every open tab, only to strip the
+   * history from it; the threshold-reach series did it again after each cycle. A record only changes
+   * when this pilot writes one, so a local write drops the entry at once ({@link #invalidateReads}),
+   * and a write by another instance sharing the database shows within {@link #LATEST_READ_TTL_MS}.
+   * What depends on the clock — STALE past the horizon — is still computed on every read.
+   */
+  static final long LATEST_READ_TTL_MS = 15_000;
+  private record LatestRead(ForecastRecord record, boolean active, long readAt) {}
+  private final java.util.Map<String, LatestRead> latestReads = new java.util.concurrent.ConcurrentHashMap<>();
+
   public ForecastPilotService(
       ForecastPilotProperties properties,
       ForecastPilotStore store,
@@ -101,6 +116,7 @@ public final class ForecastPilotService {
             "All " + properties.getMaxSeries() + " forecast series are in use; withdraw one first");
       store.approve(c, spec);
       c.commit();
+      invalidateReads(spec.seriesId());
       runtime.add(spec);
       properties.replaceRuntime(runtime);
       runtimeLoaded = true;
@@ -144,6 +160,7 @@ public final class ForecastPilotService {
       store.disable(c, id);
       c.commit();
     }
+    invalidateReads(id);
     properties.replaceRuntime(
         properties.runtime().stream().filter(s -> !s.seriesId().equals(id)).toList());
   }
@@ -154,9 +171,30 @@ public final class ForecastPilotService {
 
   public ForecastRecord get(String id) throws Exception {
     var spec = resolve(id);
+    var cached = latestReads.get(id);
+    // A fresh read needs no connection at all: the common case of a page polling between cycles.
+    if (cached != null && System.currentTimeMillis() - cached.readAt() < LATEST_READ_TTL_MS) return view(cached, spec);
     try (var c = store.open()) {
       return view(c, spec, id);
     }
+  }
+
+  /** Drops the cached reads of one series, or of all of them: after any write this pilot makes. */
+  void invalidateReads(String id) {
+    if (id == null) latestReads.clear();
+    else latestReads.remove(id);
+  }
+
+  private LatestRead latestRead(Connection c, String id) throws Exception {
+    var r = store.latest(c, id);
+    // The flag is only read when it can matter (a READY TimesFM record), as it was before.
+    boolean active = r != null && r.state().equals("READY") && r.strategy().equals("TIMESFM") && store.active(c, id);
+    var read = new LatestRead(r, active, System.currentTimeMillis());
+    // An absence is not kept: a series' first forecast must show the moment it exists, whoever
+    // wrote it, and reading nothing costs nothing worth saving.
+    if (r != null) latestReads.put(id, read);
+    else latestReads.remove(id);
+    return read;
   }
 
   /**
@@ -178,7 +216,11 @@ public final class ForecastPilotService {
   /** The latest compatible record as a reader sees it: STALE past its horizon, visibility live. */
   private ForecastRecord view(Connection c, ForecastPilotProperties.Series spec, String id)
       throws Exception {
-    var r = store.latest(c, id);
+    return view(latestRead(c, id), spec);
+  }
+
+  private ForecastRecord view(LatestRead read, ForecastPilotProperties.Series spec) throws Exception {
+    var r = read.record();
     if (r == null || !compatible(spec, r)) return null;
     boolean stale =
         r.forecast() != null
@@ -188,7 +230,7 @@ public final class ForecastPilotService {
         !stale
                 && r.state().equals("READY")
                 && r.strategy().equals("TIMESFM")
-                && store.active(c, id)
+                && read.active()
             ? ForecastThresholdPolicy.Visibility.ACTIVE
             : ForecastThresholdPolicy.Visibility.SHADOW;
     return new ForecastRecord(
@@ -293,6 +335,7 @@ public final class ForecastPilotService {
         try {
           refresh(s, System.currentTimeMillis());
         } catch (Exception e) {
+          invalidateReads(s.seriesId());
           counter("explorer_forecast_pilot_failures_total", "DEPENDENCY").increment();
           LoggerFactory.getLogger(getClass()).warn("Forecast pilot dependency unavailable");
         }
@@ -300,6 +343,8 @@ public final class ForecastPilotService {
     } finally {
       modelOutThisCycle = null;
       shadowOutThisCycle = null;
+      // Every record this cycle wrote is read afresh, by the threshold-reach series first.
+      invalidateReads(null);
       nextScheduledAt = System.currentTimeMillis() + properties.getInterval().toMillis();
       running.set(false);
     }
@@ -873,6 +918,7 @@ public final class ForecastPilotService {
       // recomputes visibility from the control row: a record a running cycle publishes as ACTIVE
       // a moment later reads SHADOW.
       store.activate(id, false);
+      invalidateReads(id);
       return;
     }
     try (var c = store.open()) {
@@ -883,6 +929,7 @@ public final class ForecastPilotService {
       store.activate(c, id, true);
       c.commit();
     }
+    invalidateReads(id);
   }
 
   public record PredictedBreach(

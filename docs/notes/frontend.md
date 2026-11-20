@@ -758,6 +758,22 @@ being refreshed would otherwise fire for ever; `metricTopics` names the topics a
 reliability badge has a trend beside it (`reliabilityTrend`): the open cohorts' coverage, oldest first,
 called a direction only past five points so two noisy cohorts are not read as one.
 
+**The forecasts are read when they can have changed.** A forecast changes only at the pilot's cycle, and
+`/api/forecasts` says when the next one starts (`nextCycleAt`, null while one runs): the page hands the
+panel a new `clock` only when `forecastReadDue` says a read can bring something new — first, while a cycle
+runs, once it is due, and at least every two minutes, since a series still collecting history moves with
+each metric refresh. The timestamps live in a ref the panel's status callback writes and the timer reads,
+never during render. The panel's per-series reads (detail, progress, shadow) also wait while an
+`IntersectionObserver` says it is off screen; without one it counts as on screen. **What changed between two
+forecasts is remembered by the page** (`nextReachMemory`): the shift of a predicted threshold, shown on the
+card only when a new forecast (another result key) predicts the same level — comparing the instants of two
+different thresholds says nothing — and the reaches that are *news* (a new one, or warning → critical,
+never on the first look), which is all a browser notification is raised for, when the operator opted in
+(`metrics.notify` in `localStorage`). *Forecast all eligible* is the card's one-click creation run for every
+metric whose reason is empty, sequentially, behind a confirmation, with each refusal named. The panel's
+*Try a threshold* reads a tried value with `whatIfReach`, the same rule as the metrics' own thresholds, and
+saves nothing.
+
 **One reading of the forecast, three surfaces.** `forecastReachFor` (the reach, in milliseconds, or `null` for a rate forecast) feeds the card's badge and the page's *Breach predicted* filter and *next predicted breach* sort, so the list and the card cannot disagree; `placeThresholds` (`thresholdPlacement.ts`) decides which of a metric's thresholds a chart draws and which it names at the edge, for the card and the Forecast panel alike. `forecastReliability` turns the quality window's 80 % coverage into a word (Reliable from 70 %, Fair from 50 %, Watch below, Early under ten points) — a badge for the glance, the numbers in its tooltip.
 
 **The card reads the forecast against the metric's thresholds** (`forecastBreach.ts`, pure and

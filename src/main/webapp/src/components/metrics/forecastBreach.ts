@@ -82,3 +82,20 @@ export function forecastReachFor(
     metric.criticalThreshold, result.strategy === 'TIMESFM');
   return reach && { ...reach, inMillis: reach.steps * series.stepMillis };
 }
+
+/**
+ * When the forecast would reach a threshold the operator is only trying out — the panel's "what if".
+ * The same reading as a metric's own thresholds (median first, then the cautious edge of the 80 %
+ * band), for one threshold and a direction given rather than implied by a pair.
+ */
+export function whatIfReach(points: ForecastPoint[], threshold: number, below: boolean, withInterval: boolean):
+  { likelihood: 'expected' | 'possible'; at: number; steps: number } | null {
+  if (!Number.isFinite(threshold) || !points.length) return null;
+  const past = (value: number) => Number.isFinite(value) && (below ? value <= threshold : value >= threshold);
+  for (const likelihood of ['expected', 'possible'] as const) {
+    if (likelihood === 'possible' && !withInterval) break;
+    const index = points.findIndex(p => past(likelihood === 'expected' ? p.q50 : below ? p.q10 : p.q90));
+    if (index >= 0) return { likelihood, at: points[index].at, steps: index + 1 };
+  }
+  return null;
+}

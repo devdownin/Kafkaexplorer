@@ -298,6 +298,22 @@ class ForecastPilotServiceTest {
     verify(connection).commit();
   }
 
+  /**
+   * The latest record is read once per series between writes: a page polling every 30 s, in every
+   * open tab, no longer reads and decodes each series' whole record on every poll. A local write
+   * drops the cached read at once.
+   */
+  @Test
+  void aSecondReadBetweenWritesDoesNotGoBackToTheStore() throws Exception {
+    when(store.latest(connection, spec.seriesId())).thenReturn(record(context, 1, "READY"));
+    assertNotNull(pilot.get(spec.seriesId()));
+    assertNotNull(pilot.get(spec.seriesId()));
+    verify(store, times(1)).latest(connection, spec.seriesId());
+    pilot.invalidateReads(spec.seriesId());
+    assertNotNull(pilot.get(spec.seriesId()));
+    verify(store, times(2)).latest(connection, spec.seriesId());
+  }
+
   @Test
   void expiredForecastCannotRemainActiveOrProduceBreach() throws Exception {
     when(store.latest(connection, spec.seriesId()))

@@ -150,4 +150,10 @@ describe('MetricCard forecast chart', () => {
     expect(screen.getByLabelText('Reliability trend')).toHaveTextContent('degrading');
     expect(screen.getByRole('img', { name: 'Coverage degrading: 90% → 75% → 60%' })).toBeInTheDocument();
   });
+
+  it('says how far the latest forecast moved its predicted threshold', () => {
+    render(<ToastProvider><MetricCard metric={{ ...metric, warningThreshold: 450, criticalThreshold: 470 }} onEdit={() => {}}
+      onDelete={() => {}} onRefresh={() => {}} refreshing={false} forecastSeries={series} reachShiftMs={-240_000} /></ToastProvider>);
+    expect(screen.getByLabelText('Forecast threshold')).toHaveTextContent('4 min sooner than the previous forecast');
+  });
 });
