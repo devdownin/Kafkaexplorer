@@ -28,6 +28,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and collector IDs), and the source attestation for a template metric, whose sources are declared.
   The forecast panel's five folds are two: Quality and Configuration, and it has no series selector:
   a card's **Details** shows that metric's forecast in it, named as the card names it.
+- **The SPA's seven open dependency alerts are closed.** `dompurify` (bundled by the Monaco editor,
+  five low advisories) to 3.4.17, `minimatch` (ESLint's TypeScript parser, a moderate ReDoS) to
+  11.0.5 and `zod` (an ESLint plugin's, memory exhaustion) to 4.6.7, through `overrides` since no
+  parent release carries them yet. Only `dompurify` ships in the application; the other two are
+  build-time. `npm audit` reports none.
 - **A metric card says when its forecast reaches a threshold.** "Warning expected in ~12 min
   (≥ 2,150, median)" when the median reaches the metric's own warning or critical threshold,
   "possible" when only the 80 % band does, critical before warning, in the direction the two

@@ -138,7 +138,7 @@ describe('Dashboard auto-refresh', () => {
       renderPage();
       await waitFor(() => expect(dashboardRequests()).toHaveLength(1));
 
-      await user.selectOptions(screen.getByLabelText('Auto-refresh'), '1m');
+      await user.selectOptions(await screen.findByLabelText('Auto-refresh'), '1m');
       expect(localStorage.getItem('kse:dashboard-refresh')).toBe('1m');
       // L'ancienne minuterie a pu tirer une fois entre le clic et le réarmement de l'effet :
       // le compte de référence est celui d'après le réarmement, pas celui d'avant le clic.
@@ -170,7 +170,7 @@ describe('Dashboard auto-refresh', () => {
     await waitFor(() => expect(activityRequests().length).toBeGreaterThanOrEqual(1));
     const activityBefore = activityRequests().length;
 
-    await user.selectOptions(screen.getByLabelText('Auto-refresh'), '30s');
+    await user.selectOptions(await screen.findByLabelText('Auto-refresh'), '30s');
 
     expect(dashboardRequests()).toHaveLength(1);
     expect(activityRequests()).toHaveLength(activityBefore);
@@ -191,7 +191,7 @@ describe('Dashboard auto-refresh', () => {
       const dashboardSoFar = dashboardRequests().length;
       const activitySoFar = activityRequests().length;
 
-      await user.selectOptions(screen.getByLabelText('Auto-refresh'), 'off');
+      await user.selectOptions(await screen.findByLabelText('Auto-refresh'), 'off');
       await vi.advanceTimersByTimeAsync(10 * 60_000);
 
       expect(dashboardRequests()).toHaveLength(dashboardSoFar);
@@ -212,7 +212,7 @@ describe('Dashboard auto-refresh', () => {
     renderPage();
     await waitFor(() => expect(dashboardRequests()).toHaveLength(1));
 
-    await user.selectOptions(screen.getByLabelText('Auto-refresh'), 'off');
+    await user.selectOptions(await screen.findByLabelText('Auto-refresh'), 'off');
     const before = dashboardRequests().length;
 
     document.dispatchEvent(new Event('visibilitychange'));
