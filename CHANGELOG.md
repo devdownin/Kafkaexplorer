@@ -25,6 +25,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `compose/dev.yml` already did. The image is written once (`KAFKA_IMAGE`, default `apache/kafka:4.4.0`,
   in `.env.example`) instead of in a dozen places. The resolved configuration is unchanged for every
   stack and overlay combination; `docs/check-image-pins.py` now resolves the YAML alias it is read through.
+- **Housekeeping: `unused/`.** Two files nothing referenced moved there, path preserved, so a `git mv`
+  restores them: `docs/SQL-BOUNDED-FLINK-STUDY.md` and the SPA's `LoadingSpinner.tsx`. Everything else that
+  looked orphaned is loaded by convention (workflows, test discovery, issue templates) or named by a note.
+
 - **CI drives the Metrics page against the forecast demo.** `ci/demo-forecast-ui.mjs` runs in the
   `forecast-stack` job after the backend smoke: the list's *Has a forecast* / *No forecast* filters keep
   what the server lists, *Breach predicted (N)* keeps N cards each with its badge, the sort keeps every
