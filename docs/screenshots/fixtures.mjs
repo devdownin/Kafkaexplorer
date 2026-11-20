@@ -1024,10 +1024,10 @@ export const forecastSeries = {
   activation: forecastActivation, stepMillis: FORECAST_STEP, minimumContextPoints: 32, withdrawable: true, thresholdConfigured: true, error: null,
 };
 
-/** GET /api/forecasts — the list is a summary: the same row without its history points. */
+/** GET /api/forecasts — the list is a summary: the same row with only its latest 60 history points. */
 export const forecastStatus = {
   enabled: true, state: 'AVAILABLE', shadowEnabled: false, modelAvailable: true,
-  series: [{ ...forecastSeries, result: { ...forecastResult, context: { ...forecastContext, points: [] } } }],
+  series: [{ ...forecastSeries, result: { ...forecastResult, context: { ...forecastContext, points: forecastContext.points.slice(-60) } } }],
 };
 
 /** GET /api/forecasts/{seriesId}/progress — the threshold of the card, judged on the cautious edge. */

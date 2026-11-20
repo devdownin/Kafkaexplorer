@@ -70,4 +70,28 @@ describe('ForecastPanel chart', () => {
       .map(t => Number(t.textContent));
     expect(Math.max(...ticks)).toBeGreaterThanOrEqual(50);
   });
+
+  // The axis started at zero: a latency between 1 900 and 2 300 was a flat line and its band a sliver.
+  it('fits the value axis to the series rather than starting at zero', async () => {
+    const high = structuredClone(status);
+    high.series[0].result.context.points.forEach((p, i) => { p.value = 1900 + 100 * i; });
+    high.series[0].result.forecast.points.forEach((p, i) => Object.assign(p, { q10: 2050 + i, q50: 2100 + i, q90: 2300 + i }));
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? high : {} }));
+    const { container } = render(<ForecastPanel />);
+    await screen.findByText('Median forecast');
+    const ticks = [...container.querySelectorAll('.recharts-yAxis .recharts-cartesian-axis-tick-value')]
+      .map(t => Number(t.textContent!.replace(/[^\d.-]/g, '')));
+    expect(Math.min(...ticks)).toBeGreaterThan(1000);
+    expect(Math.max(...ticks)).toBeGreaterThanOrEqual(2300);
+  });
+
+  // Where the measurements stop is marked, and the median leaves from the last measured point.
+  it('marks the start of the forecast and joins it to the last measurement', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
+    const { container } = render(<ForecastPanel />);
+    expect(await screen.findByText('now')).toBeInTheDocument();
+    const median = container.querySelector('.recharts-line path[stroke-dasharray="6 3"]');
+    // Three predicted points plus the measured one it starts from: four vertices, three segments.
+    expect(median?.getAttribute('d')?.match(/[ML]/g)?.length ?? (median?.getAttribute('d')?.match(/C/g)?.length ?? 0) + 1).toBe(4);
+  });
 });

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Area, Bar, BarChart, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Badge, Button, Field, Select, Table, TableBody, TableHead, TableRow, Td, Th, useConfirm } from '../ui';
 import { copyText } from '../../clipboard';
 import type { BadgeTone } from '../ui';
@@ -170,11 +170,19 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
   // series still collecting its first 130 drew 130 and said 512.
   const windows = [60, 180, 512].filter(n => n === 60 || n <= (result?.context.points.length ?? 0));
   const seriesProgress = progress?.seriesId === series?.seriesId ? progress : null;
-  const chart = [
+  const history: { at: number; actual?: number | null; imputed?: number | null; median?: number | null }[] =
     // An imputed point is a filled gap, not a measurement: drawn apart, never in "Observed" (B4).
-    ...(result?.context.points.slice(-(windows.includes(shown) ? shown : 60)).map(p => p.imputed ? { at: p.endAt, imputed: p.value } : { at: p.endAt, actual: p.value }) ?? []),
+    result?.context.points.slice(-(windows.includes(shown) ? shown : 60)).map(p => p.imputed ? { at: p.endAt, imputed: p.value } : { at: p.endAt, actual: p.value }) ?? [];
+  /*
+   * The median starts on the last measured point, so the two strokes meet: they were drawn with a
+   * gap of one step between them, which read as a missing reading at the very moment that matters.
+   */
+  const lastMeasured = [...history].reverse().find(p => typeof p.actual === 'number');
+  const chart = [
+    ...history.map(p => p === lastMeasured && result?.forecast?.points.length ? { ...p, median: p.actual } : p),
     ...(result?.forecast?.points.map(p => ({ at: p.at, median: p.q50, floor: p.q10, band: p.q90 - p.q10, q10: p.q10, q90: p.q90 })) ?? []),
   ];
+  const forecastStart = lastMeasured?.at ?? result?.forecast?.historyEndAt;
   // Fifteen-minute steps over sixty history and sixty forecast points cover a day and more: a tick
   // that shows only the time then repeats across midnight.
   const anyImputed = chart.some(p => 'imputed' in p && p.imputed != null);
@@ -182,6 +190,24 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
   const threshold = seriesProgress?.breach?.resultKey === result?.key ? seriesProgress?.breach?.threshold ?? null : null;
   const stage = series ? forecastStage(series) : null;
   const spanMs = chart.length > 1 ? chart[chart.length - 1].at - chart[0].at : 0;
+  /*
+   * The value axis fits the data and the threshold, padded by a tenth of their range. It started at
+   * zero, so a latency moving between 1 900 and 2 300 under a threshold at 3 800 was a flat line in
+   * the middle of the plot, and the 80 % band a sliver nobody could read.
+   */
+  const plotted = chart.flatMap(p => [('actual' in p ? p.actual : null), ('imputed' in p ? p.imputed : null),
+    ('median' in p ? p.median : null), ('q10' in p ? p.q10 : null), ('q90' in p ? p.q90 : null)])
+    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  if (threshold) plotted.push(threshold.threshold);
+  const low = plotted.length ? Math.min(...plotted) : 0;
+  const high = plotted.length ? Math.max(...plotted) : 1;
+  const pad = (high - low) * 0.1 || Math.abs(high) * 0.1 || 1;
+  // Bounds on a round step, so the ticks read 1,600 · 2,400 rather than 1,628.6 · 2,828.6; a
+  // non-negative series is not padded below zero.
+  const step = 10 ** Math.floor(Math.log10((high - low + 2 * pad) / 4));
+  const yDomain: [number, number] = [Math.max(low >= 0 ? 0 : -Infinity, Math.floor((low - pad) / step) * step),
+    Math.ceil((high + pad) / step) * step];
+  const number = (v: unknown) => typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(v);
   const quality = result?.quality;
   const comparisons = result && quality
     ? [
@@ -298,8 +324,8 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
       {result?.forecast ? <>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-wrap gap-2" aria-label="Forecast export">
-            <Button onClick={() => exportForecast('csv')}>Export CSV</Button>
-            <Button onClick={() => exportForecast('json')}>Export JSON</Button>
+            <Button variant="outline" size="sm" icon="download" onClick={() => exportForecast('csv')}>Export CSV</Button>
+            <Button variant="outline" size="sm" icon="download" onClick={() => exportForecast('json')}>Export JSON</Button>
           </div>
           <Field label="History shown" className="w-56">{p => <Select {...p} value={windows.includes(shown) ? shown : 60} onChange={e => setShown(Number(e.target.value))}>
             {windows.map(n => <option key={n} value={n}>Last {n} points · {about(n, series?.stepMillis ?? 60000)}</option>)}
@@ -307,25 +333,37 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
         </div>
         <div style={{ height: 260 }} role="img" aria-label="Measured history and forecast">
           <ResponsiveContainer><ComposedChart data={chart}>
-            <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={tick} />
+            <CartesianGrid stroke={FORECAST_COLORS.band} strokeOpacity={0.12} vertical={false} />
+            <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={tick}
+              tick={{ fill: FORECAST_COLORS.band, fontSize: 11 }} stroke={FORECAST_COLORS.band} strokeOpacity={0.4} minTickGap={24} />
             {/* The axis reaches the threshold: `ifOverflow="extendDomain"` does not widen it in
                 recharts 2, so a threshold above every value was drawn outside the plot, unseen. */}
-            <YAxis domain={threshold ? [0, (max: number) => Math.ceil(Math.max(max, threshold.threshold) * 1.05)] : [0, 'auto']} />
+            <YAxis domain={yDomain} allowDataOverflow tickFormatter={v => number(v)} width={56}
+              tick={{ fill: FORECAST_COLORS.band, fontSize: 11 }} stroke={FORECAST_COLORS.band} strokeOpacity={0.4} />
+            {/* What lies ahead is tinted, and "now" marks where the measurements stop. */}
+            {forecastStart !== undefined && <ReferenceArea x1={forecastStart} x2={chart[chart.length - 1].at}
+              fill={FORECAST_COLORS.forecast} fillOpacity={0.05} strokeOpacity={0} ifOverflow="hidden" />}
+            {forecastStart !== undefined && <ReferenceLine x={forecastStart} stroke={FORECAST_COLORS.band} strokeDasharray="3 3"
+              label={{ value: 'now', position: 'insideTopLeft', fill: FORECAST_COLORS.band, fontSize: 11 }} />}
             {/* The band is drawn as a floor plus a width, so its own tooltip value is the width — shown
-                beside the floor it read as an interval narrower than its lower edge. */}
+                beside the floor it read as an interval narrower than its lower edge. The tooltip takes
+                the page's surface: recharts' default is white, which put a near-white date on white. */}
             <Tooltip labelFormatter={v => new Date(Number(v)).toLocaleString()}
+              contentStyle={{ background: '#191d24', border: '1px solid #2a303b', borderRadius: 8, fontSize: 12 }}
+              labelStyle={{ color: '#9aa3b2', marginBottom: 4 }} itemStyle={{ padding: 0 }}
+              cursor={{ stroke: FORECAST_COLORS.band, strokeOpacity: 0.4 }}
               formatter={(value, name, item) => name === '80 % interval' && item?.payload
-                ? [`${Number(item.payload.q10).toPrecision(4)} – ${Number(item.payload.q90).toPrecision(4)}`, name]
-                : [value, name]} />
-            <Legend />
+                ? [`${number(item.payload.q10)} – ${number(item.payload.q90)}`, name]
+                : [number(value), name]} />
+            <Legend wrapperStyle={{ fontSize: 12, paddingTop: 4 }} />
             {/* Two separate children, never a fragment: recharts 2 does not find a graphical item
                 inside `<>…</>`, so the band and its legend entry were never drawn
                 (METRICS-FORECAST-UX-AUDIT.md B1). */}
             {result.strategy === 'TIMESFM' && <Area dataKey="floor" stackId="interval" stroke="none" fill="transparent" tooltipType="none" legendType="none" isAnimationActive={false} />}
-            {result.strategy === 'TIMESFM' && <Area dataKey="band" stackId="interval" stroke="none" fill={FORECAST_COLORS.band} fillOpacity={0.2} name="80 % interval" isAnimationActive={false} />}
-            <Line dataKey="actual" stroke={FORECAST_COLORS.observed} dot={false} name="Observed" isAnimationActive={false} />
+            {result.strategy === 'TIMESFM' && <Area dataKey="band" stackId="interval" stroke="none" fill={FORECAST_COLORS.forecast} fillOpacity={0.18} name="80 % interval" isAnimationActive={false} />}
+            <Line dataKey="actual" stroke={FORECAST_COLORS.observed} strokeWidth={2} dot={false} name="Observed" isAnimationActive={false} />
             {anyImputed && <Line dataKey="imputed" stroke={FORECAST_COLORS.warning} strokeDasharray="2 3" dot={{ r: 2, fill: FORECAST_COLORS.warning, stroke: 'none' }} legendType="circle" name="Imputed (gap filled)" isAnimationActive={false} />}
-            <Line dataKey="median" stroke={FORECAST_COLORS.forecast} strokeDasharray="6 3" dot={false} name={result.strategy === 'TIMESFM' ? 'Median forecast' : 'Baseline forecast'} isAnimationActive={false} />
+            <Line dataKey="median" stroke={FORECAST_COLORS.forecast} strokeWidth={2} strokeDasharray="6 3" dot={false} name={result.strategy === 'TIMESFM' ? 'Median forecast' : 'Baseline forecast'} isAnimationActive={false} />
             {threshold && <ReferenceLine y={threshold.threshold} ifOverflow="extendDomain" stroke={FORECAST_COLORS.warning} strokeDasharray="4 4"
               label={{ value: `Threshold ${threshold.direction === 'ABOVE' ? '≥' : '≤'} ${threshold.threshold}`, position: 'insideTopRight', fill: FORECAST_COLORS.warning, fontSize: 11 }} />}
           </ComposedChart></ResponsiveContainer>

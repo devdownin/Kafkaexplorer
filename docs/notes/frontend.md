@@ -689,10 +689,28 @@ with neither (METRICS-FORECAST-UX-AUDIT.md P2).
 panel's status into one line — collecting history against the points a first forecast needs,
 observing against the quality block, ready to approve, approved, degraded, or the reason it is
 blocked — with an estimate from the sampling interval worded as one. The card shows that line in
-place of **Prepare a forecast**. The page takes the status from the panel's own poll through
+place of **Forecast**. The page takes the status from the panel's own poll through
 `onStatus` rather than polling again, and bumps `refresh` after an approval so the panel and the
 card do not wait for the next tick.
-**No model, no way to create one.** `GET /api/forecasts` carries `modelAvailable` — whether the forecasting client exists (`ForecastPilotService.modelAvailable()`, i.e. `explorer.forecasting.inference.enabled`), read from configuration and not probed, so a service that is briefly down does not make the page withdraw the assistant and offer it again a minute later. The page derives `canCreateForecast` from it and from `enabled`: false, and the card's **Prepare a forecast**, the assistant and the panel's **Configure a forecast** are all absent, while the panel stays and says why, keeping its preparation diagnostic since that is what tells an operator what to enable. Known only once the status has been read: a way to create a forecast that appears and then goes is worse than one absent for the first second. Timestral does not count on its own — it is a shadow built under the same switch as TimesFM and never served. A series that already exists stays visible and operable whatever this says.
+
+**One click, and the card shows the forecast as a continuation of its own curve.** The card's
+**Forecast** button creates the series with the server's suggested interval, a 30-minute horizon and
+the cycle the history preview detects (it forced "None" before); disabled with the reason beneath it
+when the pilot cannot create one, and absent once a series exists, the status line standing in for
+it. The chart then draws the series the model read — the latest 60 points of its prepared context,
+which `GET /api/forecasts` keeps for this (`ForecastController.LIST_HISTORY_POINTS`) — on one time
+axis with the prediction, a dotted **now** at the boundary and the future tinted. Four defects this
+replaced, each found by rendering the card rather than by a test: the card was an `AreaChart`,
+which draws only `<Area>` children, so the median `<Line>` was **never drawn** and the band alone
+stood under a "Forecast" legend; the forecast colour was the primary token, the stroke of every
+healthy card; the history was the metric's untimed sparkline (a handful of values, and for a counter
+a cumulative count beside a forecast rate), squeezed into a fifth of the width; and without
+`allowDataOverflow` recharts widened the domain to the band's stacked floor at zero, pressing
+everything against the top edge. The panel's chart had its own three: a one-step gap between the
+measured curve and the median, a value axis from zero that flattened both under a high threshold,
+and recharts' default white tooltip with a near-white date. `forecastColors.ts` gives the forecast a
+cyan that is none of the status colours.
+**No model, no way to create one.** `GET /api/forecasts` carries `modelAvailable` — whether the forecasting client exists (`ForecastPilotService.modelAvailable()`, i.e. `explorer.forecasting.inference.enabled`), read from configuration and not probed, so a service that is briefly down does not make the page withdraw the assistant and offer it again a minute later. The page derives `canCreateForecast` from it and from `enabled`: false, and the card's **Forecast**, the assistant and the panel's **Configure a forecast** are all absent, while the panel stays and says why, keeping its preparation diagnostic since that is what tells an operator what to enable. Known only once the status has been read: a way to create a forecast that appears and then goes is worse than one absent for the first second. Timestral does not count on its own — it is a shadow built under the same switch as TimesFM and never served. A series that already exists stays visible and operable whatever this says.
 
 **The panel reads as one timeline: history → forecast → quality → approval.** It used to say the
 same things in three places that did not read together — history against 512 in the progress

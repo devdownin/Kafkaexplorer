@@ -32,6 +32,30 @@ describe('ForecastSetupWizard', () => {
     }), expect.objectContaining({ timeout: 10000 }));
     expect(onApplied).toHaveBeenCalledWith('forecast-lag');
   });
+  it('creates it with the cycle the history shows, as the form would propose it', async () => {
+    const candidates = { metrics: [metric], total: 1, truncated: false,
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 };
+    vi.mocked(axios.get).mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/history')
+      ? { status: 'READY', reason: 'ok', observedPoints: 600, requiredPoints: 128, unit: 'milliseconds', points: [],
+        suggestedSeasonality: 'HOURLY', correlation: 0.9 }
+      : candidates }));
+    vi.mocked(axios.post).mockResolvedValue({ data: { seriesId: 'forecast-lag' } });
+    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+    expect(await screen.findByText('Forecast started for Lag.')).toBeTruthy();
+    expect(axios.post).toHaveBeenCalledWith('/api/forecasts/series',
+      expect.objectContaining({ seasonality: 'HOURLY' }), expect.anything());
+  });
+  it('still creates it without a cycle when the history cannot be read', async () => {
+    const candidates = { metrics: [metric], total: 1, truncated: false,
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 };
+    vi.mocked(axios.get).mockImplementation((url: string) => url.endsWith('/history')
+      ? Promise.reject(new Error('down')) : Promise.resolve({ data: candidates }));
+    vi.mocked(axios.post).mockResolvedValue({ data: { seriesId: 'forecast-lag' } });
+    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+    expect(await screen.findByText('Forecast started for Lag.')).toBeTruthy();
+    expect(axios.post).toHaveBeenCalledWith('/api/forecasts/series',
+      expect.objectContaining({ seasonality: 'NONE' }), expect.anything());
+  });
   it('keeps the editable assistant if automatic creation is refused', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1,
       clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 } });
