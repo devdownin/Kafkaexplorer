@@ -54,3 +54,25 @@ export function lastCheck(window: ForecastQualityWindow | null | undefined):
   if (!scored || !scored.points || !Number.isFinite(scored.quality?.q10Q90Coverage) || !Number.isFinite(scored.quality?.mae)) return null;
   return { points: scored.points, coverage: scored.quality.q10Q90Coverage, meanError: scored.quality.mae };
 }
+
+/**
+ * How far to trust a forecast, in a word. The band is nominally an 80 % interval, so a forecast
+ * whose measured points fall inside it about four times in five is doing what it claims.
+ *
+ * "Reliable" from 70 % (within ten points of nominal), "Fair" from 50 %, "Watch" below: a band that
+ * holds half the time or less is not an 80 % band. Fewer than ten scored points say nothing yet
+ * ("Early"): three points in the band of four is not a verdict. The numbers stay one hover away —
+ * a badge is for the glance, and the detail is for whoever doubts it.
+ */
+export interface ForecastReliability {
+  level: 'reliable' | 'fair' | 'watch' | 'early';
+  label: string;
+  tone: 'success' | 'warning' | 'error' | 'neutral';
+}
+
+export function forecastReliability(check: { points: number; coverage: number }): ForecastReliability {
+  if (check.points < 10) return { level: 'early', label: 'Early', tone: 'neutral' };
+  if (check.coverage >= 0.7) return { level: 'reliable', label: 'Reliable', tone: 'success' };
+  if (check.coverage >= 0.5) return { level: 'fair', label: 'Fair', tone: 'warning' };
+  return { level: 'watch', label: 'Watch', tone: 'error' };
+}

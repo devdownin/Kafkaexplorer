@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
-import type { ForecastPoint } from '../../api/types';
+import type { ForecastPoint, ForecastSeriesView, MetricForecast } from '../../api/types';
 import { thresholdDirection } from '../../pages/metricAlert';
 
 /**
@@ -47,4 +47,35 @@ export function forecastThresholdReach(
     }
   }
   return null;
+}
+
+/** The predicted points that lie ahead of the history, in order — what a card or a page may read. */
+export function predictedPoints(prediction: MetricForecast | null | undefined): ForecastPoint[] {
+  return (prediction?.points ?? [])
+    .filter(p => Number.isFinite(p.q50) && Number.isFinite(p.at) && p.at > prediction!.historyEndAt)
+    .sort((a, b) => a.at - b.at);
+}
+
+export interface MetricForecastReach extends ForecastThresholdReach {
+  /** How far ahead the first predicted point at or past the threshold lies. */
+  inMillis: number;
+}
+
+/**
+ * The reach of a metric's forecast against the metric's own thresholds, or null.
+ *
+ * One definition for the card's badge and for the page's filter and sort, so the two cannot
+ * disagree about which metric is "about to breach". A counter's forecast is a rate per second
+ * while its thresholds were set on the counter's own reading: comparing them is a unit error
+ * worded as a prediction, so there is none.
+ */
+export function forecastReachFor(
+  metric: { warningThreshold: number | null; criticalThreshold: number | null },
+  series: ForecastSeriesView | null | undefined,
+): MetricForecastReach | null {
+  const result = series?.result;
+  if (!series || !result?.forecast || result.context?.profile?.transformation === 'COUNTER_RATE') return null;
+  const reach = forecastThresholdReach(predictedPoints(result.forecast), metric.warningThreshold,
+    metric.criticalThreshold, result.strategy === 'TIMESFM');
+  return reach && { ...reach, inMillis: reach.steps * series.stepMillis };
 }

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { describe, expect, it } from 'vitest';
 import type { ForecastQualityWindow, MetricForecast } from '../../api/types';
-import { compareWithActual, lastCheck } from './forecastVsActual';
+import { compareWithActual, forecastReliability, lastCheck } from './forecastVsActual';
 
 const step = 60000;
 const previous = { historyEndAt: 0, points: [1, 2, 3, 4].map(i => ({ at: i * step, central: 100, q10: 90, q50: 100, q90: 110 })) } as MetricForecast;
@@ -32,5 +32,15 @@ describe('lastCheck', () => {
     expect(lastCheck({ ...window, open: [] })).toEqual({ points: 180, coverage: 0.8, meanError: 4 });
     expect(lastCheck({ open: [], lastBlock: null, failedBlocks: 0 })).toBeNull();
     expect(lastCheck(null)).toBeNull();
+  });
+});
+
+describe('forecastReliability', () => {
+  it('says a word from the coverage of the 80 % band, once there are enough points to judge', () => {
+    expect(forecastReliability({ points: 30, coverage: 0.87 })).toMatchObject({ level: 'reliable', label: 'Reliable', tone: 'success' });
+    expect(forecastReliability({ points: 30, coverage: 0.7 }).level).toBe('reliable');
+    expect(forecastReliability({ points: 30, coverage: 0.55 })).toMatchObject({ level: 'fair', tone: 'warning' });
+    expect(forecastReliability({ points: 30, coverage: 0.3 })).toMatchObject({ level: 'watch', tone: 'error' });
+    expect(forecastReliability({ points: 9, coverage: 1 })).toMatchObject({ level: 'early', tone: 'neutral' });
   });
 });

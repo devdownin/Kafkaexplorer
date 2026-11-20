@@ -30,3 +30,6 @@ export const FORECAST_COLORS = {
   /** The 80 % interval's band and the chart's quiet furniture: on-surface-variant. */
   band: '#9aa3b2',
 } as const;
+
+/** A metric's own thresholds, wherever they are drawn: the card's chart and the forecast panel's. */
+export const THRESHOLD_COLORS = { warn: '#f5c264', crit: '#f58c8c' } as const;

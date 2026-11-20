@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { describe, expect, it } from 'vitest';
-import { forecastThresholdReach } from './forecastBreach';
+import type { ForecastSeriesView } from '../../api/types';
+import { forecastReachFor, forecastThresholdReach, predictedPoints } from './forecastBreach';
 
 const points = (medians: number[], spread = 50) =>
   medians.map((q50, i) => ({ at: 1000 + i * 60000, central: q50, q50, q10: q50 - spread, q90: q50 + spread }));
@@ -33,5 +34,25 @@ describe('forecastThresholdReach', () => {
   it('says nothing without thresholds or points', () => {
     expect(forecastThresholdReach(points([1e9]), null, null, true)).toBeNull();
     expect(forecastThresholdReach([], 800, 1600, true)).toBeNull();
+  });
+});
+
+describe('predictedPoints and forecastReachFor', () => {
+  const series = (transformation = 'GAUGE_MEAN') => ({ stepMillis: 60000, result: { strategy: 'TIMESFM', context: { profile: { transformation } },
+    forecast: { historyEndAt: 500, points: [{ at: 400, central: 1, q10: 1, q50: 1, q90: 1 }, ...points([700, 900, 1000])] } } }) as unknown as ForecastSeriesView;
+
+  it('keeps the finite points after the end of the history, in order', () => {
+    expect(predictedPoints(series().result!.forecast)).toHaveLength(3);
+    expect(predictedPoints(undefined)).toEqual([]);
+  });
+
+  it('measures the wait in milliseconds, from the series step', () => {
+    expect(forecastReachFor({ warningThreshold: 800, criticalThreshold: 1600 }, series()))
+      .toMatchObject({ level: 'warning', steps: 2, inMillis: 120000 });
+  });
+
+  it('never compares the counter thresholds with a rate forecast, and says nothing without a forecast', () => {
+    expect(forecastReachFor({ warningThreshold: 800, criticalThreshold: 1600 }, series('COUNTER_RATE'))).toBeNull();
+    expect(forecastReachFor({ warningThreshold: 800, criticalThreshold: 1600 }, undefined)).toBeNull();
   });
 });

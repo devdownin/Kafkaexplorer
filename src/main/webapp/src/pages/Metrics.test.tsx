@@ -203,12 +203,30 @@ describe('Metrics page', () => {
     mockedAxios.post.mockImplementation((url: string, body?: unknown) =>
       url === '/api/forecasts/series' ? Promise.resolve({ data: { seriesId: 'forecast-1' } }) : post(url, body));
     const user = userEvent.setup(); await renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Forecast' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Forecast' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Forecast' }));
     expect(await screen.findByText(/Forecast started for gauge_latency_a_to_b\./)).toBeInTheDocument();
     expect(mockedAxios.post).toHaveBeenCalledWith('/api/forecasts/series',
       expect.objectContaining({ metricId: templateMetric.id, confirmed: true }), expect.anything());
     expect(screen.queryByRole('heading', { name: 'Forecast setup' })).toBeNull();
     expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
+  });
+  it('filters the list to the metrics whose forecast reaches a threshold, and sorts by the soonest', async () => {
+    const other = { ...templateMetric, id: 'm-2', name: 'gauge_other', warningThreshold: 5000, criticalThreshold: 9000 };
+    const later = { ...templateMetric, id: 'm-3', name: 'gauge_later', warningThreshold: 800, criticalThreshold: 1600 };
+    const mk = (metricId: string, first: number) => ({ seriesId: metricId.padEnd(64, 'x'), metricId, environment: 'e', stepMillis: 60000,
+      minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+      activation: { eligible: false, reason: 'not yet', blockPoints: 0, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: { key: metricId, state: 'READY', strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'ok', quality: null,
+        context: { status: 'READY', observedPoints: 512, outputUnit: 'ms', profile: { transformation: 'GAUGE_MEAN' }, points: [] },
+        forecast: { historyEndAt: 0, points: [1, 2, 3, 4].map(i => ({ at: i * 60000, central: first, q10: first - 5, q50: i >= first / 100 ? 900 : 100, q90: first + 5 })) } } });
+    stubApi([templateMetric, other, later], [suggestion],
+      { ...READY_FORECASTS, series: [mk('m-1', 400), mk('m-2', 400), mk('m-3', 200)] });
+    const user = userEvent.setup(); await renderPage();
+    await user.selectOptions(await screen.findByLabelText('Filter by forecast'), 'breach');
+    await waitFor(() => expect(screen.getByText(/2 \/ 3 metrics/)).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText('Sort by'), 'breach');
+    expect(screen.getByText(/sorted by next predicted breach/)).toBeInTheDocument();
   });
   it('opens the form for that metric, on the reason, only when the one-click creation stops', async () => {
     stubApi([templateMetric], [suggestion], READY_FORECASTS);
@@ -217,7 +235,8 @@ describe('Metrics page', () => {
       ? Promise.reject({ response: { data: { reason: 'History not available' } } }) : post(url, body));
     mockedAxios.isAxiosError.mockReturnValueOnce(true);
     const user = userEvent.setup(); await renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Forecast' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Forecast' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Forecast' }));
     // Opened for that metric, its sources are there at once (METRICS-FORECAST-UX-AUDIT.md U4).
     expect(await screen.findByRole('list', { name: 'All source topics: selected' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Forecast setup' })).toHaveFocus();

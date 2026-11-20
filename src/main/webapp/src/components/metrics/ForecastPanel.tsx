@@ -16,7 +16,8 @@ import { ForecastShadowComparison } from './ForecastShadowComparison';
 import { isShadowComparison, type ShadowView } from './shadowModels';
 import { ForecastTimeline } from './ForecastTimeline';
 import { about, forecastStage } from './forecastStage';
-import { FORECAST_COLORS } from './forecastColors';
+import { FORECAST_COLORS, THRESHOLD_COLORS } from './forecastColors';
+import { placeThresholds } from './thresholdPlacement';
 
 /**
  * READY only says a forecast was produced, not that it can be approved: a green badge beside a
@@ -71,7 +72,7 @@ function isProgress(data: Progress | undefined, seriesId: string): data is Progr
     && data.requiredPoints === 512 && Array.isArray(data.topics) && Array.isArray(data.groups);
 }
 
-export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames = {} }: {
+export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames = {}, metricThresholds = {} }: {
   /**
    * The series to show: the one a card's Details asked for, or the one just started. The card is
    * where a series is chosen — every forecast belongs to a metric card — so the panel has no
@@ -80,6 +81,8 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
   focus?: string;
   /** Metric names by id, so the panel says which metric it shows the way the card does. */
   metricNames?: Record<string, string>;
+  /** Each metric's own warning and critical thresholds, drawn on its chart as the card draws them. */
+  metricThresholds?: Record<string, { warning: number | null; critical: number | null }>;
   /** Receives every status the panel polls, so the page can show it on the cards without a second poll. */
   onStatus?: (status: ForecastStatus | null) => void;
   /** Bumped by the page after an approval, to poll at once rather than at the next tick. */
@@ -236,6 +239,14 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
     ('prevQ10' in p ? p.prevQ10 : null), ('prevQ90' in p ? p.prevQ90 : null)])
     .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
   if (threshold) plotted.push(threshold.threshold);
+  // The metric's own thresholds, by the rule the card uses (thresholdPlacement.ts). They are on the
+  // counter's reading, so a rate forecast is never compared with them and they are not drawn.
+  const own = series ? metricThresholds[series.metricId] : undefined;
+  const ownRate = result?.context?.profile?.transformation === 'COUNTER_RATE';
+  const placed = placeThresholds(plotted.length ? Math.min(...plotted) : 0, plotted.length ? Math.max(...plotted) : 1,
+    own && !ownRate ? [{ label: 'warning', value: own.warning, color: THRESHOLD_COLORS.warn },
+      { label: 'critical', value: own.critical, color: THRESHOLD_COLORS.crit }] : []);
+  for (const l of placed.lines) plotted.push(l.value);
   const low = plotted.length ? Math.min(...plotted) : 0;
   const high = plotted.length ? Math.max(...plotted) : 1;
   const pad = (high - low) * 0.1 || Math.abs(high) * 0.1 || 1;
@@ -409,10 +420,14 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
             <Line dataKey="actual" stroke={FORECAST_COLORS.observed} strokeWidth={2} dot={false} name="Observed" isAnimationActive={false} />
             {anyImputed && <Line dataKey="imputed" stroke={FORECAST_COLORS.warning} strokeDasharray="2 3" dot={{ r: 2, fill: FORECAST_COLORS.warning, stroke: 'none' }} legendType="circle" name="Imputed (gap filled)" isAnimationActive={false} />}
             <Line dataKey="median" stroke={FORECAST_COLORS.forecast} strokeWidth={2} strokeDasharray="6 3" dot={false} name={result.strategy === 'TIMESFM' ? 'Median forecast' : 'Baseline forecast'} isAnimationActive={false} />
+            {placed.lines.map(l => <ReferenceLine key={l.label} y={l.value} stroke={l.color} strokeDasharray="4 4"
+              label={{ value: `${l.label} ${number(l.value)}`, position: 'insideBottomRight', fill: l.color, fontSize: 11 }} />)}
             {threshold && <ReferenceLine y={threshold.threshold} ifOverflow="extendDomain" stroke={FORECAST_COLORS.warning} strokeDasharray="4 4"
               label={{ value: `Threshold ${threshold.direction === 'ABOVE' ? '≥' : '≤'} ${threshold.threshold}`, position: 'insideTopRight', fill: FORECAST_COLORS.warning, fontSize: 11 }} />}
           </ComposedChart></ResponsiveContainer>
         </div>
+        {placed.offScale.length > 0 && <p className="text-xs font-mono" aria-label="Thresholds off the chart scale">
+          {placed.offScale.map(t => <span key={t.label} className="mr-3" style={{ color: t.color }}>{t.up ? '↑' : '↓'} {t.label} {number(t.value)} <span className="text-outline">off scale</span></span>)}</p>}
         {compare && <p role="status" aria-label="Previous forecast against what happened" className="text-sm">
           {!previousShown ? 'Reading the previous forecast…'
             : previousShown.failed ? 'The previous forecast could not be read. Retry after the next refresh.'

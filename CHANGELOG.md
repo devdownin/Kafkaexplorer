@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The Metrics page reads at a glance.** The card's disclaimer paragraph is an ⓘ beside a one-line
+  legend, its chart is taller (120 px), and "Last checked: 87 % … mean error" became a *Reliable / Fair /
+  Watch* badge with the figures one hover away. The Forecast button says what it does on hover and focus
+  and says "Creating forecast…" while it works. The list can be filtered on *breach predicted* and sorted
+  by the soonest predicted threshold, and the Forecast panel draws the metric's own warning and critical
+  thresholds the way its card does (`thresholdPlacement.ts`, one rule for both; none against a rate).
+
 - **The demo can show a forecast working.** Its topics were seeded once and stood still, so no metric
   had a history and a forecast waited two hours. `./demo.sh` now also starts `compose/demo-forecast.yml`:
   a generator feeds two topic pairs (orders not yet shipped, degrading towards their threshold; a

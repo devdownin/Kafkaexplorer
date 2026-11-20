@@ -32,6 +32,7 @@ import { ForecastSetupWizard } from '../components/metrics/ForecastSetupWizard';
 import { ForecastPanel } from '../components/metrics/ForecastPanel';
 import { AutoCreateRefused, createForecastFromMetric } from '../components/metrics/forecastAutoCreate';
 import { forecastStage } from '../components/metrics/forecastStage';
+import { forecastReachFor, type MetricForecastReach } from '../components/metrics/forecastBreach';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
 import { TemplateParamsEditor } from '../components/metrics/TemplateParamsEditor';
@@ -214,6 +215,8 @@ const Metrics: React.FC = () => {
     for (const s of forecastStatus?.series ?? []) if (!stages.has(s.metricId)) stages.set(s.metricId, forecastStage(s));
     return stages;
   }, [forecastStatus]);
+  const metricThresholds = useMemo(() => Object.fromEntries(metrics.map(m =>
+    [m.id, { warning: m.warningThreshold, critical: m.criticalThreshold }])), [metrics]);
   const metricNames = useMemo(() => Object.fromEntries(metrics.map(m => [m.id, m.name || m.id])), [metrics]);
   const forecastSeriesByMetric = useMemo(() => {
     const series = new Map<string, ForecastStatus['series'][number]>();
@@ -291,6 +294,10 @@ const Metrics: React.FC = () => {
   const [priorityRoute, setPriorityRoute] = useState<string | null>(null);
   const [filterType, setFilterType]     = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  // The forecast is what an operator asks the list about: which metrics are about to breach, which
+  // have a forecast at all. Both views read the same reach the card's badge does.
+  const [filterForecast, setFilterForecast] = useState<'all' | 'breach' | 'running' | 'none'>('all');
+  const [sortBy, setSortBy] = useState<'severity' | 'breach'>('severity');
   const [nameIsAuto, setNameIsAuto]     = useState(restoredEditor?.nameIsAuto ?? false);
   const [labelPreview, setLabelPreview] = useState<MetricLabelPreview | null>(null);
   const [labelPreviewLoading, setLabelPreviewLoading] = useState(false);
@@ -913,10 +920,33 @@ const Metrics: React.FC = () => {
   const anyMetricRunning = useMemo(() => hasRunningMetric(metrics), [metrics]);
 
   const SEVERITY_ORDER: Record<string, number> = { error: 0, critical: 1, warning: 2, ok: 3, pending: 4 };
+  // Metric id → when its forecast first reaches one of its own thresholds (forecastReachFor: the
+  // card's badge reads the same function, so the list and the card cannot disagree).
+  const forecastReaches = useMemo(() => {
+    const reaches = new Map<string, MetricForecastReach>();
+    for (const m of metrics) {
+      const reach = forecastReachFor(m, forecastSeriesByMetric.get(m.id));
+      if (reach) reaches.set(m.id, reach);
+    }
+    return reaches;
+  }, [metrics, forecastSeriesByMetric]);
+  const forecastFilterAvailable = Boolean(forecastStatus?.enabled) && forecastStatus!.series.length > 0;
   const filteredMetrics = metrics
     .filter(m => filterType === 'all' || m.type === filterType)
     .filter(m => filterStatus === 'all' || getStatus(m) === filterStatus)
-    .sort((a, b) => SEVERITY_ORDER[getStatus(a)] - SEVERITY_ORDER[getStatus(b)]);
+    .filter(m => filterForecast === 'all'
+      || (filterForecast === 'breach' ? forecastReaches.has(m.id)
+        : filterForecast === 'running' ? forecastSeriesByMetric.has(m.id) : !forecastSeriesByMetric.has(m.id)))
+    .sort((a, b) => {
+      if (sortBy === 'breach') {
+        // Soonest predicted breach first, critical before warning at the same instant; the rest by severity.
+        const ra = forecastReaches.get(a.id), rb = forecastReaches.get(b.id);
+        if (ra && rb) return ra.inMillis - rb.inMillis || (ra.level === rb.level ? 0 : ra.level === 'critical' ? -1 : 1);
+        if (ra || rb) return ra ? -1 : 1;
+      }
+      return SEVERITY_ORDER[getStatus(a)] - SEVERITY_ORDER[getStatus(b)];
+    });
+  const filtersActive = filterType !== 'all' || filterStatus !== 'all' || filterForecast !== 'all';
 
   return (
     // `relative` ancre le fond animé de la page, et rien de plus : surtout pas `isolate`, qui
@@ -971,14 +1001,30 @@ const Metrics: React.FC = () => {
             <option value="ok">Healthy</option>
             <option value="pending">Pending</option>
           </Select>
-          {(filterType !== 'all' || filterStatus !== 'all') && (
-            <button onClick={() => { setFilterType('all'); setFilterStatus('all'); }}
+          {forecastFilterAvailable && (
+            <Select value={filterForecast} onChange={e => setFilterForecast(e.target.value as typeof filterForecast)}
+              className="w-auto" aria-label="Filter by forecast">
+              <option value="all">All forecasts</option>
+              <option value="breach">Breach predicted ({forecastReaches.size})</option>
+              <option value="running">Has a forecast</option>
+              <option value="none">No forecast</option>
+            </Select>
+          )}
+          {forecastFilterAvailable && (
+            <Select value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)}
+              className="w-auto" aria-label="Sort by">
+              <option value="severity">Sort: severity</option>
+              <option value="breach">Sort: next predicted breach</option>
+            </Select>
+          )}
+          {filtersActive && (
+            <button onClick={() => { setFilterType('all'); setFilterStatus('all'); setFilterForecast('all'); }}
               className="text-[12px] text-on-surface-variant hover:text-on-surface transition-colors flex items-center gap-1">
               <span className="material-symbols-outlined text-[16px]">close</span>Clear filters
             </button>
           )}
           <span className="text-[12px] text-outline ml-auto tabular-nums">
-            {filteredMetrics.length} / {metrics.length} metrics · sorted by severity
+            {filteredMetrics.length} / {metrics.length} metrics · sorted by {sortBy === 'breach' && forecastFilterAvailable ? 'next predicted breach' : 'severity'}
           </span>
         </div>
       )}
@@ -1071,7 +1117,7 @@ const Metrics: React.FC = () => {
             setForecastRevision(v => v + 1);
           }} />
       </section>}
-      <ForecastPanel refresh={forecastRevision} focus={forecastFocus} metricNames={metricNames} onStatus={status => {
+      <ForecastPanel refresh={forecastRevision} focus={forecastFocus} metricNames={metricNames} metricThresholds={metricThresholds} onStatus={status => {
         setForecastStatus(status);
         // Once the server lists the new series, its status becomes authoritative. A later
         // withdrawal can then re-enable the metric's Prepare action.
