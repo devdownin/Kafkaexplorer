@@ -193,13 +193,37 @@ beforeEach(() => {
 });
 
 describe('Metrics page', () => {
-  it('opens the forecast assistant from the matching metric card and aborts it on close', async () => {
-    stubApi([templateMetric], [suggestion], READY_FORECASTS); const user = userEvent.setup(); await renderPage();
+  /*
+   * Every forecast starts from an existing metric, so the card's button creates it outright: no
+   * form opens on success, and the toast says when its first forecast follows.
+   */
+  it('creates the forecast from its card without opening a form', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, body?: unknown) =>
+      url === '/api/forecasts/series' ? Promise.resolve({ data: { seriesId: 'forecast-1' } }) : post(url, body));
+    const user = userEvent.setup(); await renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Forecast' }));
+    expect(await screen.findByText(/Forecast started for gauge_latency_a_to_b\./)).toBeInTheDocument();
+    expect(mockedAxios.post).toHaveBeenCalledWith('/api/forecasts/series',
+      expect.objectContaining({ metricId: templateMetric.id, confirmed: true }), expect.anything());
+    expect(screen.queryByRole('heading', { name: 'Forecast setup' })).toBeNull();
+    expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
+  });
+  it('opens the form for that metric, on the reason, only when the one-click creation stops', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, body?: unknown) => url === '/api/forecasts/series'
+      ? Promise.reject({ response: { data: { reason: 'History not available' } } }) : post(url, body));
+    mockedAxios.isAxiosError.mockReturnValueOnce(true);
+    const user = userEvent.setup(); await renderPage();
     await user.click(await screen.findByRole('button', { name: 'Forecast' }));
     // Opened for that metric, its sources are there at once (METRICS-FORECAST-UX-AUDIT.md U4).
     expect(await screen.findByRole('list', { name: 'All source topics: selected' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Forecast setup' })).toHaveFocus();
-    expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/forecasts/configuration', expect.anything(), expect.anything());
+    expect(screen.getByLabelText('Forecast configuration assistant')).toHaveTextContent('Automatic creation stopped: History not available.');
+    // A template declares its sources: nothing to attest.
+    expect(screen.queryByRole('checkbox', { name: /I confirm these are all the topics/ })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Close forecast setup' }));
     expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
   });

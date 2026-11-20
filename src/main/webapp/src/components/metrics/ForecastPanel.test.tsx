@@ -105,7 +105,7 @@ describe('ForecastPanel', () => {
     // only once something shows it (P2): no threshold is configured and the summary is closed.
     expect(vi.mocked(axios.get).mock.calls.map(call => call[0]).filter(url => url !== '/api/forecasts/preparation'))
       .toEqual(['/api/forecasts', path, `${path}/shadow`]);
-    await user.click(screen.getByText('Summary, history and sources'));
+    await user.click(screen.getByText('Configuration'));
     expect(await screen.findByText(/40 \/ 512 observed points/)).toBeTruthy();
   });
   it('never asks for a shadow the list says is not configured', async () => {
@@ -121,13 +121,13 @@ describe('ForecastPanel', () => {
     expect(await screen.findByRole('button', { name: 'Copy raw result (JSON)' })).toBeTruthy();
     expect(document.querySelector('pre')).toBeNull();
   });
-  it('hands the configuration assistant to the page instead of opening its own', async () => {
-    const onConfigure = vi.fn();
+  // Every forecast starts from an existing metric: the panel points at the cards, and opens no form.
+  it('points at the metric cards instead of offering a form of its own', async () => {
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts/preparation'
       ? { checkedAt: 1, probed: false, checks: [] } : { enabled: true, state: 'AVAILABLE', series: [] } }));
-    const user = userEvent.setup(); render(<ForecastPanel onConfigure={onConfigure} />);
-    await user.click(await screen.findByRole('button', { name: 'Configure a forecast' }));
-    expect(onConfigure).toHaveBeenCalledOnce();
+    render(<ForecastPanel />);
+    expect(await screen.findByText(/press/)).toHaveTextContent('Once the dependencies are ready, press Forecast on a metric card.');
+    expect(screen.queryByRole('button', { name: 'Configure a forecast' })).toBeNull();
     expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
   });
   it('says so, and offers no way to configure, when no forecasting model is configured', async () => {
@@ -323,7 +323,7 @@ describe('ForecastPanel', () => {
     const user = userEvent.setup(); render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
     await screen.findByLabelText('Forecast status');
     expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).not.toContain('/api/forecasts/preparation');
-    await user.click(screen.getByText('Preparation and configuration'));
+    await user.click(screen.getByText('Configuration'));
     await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).toContain('/api/forecasts/preparation'));
   });
 

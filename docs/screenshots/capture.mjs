@@ -140,15 +140,15 @@ const SCREENS = [
     anchor: 'section[aria-label="Metrics Forecast"]',
   },
   {
-    // From a metric card, a forecast is now created directly: capture the confirmed result,
-    // not the previous manual assistant form, which no longer appears on successful creation.
+    // A card's Forecast button creates the forecast outright, with no form: capture the card it
+    // was pressed on, now saying where its new forecast stands.
     name: 'metrics-forecast-assistant',
     url: '/metrics',
     settle: async page => {
       await page.locator('button:enabled').filter({ hasText: /^\s*(insights)?\s*Forecast\s*$/ }).first().click();
-      await page.getByText('Forecast started for gauge_volume_demo_orders_1_received.').waitFor();
+      await page.getByText(/^Forecast started for gauge_volume_demo_orders_1_received\./).waitFor();
     },
-    anchor: 'section[aria-labelledby="metric-forecast-preparation"]',
+    anchor: '[aria-label="Forecast status of gauge_volume_demo_orders_1_received"]',
   },
 ];
 

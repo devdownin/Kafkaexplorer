@@ -44,8 +44,10 @@ export const MetricCard: React.FC<{
   forecast?: ForecastStageSummary;
   /** Forecast points come from the already-polled /api/forecasts status; no per-card API calls. */
   forecastSeries?: ForecastSeriesView;
+  /** The one-click creation is running for this card. */
+  forecastCreating?: boolean;
   refreshing: boolean;
-}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries }) => {
+}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, forecastCreating = false }) => {
   const { toast } = useToast();
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
@@ -508,7 +510,8 @@ export const MetricCard: React.FC<{
       {!forecast && onPrepareForecast && <div className="px-4 py-2">
         <span title={forecastUnavailableReason ?? 'Create a forecast for this metric with the suggested settings'}
           className="inline-flex" aria-label={forecastUnavailableReason || undefined}>
-          <Button variant="outline" size="sm" icon="insights" disabled={Boolean(forecastUnavailableReason || refreshing)} onClick={onPrepareForecast}>
+          <Button variant="outline" size="sm" icon="insights" loading={forecastCreating}
+            disabled={Boolean(forecastUnavailableReason || refreshing || forecastCreating)} onClick={onPrepareForecast}>
             Forecast
           </Button>
         </span>

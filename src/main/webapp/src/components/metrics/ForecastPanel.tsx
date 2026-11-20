@@ -70,10 +70,9 @@ function isProgress(data: Progress | undefined, seriesId: string): data is Progr
     && data.requiredPoints === 512 && Array.isArray(data.topics) && Array.isArray(data.groups);
 }
 
-export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }: {
+export function ForecastPanel({ onStatus, refresh = 0, focus = '' }: {
   /** A series to show: the one the assistant just started, which was otherwise left behind the first. */
   focus?: string;
-  onConfigure?: () => void;
   /** Receives every status the panel polls, so the page can show it on the cards without a second poll. */
   onStatus?: (status: ForecastStatus | null) => void;
   /** Bumped by the page after an approval, to poll at once rather than at the next tick. */
@@ -301,7 +300,7 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
     {error && <p role="alert">{error}</p>}
     {!status && !error && <p>Loading forecast status…</p>}
     {status && !status.enabled && <p>Forecast pilot disabled by configuration. Enable explorer.forecasting.pilot.enabled to use it.</p>}
-    {(status?.enabled || !status && error) && !status?.series.length && <ForecastPreparation onConfigure={onConfigure} />}
+    {(status?.enabled || !status && error) && !status?.series.length && <ForecastPreparation />}
     {status?.enabled && status.modelAvailable === false && <p role="note">No forecasting model is configured, so no forecast can be created. Enable explorer.forecasting.inference (TimesFM) to create one; Timestral only scores beside it.</p>}
     {status?.enabled && status.modelAvailable !== false && status.series.length === 0 && <p>Forecast pilot enabled. Configure approved series, PostgreSQL history and TimesFM inference to calculate forecasts.</p>}
     {status?.enabled && status.series.length > 0 && <>
@@ -396,10 +395,8 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
 
       {series && <ForecastTimeline series={series} />}
 
-      <details onToggle={e => setSummaryOpen(e.currentTarget.open)}><summary>Summary, history and sources</summary>
-        {series && <ForecastProgress progress={seriesProgress} error={progressError} result={result} />}
-      </details>
-      {result && <details><summary>Quality details and baselines</summary>
+      {/* Two folds, where there were five: what the forecast is worth, and how it is set up. */}
+      {result && <details><summary>Quality</summary>
         {!result.quality ? <p>Realised quality: unmeasured; backtesting needs evaluated observations.</p> : <>
           <div className="grid grid-cols-3 gap-2 my-3" aria-label="Realised backtesting quality">
             <div><p className="text-xs text-on-surface-variant">Evaluated points</p><strong>{result.evaluatedPoints}</strong></div>
@@ -425,9 +422,10 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
         </>}
         <Button variant="ghost" onClick={() => void copyResult()}>{copied ? 'Raw result copied' : 'Copy raw result (JSON)'}</Button>
         {action?.source === 'copy' && <p role="alert">{action.text}</p>}
+        <ForecastShadowComparison view={shadow?.seriesId === series?.seriesId ? shadow?.view ?? null : null} />
       </details>}
-      <ForecastShadowComparison view={shadow?.seriesId === series?.seriesId ? shadow?.view ?? null : null} />
-      {series && <details><summary>Forecast configuration summary</summary>
+      {series && <details onToggle={e => { const open = e.currentTarget.open; setSummaryOpen(open); setPreparationOpen(open); }}>
+        <summary>Configuration</summary>
         <dl className="grid min-w-0 grid-cols-1 sm:grid-cols-2 gap-2 text-sm my-3 [&>div]:min-w-0">
           <div><dt>Metric</dt><dd className="font-mono break-all">{series.metricId}</dd></div>
           <div><dt>Environment</dt><dd>{series.environment}</dd></div>
@@ -438,11 +436,11 @@ export function ForecastPanel({ onConfigure, onStatus, refresh = 0, focus = '' }
           {result?.forecast && <div><dt>Model</dt><dd className="min-w-0 break-words [overflow-wrap:anywhere]">{result.forecast.modelId} · {result.forecast.modelRevision}</dd></div>}
           {result?.forecast && <div><dt>Horizon</dt><dd>{about(result.forecast.points.length, series.stepMillis)}</dd></div>}
         </dl>
-        <p className="text-xs text-on-surface-variant">Read-only effective configuration. Edit sources through the preparation assistant.</p>
+        <p className="text-xs text-on-surface-variant">Read-only effective configuration: to change it, stop this forecast and start it again from its metric card.</p>
+        <ForecastProgress progress={seriesProgress} error={progressError} result={result} />
+        {/* The dependency checks, for when a forecast stops: read only once this fold is open. */}
+        {preparationOpen && <ForecastPreparation />}
       </details>}
-      <details onToggle={e => setPreparationOpen(e.currentTarget.open)}><summary>Preparation and configuration</summary>
-        {preparationOpen && <ForecastPreparation onConfigure={onConfigure} />}
-      </details>
     </>}
   </section>;
 }

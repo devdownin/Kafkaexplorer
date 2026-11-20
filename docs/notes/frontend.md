@@ -631,13 +631,24 @@ state and error; the panel now reads both in one pass and hands `ForecastProgres
 the latter is presentational. A raw persisted record is a copy button (through `copyText`, the
 secure-context-safe wrapper the lint rule requires), not a `<pre>` of JSON. The page says
 **Observing** / **Approved** and "80 % interval" rather than SHADOW / ACTIVE and Q10–Q90; the
-pilot's terms stay in the badge tooltip, the API and MCP. **There is one configuration assistant,
-on the Metrics page**: `ForecastPreparation` used to mount a second one, so a card's
-"Prepare a forecast" and the panel's "Configure a forecast" could hold two half-filled forms at
-once. The assistant names its sampling intervals, states the horizon as a duration, folds the
-prefilled history identities under **Advanced** (opened by `flushSync` before focusing one that is
-invalid — a field inside a closed `<details>` cannot take focus), and takes the attestation
-checkbox as the confirmation instead of asking again in a dialog. Sources are chips (`NameListField`) rather than a
+pilot's terms stay in the badge tooltip, the API and MCP. **Every forecast starts from an existing
+metric, so a card's Forecast button is the only way in, and it needs no form**
+(`forecastAutoCreate.ts`): the definition and sources come from the candidate catalogue, the
+interval from the server's suggestion, the cycle from the recorded history, and a toast says when
+the first forecast follows. The form (`ForecastSetupWizard`) is for one metric and opens only when
+that stops, on the reason it stopped. What went with that: the panel's **Configure a forecast** and
+the form's metric selector (with its "already forecast" options, its "first 100 of N" and its
+"Configure another metric"), and a section opened on success to say "Forecast started" before
+being closed by hand. The form no longer asks what the metric already says — its unit, the
+environment and the two history identities keep the values the one-click path sends — and asks to
+confirm the sources only for free SQL, where they are inferred: a template declares them, and the
+one-click path already sent them confirmed, so the form demanded an attestation the faster path did
+not. It names its sampling intervals, states the horizon as a duration, and folds the interval,
+horizon, cycle and threshold under **Advanced** (opened by `flushSync` before focusing an invalid
+threshold — a field inside a closed `<details>` cannot take focus). **The panel has two folds,
+where it had five**: *Quality* (the realised scores, the baselines, the shadow comparison) and
+*Configuration* (the effective settings, the history and sources, and the dependency checks, read
+only once it is opened). Sources are chips (`NameListField`) rather than a
 comma-separated string prefilled from the catalogue, where a stray comma or a typo became a
 declared source nobody reads; and the export ends with numbered next steps and a copy button
 beside the download, since the file is usually pasted into a deployment's configuration.
@@ -725,7 +736,7 @@ The stage line carries `progress` (history before the first forecast, then the q
 none after a failed block), drawn as a bar; and the assistant's confirmation counts the points
 already recorded, from the history preview it reads anyway, since the journal records a metric from
 the moment it runs and "~2 h" was usually wrong.
-**No model, no way to create one.** `GET /api/forecasts` carries `modelAvailable` — whether the forecasting client exists (`ForecastPilotService.modelAvailable()`, i.e. `explorer.forecasting.inference.enabled`), read from configuration and not probed, so a service that is briefly down does not make the page withdraw the assistant and offer it again a minute later. The page derives `canCreateForecast` from it and from `enabled`: false, and the card's **Forecast**, the assistant and the panel's **Configure a forecast** are all absent, while the panel stays and says why, keeping its preparation diagnostic since that is what tells an operator what to enable. Known only once the status has been read: a way to create a forecast that appears and then goes is worse than one absent for the first second. Timestral does not count on its own — it is a shadow built under the same switch as TimesFM and never served. A series that already exists stays visible and operable whatever this says.
+**No model, no way to create one.** `GET /api/forecasts` carries `modelAvailable` — whether the forecasting client exists (`ForecastPilotService.modelAvailable()`, i.e. `explorer.forecasting.inference.enabled`), read from configuration and not probed, so a service that is briefly down does not make the page withdraw the assistant and offer it again a minute later. The page derives `canCreateForecast` from it and from `enabled`: false, and the card's **Forecast** and the form are absent, while the panel stays and says why, keeping its preparation diagnostic since that is what tells an operator what to enable. Known only once the status has been read: a way to create a forecast that appears and then goes is worse than one absent for the first second. Timestral does not count on its own — it is a shadow built under the same switch as TimesFM and never served. A series that already exists stays visible and operable whatever this says.
 
 **The panel reads as one timeline: history → forecast → quality → approval.** It used to say the
 same things in three places that did not read together — history against 512 in the progress
