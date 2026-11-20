@@ -168,15 +168,15 @@
         </div>
     </section>
 
-    <!-- Staged UI/UX PRs; not yet a claim about the current release -->
+    <!-- Shipped UI/UX work (all merged; see CHANGELOG.md for the release that carries each) -->
     <section id="ui-ux-roadmap" class="py-12 border-t border-border">
         <div class="container mx-auto px-6 max-w-4xl">
-            <h2 class="text-2xl font-bold text-white mb-3">Faster investigations — UI/UX work in progress</h2>
-            <p class="text-slate-400 mb-4">These dashboard enhancements are proposed in pull requests; they are not part of the published image until merged and released.</p>
+            <h2 class="text-2xl font-bold text-white mb-3">Faster investigations — recently shipped</h2>
             <ul class="list-disc pl-6 space-y-2 text-slate-300">
-                <li><a class="text-primary hover:underline" href="https://github.com/devdownin/Kafkaexplorer/pull/604">Diagnostic overview</a> — broker reachability, empty and dead-letter topics, and remembered table density.</li>
-                <li><a class="text-primary hover:underline" href="https://github.com/devdownin/Kafkaexplorer/pull/605">Saved topic view</a> — restore search and filters in the same browser.</li>
-                <li><a class="text-primary hover:underline" href="https://github.com/devdownin/Kafkaexplorer/pull/606">Recent topics</a> — quick access via the existing Ctrl+K palette.</li>
+                <li><strong class="text-white">Diagnostic overview</strong> on the Dashboard — broker reachability, empty and dead-letter topics, remembered table density.</li>
+                <li><strong class="text-white">Saved topic view</strong> — search and filters restored in the same browser.</li>
+                <li><strong class="text-white">Recent topics</strong> in the Ctrl+K palette.</li>
+                <li><strong class="text-white">Metrics page</strong> — filter and sort by predicted breach, one polling clock, cards that redraw only when their metric moves, and a note on any metric whose refresh slows the others.</li>
             </ul>
         </div>
     </section>
@@ -497,7 +497,21 @@ docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
     </section>
 
     <!-- Footer -->
-<section id="metric-forecast-workflow" class="py-16 px-6 bg-slate-900 text-white"><div class="max-w-5xl mx-auto"><h2 class="text-3xl font-bold mb-4">Forecast from an existing metric</h2><p class="text-slate-300 mb-5">On the Metrics page, choose <strong>Prepare a forecast</strong> on an eligible metric. The forecast reuses the selected metric and extends its chart with a visually distinct prediction. Ineligible metrics have a disabled action; after successful preparation, the action is disabled to prevent duplicates. Forecasts do not automatically enable alerts.</p><a class="text-sky-300 underline" href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md">Forecast setup and prerequisites</a></div></section>
+<section id="metric-forecast-workflow" class="py-16 border-t border-border">
+        <div class="container mx-auto px-6 max-w-4xl">
+            <h2 class="text-3xl font-bold text-white mb-4">Forecast from an existing metric</h2>
+            <p class="text-slate-400 mb-4">Press <strong class="text-white">Forecast</strong> on a metric card: the forecast is created from the metric's recorded history, with nothing to fill in, and drawn as the continuation of its curve with its 80&nbsp;% band. The card then tells you:</p>
+            <ul class="list-disc pl-6 space-y-2 text-slate-300 mb-5">
+                <li>when one of the metric's own thresholds is predicted — <em>"Warning expected in ~12 min"</em>, on the median or on the edge of the band;</li>
+                <li>how reliable the forecast has been against what then happened (Reliable / Fair / Watch);</li>
+                <li>when it was made and when the next one is due.</li>
+            </ul>
+            <p class="text-slate-400 mb-3">The page sends no alert. The same reading is a Prometheus series, so the alert lives where alerts belong:</p>
+            <pre class="bg-black/40 border border-border rounded-lg p-4 text-sm text-slate-200 overflow-x-auto mb-5"><code>explorer_forecast_threshold_eta_seconds{level="critical", likelihood="expected"} &lt; 1800</code></pre>
+            <p class="text-slate-400 mb-5"><code class="text-primary">./demo.sh --forecast</code> runs it end to end — live traffic, seeded history, TimesFM — with nothing to configure.</p>
+            <a class="text-primary hover:underline" href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md">Forecast setup, alerting and prerequisites</a>
+        </div>
+    </section>
     <footer class="py-12 border-t border-border bg-black/40">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex flex-col md:flex-row justify-between items-center gap-8">

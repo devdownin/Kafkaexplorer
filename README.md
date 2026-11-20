@@ -177,9 +177,15 @@ A single Spring Boot 4.1 JAR embedding Apache Flink 2.3 as the SQL engine, with 
 
 An optional in-process MCP server (Spring AI 2.0) exposes the same services to an LLM agent — same caches, same budgets, no second Kafka client — behind a KIP-1318-shaped guard: resource scope applied to SQL as well as to topic names, per-tool allow/deny enforced by absence from `tools/list`, a rate limit, approval tokens, DLP on everything that leaves, and an append-only call trail. Off unless `explorer.mcp.enabled=true`, read-only when on, and behind a bearer token over TLS once it is. See **[SPEC-MCP.md](SPEC-MCP.md)**.
 
-Operational review tools add `kex_topic_configuration` (effective topic settings and replica/ISR counts), `kex_topic_policy_review` (operator-defined rules per environment), `kex_consumer_lag_trend` (two complete offset/commit snapshots, with producer and consumer rates), and `kex_dlq_review` (DLQ retention, bounded header checks and explicitly declared source/retry/replay links). Set `explorer.mcp.lag-history-directory` to the same writable volume on every instance to retain the lag baseline across instances and restarts (48-hour validity by default, configurable); the filesystem must support cross-process locks. Without it, the baseline stays in this server process for up to 30 minutes. Missing broker data is reported as unmeasured, and the DLQ review does not reprocess records. Configuration examples are in [`docs/DOCKERHUB.md`](docs/DOCKERHUB.md) and `application.yml`.
+Operational review tools add `kex_topic_configuration` (effective topic settings and replica/ISR counts), `kex_topic_policy_review` (operator-defined rules per environment), `kex_consumer_lag_trend` (two complete offset/commit snapshots, with producer and consumer rates), and `kex_dlq_review` (DLQ retention, bounded header checks and explicitly declared source/retry/replay links). Set `explorer.mcp.lag-history-directory` to the same writable volume on every instance to retain the lag baseline across instances and restarts (48-hour validity by default, configurable); the filesystem must support cross-process locks. Without it, the baseline stays in this server process for up to 30 minutes. Missing broker data is reported as unmeasured, and the DLQ review does not reprocess records. Configuration examples are in [`docs/DOCKERHUB-OPERATIONS.md`](docs/DOCKERHUB-OPERATIONS.md) and `application.yml`.
 
 Architecture deep-dive: **[docs/architecture.md](docs/architecture.md)**
+
+**Forecast from a metric card**: press **Forecast** and the forecast is created from the metric's
+recorded history, drawn as the continuation of its curve. The card says when one of the metric's
+thresholds is predicted, how reliable the forecast has been and when the next one is due. Nothing is
+sent; the same reading is the Prometheus series `explorer_forecast_threshold_eta_seconds`, which you
+can alert on. `./demo.sh --forecast` runs it end to end with nothing to configure.
 
 The **Metrics Forecast** panel includes preparation diagnostics, a candidate catalogue, a reviewed
 configuration assistant, live history progress and a result summary. Run `bin/forecast-stack.sh`
