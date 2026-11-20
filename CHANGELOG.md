@@ -27,6 +27,19 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from the quality window the list already carries ("Last checked: 87% of 30 points in the 80% band
   · mean error 42 ms"). `GET /api/forecasts/{seriesId}/previous` serves that forecast (204 until one
   has matured): it is read from the results already kept, so nothing new is stored.
+- **Creating a forecast is one click, and the form is only for when it fails.** Every forecast
+  starts from an existing metric, so the card's **Forecast** button creates it without opening
+  anything and a toast says when the first forecast follows; the form opens for that metric, on the
+  reason, only if the creation stops. Gone with it: the panel's "Configure a forecast" and the
+  form's metric selector, the fields the metric already answers (unit, environment, history cluster
+  and collector IDs), and the source attestation for a template metric, whose sources are declared.
+  The forecast panel's five folds are two: Quality and Configuration, and it has no series selector:
+  a card's **Details** shows that metric's forecast in it, named as the card names it.
+- **The SPA's seven open dependency alerts are closed.** `dompurify` (bundled by the Monaco editor,
+  five low advisories) to 3.4.17, `minimatch` (ESLint's TypeScript parser, a moderate ReDoS) to
+  11.0.5 and `zod` (an ESLint plugin's, memory exhaustion) to 4.6.7, through `overrides` since no
+  parent release carries them yet. Only `dompurify` ships in the application; the other two are
+  build-time. `npm audit` reports none.
 - **A metric card says when its forecast reaches a threshold.** "Warning expected in ~12 min
   (≥ 2,150, median)" when the median reaches the metric's own warning or critical threshold,
   "possible" when only the 80 % band does, critical before warning, in the direction the two

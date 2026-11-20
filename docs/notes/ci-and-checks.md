@@ -364,6 +364,15 @@ transparency log. Consumers verify with `gh attestation verify <jar> --repo devd
 SHA pins and rewrites the comment, so this costs nothing to maintain — when adding an action,
 pin it the same way rather than reaching for the tag.
 
+**`package.json` carries `overrides`, and each one is a vulnerability its parent has not fixed yet.**
+`monaco-editor` 0.57.0 pins `dompurify` 3.4.15 exactly — five advisories up to 3.4.16, and no newer
+Monaco to move to — so the editor gets 3.4.17; `@typescript-eslint/typescript-estree` 8.72 asks for
+`minimatch` ^10, and the ReDoS fix is in 11.0.1, so it gets 11.0.5, the line its own 8.73 moved to;
+`zod` (through `eslint-plugin-react-hooks`) is lifted past the memory-exhaustion fix in 4.6.6. The
+versions are exact and at least two weeks old when chosen, as everything else here. **Remove an
+override once its parent ships the fix**: left behind, it pins a dependency nobody is looking at.
+`npm audit` reports zero with them.
+
 `.gitattributes` normalises text to LF in the repository while checking `*.bat` / `*.cmd` /
 `*.ps1` out as CRLF. The tree mixes Unix entry points (`mvnw`, the `setup-*.sh` seeders,
 everything the images run) with Windows ones, and a CRLF that reaches a shell script is the

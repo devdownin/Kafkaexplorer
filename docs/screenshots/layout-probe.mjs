@@ -143,13 +143,15 @@ const STATES = {
       close: ESCAPE,
     },
     {
-      // A metric card now starts a forecast automatically; measure its resulting confirmation,
-      // not the historical manual configuration form.
+      // A card's Forecast button creates the forecast outright; the form opens only when that
+      // stops, so the server is made to refuse once — the form is the layout worth measuring.
       name: 'forecast-assistant',
       viewports: ['phone', 'tablet', 'desktop'],
       open: async page => {
+        await page.route('**/api/forecasts/series', route => route.fulfill({ status: 400,
+          contentType: 'application/json', body: JSON.stringify({ reason: 'History not available' }) }), { times: 1 });
         await page.locator('button:enabled').filter({ hasText: /^\s*(insights)?\s*Forecast\s*$/ }).first().click();
-        await page.getByText('Forecast started for gauge_volume_demo_orders_1_received.').waitFor({ timeout: 5000 });
+        await page.getByRole('heading', { name: 'Forecast setup' }).waitFor({ timeout: 5000 });
       },
       close: async page => {
         await page.getByRole('button', { name: 'Close forecast setup' }).click();
