@@ -1,5 +1,46 @@
 # Metrics demo test scenarios
 
+## The forecast demo: two live metrics that are forecast from the first minutes
+
+`./demo.sh` (and `.\demo.cmd`) also starts `compose/demo-forecast.yml`. The rest of the demo's topics are
+seeded once and then stand still, so a metric over them reads one value for ever and a forecast has
+nothing to extend; these two are fed continuously, and their history is written ahead so a forecast does
+not wait the two hours (128 recorded points) it would otherwise need.
+
+| Metric | What it reads | Story | What to look at |
+| --- | --- | --- | --- |
+| `gauge_unshipped_demo_live_orders_minus_shipped` | orders taken and not yet shipped: records in `demo.live.orders` minus those in `demo.live.shipped` | the warehouse falls behind for three hours (about 20 towards 450 orders), then a bulk shipment drains it; a small hourly ripple | warning at 300 and critical at 400: for about half an hour before each, the card says **"Warning expected in ~N min"**, then "Critical expected". **Already forecast** when the page opens |
+| `gauge_backlog_demo_live_requests_minus_processed` | records produced to `demo.live.requests` minus those produced to `demo.live.processed` | an hourly cycle between 10 and 130 records | the forecast **follows** the cycle rather than extrapolating a line; the history preview finds the hourly cycle; the warning at 110 is crossed near each peak and the critical at 135 never. **Not forecast yet**: press **Forecast** on its card |
+
+Open **Metrics**: both cards already draw a curve, the unshipped-orders one with its forecast beside it.
+
+1. **The unshipped-orders forecast** — a cyan dashed median and its 80 % band continue the curve; the card
+   shows the predicted threshold ("Warning expected in ~12 min (≥ 300, median)") when the forecast gets there.
+2. **Press Forecast on the backlog card** — nothing to fill in: it is created with the cycle its history
+   shows, and its first forecast is computed at the next cycle, one minute later, because the history is
+   already there. A card the demo cannot forecast (the raw-SQL examples) keeps a disabled button and says why.
+3. **Previous forecast vs actual** in the Metrics Forecast panel, once a forecast has matured (one horizon,
+   thirty minutes after the first): the earlier forecast drawn over what then happened, and how it did.
+
+**Why a count, and why these two.** Only a measurement the Explorer records as *complete* can be forecast: a
+latency or a consumer delay is recorded as limited-scope (a bounded read of recent rows), and a metric over
+raw SQL as unverified, so neither is ever offered a forecast. The difference of two topics' end offsets is
+exactly that, and a generator can hold it on any curve with nothing to back-date.
+
+**What is seeded is demo data, and says so.** `demo-forecast-seed` writes the nine hours before the first
+observation the Explorer recorded itself, as clones of that observation with their own `collectorRunId`
+`demo-seed-<n>`: the same series, unit and scope, distinguishable from what was measured. It never seeds a
+metric that was not recorded for real, and never twice. It follows the same two curves the generator
+produces (`scripts/demo-forecast/signals.awk`), which depend on the wall clock alone: a stack restarted at
+any hour resumes the same curve. The topics themselves do not hold those nine hours — only the history the
+forecast reads does. `./demo.sh logs demo-forecast-seed` shows what was done; `./demo.sh reset` removes it.
+
+`docs/check-demo-forecast.py` holds the curves to the thresholds above and the generator to its stubs;
+the `forecast-stack` CI job (`ci/demo-forecast.py`) runs the overlay against the real preparer, PostgreSQL
+and TimesFM and checks a forecast comes out of each metric.
+
+## The static `demo.metrics.requests` scenarios
+
 The bundled `setup-demo.sh` seeds `demo.metrics.requests` with **180 one-minute aggregate records** spanning the last three hours, plus the existing `demo.iot.sensors` readings. No external credentials or inference model are needed to inspect these Kafka records.
 
 ## Start and inspect
@@ -68,4 +109,4 @@ For time-resolved curves and forecasting, use a windowed aggregation on the decl
 5. If forecasting is configured, collect a durable history before testing **Prepare a forecast**; verify the observed/predicted distinction and any confidence band.
 6. Confirm that a metric without sufficient history or an approved forecast source disables or explains the forecast action.
 
-The fixture is deterministic in shape but uses the current time as its origin. It does not generate live traffic after seeding.
+The fixture is deterministic in shape but uses the current time as its origin. It does not generate live traffic after seeding: that is what the live forecast demo above adds, on `demo.live.*` topics of its own so that the audit counts these scenarios rely on do not move.

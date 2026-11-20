@@ -12,6 +12,7 @@
 # Always LF, on every platform. These run under a shell — including on Windows, via Git Bash,
 # WSL or a container — so a CRLF checkout breaks them there too.
 *.sh            text eol=lf
+*.awk           text eol=lf
 mvnw            text eol=lf
 Dockerfile*     text eol=lf
 *.yml           text eol=lf

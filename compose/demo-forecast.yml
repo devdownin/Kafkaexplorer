@@ -1,0 +1,67 @@
+# Overlay: live traffic and a seeded history, so the forecast demo can be seen working rather
+# than waited for. `./demo.sh` layers it after compose/forecasts.yml, which it needs (PostgreSQL
+# and the history the Explorer records into it); nothing else uses it.
+#
+#   demo-live ............ keeps two topic pairs moving (demo.live.*): orders not yet shipped,
+#                          degrading towards their threshold, and a request backlog on an hourly
+#                          cycle — the rest of the demo's topics are seeded once and stand still,
+#                          so a metric over them has one value for ever and nothing to forecast.
+#   demo-forecast-seed ... creates the two metrics over those topics, writes the nine hours
+#                          before the Explorer's first real recording of each (marked
+#                          `demo-seed-<n>`), and starts the unshipped-orders forecast. The backlog's
+#                          is left to the Forecast button on its card.
+#
+# Both read scripts/demo-forecast/ — signals.awk is the one definition of the two curves, so the
+# seeded past and the live traffic are one signal. docs/metrics-demo-scenarios.md tells the story.
+#
+# Paths are the project root's, as in forecasts.yml: Compose resolves every relative path against
+# the first file's directory, which here is docker-compose.yml's. Each script is copied through
+# `sed` first, as the seeders' entrypoints do, so a CRLF checkout on Windows does not break it.
+services:
+
+  demo-live:
+    image: apache/kafka:4.3.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./scripts/demo-forecast:/demo-forecast:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mkdir -p /tmp/demo-forecast
+        for f in /demo-forecast/*; do sed 's/\r$$//' "$$f" > "/tmp/demo-forecast/$$(basename "$$f")"; done
+        exec sh /tmp/demo-forecast/live.sh kafka:29092
+    # A traffic generator that stops leaves the curves flat: bring it back.
+    restart: unless-stopped
+
+  demo-forecast-seed:
+    image: postgres:17.6-alpine
+    # No depends_on: forecast-postgres is forecasts.yml's, and seed.sh waits for PostgreSQL and for
+    # the Explorer by asking them, which also answers when they are up but not yet ready.
+    volumes:
+      - ./scripts/demo-forecast:/demo-forecast:ro
+    environment:
+      PGHOST: forecast-postgres
+      PGUSER: forecasts
+      PGDATABASE: forecasts
+      PGPASSWORD: ${FORECAST_POSTGRES_PASSWORD:-}
+      EXPLORER_URL: http://explorer:8080
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mkdir -p /tmp/demo-forecast
+        for f in /demo-forecast/*; do sed 's/\r$$//' "$$f" > "/tmp/demo-forecast/$$(basename "$$f")"; done
+        exec sh /tmp/demo-forecast/seed.sh
+    # Once per `up`, and idempotent: a history already seeded is left alone.
+    restart: "no"
+    # PostgreSQL is on the private network; the Explorer, to create the metrics, on the default one.
+    networks:
+      - default
+      - timesfm_private
+
+networks:
+  timesfm_private:
+    internal: true

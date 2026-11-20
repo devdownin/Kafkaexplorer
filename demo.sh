@@ -106,7 +106,8 @@ export DEMO_SPECTRA=${DEMO_SPECTRA:-true}
 
 export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-kafka-explorer-demo}
 
-files=(-f docker-compose.yml -f compose/schema-registry.yml -f compose/mcp.yml -f compose/forecasts.yml)
+files=(-f docker-compose.yml -f compose/schema-registry.yml -f compose/mcp.yml -f compose/forecasts.yml
+  -f compose/demo-forecast.yml)
 [[ $DEMO_PUBLISHED_IMAGE == true ]] && files+=(-f compose/image.yml)
 if [[ $DEMO_SPECTRA == true ]]; then
   files+=(-f compose/demo.yml -f compose/spectra-hub.mcp.yml -f compose/spectra-hub.ingest.yml
@@ -167,7 +168,8 @@ LLM ................... OpenRouter ${OPENROUTER_MODEL} (Explorer, agent)
 SQL assistant ......... ${EXPLORER_ASSISTANT_ENABLED} (editor ask bar, Suggest a fix, Metrics: Describe the metric; table and column names go to OpenRouter)
 
 Demo topics (JSON + Avro) are seeded in the background: ./demo.sh logs demo-setup
-Forecast: Metrics → "Prepare a forecast" on a metric card.
+Forecast: Metrics → the two demo.live.* metrics have 9 h of seeded history (live traffic keeps them moving):
+  the unshipped-orders one is already forecast; press Forecast on the backlog one. ./demo.sh logs demo-forecast-seed
 EOF
 }
 

@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The demo can show a forecast working.** Its topics were seeded once and stood still, so no metric
+  had a history and a forecast waited two hours. `./demo.sh` now also starts `compose/demo-forecast.yml`:
+  a generator feeds two topic pairs (orders not yet shipped, degrading towards their threshold; a
+  request backlog on an hourly cycle) and a seeder writes the nine hours before the Explorer's first
+  recording of each, marked `demo-seed-<n>`, from the same curves. The first is already forecast when the Metrics page
+  opens, with its "Warning expected in ~N min" badge; the backlog's is the Forecast button, with its
+  hourly cycle found and its first forecast one minute away. `docs/metrics-demo-scenarios.md` tells the
+  story; `docs/check-demo-forecast.py` and the `forecast-stack` CI job hold it.
 - **The SPA's seven open dependency alerts are closed.** `dompurify` (bundled by the Monaco editor,
   five low advisories) to 3.4.17, `minimatch` (ESLint's TypeScript parser, a moderate ReDoS) to
   11.0.5 and `zod` (an ESLint plugin's, memory exhaustion) to 4.6.7, through `overrides` since no
