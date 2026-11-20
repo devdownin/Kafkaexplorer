@@ -30,6 +30,7 @@ import { hasRunningMetric } from './metricsHealth';
 import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop';
 import { ForecastSetupWizard } from '../components/metrics/ForecastSetupWizard';
 import { ForecastPanel } from '../components/metrics/ForecastPanel';
+import { AutoCreateRefused, createForecastFromMetric } from '../components/metrics/forecastAutoCreate';
 import { forecastStage } from '../components/metrics/forecastStage';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
@@ -153,7 +154,13 @@ const Metrics: React.FC = () => {
    * Le brouillon est relu au montage et rouvre le modal tel qu'il était.
    */
   const [restoredEditor] = useState(() => readDraft<EditorDraft | null>(EDITOR_DRAFT, null));
-  const [forecastRequest, setForecastRequest] = useState<{ metricId?: string; sequence: number } | null>(null);
+  /*
+   * The form for one metric, opened only when its card's one-click creation stopped — with the
+   * reason it stopped. A success needs no form: the card shows where the new forecast stands.
+   */
+  const [forecastRequest, setForecastRequest] = useState<{ metricId: string; error: string; sequence: number } | null>(null);
+  // The metric whose forecast is being created from its card, so the button can say so.
+  const [creatingForecastId, setCreatingForecastId] = useState('');
   // The panel's own poll feeds the cards: one request for both, not one per card.
   const [forecastStatus, setForecastStatus] = useState<ForecastStatus | null>(null);
   const [forecastRevision, setForecastRevision] = useState(0);
@@ -207,6 +214,7 @@ const Metrics: React.FC = () => {
     for (const s of forecastStatus?.series ?? []) if (!stages.has(s.metricId)) stages.set(s.metricId, forecastStage(s));
     return stages;
   }, [forecastStatus]);
+  const metricNames = useMemo(() => Object.fromEntries(metrics.map(m => [m.id, m.name || m.id])), [metrics]);
   const forecastSeriesByMetric = useMemo(() => {
     const series = new Map<string, ForecastStatus['series'][number]>();
     for (const s of forecastStatus?.series ?? []) if (!series.has(s.metricId)) series.set(s.metricId, s);
@@ -220,6 +228,25 @@ const Metrics: React.FC = () => {
     heading?.focus({ preventScroll: true });
     heading?.closest('section')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   }, [forecastRequest]);
+  async function createForecast(metric: MetricConfig) {
+    if (creatingForecastId) return;
+    setCreatingForecastId(metric.id);
+    setForecastRequest(null);
+    try {
+      const created = await createForecastFromMetric(metric.id);
+      setCreatedForecastMetricId(metric.id);
+      setForecastFocus(created.seriesId);
+      setForecastRevision(v => v + 1);
+      toast(`Forecast started for ${created.name}. ${created.firstForecast}.`, 'success');
+    } catch (e) {
+      const reason = e instanceof AutoCreateRefused ? e.message
+        : axios.isAxiosError(e) && typeof e.response?.data?.reason === 'string' ? e.response.data.reason : '';
+      setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1,
+        error: reason ? `Automatic creation stopped: ${reason}. Review the settings below.` : 'Automatic creation failed. Review the settings below and retry.' }));
+    } finally {
+      setCreatingForecastId('');
+    }
+  }
   const [isModalOpen, setIsModalOpen]   = useState(restoredEditor !== null);
   const [editingMetric, setEditingMetric] = useState<Partial<MetricConfig>>(restoredEditor?.metric ?? EMPTY_METRIC);
   const [selectedTopic, setSelectedTopic] = useState<string>(restoredEditor?.topic ?? '');
@@ -990,9 +1017,14 @@ const Metrics: React.FC = () => {
                     if (!candidate?.eligible || !candidate.topics.length
                       || forecastCandidates?.applyUnavailable !== null
                       || forecastMetricIds.includes(metric.id)) return;
-                    setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1 }));
+                    void createForecast(metric);
                   }
                 : undefined}
+              forecastCreating={creatingForecastId === metric.id}
+              onShowForecast={forecastSeriesByMetric.has(metric.id) ? () => {
+                setForecastFocus(forecastSeriesByMetric.get(metric.id)!.seriesId);
+                document.querySelector('section[aria-label="Metrics Forecast"]')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+              } : undefined}
               forecastUnavailableReason={canCreateForecast ? (
                 forecastCandidatesError ? 'Forecast eligibility could not be verified. Retry after reloading.'
                   : !forecastCandidates ? 'Checking forecast eligibility…'
@@ -1030,23 +1062,21 @@ const Metrics: React.FC = () => {
           <h3 id="metric-forecast-preparation" tabIndex={-1} className="text-lg font-semibold outline-none">Forecast setup</h3>
           <Button variant="ghost" size="sm" icon="close" onClick={() => setForecastRequest(null)}>Close forecast setup</Button>
         </div>
-        <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId}
+        <ForecastSetupWizard key={forecastRequest.sequence} metricId={forecastRequest.metricId}
+          initialError={forecastRequest.error}
+          sourcesInferred={(metrics.find(m => m.id === forecastRequest.metricId)?.templateType ?? RAW_SQL) === RAW_SQL}
           onApplied={seriesId => {
-            if (forecastRequest.metricId) setCreatedForecastMetricId(forecastRequest.metricId);
+            setCreatedForecastMetricId(forecastRequest.metricId);
             setForecastFocus(seriesId);
             setForecastRevision(v => v + 1);
-          }}
-          forecastMetricIds={forecastMetricIds} />
+          }} />
       </section>}
-      <ForecastPanel refresh={forecastRevision} focus={forecastFocus} onStatus={status => {
+      <ForecastPanel refresh={forecastRevision} focus={forecastFocus} metricNames={metricNames} onStatus={status => {
         setForecastStatus(status);
         // Once the server lists the new series, its status becomes authoritative. A later
         // withdrawal can then re-enable the metric's Prepare action.
         setCreatedForecastMetricId(id => id && status?.series.some(series => series.metricId === id) ? '' : id);
-      }}
-        onConfigure={canCreateForecast
-          ? () => setForecastRequest(previous => ({ sequence: (previous?.sequence ?? 0) + 1 }))
-          : undefined} />
+      }} />
       <SuggestionsPanel
         response={suggestions}
         loading={suggestionsLoading}

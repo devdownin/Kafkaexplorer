@@ -56,10 +56,11 @@ function Ready({ c }: { c: Comparison }) {
 /** Comparison only: the shadow is never served, never approved, and sends nothing. */
 export function ForecastShadowComparison({ view }: { view: ShadowView | null }) {
   if (!view || view.kind === 'OFF') return null;
-  return <details><summary>Shadow model comparison</summary>
+  // A section of the panel's "Quality" fold, not a fold of its own inside it.
+  return <section className="space-y-2" aria-label="Shadow model comparison"><h4 className="font-medium">Shadow model comparison</h4>
     {view.kind === 'EMPTY' && <p>The shadow is enabled; no forecast compatible with this series has been scored yet.</p>}
     {view.kind === 'ERROR' && <p>Shadow comparison unavailable. Previous figures may be stale.</p>}
     {view.kind === 'READY' && <Ready c={view.comparison} />}
     <p>The shadow is never served or approved, and sends nothing. Both models are scored on the same realised values.</p>
-  </details>;
+  </section>;
 }

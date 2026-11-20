@@ -30,6 +30,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   story; `docs/check-demo-forecast.py` and the `forecast-stack` CI job hold it. **`./demo.sh --forecast`
   (`.\demo.cmd -Forecast`) starts that demo alone**, with nothing to configure: no LLM key, no SpectraLLM,
   no agent, every variable defaulted.
+- **Creating a forecast is one click, and the form is only for when it fails.** Every forecast
+  starts from an existing metric, so the card's **Forecast** button creates it without opening
+  anything and a toast says when the first forecast follows; the form opens for that metric, on the
+  reason, only if the creation stops. Gone with it: the panel's "Configure a forecast" and the
+  form's metric selector, the fields the metric already answers (unit, environment, history cluster
+  and collector IDs), and the source attestation for a template metric, whose sources are declared.
+  The forecast panel's five folds are two: Quality and Configuration, and it has no series selector:
+  a card's **Details** shows that metric's forecast in it, named as the card names it.
 - **The SPA's seven open dependency alerts are closed.** `dompurify` (bundled by the Monaco editor,
   five low advisories) to 3.4.17, `minimatch` (ESLint's TypeScript parser, a moderate ReDoS) to
   11.0.5 and `zod` (an ESLint plugin's, memory exhaustion) to 4.6.7, through `overrides` since no
