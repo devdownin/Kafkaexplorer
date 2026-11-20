@@ -58,6 +58,24 @@ describe('ForecastPanel chart', () => {
     expect(await screen.findByText('Threshold ≥ 11')).toBeInTheDocument();
   });
 
+  // The metric's own thresholds, drawn as the card draws them: a near one on the chart, a far one named.
+  it('draws the metric\u2019s own warning and critical thresholds, naming a far one at the edge', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
+    render(<ForecastPanel metricThresholds={{ m: { warning: 11, critical: 5000 } }} />);
+    expect(await screen.findByText('warning 11')).toBeInTheDocument();
+    expect(screen.getByLabelText('Thresholds off the chart scale')).toHaveTextContent('↑ critical 5,000');
+  });
+
+  it('draws none of them against a rate forecast', async () => {
+    const rate = structuredClone(status) as typeof status & { series: { result: { context: Record<string, unknown> } }[] };
+    rate.series[0].result.context.profile = { transformation: 'COUNTER_RATE' };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? rate : {} }));
+    render(<ForecastPanel metricThresholds={{ m: { warning: 11, critical: 5000 } }} />);
+    expect(await screen.findByText('80 % interval')).toBeInTheDocument();
+    expect(screen.queryByText('warning 11')).toBeNull();
+    expect(screen.queryByLabelText('Thresholds off the chart scale')).toBeNull();
+  });
+
   // A threshold above every value was drawn outside the plot: `ifOverflow="extendDomain"` does not
   // widen the axis in recharts 2. Found by the documentation capture, not by the test above.
   it('widens the value axis to a threshold above every value', async () => {

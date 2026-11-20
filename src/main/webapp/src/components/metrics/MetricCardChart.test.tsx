@@ -89,7 +89,9 @@ describe('MetricCard forecast chart', () => {
     render(<ToastProvider><MetricCard metric={metric} onEdit={() => {}} onDelete={() => {}} onRefresh={() => {}}
       refreshing={false} forecastSeries={scored as unknown as ForecastSeriesView}
       forecast={{ stage: 'OBSERVING', label: 'Observing', tone: 'neutral', detail: 'Observing' }} /></ToastProvider>);
-    expect(screen.getByLabelText('Forecast against actual')).toHaveTextContent('Last checked: 87% of 30 points in the 80% band · mean error 4.25 ms');
+    expect(screen.getByLabelText('Forecast against actual')).toHaveTextContent('Reliability');
+    expect(screen.getByLabelText('Forecast against actual')).toHaveTextContent('Reliable');
+    expect(screen.getByLabelText('Forecast against actual')).toHaveTextContent('87% of 30 points in the band');
   });
 
   it('neither draws nor compares the metric thresholds against a counter forecast, a rate per second', () => {
@@ -99,6 +101,6 @@ describe('MetricCard forecast chart', () => {
     expect(screen.queryByLabelText('Forecast threshold')).toBeNull();
     expect(screen.queryByText('warn')).toBeNull();
     expect(screen.getByText(/a rate per second; the value above is the counter’s own reading/)).toBeInTheDocument();
-    expect(screen.getByLabelText('Metric chart legend')).toHaveTextContent('Observed (per second)');
+    expect(screen.getByLabelText('Metric chart legend')).toHaveTextContent('Observed (/s)');
   });
 });

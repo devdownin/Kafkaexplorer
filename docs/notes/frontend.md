@@ -736,6 +736,8 @@ left out rather than scored. It is read only once asked for, once per latest res
 "Last checked" line is the same question answered without a request: the latest scored cohort of
 the quality window the list already carries, else the last closed block.
 
+**One reading of the forecast, three surfaces.** `forecastReachFor` (the reach, in milliseconds, or `null` for a rate forecast) feeds the card's badge and the page's *Breach predicted* filter and *next predicted breach* sort, so the list and the card cannot disagree; `placeThresholds` (`thresholdPlacement.ts`) decides which of a metric's thresholds a chart draws and which it names at the edge, for the card and the Forecast panel alike. `forecastReliability` turns the quality window's 80 % coverage into a word (Reliable from 70 %, Fair from 50 %, Watch below, Early under ten points) — a badge for the glance, the numbers in its tooltip.
+
 **The card reads the forecast against the metric's thresholds** (`forecastBreach.ts`, pure and
 tested): the first predicted point whose median is at or past the critical, then the warning,
 threshold is "expected"; failing that, the cautious edge of the 80 % band (q90 upwards, q10
