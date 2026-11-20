@@ -82,6 +82,16 @@ describe('MetricCard forecast chart', () => {
     expect(screen.queryByLabelText('Thresholds off the chart scale')).not.toHaveTextContent('warn');
   });
 
+  it('says how the forecast did against what happened, from the quality window the list carries', () => {
+    const scored = structuredClone(series) as unknown as { result: Record<string, unknown> };
+    scored.result.qualityWindow = { open: [{ through: 1, points: 30, baselineMae: {}, meanAbsActual: 1,
+      quality: { mae: 4.25, mase: null, meanPinballLoss: 0, q10Q90Coverage: 0.87, meanIntervalWidth: 0 } }], lastBlock: null, failedBlocks: 0 };
+    render(<ToastProvider><MetricCard metric={metric} onEdit={() => {}} onDelete={() => {}} onRefresh={() => {}}
+      refreshing={false} forecastSeries={scored as unknown as ForecastSeriesView}
+      forecast={{ stage: 'OBSERVING', label: 'Observing', tone: 'neutral', detail: 'Observing' }} /></ToastProvider>);
+    expect(screen.getByLabelText('Forecast against actual')).toHaveTextContent('Last checked: 87% of 30 points in the 80% band · mean error 4.25 ms');
+  });
+
   it('neither draws nor compares the metric thresholds against a counter forecast, a rate per second', () => {
     const rate = structuredClone(series) as unknown as { result: { context: { profile: { transformation: string } } } };
     rate.result.context.profile.transformation = 'COUNTER_RATE';

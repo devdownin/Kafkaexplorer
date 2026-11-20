@@ -2,13 +2,14 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Badge, Button, Field, Select, Table, TableBody, TableHead, TableRow, Td, Th, useConfirm } from '../ui';
+import { Badge, Button, Checkbox, Field, Select, Table, TableBody, TableHead, TableRow, Td, Th, useConfirm } from '../ui';
 import { copyText } from '../../clipboard';
 import type { BadgeTone } from '../ui';
 import type {
   ForecastActivationRefusal, ForecastProgress as Progress, ForecastSeriesView, ForecastShadowComparison as Comparison,
-  ForecastStatus,
+  ForecastStatus, MetricForecast,
 } from '../../api/types';
+import { compareWithActual } from './forecastVsActual';
 import { ForecastPreparation } from './ForecastPreparation';
 import { ForecastProgress } from './ForecastProgress';
 import { ForecastShadowComparison } from './ForecastShadowComparison';
@@ -96,6 +97,12 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
   const [action, setAction] = useState<{ source: 'approve' | 'withdraw' | 'copy'; text: string } | null>(null);
   /** How much of the 512-point context the chart draws: a forecast is judged against more than the last hour. */
   const [shown, setShown] = useState(60);
+  /*
+   * The latest fully measured forecast, drawn over what happened: read only once asked for, and
+   * once per latest result — a past forecast does not change until a newer one has matured.
+   */
+  const [compare, setCompare] = useState(false);
+  const [previousRead, setPreviousRead] = useState<{ key: string; forecast: MetricForecast | null; failed: boolean } | null>(null);
   /** P2: `/progress` is read only where its answer is on screen — the threshold on the chart, or the open summary. */
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -167,6 +174,21 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
       if (!signal.aborted) setShadow({ seriesId, view });
     });
   }, [seriesId, revision, refresh, shadowConfigured, wantProgress]);
+  const latestKey = status?.series.find(s => s.seriesId === seriesId)?.result?.key;
+  const previousKey = `${seriesId}|${latestKey}`;
+  useEffect(() => {
+    if (!compare || !seriesId || !latestKey) return;
+    const controller = new AbortController();
+    axios.get<MetricForecast | ''>(`/api/forecasts/${encodeURIComponent(seriesId)}/previous`,
+      { signal: controller.signal, timeout: 10000, validateStatus: code => code === 200 || code === 204 })
+      .then(response => {
+        if (controller.signal.aborted) return;
+        const forecast = response.status === 200 && response.data && Array.isArray(response.data.points) ? response.data : null;
+        setPreviousRead({ key: `${seriesId}|${latestKey}`, forecast, failed: false });
+      })
+      .catch(() => { if (!controller.signal.aborted) setPreviousRead({ key: `${seriesId}|${latestKey}`, forecast: null, failed: true }); });
+    return () => controller.abort();
+  }, [compare, seriesId, latestKey]);
   const listed = status?.series.find(s => s.seriesId === seriesId);
   // The detail is the same row with its history: preferred once it is about the series shown.
   const series = listed && detail?.seriesId === listed.seriesId ? detail : listed;
@@ -175,9 +197,18 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
   // series still collecting its first 130 drew 130 and said 512.
   const windows = [60, 180, 512].filter(n => n === 60 || n <= (result?.context.points.length ?? 0));
   const seriesProgress = progress?.seriesId === series?.seriesId ? progress : null;
-  const history: { at: number; actual?: number | null; imputed?: number | null; median?: number | null }[] =
+  const previousShown = compare && previousRead?.key === previousKey ? previousRead : null;
+  const previous = previousShown?.forecast ?? null;
+  const previousAt = new Map((previous?.points ?? []).map(p => [p.at, p]));
+  const versus = previous && result ? compareWithActual(previous, result.context.points) : null;
+  const history: { at: number; actual?: number | null; imputed?: number | null; median?: number | null;
+    prevMedian?: number; prevFloor?: number; prevBand?: number; prevQ10?: number; prevQ90?: number }[] =
     // An imputed point is a filled gap, not a measurement: drawn apart, never in "Observed" (B4).
-    result?.context.points.slice(-(windows.includes(shown) ? shown : 60)).map(p => p.imputed ? { at: p.endAt, imputed: p.value } : { at: p.endAt, actual: p.value }) ?? [];
+    result?.context.points.slice(-(windows.includes(shown) ? shown : 60)).map(p => {
+      const row = p.imputed ? { at: p.endAt, imputed: p.value } : { at: p.endAt, actual: p.value };
+      const past = previousAt.get(p.endAt);
+      return past ? { ...row, prevMedian: past.q50, prevFloor: past.q10, prevBand: past.q90 - past.q10, prevQ10: past.q10, prevQ90: past.q90 } : row;
+    }) ?? [];
   /*
    * The median starts on the last measured point, so the two strokes meet: they were drawn with a
    * gap of one step between them, which read as a missing reading at the very moment that matters.
@@ -201,7 +232,8 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
    * the middle of the plot, and the 80 % band a sliver nobody could read.
    */
   const plotted = chart.flatMap(p => [('actual' in p ? p.actual : null), ('imputed' in p ? p.imputed : null),
-    ('median' in p ? p.median : null), ('q10' in p ? p.q10 : null), ('q90' in p ? p.q90 : null)])
+    ('median' in p ? p.median : null), ('q10' in p ? p.q10 : null), ('q90' in p ? p.q90 : null),
+    ('prevQ10' in p ? p.prevQ10 : null), ('prevQ90' in p ? p.prevQ90 : null)])
     .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
   if (threshold) plotted.push(threshold.threshold);
   const low = plotted.length ? Math.min(...plotted) : 0;
@@ -333,6 +365,8 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
             <Button variant="outline" size="sm" icon="download" onClick={() => exportForecast('csv')}>Export CSV</Button>
             <Button variant="outline" size="sm" icon="download" onClick={() => exportForecast('json')}>Export JSON</Button>
           </div>
+          <label className="flex items-center gap-2 text-sm pb-2" title="The latest forecast whose whole horizon has been measured, drawn over what happened">
+            <Checkbox checked={compare} onChange={setCompare} />Previous forecast vs actual</label>
           <Field label="History shown" className="w-56">{p => <Select {...p} value={windows.includes(shown) ? shown : 60} onChange={e => setShown(Number(e.target.value))}>
             {windows.map(n => <option key={n} value={n}>Last {n} points · {about(n, series?.stepMillis ?? 60000)}</option>)}
           </Select>}</Field>
@@ -360,13 +394,18 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
               cursor={{ stroke: FORECAST_COLORS.band, strokeOpacity: 0.4 }}
               formatter={(value, name, item) => name === '80 % interval' && item?.payload
                 ? [`${number(item.payload.q10)} – ${number(item.payload.q90)}`, name]
-                : [number(value), name]} />
+                : name === 'Previous 80 % interval' && item?.payload
+                  ? [`${number(item.payload.prevQ10)} – ${number(item.payload.prevQ90)}`, name]
+                  : [number(value), name]} />
             <Legend wrapperStyle={{ fontSize: 12, paddingTop: 4 }} />
             {/* Two separate children, never a fragment: recharts 2 does not find a graphical item
                 inside `<>…</>`, so the band and its legend entry were never drawn
                 (METRICS-FORECAST-UX-AUDIT.md B1). */}
             {result.strategy === 'TIMESFM' && <Area dataKey="floor" stackId="interval" stroke="none" fill="transparent" tooltipType="none" legendType="none" isAnimationActive={false} />}
             {result.strategy === 'TIMESFM' && <Area dataKey="band" stackId="interval" stroke="none" fill={FORECAST_COLORS.forecast} fillOpacity={0.18} name="80 % interval" isAnimationActive={false} />}
+            {previous && <Area dataKey="prevFloor" stackId="previous" stroke="none" fill="transparent" tooltipType="none" legendType="none" isAnimationActive={false} />}
+            {previous && <Area dataKey="prevBand" stackId="previous" stroke="none" fill={FORECAST_COLORS.previous} fillOpacity={0.22} name="Previous 80 % interval" isAnimationActive={false} />}
+            {previous && <Line dataKey="prevMedian" stroke={FORECAST_COLORS.previous} strokeWidth={2} strokeDasharray="2 3" dot={false} name="Previous forecast" isAnimationActive={false} />}
             <Line dataKey="actual" stroke={FORECAST_COLORS.observed} strokeWidth={2} dot={false} name="Observed" isAnimationActive={false} />
             {anyImputed && <Line dataKey="imputed" stroke={FORECAST_COLORS.warning} strokeDasharray="2 3" dot={{ r: 2, fill: FORECAST_COLORS.warning, stroke: 'none' }} legendType="circle" name="Imputed (gap filled)" isAnimationActive={false} />}
             <Line dataKey="median" stroke={FORECAST_COLORS.forecast} strokeWidth={2} strokeDasharray="6 3" dot={false} name={result.strategy === 'TIMESFM' ? 'Median forecast' : 'Baseline forecast'} isAnimationActive={false} />
@@ -374,6 +413,16 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
               label={{ value: `Threshold ${threshold.direction === 'ABOVE' ? '≥' : '≤'} ${threshold.threshold}`, position: 'insideTopRight', fill: FORECAST_COLORS.warning, fontSize: 11 }} />}
           </ComposedChart></ResponsiveContainer>
         </div>
+        {compare && <p role="status" aria-label="Previous forecast against what happened" className="text-sm">
+          {!previousShown ? 'Reading the previous forecast…'
+            : previousShown.failed ? 'The previous forecast could not be read. Retry after the next refresh.'
+            : !previous || !versus ? 'No forecast has been fully measured yet: the first comparison is available one horizon after the first forecast.'
+            : versus.compared === 0 ? 'The previous forecast has no measured point to compare with yet.'
+            : <>Forecast made at {new Date(versus.madeAt).toLocaleTimeString()}: <span className="font-medium">{versus.inBand} of {versus.compared}</span> measured
+              points inside its 80 % band · mean error <span className="font-medium">{number(versus.meanError)} {result.context.outputUnit}</span>
+              {versus.bias !== null && Math.abs(versus.bias) >= (versus.meanError ?? 0) * 0.5
+                ? ` · it ran ${versus.bias > 0 ? 'low' : 'high'} by ${number(Math.abs(versus.bias))} on average` : ''}.</>}
+        </p>}
         {trend && <div role="note" className="rounded-lg border border-outline-variant p-3 space-y-1">
           <p className="font-medium">Forecast insights</p>
           <p>Predicted median is {trend} across {forecastPoints.length} forecast points.

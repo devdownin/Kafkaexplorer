@@ -1018,6 +1018,18 @@ const forecastResult = {
 const forecastActivation = { eligible: false, reason: '24 of the 30 realised points required have been evaluated',
   blockPoints: 24, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 };
 
+/**
+ * GET /api/forecasts/{seriesId}/previous — the latest forecast whose horizon has been measured: made
+ * thirty minutes before the one on screen, from the same smooth swell, so it follows the measured
+ * curve without its faster ripple — mostly inside its band, as a decent forecast is.
+ */
+export const forecastPrevious = { ...forecastResult.forecast, requestId: 'r-0', historyEndAt: forecastEnd - 30 * FORECAST_STEP,
+  points: Array.from({ length: 30 }, (_, k) => {
+    const i = 512 - 30 + k;
+    const central = Math.round(2140 + 180 * Math.sin(i / 24));
+    return { at: forecastEnd - (511 - i) * FORECAST_STEP, central, q10: central - 50 - 3 * k, q50: central, q90: central + 50 + 3 * k };
+  }) };
+
 /** GET /api/forecasts/{seriesId} — the series on screen, its 512 context points included. */
 export const forecastSeries = {
   seriesId: FORECAST_ID, metricId: 'm-hop-latency', environment: 'local', result: forecastResult,

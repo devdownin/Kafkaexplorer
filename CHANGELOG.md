@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A forecast can be set beside what then happened.** "Previous forecast vs actual" on the forecast
+  panel draws the latest forecast whose whole horizon has been measured over the measured curve,
+  and says how it did: how many measured points fell inside its 80 % band, its mean error in the
+  series' unit, and which way it leaned when it leaned. The metric card says the same in one line
+  from the quality window the list already carries ("Last checked: 87% of 30 points in the 80% band
+  · mean error 42 ms"). `GET /api/forecasts/{seriesId}/previous` serves that forecast (204 until one
+  has matured): it is read from the results already kept, so nothing new is stored.
 - **Creating a forecast is one click, and the form is only for when it fails.** Every forecast
   starts from an existing metric, so the card's **Forecast** button creates it without opening
   anything and a toast says when the first forecast follows; the form opens for that metric, on the

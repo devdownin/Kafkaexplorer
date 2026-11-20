@@ -159,6 +159,22 @@ public final class ForecastPilotService {
     }
   }
 
+  /**
+   * The latest TimesFM forecast whose whole horizon has since been measured: what it predicted, to be
+   * set beside what happened. Its history ended at least one horizon before the latest one's, so every
+   * point it predicted lies inside the latest context. {@code null} when there is none yet.
+   */
+  public MetricForecast previous(String id) throws Exception {
+    var spec = resolve(id);
+    try (var c = store.open()) {
+      var latest = view(c, spec, id);
+      if (latest == null || latest.context() == null) return null;
+      var r = store.matured(c, id,
+          latest.context().toExclusive() - spec.horizon() * spec.profile().stepMillis(), 0);
+      return r == null || !compatible(spec, r) ? null : r.forecast();
+    }
+  }
+
   /** The latest compatible record as a reader sees it: STALE past its horizon, visibility live. */
   private ForecastRecord view(Connection c, ForecastPilotProperties.Series spec, String id)
       throws Exception {
