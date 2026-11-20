@@ -20,6 +20,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **MCP: `kex_list_forecast_threshold_reaches`, the card's predicted threshold for an agent.** The only
+  forecast-threshold tool, `kex_list_predicted_threshold_breaches`, judges a series' configured threshold
+  *policy*; the Metrics page and `explorer_forecast_threshold_eta_seconds` read the metric's *own* warning
+  and critical thresholds — so an agent asking "what is about to breach" got a different answer from the
+  screen. The new read-only tool gives one row per authorized series through the same
+  `ForecastThresholdReach`: `REACH` (level, likelihood, instant, seconds until it), `NO_REACH`,
+  `NO_THRESHOLDS`, `NOT_COMPARABLE` (a counter's rate forecast) or `NOT_EVALUATED`, each with its reason,
+  and `PARTIAL_FAILURE` coverage naming the series with nothing to read. The pilot now has six tools.
+
 - **Metrics page: one clock, cards that render only when they change, and what each forecast and refresh
   costs.** The list was read every 15 s while the server recomputes every 30 s, and the forecast panel ran
   a second loop beside it; both now read on one clock, at the tick the server reports. Each card is

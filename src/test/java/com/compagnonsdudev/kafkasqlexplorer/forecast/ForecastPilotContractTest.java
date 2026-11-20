@@ -56,9 +56,10 @@ class ForecastPilotContractTest {
             "kex_metric_history",
             "kex_forecast_metric",
             "kex_get_forecast_quality",
-            "kex_list_predicted_threshold_breaches"),
+            "kex_list_predicted_threshold_breaches",
+            "kex_list_forecast_threshold_reaches"),
         annotations.stream().map(McpTool::name).collect(Collectors.toSet()));
-    assertEquals(5, annotations.size());
+    assertEquals(6, annotations.size());
     annotations.forEach(a -> assertTrue(a.annotations().readOnlyHint()));
   }
 
