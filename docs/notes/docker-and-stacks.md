@@ -634,6 +634,55 @@ Hugging Face’s auxiliary cache (Xet metadata and logs) also needs writable sto
 `cache_dir=/models` to `hf_hub_download` alone does not relocate Xet: its default under
 `/app/.cache` fails when the TimesFM container root filesystem is read-only.
 
+### The forecast demo's overlay: `compose/demo-forecast.yml`
+
+`./demo.sh` layers it after `forecasts.yml` (`demo.ps1` too — the twins name the same files, which
+`docs/check-demo-forecast.py` compares). **`./demo.sh --forecast` (`-Forecast`, `DEMO_MODE=forecast`) starts
+that and nothing else**: the base, Schema Registry, MCP, the forecast stack and this overlay, with
+`demo.yml`, `ecosystem.yml`, `demo-llm.yml` and the SpectraLLM files left out — the agent and the hosted
+model are what want a key, and nothing the demo shows uses them. So the whole command is `./demo.sh
+--forecast`: every variable has a default there, the SQL assistant (which needs that model) defaults to off,
+and the credentials are generated on the first run as ever. The mode is resolved **after** the `.env`
+files, as `DEMO_SPECTRA` is, so a `DEMO_MODE` set there is honoured; the flag outranks it. It leaves the
+default mode, the whole suite, exactly as it was. **Why it exists:** the demo's topics are seeded once and stand
+still, so a metric over them has one value for ever, and a forecast needs 128 recorded points — two hours
+at the minute the Explorer samples. A demo that cannot show its main feature for two hours does not show
+it. Two services, each in an image the stack already pulls:
+
+- **`demo-live`** (the Kafka image) keeps `demo.live.orders → shipped` and `requests → processed` moving.
+  Each pair is held on its curve by reading the end offsets and producing the difference to whichever side
+  is short — **stateless**, so a restart or a second copy resumes the curve. The producers are long-lived
+  and fed through pipes: one per record would spend its time in the JVM's start-up.
+- **`demo-forecast-seed`** (the PostgreSQL image: `psql`, `wget`, `sed` and `awk`, nothing to install)
+  creates the two metrics by `POST /api/metrics` (an upsert by id), waits for the Explorer to record each
+  for real once, and **clones that first real observation (its `value` component: a metric is recorded as
+  several, each its own series) nine hours back** with its own `collectorRunId`
+  `demo-seed-<n>`. Cloning is the same technique `ci/forecast-stack.py` uses, and it is the only way to
+  get the series id, unit, definition version and scope exactly right without re-deriving them in shell.
+  A series that already holds seeded rows is left alone, and a metric not recorded for real is not seeded.
+  The unshipped-orders forecast is then started from the candidate catalogue, as the card's button does
+  it; the backlog's is left to the button, which is the feature the demo is for.
+
+**The two curves are one file.** `scripts/demo-forecast/signals.awk` is read by both services, and its
+functions depend on the epoch alone, never on when the demo started: otherwise the seeded past and the
+live traffic would be two signals with a jump at the join, which a forecast reads as a regime change. The
+seeded point is the value the live metric reads then, since the metric *is* the signal.
+
+**Choices that look arbitrary.** The two metrics are *offset-counted deltas*, and that is not a taste: the
+Explorer records a measurement as forecastable only when it is complete (`MetricObservationJournal`), and
+a transit latency, a consumer delay or a raw-SQL metric never is — a first version of this demo built on a
+transit latency and would have shown a forecast button that could never produce one. The difference of two
+end offsets is complete, exact, and holdable on any curve with no timestamp to back-date. The overlay has **no `depends_on: forecast-postgres`**: the CI that resolves every
+overlay beside the base alone would refuse an undefined service, and the script asks PostgreSQL and the
+Explorer whether they answer, which is the readiness that matters. Each script is copied through `sed`
+before it runs, as the seeders' entrypoints do, so a CRLF checkout does not break it.
+
+**What checks it.** `docs/check-demo-forecast.py` (curves against the thresholds read from `seed.sh`, the
+generator against stub CLIs, the twin scripts) and the `forecast-stack` job's `ci/demo-forecast.py`: the
+overlay on the real stack, the seeded rows beside the recorded ones, a TimesFM result from each metric.
+The seeder's SQL was also run against a real PostgreSQL and its rows read back through the real
+`MetricSeriesPreparer` (512 observed points, none missing) before it shipped.
+
 ## The forecast stack with no download at start
 
 `compose/forecast-offline.yml` is an overlay of `compose/forecasts.yml` (like `local-ai.yml`, it

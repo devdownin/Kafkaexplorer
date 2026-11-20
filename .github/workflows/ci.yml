@@ -494,17 +494,24 @@ jobs:
             up -d --no-build --wait --wait-timeout 900 kafka forecast-postgres timesfm explorer
       - name: Collect, infer and read the persisted result
         run: python3 ci/forecast-stack.py
+      # The demo's overlay on the same stack: live traffic, the seeded history, and a forecast of each
+      # of its two metrics from it. What docs/metrics-demo-scenarios.md promises, against the real
+      # preparer, PostgreSQL and TimesFM — the one place the seeder's SQL meets all three.
+      - name: The demo's live traffic and seeded history produce forecasts
+        run: python3 ci/demo-forecast.py
       - name: Capture service logs
         if: failure()
         run: |
           docker compose -p forecast-ci --env-file .forecast-stack/.env \
             -f docker-compose.yml -f compose/forecasts.yml -f compose/image.yml -f compose/ci.yml \
-            logs --tail 200 explorer timesfm forecast-model-prefetch forecast-postgres
+            -f compose/demo-forecast.yml \
+            logs --tail 200 explorer timesfm forecast-model-prefetch forecast-postgres demo-live demo-forecast-seed
       - name: Stop disposable stack
         if: always()
         run: |
           docker compose -p forecast-ci --env-file .forecast-stack/.env \
             -f docker-compose.yml -f compose/forecasts.yml -f compose/image.yml -f compose/ci.yml \
+            -f compose/demo-forecast.yml \
             down -v --remove-orphans
 
   # The local LLM image carries a 5 GB model, so it is built and booted only when something it
@@ -893,7 +900,7 @@ jobs:
           # NAMED here, so an omission is structural rather than a string search over a list
           # of command lines.
           declare -A OVERLAYS=(
-            [docker-compose.yml]="compose/schema-registry.yml compose/llama-cpp.yml compose/mcp.yml compose/image.yml compose/limits.yml compose/ci.yml compose/timesfm.yml compose/forecasts.yml compose/demo.yml compose/demo-no-spectra.yml compose/demo-llm.yml"
+            [docker-compose.yml]="compose/schema-registry.yml compose/llama-cpp.yml compose/mcp.yml compose/image.yml compose/limits.yml compose/ci.yml compose/timesfm.yml compose/forecasts.yml compose/demo.yml compose/demo-no-spectra.yml compose/demo-llm.yml compose/demo-forecast.yml"
             [compose/dev.yml]=""
             [compose/build.yml]=""
             [compose/spectra-hub.yml]="compose/spectra-hub.ingest.yml compose/spectra-hub.gpu.yml compose/spectra-hub.limits.yml compose/spectra-hub.agent-eval.yml compose/spectra-hub.mcp.yml compose/ecosystem.yml"

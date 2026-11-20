@@ -9,7 +9,13 @@
 #
 #   $env:OPENROUTER_API_KEY = 'sk-or-...'; .\demo.cmd          # build, start, wait, print the endpoints
 #   .\demo.cmd -NoSpectra                                      # the same without SpectraLLM
-#   .\demo.cmd [-NoSpectra] down | reset | ps | logs [service] | probe
+#   .\demo.cmd -Forecast                                       # the forecast demo alone, nothing to configure
+#   .\demo.cmd [-NoSpectra|-Forecast] down | reset | ps | logs [service] | probe
+#
+# -Forecast (DEMO_MODE=forecast) is the stack the forecast demo needs and nothing else: Kafka and the
+# demo topics, Schema Registry, the Explorer with MCP, PostgreSQL, TimesFM, the live traffic and its
+# seeded history (compose/demo-forecast.yml). No LLM key, no SpectraLLM, no agent: every variable has
+# a default, so `.\demo.cmd -Forecast` is the whole command. Same as `./demo.sh --forecast`.
 #
 # demo.cmd only runs this file with -ExecutionPolicy Bypass, which Windows 11's default policy
 # would otherwise refuse. Runs on Windows PowerShell 5.1 and PowerShell 7; Docker Desktop with the
@@ -22,6 +28,7 @@
 [CmdletBinding()]
 param(
     [switch] $NoSpectra,
+    [switch] $Forecast,
     [Parameter(Position = 0)]
     [ValidateSet('up', 'down', 'reset', 'ps', 'logs', 'probe')]
     [string] $Command = 'up',
@@ -111,12 +118,21 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 & docker compose version *> $null
 if ($LASTEXITCODE -ne 0) { throw 'Docker Compose v2 is required: update Docker Desktop.' }
 
-# Before the env files, so the switch outranks a DEMO_SPECTRA they set.
+# Before the env files, so a switch outranks a DEMO_SPECTRA / DEMO_MODE they set.
 if ($NoSpectra) { $env:DEMO_SPECTRA = 'false' }
+if ($Forecast) { $env:DEMO_MODE = 'forecast' }
 
 Initialize-ForecastStack
 Import-EnvFile '.env'
 Import-EnvFile (Join-Path '.forecast-stack' '.env')
+
+# After the env files, so a DEMO_MODE they set is honoured; full is the whole suite.
+Set-Default DEMO_MODE 'full'
+if ($env:DEMO_MODE -notin @('full', 'forecast')) {
+    throw "DEMO_MODE must be full or forecast, not '$($env:DEMO_MODE)'."
+}
+$forecastOnly = $env:DEMO_MODE -eq 'forecast'
+if ($forecastOnly) { $env:DEMO_SPECTRA = 'false' }
 
 # -- Defaults: the same values as demo.sh ---------------------------------------------------
 Set-Default BIND_ADDR '127.0.0.1'
@@ -129,8 +145,9 @@ Set-Default SCHEMA_REGISTRY_PORT '8085'
 # LLM - OpenRouter on both sides. An empty key stays unset: Windows has no empty variable.
 Set-Default OPENROUTER_MODEL 'openai/gpt-4o-mini'
 Set-Default KEX_AGENT_LLM_PROVIDER 'openai'
-# The SQL & metric assistant, on the same OpenRouter model (false turns it off).
-Set-Default EXPLORER_ASSISTANT_ENABLED 'true'
+# The SQL & metric assistant, on the same OpenRouter model (false turns it off). It needs that model,
+# which the forecast demo does not have: off there.
+Set-Default EXPLORER_ASSISTANT_ENABLED $(if ($forecastOnly) { 'false' } else { 'true' })
 
 # Agent and MCP. The MCP token defaults to the generated one from .forecast-stack/.env.
 Set-Default KEX_AGENT_IMAGE_NAMESPACE 'compagnonsdudev'
@@ -176,18 +193,22 @@ $spectraOn = $env:DEMO_SPECTRA -eq 'true'
 Set-Default COMPOSE_PROJECT_NAME 'kafka-explorer-demo'
 
 $script:ComposeFiles = @('-f', 'docker-compose.yml', '-f', 'compose/schema-registry.yml',
-    '-f', 'compose/mcp.yml', '-f', 'compose/forecasts.yml')
+    '-f', 'compose/mcp.yml', '-f', 'compose/forecasts.yml', '-f', 'compose/demo-forecast.yml')
 if ($env:DEMO_PUBLISHED_IMAGE -eq 'true') { $script:ComposeFiles += @('-f', 'compose/image.yml') }
-if ($spectraOn) {
-    $script:ComposeFiles += @('-f', 'compose/demo.yml', '-f', 'compose/spectra-hub.mcp.yml',
-        '-f', 'compose/spectra-hub.ingest.yml', '-f', 'compose/ecosystem.yml')
-} else {
-    $script:ComposeFiles += @('-f', 'compose/demo-no-spectra.yml')
+# The forecast demo stops here: the agent (compose/demo*.yml, ecosystem) and the hosted model
+# (demo-llm.yml) are what want a key, and nothing it shows uses them.
+if (-not $forecastOnly) {
+    if ($spectraOn) {
+        $script:ComposeFiles += @('-f', 'compose/demo.yml', '-f', 'compose/spectra-hub.mcp.yml',
+            '-f', 'compose/spectra-hub.ingest.yml', '-f', 'compose/ecosystem.yml')
+    } else {
+        $script:ComposeFiles += @('-f', 'compose/demo-no-spectra.yml')
+    }
+    $script:ComposeFiles += @('-f', 'compose/demo-llm.yml')
 }
-$script:ComposeFiles += @('-f', 'compose/demo-llm.yml')
 
 function Start-Demo {
-    if (-not (Test-EnvSet 'OPENROUTER_API_KEY')) {
+    if (-not $forecastOnly -and -not (Test-EnvSet 'OPENROUTER_API_KEY')) {
         Write-Warning ('OPENROUTER_API_KEY is empty - Process Mining answers without its LLM half and the ' +
             "agent starts DEGRADED. Set it (`$env:OPENROUTER_API_KEY = 'sk-or-...', or in .env) and rerun.")
     }
@@ -201,6 +222,23 @@ function Start-Demo {
     Invoke-Compose up -d --build --remove-orphans
 
     Wait-Http 'Kafka Explorer' "http://127.0.0.1:$($env:EXPLORER_PORT)/actuator/health" 900 | Out-Null
+    if ($forecastOnly) {
+        Write-Host @"
+
+Kafka SQL Explorer .... http://localhost:$($env:EXPLORER_PORT)   -> Metrics
+  MCP ................. http://localhost:$($env:EXPLORER_PORT)/mcp   (Bearer in .forecast-stack\.env or EXPLORER_MCP_AUTH_TOKEN)
+Schema Registry ....... http://localhost:$($env:SCHEMA_REGISTRY_PORT)
+Kafka ................. localhost:$($env:KAFKA_PORT)
+LLM, agent, SpectraLLM  not started (-Forecast): nothing to configure
+
+The forecast demo: Metrics has two live metrics (demo.live.orders minus shipped, requests minus processed).
+  Their history is seeded in the first minutes (.\demo.cmd -Forecast logs demo-forecast-seed), then:
+  - the unshipped-orders one is already forecast, with its "Warning expected in ~N min" badge;
+  - press Forecast on the backlog one: its hourly cycle is found and its first forecast follows at the next cycle.
+  .\demo.cmd -Forecast down | reset | ps | logs [service] | probe     (docs/metrics-demo-scenarios.md)
+"@
+        return
+    }
     Wait-Http 'Kex-anHarness' "http://127.0.0.1:$($env:KEX_AGENT_PORT)/api/agent/mcp/servers" 300 `
         @{ Authorization = "Bearer $($env:KEX_AGENT_API_KEY)" } | Out-Null
     # spectra-api waits for the embedding model and the demo seed; its chat answers once llm-chat
@@ -227,12 +265,13 @@ LLM ................... OpenRouter $($env:OPENROUTER_MODEL) (Explorer, agent)
 SQL assistant ......... $($env:EXPLORER_ASSISTANT_ENABLED) (editor ask bar, Suggest a fix, Metrics: Describe the metric; table and column names go to OpenRouter)
 
 Demo topics (JSON + Avro) are seeded in the background: .\demo.cmd logs demo-setup
-Forecast: Metrics -> "Prepare a forecast" on a metric card.
+Forecast: Metrics -> the two demo.live.* metrics have 9 h of seeded history (live traffic keeps them moving):
+  the unshipped-orders one is already forecast; press Forecast on the backlog one. .\demo.cmd logs demo-forecast-seed
 "@
 }
 
 if ($Services.Count -gt 0 -and $Command -ne 'logs') {
-    throw "Only 'logs' takes service names. Usage: .\demo.cmd [-NoSpectra] [up|down|reset|ps|logs [service]|probe]"
+    throw "Only 'logs' takes service names. Usage: .\demo.cmd [-NoSpectra|-Forecast] [up|down|reset|ps|logs [service]|probe]"
 }
 
 switch ($Command) {
