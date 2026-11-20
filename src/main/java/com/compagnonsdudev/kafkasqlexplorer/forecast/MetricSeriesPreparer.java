@@ -33,10 +33,17 @@ public final class MetricSeriesPreparer {
         var status = READY;
         String reason = "Complete regular context";
         MetricObservation reference = null;
+        // The identity each row claims is recomputed (a JSON digest), once per distinct tuple rather
+        // than once per row: a read is one series, so 4 096 rows hashed the same tuple 4 096 times —
+        // 2.45 of the 10.4 ms a full preparation took, measured (METRICS-FORECAST-AUDIT-2.md P3).
+        // The guard itself is unchanged: a row whose fields do not derive its series id is refused.
+        Map<List<Object>, String> derived = new HashMap<>();
         for (var o : rows) {
+            String claimed = derived.computeIfAbsent(
+                List.of(o.clusterId(), o.definitionVersion(), o.metricId(), o.component(), o.labels()),
+                k -> MetricObservation.seriesId(o.clusterId(), o.definitionVersion(), o.metricId(), o.component(), o.labels()));
             if (!seriesId.equals(o.seriesId()) || !definitionVersion.equals(o.definitionVersion())
-                || !unit.equals(o.unit()) || !seriesId.equals(MetricObservation.seriesId(o.clusterId(),
-                    o.definitionVersion(), o.metricId(), o.component(), o.labels()))
+                || !unit.equals(o.unit()) || !seriesId.equals(claimed)
                 || (reference != null && !reference.semanticKind().equals(o.semanticKind()))) {
                 status = SCOPE_CHANGED; reason = "Series identity, definition, unit or semantics changed"; break;
             }

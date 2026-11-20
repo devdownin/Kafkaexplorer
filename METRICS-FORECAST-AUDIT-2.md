@@ -8,12 +8,12 @@ le panneau côté SPA, les overlays offline, les workflows de publication.
 Premier audit du moteur : `TIMESFM-FORECAST-AUDIT.md` ; de l'UX : `METRICS-FORECAST-UX-AUDIT.md`. Rien
 n'y est re-signalé.
 
-> **Statut.** **B1–B6, U1, O1, P2 et S1 sont corrigés**, et les deux premiers points « à vérifier » aussi
+> **Statut.** **Tous les constats sont corrigés** — B1–B6, U1, O1, P1, P2, P3 et S1, et les deux premiers points « à vérifier » aussi
 > (le tag vide des workflows est gardé ; le chemin de `compose/llama-cpp.yml` est corrigé, avec un contrôle
 > qui échoue sur l'ancien). Chacun a un test ; sans le correctif, 192 marches aléatoires sur 200
-> recevaient un cycle (B1) et l'aperçu lisait une autre série (B2). **Restent ouverts P1 et P3** : P1
-> demande une requête SQL propre à PostgreSQL ou un résumé stocké à part, à mesurer sur une vraie base ;
-> P3 était à mesurer avant d'y toucher, et ne l'a pas été. **Les défauts B1, B2, B4, B5, B6 et U1
+> recevaient un cycle (B1) et l'aperçu lisait une autre série (B2). P1 et P3 l'ont été en dernier :
+> P1 sans SQL propre à PostgreSQL (le dernier résultat d'une série n'est décodé qu'une fois, les
+> résultats étant immuables), P3 après mesure (voir ces deux sections). **Les défauts B1, B2, B4, B5, B6 et U1
 > viennent de l'assistant et de l'aperçu d'historique ajoutés par la PR #570** — du code récent, écrit
 > sans avoir été éprouvé sur des séries qui dérivent. Chaque constat dit comment il a été établi —
 > **reproduit** (un test jeté ensuite, sortie citée), **lu** (déduit du code, fichier:ligne) ou
@@ -137,6 +137,11 @@ d'essai du premier audit (44 KB de JSON, *mesuré* alors), 20 séries font ~0,9 
 sondage de 30 s et par onglet ouvert* (*calculé*).
 **Optimisation** : une requête pour toutes les séries (`DISTINCT ON (series_id)`) en retirant les points
 côté SQL (`payload::jsonb #- '{context,points}'`), ou stocker un résumé à part.
+**Corrigé** autrement, sans SQL propre à PostgreSQL : `latest` lit d'abord la seule `result_key` du dernier
+résultat, et ne lit et décode le `payload` que si cette clé a changé depuis le sondage précédent (cache
+borné à 1 024 séries). C'est sûr parce qu'un résultat est inséré une fois et jamais réécrit
+(`ON CONFLICT DO NOTHING`) : une clé désigne toujours le même contenu. Entre deux cycles de prévision,
+un sondage ne décode donc plus rien. `ForecastPilotStoreLatestTest`.
 
 ### P2 — `historyPreview` n'est ni mémoïsé ni borné *(basse, lu)*
 
@@ -152,6 +157,11 @@ intervalle, pas clos)`.
 ligne, jusqu'à 4096, afin de comparer à `seriesId` — alors que la requête filtre déjà
 `WHERE series_id = ?`. Le contrôle vaut pour une source non fiable ; pour la voie `JdbcMetricObservationStore`
 il est redondant. À mesurer avant d'y toucher.
+**Mesuré puis corrigé** : sur 4 096 lignes d'une même série, une préparation complète coûtait 10,4 ms,
+dont 2,45 ms pour ces seuls hachages (*mesuré*, test jeté ensuite). Le contrôle est gardé — il refuse
+toujours une ligne dont les champs ne dérivent pas la série qu'elle déclare — mais le hachage est
+mémoïsé par tuple d'identité distinct : une série en a un seul, donc un hachage au lieu de 4 096.
+`aRowWhoseFieldsDoNotDeriveItsSeriesIsStillRefused`.
 
 ---
 

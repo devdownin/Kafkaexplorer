@@ -133,6 +133,20 @@ class MetricSeriesPreparationTest {
         assertTrue(waiting.reason().contains("collected since"), waiting.reason());
     }
 
+    /** METRICS-FORECAST-AUDIT-2.md P3: the identity digest is memoised, not the guard dropped. */
+    @Test
+    void aRowWhoseFieldsDoNotDeriveItsSeriesIsStillRefused() {
+        var rows = new ArrayList<>(gauges(20));
+        // Same claimed series id, but a label that derives another one: the guard must still see it.
+        var good = rows.get(10);
+        var forged = new MetricObservation(good.observationId() + "x", good.seriesId(), good.clusterId(), good.metricId(),
+            good.definitionVersion(), good.component(), Map.of("topic", "payments"), good.unit(), good.semanticKind(),
+            good.collectorRunId(), good.observedAt() + 1, good.value(), good.qualityState(), good.coverage());
+        rows.add(forged);
+        assertEquals(SCOPE_CHANGED, prepare(rows, 20 * STEP, 20, GAUGE_MEAN).status());
+        assertEquals(READY, prepare(gauges(20), 20 * STEP, 20, GAUGE_MEAN).status());
+    }
+
     @Test
     void separatesScopeChangesUnverifiedQualityUnknownUnitAndSemanticMismatch() {
         var rows = gauges(20);
