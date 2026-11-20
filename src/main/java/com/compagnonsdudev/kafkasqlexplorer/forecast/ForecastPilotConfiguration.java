@@ -49,7 +49,11 @@ public class ForecastPilotConfiguration {
   }
 
   @Bean
-  ForecastPilotScheduler forecastPilotScheduler(ForecastPilotService pilot, ForecastPilotProperties p) {
-    return new ForecastPilotScheduler(pilot, p.getInterval());
+  ForecastPilotScheduler forecastPilotScheduler(ForecastPilotService pilot, ForecastPilotProperties p,
+                                                 ObjectProvider<ForecastThresholdMetrics> thresholdMetrics) {
+    // The threshold-reach series is recomputed on the pilot's own thread, after its cycle — never
+    // on Spring's single scheduler thread, which metric collection owns (see ForecastPilotScheduler).
+    var metrics = thresholdMetrics.getIfAvailable();
+    return new ForecastPilotScheduler(pilot, p.getInterval(), metrics == null ? () -> {} : metrics::publish);
   }
 }

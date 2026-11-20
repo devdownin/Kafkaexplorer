@@ -20,6 +20,19 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Metrics page: one clock, cards that render only when they change, and what each forecast and refresh
+  costs.** The list was read every 15 s while the server recomputes every 30 s, and the forecast panel ran
+  a second loop beside it; both now read on one clock, at the tick the server reports. Each card is
+  memoised and the page keeps every unchanged metric, forecast series and handler the same object between
+  polls, so typing in the editor or a poll that moved one metric no longer redraws every chart. A card says
+  when its forecast was made and when the next cycle is due, and, when its last refresh took more than half
+  the loop's tick, that it delays every other metric (`GET /api/metrics/refresh-costs`; the loop stays
+  single threaded by design). The "No forecast" filter says why, grouped. And the predicted threshold the
+  card shows is published as `explorer_forecast_threshold_eta_seconds{metric_id,level,likelihood}`, so a
+  forecast can be alerted on in Alertmanager — `ForecastThresholdReach`, the server twin of
+  `forecastBreach.ts`, recomputed on the forecast pilot's own thread, never on the scheduler metric
+  collection owns.
+
 - **Compose: one broker definition, one Kafka image.** `compose/spectra-hub.yml` extended nothing and
   carried its own copy of the broker, its volume fix and the demo seeder; it now `extends` the base's, as
   `compose/dev.yml` already did. The image is written once (`KAFKA_IMAGE`, default `apache/kafka:4.4.0`,

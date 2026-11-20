@@ -44,8 +44,14 @@ const POLL_MS = 30000;
  * One poll on the panel's clock, paused behind a hidden tab and run at once on return. The run
  * reports its own errors; the signal is aborted when the poll is disposed.
  */
-function poll(run: (signal: AbortSignal) => Promise<void>): () => void {
+function poll(run: (signal: AbortSignal) => Promise<void>, ownClock = true): () => void {
   const controller = new AbortController();
+  // Driven by the page's clock: one read per tick it hands down, no timer and no listener here —
+  // the page's own polling already pauses behind a hidden tab and reads again on return.
+  if (!ownClock) {
+    void run(controller.signal);
+    return () => controller.abort();
+  }
   let timer: ReturnType<typeof setTimeout>;
   let skipped = false;
   async function tick() {
@@ -72,7 +78,7 @@ function isProgress(data: Progress | undefined, seriesId: string): data is Progr
     && data.requiredPoints === 512 && Array.isArray(data.topics) && Array.isArray(data.groups);
 }
 
-export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames = {}, metricThresholds = {} }: {
+export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metricNames = {}, metricThresholds = {} }: {
   /**
    * The series to show: the one a card's Details asked for, or the one just started. The card is
    * where a series is chosen — every forecast belongs to a metric card — so the panel has no
@@ -87,6 +93,11 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
   onStatus?: (status: ForecastStatus | null) => void;
   /** Bumped by the page after an approval, to poll at once rather than at the next tick. */
   refresh?: number;
+  /**
+   * The page's clock. Given, the panel reads once per tick instead of running its own timer: the
+   * metric list and the forecasts were two loops (15 s and 30 s) that never met, and now share one.
+   */
+  clock?: number;
 }) {
   const [status, setStatus] = useState<ForecastStatus | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -138,7 +149,7 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onStatus is the page's state setter, stable
-  }), [revision, refresh]);
+  }, clock === undefined), [revision, refresh, clock]);
   const seriesId = status?.series.some(s => s.seriesId === selected) ? selected : status?.series[0]?.seriesId;
   // The list says whether a shadow exists at all: asking each series for one answered a 404 that
   // the browser wrote into the console of every Metrics page (PAGES-SIMPLICITY-AUDIT.md X1).
@@ -175,8 +186,8 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames =
         view = { kind: 'ERROR' };
       }
       if (!signal.aborted) setShadow({ seriesId, view });
-    });
-  }, [seriesId, revision, refresh, shadowConfigured, wantProgress]);
+    }, clock === undefined);
+  }, [seriesId, revision, refresh, clock, shadowConfigured, wantProgress]);
   const latestKey = status?.series.find(s => s.seriesId === seriesId)?.result?.key;
   const previousKey = `${seriesId}|${latestKey}`;
   useEffect(() => {

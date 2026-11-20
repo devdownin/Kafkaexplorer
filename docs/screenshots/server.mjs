@@ -61,6 +61,7 @@ const API = [
   [m => m === '/api/assistant/status', () => F.assistantStatus],
   [m => m === '/api/metrics', () => F.metrics],
   [m => m === '/api/metrics/templates', () => F.metricTemplates],
+  [m => m === '/api/metrics/refresh-costs', () => F.metricRefreshCosts],
   [m => m === '/api/metrics/metadata', () => ({ demo_orders_1_received: ['id', 'status', 'amount_cents'] })],
   [m => m === '/api/metrics/suggestions', () => F.metricSuggestions],
   [m => m === '/api/metrics/label-preview', url => F.labelPreview(url)],

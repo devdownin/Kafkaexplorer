@@ -71,6 +71,16 @@ public class MetricController {
             m.componentHistory());
     }
 
+    /**
+     * What each metric's last refresh cost, beside the loop's tick. Separate from the list on
+     * purpose: it is not part of the metric (nothing persists it, an edit must not echo it back),
+     * and the page reads it on the same clock as the list.
+     */
+    @GetMapping("/refresh-costs")
+    public com.compagnonsdudev.kafkasqlexplorer.domain.MetricRefreshCosts refreshCosts() {
+        return metricService.refreshCosts();
+    }
+
     @GetMapping("/metadata")
     public Map<String, List<String>> getMetadata() {
         Map<String, List<String>> metadata = new HashMap<>();

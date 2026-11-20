@@ -351,6 +351,13 @@ public class MetricService {
 
     /** metricId → when its last refresh started, for the metrics that ask for a slower cadence. */
     private final Map<String, Long> lastRefreshStartedAt = new ConcurrentHashMap<>();
+    /**
+     * What each metric's last refresh cost, in milliseconds. The loop is single threaded by design
+     * (see {@link #recordCycleDuration}), so the cycle's total said that the loop was slow but not
+     * which metric made it so — and the remedy, a {@code refreshIntervalMs} of its own, is per
+     * metric. The page shows this beside each card.
+     */
+    private final Map<String, Long> lastRefreshDurationMs = new ConcurrentHashMap<>();
 
     /** Holder for {@link #REFRESH_DURATION_SERIES}, registered on the first cycle that completes. */
     private final AtomicReference<Double> refreshDurationHolder = new AtomicReference<>(0.0);
@@ -710,6 +717,7 @@ public class MetricService {
         // "count went backwards" refusal catches it, but as a lost refresh rather than as nothing.
         countDeltaBaselines.remove(id);
         lastRefreshStartedAt.remove(id);
+        lastRefreshDurationMs.remove(id);
         meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_counter").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_histogram").tag("metric_id", id).meters().forEach(meterRegistry::remove);
@@ -2219,8 +2227,10 @@ public class MetricService {
             try {
                 // Deliberately not subject to refreshIntervalMs: this is somebody pressing
                 // Refresh, and an explicit gesture is never a cadence to be rationed.
-                lastRefreshStartedAt.put(id, System.currentTimeMillis());
+                long started = System.currentTimeMillis();
+                lastRefreshStartedAt.put(id, started);
                 refreshSingleMetric(id, config);
+                lastRefreshDurationMs.put(id, System.currentTimeMillis() - started);
             } finally {
                 endRefreshCycle();
             }
@@ -2239,8 +2249,10 @@ public class MetricService {
                 skipped++;
                 continue;
             }
-            lastRefreshStartedAt.put(entry.getKey(), System.currentTimeMillis());
+            long started = System.currentTimeMillis();
+            lastRefreshStartedAt.put(entry.getKey(), started);
             refreshSingleMetric(entry.getKey(), entry.getValue());
+            lastRefreshDurationMs.put(entry.getKey(), System.currentTimeMillis() - started);
             refreshed++;
         }
         recordCycleDuration(System.currentTimeMillis() - cycleStart, refreshed, skipped);
@@ -2270,6 +2282,19 @@ public class MetricService {
         // without it a 5-minute interval polled every 30 s fires at 5 min 30 s, every time.
         long tolerance = Math.max(1_000L, interval / 10);
         return now - last >= interval - tolerance;
+    }
+
+    /** The loop's tick and each metric's last refresh cost; a metric not refreshed yet is absent. */
+    public com.compagnonsdudev.kafkasqlexplorer.domain.MetricRefreshCosts refreshCosts() {
+        Map<String, com.compagnonsdudev.kafkasqlexplorer.domain.MetricRefreshCosts.Cost> costs = new java.util.HashMap<>();
+        metrics.forEach((id, config) -> {
+            Long duration = lastRefreshDurationMs.get(id);
+            if (duration != null) {
+                costs.put(id, new com.compagnonsdudev.kafkasqlexplorer.domain.MetricRefreshCosts.Cost(
+                    duration, collectionIntervalMs(config)));
+            }
+        });
+        return new com.compagnonsdudev.kafkasqlexplorer.domain.MetricRefreshCosts(metricsRefreshRateMs, costs);
     }
 
     /** How often this metric is actually collected: its own interval, never faster than the loop. */

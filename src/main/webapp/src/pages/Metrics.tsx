@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import Editor, { useMonaco } from '@monaco-editor/react';
@@ -24,14 +24,15 @@ import { DEFAULT_REQUEST_TIMEOUT_MS } from '../api/requestTimeout';
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
 import type {
   AuditHistory, ForecastCandidates, ForecastStatus, MetricConfig, MetricLabelPreview, MetricSuggestion, MetricSuggestions, MetricTemplateDescriptor,
-  MetricTestResponse, TableMetadata,
+  MetricRefreshCosts, MetricTestResponse, TableMetadata,
 } from '../api/types';
 import { hasRunningMetric } from './metricsHealth';
 import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop';
 import { ForecastSetupWizard } from '../components/metrics/ForecastSetupWizard';
 import { ForecastPanel } from '../components/metrics/ForecastPanel';
 import { AutoCreateRefused, createForecastFromMetric } from '../components/metrics/forecastAutoCreate';
-import { forecastStage } from '../components/metrics/forecastStage';
+import { forecastStage, type ForecastStageSummary } from '../components/metrics/forecastStage';
+import { groupReasons, keepUnchanged } from './metricsPolling';
 import { forecastReachFor, type MetricForecastReach } from '../components/metrics/forecastBreach';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
@@ -70,6 +71,9 @@ import {
   validateThresholds,
 } from './metricsEditor';
 import type { ValidationMsg } from './metricsEditor';
+
+/** A card whose forecast was just created, before the next poll lists it. One object, so a memoised card is not re-rendered for it. */
+const STARTED_STAGE: ForecastStageSummary = { stage: 'WAITING', label: 'Started', tone: 'neutral', detail: 'Waiting for the first forecast cycle' };
 
 // ── Metric template metadata (mirrors the backend TEMPLATE_DESCRIPTORS) ──────
 /** Hauteurs de l'ornement affiché tant qu'aucune donnée n'est arrivée. */
@@ -165,6 +169,10 @@ const Metrics: React.FC = () => {
   // The panel's own poll feeds the cards: one request for both, not one per card.
   const [forecastStatus, setForecastStatus] = useState<ForecastStatus | null>(null);
   const [forecastRevision, setForecastRevision] = useState(0);
+  // The page's one clock, handed to the forecast panel so both read on the same tick.
+  const [forecastClock, setForecastClock] = useState(0);
+  // What each metric's last refresh cost, and the loop's tick the page polls at.
+  const [refreshCosts, setRefreshCosts] = useState<MetricRefreshCosts | null>(null);
   // The series the assistant just started: the panel shows it, not whichever series is first.
   const [forecastFocus, setForecastFocus] = useState('');
   // The creation response arrives before the next /api/forecasts poll: disable the card at once.
@@ -209,8 +217,10 @@ const Metrics: React.FC = () => {
   const candidatesByMetric = useMemo(() => new Map(
     forecastCandidates?.metrics.map(candidate => [candidate.metricId, candidate] as const) ?? [],
   ), [forecastCandidates]);
+  // Recomputed only when the status object changes, which the identity-keeping poll below makes
+  // "when a forecast moved" rather than "every 30 s".
   const forecastStages = useMemo(() => {
-    const stages = new Map<string, ReturnType<typeof forecastStage>>();
+    const stages = new Map<string, ForecastStageSummary>();
     // A metric forecast in two environments shows the first, as the panel's selector does.
     for (const s of forecastStatus?.series ?? []) if (!stages.has(s.metricId)) stages.set(s.metricId, forecastStage(s));
     return stages;
@@ -331,8 +341,9 @@ const Metrics: React.FC = () => {
   const fetchMetrics = useCallback(async () => {
     try {
       const res = await axios.get<MetricConfig[]>('/api/metrics');
-      // A poll that brought nothing new keeps the array, so nothing below re-renders for it.
-      setMetrics(previous => JSON.stringify(previous) === JSON.stringify(res.data) ? previous : res.data);
+      // Element by element: a metric that did not move stays the same object, so its memoised card
+      // does not render again; a poll that brought nothing new keeps the array itself.
+      setMetrics(previous => keepUnchanged(previous, res.data, m => m.id));
       listFailing.current = false;
       setListError(null);
     } catch (err) {
@@ -344,6 +355,14 @@ const Metrics: React.FC = () => {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
+  }, []);
+
+  const fetchRefreshCosts = useCallback(async () => {
+    try {
+      const { data } = await axios.get<MetricRefreshCosts>('/api/metrics/refresh-costs');
+      if (data && typeof data.tickMs === 'number' && data.metrics && typeof data.metrics === 'object')
+        setRefreshCosts(previous => JSON.stringify(previous) === JSON.stringify(data) ? previous : data);
+    } catch { /* a cost that cannot be read is simply not shown */ }
   }, []);
 
   // The mount derivation and the one a save triggers can overlap: the older answer, landing last,
@@ -401,9 +420,21 @@ const Metrics: React.FC = () => {
     axios.get<MetricTemplateDescriptor[]>('/api/metrics/templates')
       .then(r => setTemplates(r.data))
       .catch(err => setTemplatesError(describeApiError(err, 'Failed to load metric templates.')));
-    return startVisiblePolling(() => void fetchMetrics(), 15000);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- poll on mount; fetchMetrics/toast are stable
+    void fetchRefreshCosts();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- load on mount; fetchMetrics/toast are stable
   }, []);
+  /*
+   * One clock, at the server's own cadence. The list was read every 15 s while the server
+   * recomputes every 30 s (`explorer.metrics-refresh-rate`), so one read in two brought nothing,
+   * and the forecast panel ran a second loop of its own beside it. The tick is the one the server
+   * reports, so a deployment that refreshes every minute is read every minute.
+   */
+  const pollMs = refreshCosts && refreshCosts.tickMs >= 5000 ? refreshCosts.tickMs : 30000;
+  useEffect(() => startVisiblePolling(() => {
+    void fetchMetrics();
+    void fetchRefreshCosts();
+    setForecastClock(c => c + 1);
+  }, pollMs), [pollMs, fetchMetrics, fetchRefreshCosts]);
 
   /** Called with every preview that arrived: drops the labels the new topic's message does not carry. */
   const reconcileLabelFields = useCallback((preview: MetricLabelPreview) => {
@@ -930,6 +961,68 @@ const Metrics: React.FC = () => {
     }
     return reaches;
   }, [metrics, forecastSeriesByMetric]);
+  /*
+   * Why each metric has no forecast to create, or undefined when it can be created now — one
+   * reading for the card's disabled button and for the summary the "No forecast" filter shows.
+   */
+  const forecastReasons = useMemo(() => {
+    const reasons = new Map<string, string | undefined>();
+    if (!canCreateForecast) return reasons;
+    for (const m of metrics) {
+      const candidate = candidatesByMetric.get(m.id);
+      reasons.set(m.id, forecastCandidatesError ? 'Forecast eligibility could not be verified. Retry after reloading.'
+        : !forecastCandidates ? 'Checking forecast eligibility…'
+          : forecastCandidates.applyUnavailable !== null
+            ? forecastCandidates.applyUnavailable || 'Forecast creation is currently unavailable.'
+            : !candidate
+              ? forecastCandidates.truncated
+                ? 'Metric not included in the candidate catalogue (catalogue truncated).'
+                : 'Metric is not available as a forecast candidate.'
+              : !candidate.eligible
+                ? candidate.blockers.join('; ') || 'Metric cannot be forecast.'
+                : !candidate.topics.length
+                  ? 'This metric has no forecastable source topics.'
+                  : undefined);
+    }
+    return reasons;
+  }, [canCreateForecast, metrics, candidatesByMetric, forecastCandidates, forecastCandidatesError]);
+  /*
+   * The cards' handlers, stable per metric id. Each card is memoised, and a handler written inline
+   * is a new function on every render — which made every card render again on every poll whatever
+   * its metric did. The stable handler reads the page's current state when it is called, so it is
+   * never a stale closure either.
+   */
+  const cardActions = useRef<{
+    edit: (id: string) => void; remove: (id: string) => void; refresh: (id: string) => void;
+    prepare: (id: string) => void; show: (id: string) => void;
+  } | null>(null);
+  useLayoutEffect(() => {
+    cardActions.current = {
+      edit: id => { const metric = metrics.find(m => m.id === id); if (metric) openEdit(metric); },
+      remove: id => void handleDelete(id),
+      refresh: id => void handleRefreshOne(id),
+      prepare: id => {
+        const metric = metrics.find(m => m.id === id);
+        const candidate = candidatesByMetric.get(id);
+        if (!metric || !candidate?.eligible || !candidate.topics.length
+          || forecastCandidates?.applyUnavailable !== null
+          || forecastMetricIds.includes(id)) return;
+        void createForecast(metric);
+      },
+      show: id => {
+        const series = forecastSeriesByMetric.get(id);
+        if (!series) return;
+        setForecastFocus(series.seriesId);
+        document.querySelector('section[aria-label="Metrics Forecast"]')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+      },
+    };
+  });
+  // One stable function per action, taking the metric's id: the same for every card and every render.
+  const onEditCard = useCallback((id: string) => cardActions.current?.edit(id), []);
+  const onDeleteCard = useCallback((id: string) => cardActions.current?.remove(id), []);
+  const onRefreshCard = useCallback((id: string) => cardActions.current?.refresh(id), []);
+  const onPrepareCard = useCallback((id: string) => cardActions.current?.prepare(id), []);
+  const onShowCard = useCallback((id: string) => cardActions.current?.show(id), []);
   const forecastFilterAvailable = Boolean(forecastStatus?.enabled) && forecastStatus!.series.length > 0;
   const filteredMetrics = metrics
     .filter(m => filterType === 'all' || m.type === filterType)
@@ -1028,6 +1121,15 @@ const Metrics: React.FC = () => {
           </span>
         </div>
       )}
+      {/* Why the metrics shown have no forecast, grouped: each card says it under its own button,
+          and the list answers the question the filter asks — what stands between these and one. */}
+      {filterForecast === 'none' && canCreateForecast && filteredMetrics.length > 0 && (
+        <div role="note" aria-label="Why these metrics have no forecast" className="text-xs text-on-surface-variant -mt-2">
+          <span className="font-semibold">Why no forecast: </span>
+          {groupReasons(filteredMetrics.map(m => forecastReasons.get(m.id)))
+            .map(({ reason, count }) => `${count} × ${reason}`).join(' · ')}
+        </div>
+      )}
 
       {listError && !loading && (
         <ErrorPanel error={listError} onRetry={() => void fetchMetrics()} />
@@ -1053,43 +1155,19 @@ const Metrics: React.FC = () => {
             <MetricCard
               key={metric.id}
               metric={metric}
-              onEdit={() => openEdit(metric)}
-              onDelete={() => handleDelete(metric.id)}
-              onRefresh={() => handleRefreshOne(metric.id)}
+              onEdit={onEditCard}
+              onDelete={onDeleteCard}
+              onRefresh={onRefreshCard}
               refreshing={refreshingId === metric.id}
-              onPrepareForecast={canCreateForecast
-                ? () => {
-                    const candidate = candidatesByMetric.get(metric.id);
-                    if (!candidate?.eligible || !candidate.topics.length
-                      || forecastCandidates?.applyUnavailable !== null
-                      || forecastMetricIds.includes(metric.id)) return;
-                    void createForecast(metric);
-                  }
-                : undefined}
+              onPrepareForecast={canCreateForecast ? onPrepareCard : undefined}
               forecastCreating={creatingForecastId === metric.id}
-              onShowForecast={forecastSeriesByMetric.has(metric.id) ? () => {
-                setForecastFocus(forecastSeriesByMetric.get(metric.id)!.seriesId);
-                document.querySelector('section[aria-label="Metrics Forecast"]')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
-              } : undefined}
-              forecastUnavailableReason={canCreateForecast ? (
-                forecastCandidatesError ? 'Forecast eligibility could not be verified. Retry after reloading.'
-                  : !forecastCandidates ? 'Checking forecast eligibility…'
-                    : forecastCandidates.applyUnavailable !== null
-                      ? forecastCandidates.applyUnavailable || 'Forecast creation is currently unavailable.'
-                      : !candidatesByMetric.has(metric.id)
-                        ? forecastCandidates.truncated
-                          ? 'Metric not included in the candidate catalogue (catalogue truncated).'
-                          : 'Metric is not available as a forecast candidate.'
-                        : !candidatesByMetric.get(metric.id)!.eligible
-                          ? candidatesByMetric.get(metric.id)!.blockers.join('; ') || 'Metric cannot be forecast.'
-                          : !candidatesByMetric.get(metric.id)!.topics.length
-                            ? 'This metric has no forecastable source topics.'
-                            : undefined
-              ) : undefined}
-              forecast={forecastStages.get(metric.id) ?? (createdForecastMetricId === metric.id
-                ? { stage: 'WAITING', label: 'Started', tone: 'neutral', detail: 'Waiting for the first forecast cycle' }
-                : undefined)}
+              onShowForecast={forecastSeriesByMetric.has(metric.id) ? onShowCard : undefined}
+              forecastUnavailableReason={forecastReasons.get(metric.id)}
+              forecast={forecastStages.get(metric.id) ?? (createdForecastMetricId === metric.id ? STARTED_STAGE : undefined)}
               forecastSeries={forecastSeriesByMetric.get(metric.id)}
+              nextForecastAt={forecastSeriesByMetric.has(metric.id) ? forecastStatus?.nextCycleAt ?? null : null}
+              refreshDurationMs={refreshCosts?.metrics[metric.id]?.lastDurationMs}
+              refreshTickMs={refreshCosts?.tickMs}
             />
           )) : (
             <div className="col-span-full text-center py-12 text-on-surface-variant text-sm">
@@ -1117,8 +1195,15 @@ const Metrics: React.FC = () => {
             setForecastRevision(v => v + 1);
           }} />
       </section>}
-      <ForecastPanel refresh={forecastRevision} focus={forecastFocus} metricNames={metricNames} metricThresholds={metricThresholds} onStatus={status => {
-        setForecastStatus(status);
+      <ForecastPanel refresh={forecastRevision} clock={forecastClock} focus={forecastFocus} metricNames={metricNames} metricThresholds={metricThresholds} onStatus={status => {
+        // Series by series, as the list: a series that did not move stays the same object.
+        setForecastStatus(previous => {
+          if (!status || !previous) return status;
+          const series = keepUnchanged(previous.series, status.series, row => row.seriesId);
+          const next = { ...status, series };
+          return series === previous.series && JSON.stringify({ ...previous, series: [] }) === JSON.stringify({ ...status, series: [] })
+            ? previous : next;
+        });
         // Once the server lists the new series, its status becomes authoritative. A later
         // withdrawal can then re-enable the metric's Prepare action.
         setCreatedForecastMetricId(id => id && status?.series.some(series => series.metricId === id) ? '' : id);

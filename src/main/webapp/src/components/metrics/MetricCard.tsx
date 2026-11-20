@@ -15,7 +15,7 @@
  * modèle de données.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Area, ComposedChart, Line, LineChart, ResponsiveContainer, ReferenceLine, ReferenceArea, Tooltip, XAxis, YAxis } from 'recharts';
 // Recharts exporte lui aussi un `Tooltip` : le nôtre est aliasé, comme dans la page.
 import { Badge, Button, Tooltip as InfoTooltip } from '../ui';
@@ -28,18 +28,34 @@ import { FORECAST_COLORS, THRESHOLD_COLORS } from './forecastColors';
 import { forecastReachFor, predictedPoints } from './forecastBreach';
 import { forecastReliability, lastCheck } from './forecastVsActual';
 import { placeThresholds } from './thresholdPlacement';
+import { clockTime, refreshCostNote } from '../../pages/metricsPolling';
 import { buildAlertRule, thresholdDirection } from '../../pages/metricAlert';
 import { componentSeries, describeMeasurement, describeMetricScope, scopeNoteOf } from '../../pages/metricScope';
 import {
   RAW_SQL, PLACEHOLDER_BARS, STATUS_STYLES, TYPE_META, describeTemplate, getStatus, relativeTime,
 } from '../../pages/metricsEditor';
 
-export const MetricCard: React.FC<{
+/**
+ * "12 s ago", kept current on its own. The card is memoised and renders only when its own data
+ * moves, so a relative time computed in the card would freeze at its last render — on a metric with
+ * a five-minute interval, "just now" for five minutes. Only this label ticks.
+ */
+const RelativeTime: React.FC<{ at: number | null }> = ({ at }) => {
+  const [, setNow] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(n => n + 1), 15000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return <>{relativeTime(at)}</>;
+};
+
+const MetricCardView: React.FC<{
   metric: MetricConfig;
-  onEdit: () => void;
-  onDelete: () => void;
-  onRefresh: () => void;
-  onPrepareForecast?: () => void;
+  /** The actions receive the metric's id, so the page can hand every card the same stable functions. */
+  onEdit: (id: string) => void;
+  onDelete: (id: string) => void;
+  onRefresh: (id: string) => void;
+  onPrepareForecast?: (id: string) => void;
   /** Reason returned by candidate validation, or why it cannot be checked yet. */
   forecastUnavailableReason?: string;
   /** Where this metric's forecast stands; absent when it has none, and the card offers to prepare one. */
@@ -49,9 +65,14 @@ export const MetricCard: React.FC<{
   /** The one-click creation is running for this card. */
   forecastCreating?: boolean;
   /** Shows this metric's forecast in the Metrics Forecast panel: the card is where a series is chosen. */
-  onShowForecast?: () => void;
+  onShowForecast?: (id: string) => void;
   refreshing: boolean;
-}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, forecastCreating = false, onShowForecast }) => {
+  /** When the next forecast cycle starts; null while one runs, or with no forecast. */
+  nextForecastAt?: number | null;
+  /** What this metric's last refresh cost, and the loop's tick it is measured against. */
+  refreshDurationMs?: number;
+  refreshTickMs?: number;
+}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, forecastCreating = false, onShowForecast, nextForecastAt = null, refreshDurationMs, refreshTickMs }) => {
   const { toast } = useToast();
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
@@ -167,15 +188,15 @@ export const MetricCard: React.FC<{
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <button onClick={onRefresh} disabled={refreshing} title="Refresh now" aria-label="Refresh this metric now"
+          <button onClick={() => onRefresh(metric.id)} disabled={refreshing} title="Refresh now" aria-label="Refresh this metric now"
             className="p-1 text-on-surface-variant hover:text-primary transition-colors disabled:opacity-40">
             <span className={`material-symbols-outlined text-base ${refreshing ? 'animate-spin' : ''}`}>refresh</span>
           </button>
-          <button onClick={onEdit} title="Edit" aria-label="Edit this metric"
+          <button onClick={() => onEdit(metric.id)} title="Edit" aria-label="Edit this metric"
             className="p-1 text-on-surface-variant hover:text-primary transition-colors">
             <span className="material-symbols-outlined text-base">edit</span>
           </button>
-          <button onClick={onDelete} title="Delete" aria-label="Delete this metric"
+          <button onClick={() => onDelete(metric.id)} title="Delete" aria-label="Delete this metric"
             className="p-1 text-on-surface-variant hover:text-error transition-colors">
             <span className="material-symbols-outlined text-base">delete</span>
           </button>
@@ -492,8 +513,18 @@ export const MetricCard: React.FC<{
 
       {forecast ? <div role="group" className="px-4 py-2 border-t border-outline-variant/60 text-xs flex flex-wrap items-center gap-2" aria-label={`Forecast status of ${metric.name || metric.id}`}>
         <span className="font-semibold">Forecast</span><Badge tone={forecast.tone}>{forecast.label}</Badge><span>{forecast.detail}</span>
-        {onShowForecast && <Button variant="ghost" size="sm" className="ml-auto" icon="open_in_full" onClick={onShowForecast}
+        {onShowForecast && <Button variant="ghost" size="sm" className="ml-auto" icon="open_in_full" onClick={() => onShowForecast(metric.id)}
           aria-label={`Show the forecast of ${metric.name || metric.id}`}>Details</Button>}
+        {/* When it was made and when the next one is due: an instant, not an age, so it never goes stale
+            on screen — and a forecast that stopped moving reads as stopped, not as stable. */}
+        {(() => {
+          const made = clockTime(forecastSeries?.result?.generatedAt);
+          const next = clockTime(nextForecastAt);
+          if (!made && !next) return null;
+          return <span className="basis-full text-on-surface-variant" aria-label="Forecast freshness">
+            {made ? `Made at ${made}` : 'Not made yet'}{next ? ` · next cycle ~${next}` : ''}
+          </span>;
+        })()}
         {/* How the forecast has done against what happened, from the quality window the list carries. */}
         {(() => {
           const check = lastCheck(forecastSeries?.result?.qualityWindow);
@@ -526,7 +557,7 @@ export const MetricCard: React.FC<{
           const button = (
             <span className="inline-flex rounded" aria-label={forecastUnavailableReason || undefined}>
               <Button variant="outline" size="sm" icon="insights" loading={forecastCreating} aria-busy={forecastCreating || undefined}
-                disabled={Boolean(forecastUnavailableReason || refreshing || forecastCreating)} onClick={onPrepareForecast}>
+                disabled={Boolean(forecastUnavailableReason || refreshing || forecastCreating)} onClick={() => onPrepareForecast(metric.id)}>
                 {forecastCreating ? 'Creating forecast…' : 'Forecast'}
               </Button>
             </span>
@@ -545,14 +576,30 @@ export const MetricCard: React.FC<{
           <p className="text-[10px] text-on-surface-variant mt-1" role="note">{forecastUnavailableReason}</p>
         )}
       </div>}
+      {/* What the last refresh cost: said on the card when it slows the whole loop down, since the
+          remedy — a refresh interval of its own — is set on this metric. */}
+      {(() => {
+        const note = refreshCostNote(refreshDurationMs, refreshTickMs);
+        return note?.slow ? <p role="note" aria-label="Refresh cost"
+          className="px-4 py-1.5 text-[10px] text-warning border-t border-outline-variant/60 flex items-start gap-1">
+          <span className="material-symbols-outlined text-[12px]" aria-hidden="true">hourglass_top</span>{note.text}</p> : null;
+      })()}
       {/* Footer */}
       <div className="px-4 py-1.5 flex items-center justify-between border-t border-primary/5">
-        <span className="text-[10px] text-outline flex items-center gap-1">
+        <span className="text-[10px] text-outline flex items-center gap-1"
+          title={refreshCostNote(refreshDurationMs, refreshTickMs)?.text}>
           <span className="material-symbols-outlined text-[11px]">schedule</span>
-          {relativeTime(metric.lastUpdateTime)}
+          <RelativeTime at={metric.lastUpdateTime} />
         </span>
         <span className={`text-[10px] font-bold ${st.text}`}>{st.label}</span>
       </div>
     </div>
   );
 };
+
+/**
+ * Memoised: the page polls, edits forms and filters, and every one of those renders it; a card now
+ * renders again only when one of its own props moved. The page keeps each metric, each forecast
+ * series and each handler the same object between polls for that reason.
+ */
+export const MetricCard = React.memo(MetricCardView);

@@ -228,6 +228,19 @@ describe('Metrics page', () => {
     await user.selectOptions(screen.getByLabelText('Sort by'), 'breach');
     expect(screen.getByText(/sorted by next predicted breach/)).toBeInTheDocument();
   });
+  it('says, under the "No forecast" filter, why the metrics shown have none', async () => {
+    const other = { ...templateMetric, id: 'm-2', name: 'gauge_other' };
+    const series = { seriesId: 'm-1'.padEnd(64, 'x'), metricId: 'm-1', environment: 'e', stepMillis: 60000,
+      minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+      activation: { eligible: false, reason: 'not yet', blockPoints: 0, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: null };
+    stubApi([templateMetric, other], [suggestion], { ...READY_FORECASTS, series: [series] });
+    const user = userEvent.setup(); await renderPage();
+    await user.selectOptions(await screen.findByLabelText('Filter by forecast'), 'none');
+    // The catalogue says gauge_other can be forecast: nothing stands between it and a forecast but a click.
+    expect(await screen.findByLabelText('Why these metrics have no forecast'))
+      .toHaveTextContent('1 × Ready: press Forecast on the card');
+  });
   it('opens the form for that metric, on the reason, only when the one-click creation stops', async () => {
     stubApi([templateMetric], [suggestion], READY_FORECASTS);
     const post = mockedAxios.post.getMockImplementation()!;
