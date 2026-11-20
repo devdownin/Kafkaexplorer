@@ -64,6 +64,7 @@ CONTRACTS = {
     "forecastStatus": "ForecastStatus",
     "forecastSeries": "ForecastSeriesView",
     "forecastProgress": "ForecastProgress",
+    "forecastPrevious": "MetricForecast",
     "forecastCandidates": "ForecastCandidates",
     "forecastHistory": "ForecastHistoryPreview",
     "forecastApplied": "ForecastApplied",

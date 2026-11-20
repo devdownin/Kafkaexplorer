@@ -22,6 +22,11 @@ export const FORECAST_COLORS = {
    * surfaces, so a prediction is never mistaken for a measurement of any state.
    */
   forecast: '#56c8e8',
+  /**
+   * A past forecast set beside what happened: the secondary token, so it reads as a forecast of
+   * another time rather than as the current one or as a measurement.
+   */
+  previous: '#c9a9f7',
   /** The 80 % interval's band and the chart's quiet furniture: on-surface-variant. */
   band: '#9aa3b2',
 } as const;

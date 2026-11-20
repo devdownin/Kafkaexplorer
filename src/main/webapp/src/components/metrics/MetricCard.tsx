@@ -26,6 +26,7 @@ import type { ForecastSeriesView, MetricConfig } from '../../api/types';
 import { about, type ForecastStageSummary } from './forecastStage';
 import { FORECAST_COLORS } from './forecastColors';
 import { forecastThresholdReach } from './forecastBreach';
+import { lastCheck } from './forecastVsActual';
 import { buildAlertRule, thresholdDirection } from '../../pages/metricAlert';
 import { componentSeries, describeMeasurement, describeMetricScope, scopeNoteOf } from '../../pages/metricScope';
 import {
@@ -496,6 +497,14 @@ export const MetricCard: React.FC<{
       </div>}
       {forecast ? <div role="group" className="px-4 py-2 border-t border-outline-variant/60 text-xs flex flex-wrap items-center gap-2" aria-label={`Forecast status of ${metric.name || metric.id}`}>
         <span className="font-semibold">Forecast</span><Badge tone={forecast.tone}>{forecast.label}</Badge><span>{forecast.detail}</span>
+        {/* How the forecast has done against what happened, from the quality window the list carries. */}
+        {(() => {
+          const check = lastCheck(forecastSeries?.result?.qualityWindow);
+          return check && <span className="basis-full text-on-surface-variant" aria-label="Forecast against actual">
+            Last checked: <span className="font-medium text-on-surface">{Math.round(check.coverage * 100)}%</span> of {check.points} points
+            in the 80% band · mean error {check.meanError.toLocaleString(undefined, { maximumFractionDigits: 2 })} {forecastSeries?.result?.context.outputUnit}
+          </span>;
+        })()}
         {/* The wait as a bar as well as a count: the sentence says how much, the bar how far. */}
         {forecast.progress !== undefined && <div role="progressbar" aria-label={`${forecast.label} progress`}
           aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(forecast.progress * 100)}

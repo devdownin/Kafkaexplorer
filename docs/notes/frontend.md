@@ -711,6 +711,17 @@ measured curve and the median, a value axis from zero that flattened both under 
 and recharts' default white tooltip with a near-white date. `forecastColors.ts` gives the forecast a
 cyan that is none of the status colours.
 
+**A past forecast can be set beside what happened** (`forecastVsActual.ts`, pure and tested). The
+quality the panel reports is an aggregate over blocks of forecasts — true, and impossible to
+picture — so "Previous forecast vs actual" draws one forecast over the measured curve: the latest
+whose whole horizon has been measured (`GET /api/forecasts/{seriesId}/previous`, `store.matured` with
+the bound one horizon before the latest history end, so every point it predicted is inside the
+latest context). It is scored point by point on the shared grid — inside the band or not, mean
+error, and a direction only when the bias is at least half the mean error — and an imputed point is
+left out rather than scored. It is read only once asked for, once per latest result. The card's
+"Last checked" line is the same question answered without a request: the latest scored cohort of
+the quality window the list already carries, else the last closed block.
+
 **The card reads the forecast against the metric's thresholds** (`forecastBreach.ts`, pure and
 tested): the first predicted point whose median is at or past the critical, then the warning,
 threshold is "expected"; failing that, the cautious edge of the 80 % band (q90 upwards, q10

@@ -4,6 +4,8 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import axios from 'axios';
+import userEvent from '@testing-library/user-event';
+import { FORECAST_COLORS } from './forecastColors';
 import { ForecastPanel } from './ForecastPanel';
 
 vi.mock('axios', () => ({ default: { get: vi.fn(), put: vi.fn(), delete: vi.fn(), isAxiosError: () => false } }));
@@ -69,6 +71,37 @@ describe('ForecastPanel chart', () => {
     const ticks = [...container.querySelectorAll('.recharts-yAxis .recharts-cartesian-axis-tick-value')]
       .map(t => Number(t.textContent));
     expect(Math.max(...ticks)).toBeGreaterThanOrEqual(50);
+  });
+
+  // One past forecast against what happened, point by point, only once it is asked for.
+  it('sets the latest fully measured forecast beside what happened, on request', async () => {
+    // Measured 9 at 0, 1 and 2 minutes; the previous forecast said 10 (8–12) at 1 and 2, and 20 at 0.
+    const previous = { historyEndAt: -60000, points: [0, 1, 2].map(i => ({ at: i * 60000, central: 10, q10: i === 0 ? 18 : 8, q50: i === 0 ? 20 : 10, q90: i === 0 ? 22 : 12 })) };
+    const asked: string[] = [];
+    vi.mocked(axios.get).mockImplementation(url => {
+      asked.push(String(url));
+      return Promise.resolve(String(url).endsWith('/previous') ? { status: 200, data: previous } : { data: url === '/api/forecasts' ? status : {} });
+    });
+    const { container } = render(<ForecastPanel />);
+    await screen.findByText('Median forecast');
+    expect(asked.some(u => u.endsWith('/previous'))).toBe(false);
+    await userEvent.setup().click(screen.getByRole('checkbox', { name: /Previous forecast vs actual/ }));
+    const summary = await screen.findByText(/measured/, { selector: '[aria-label="Previous forecast against what happened"]' });
+    expect(summary).toHaveTextContent('2 of 3 measured points inside its 80 % band');
+    expect(summary).toHaveTextContent('mean error 4.33 ms');
+    // Measured below what it predicted on average, by as much as its mean error: said, as a direction.
+    expect(summary).toHaveTextContent('it ran high by 4.33 on average');
+    expect(screen.getByText('Previous forecast')).toBeInTheDocument();
+    expect(container.querySelector(`path[stroke="${FORECAST_COLORS.previous}"]`)).not.toBeNull();
+  });
+
+  it('says so when no forecast has been fully measured yet', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve(String(url).endsWith('/previous')
+      ? { status: 204, data: '' } : { data: url === '/api/forecasts' ? status : {} }));
+    render(<ForecastPanel />);
+    await screen.findByText('Median forecast');
+    await userEvent.setup().click(screen.getByRole('checkbox', { name: /Previous forecast vs actual/ }));
+    expect(await screen.findByText(/No forecast has been fully measured yet/)).toBeInTheDocument();
   });
 
   // The axis started at zero: a latency between 1 900 and 2 300 was a flat line and its band a sliver.
