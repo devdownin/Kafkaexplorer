@@ -758,6 +758,10 @@ being refreshed would otherwise fire for ever; `metricTopics` names the topics a
 reliability badge has a trend beside it (`reliabilityTrend`): the open cohorts' coverage, oldest first,
 called a direction only past five points so two noisy cohorts are not read as one.
 
+**The compact line carries its forecast** (`MetricRow`'s `Sparkline`): the predicted medians continue the
+history, dashed, from the last measured point and on the same step, capped at half the measured points so
+a short history is not squeezed into a corner; none for a `COUNTER_RATE` forecast, a rate beside a counter.
+
 **One reading of the forecast, three surfaces.** `forecastReachFor` (the reach, in milliseconds, or `null` for a rate forecast) feeds the card's badge and the page's *Breach predicted* filter and *next predicted breach* sort, so the list and the card cannot disagree; `placeThresholds` (`thresholdPlacement.ts`) decides which of a metric's thresholds a chart draws and which it names at the edge, for the card and the Forecast panel alike. `forecastReliability` turns the quality window's 80 % coverage into a word (Reliable from 70 %, Fair from 50 %, Watch below, Early under ten points) — a badge for the glance, the numbers in its tooltip.
 
 **The card reads the forecast against the metric's thresholds** (`forecastBreach.ts`, pure and

@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Compact layout: the forecast continues the sparkline.** Each line now carries its forecast's median as a
+  dashed continuation of the measured history, from the last measured point and at the same step width;
+  at most half as many predicted points as measured ones, so a short history is not squeezed into a corner
+  (the card's own fix). None for a counter, whose forecast is a rate per second beside a counter's reading.
+
 - **MCP: `kex_list_forecast_threshold_reaches`, the card's predicted threshold for an agent.** The only
   forecast-threshold tool, `kex_list_predicted_threshold_breaches`, judges a series' configured threshold
   *policy*; the Metrics page and `explorer_forecast_threshold_eta_seconds` read the metric's *own* warning

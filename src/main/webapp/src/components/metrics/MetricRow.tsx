@@ -5,7 +5,7 @@ import type { ForecastSeriesView, MetricConfig } from '../../api/types';
 import { Badge } from '../ui';
 import { STATUS_STYLES, getStatus } from '../../pages/metricsEditor';
 import { about, type ForecastStageSummary } from './forecastStage';
-import { forecastReachFor } from './forecastBreach';
+import { forecastReachFor, predictedPoints } from './forecastBreach';
 import { FORECAST_COLORS } from './forecastColors';
 
 /**
@@ -16,16 +16,41 @@ import { FORECAST_COLORS } from './forecastColors';
  * for — the verdict, the value, where it is going, and the forecast's predicted threshold, read by
  * the same `forecastReachFor` the card's badge reads. The card is one click away (Edit, Details).
  */
-const Sparkline: React.FC<{ values: number[] }> = ({ values }) => {
+const Sparkline: React.FC<{ values: number[]; forecast?: number[] }> = ({ values, forecast = [] }) => {
   const shown = values.filter(Number.isFinite).slice(-30);
   if (shown.length < 2) return <span className="w-24 shrink-0" aria-hidden="true" />;
-  const w = 96, h = 24;
-  const min = Math.min(...shown), max = Math.max(...shown), span = max - min || 1;
-  const points = shown.map((v, i) => `${(i * w) / (shown.length - 1)},${h - 2 - ((v - min) / span) * (h - 4)}`).join(' ');
+  // At most half as many predicted points as measured ones: thirty predicted steps beside nine
+  // measured ones squeezed the history into the first quarter of the line — the defect the card
+  // fixed. The line shows where the forecast heads; its whole horizon is on the card and the panel.
+  const ahead = forecast.filter(Number.isFinite).slice(0, Math.max(1, Math.ceil(shown.length / 2)));
+  // A wider line when there is a forecast to carry, so the history keeps its width beside it.
+  const w = ahead.length ? 128 : 96, h = 24;
+  const all = [...shown, ...ahead];
+  const min = Math.min(...all), max = Math.max(...all), span = max - min || 1;
+  // One step for both, so a minute of forecast is as wide as a minute of history.
+  const stepX = w / (shown.length - 1 + ahead.length);
+  const y = (v: number) => h - 2 - ((v - min) / span) * (h - 4);
+  const history = shown.map((v, i) => `${i * stepX},${y(v)}`).join(' ');
+  // The forecast continues the line from its last measured point, dashed, as on the card.
+  const last = shown.length - 1;
+  const future = [`${last * stepX},${y(shown[last])}`, ...ahead.map((v, i) => `${(last + 1 + i) * stepX},${y(v)}`)].join(' ');
   return <svg width={w} height={h} className="shrink-0" aria-hidden="true">
-    <polyline fill="none" stroke="currentColor" strokeWidth={1.5} points={points} />
+    <polyline fill="none" stroke="currentColor" strokeWidth={1.5} points={history} />
+    {ahead.length > 0 && <polyline data-testid="sparkline-forecast" fill="none" stroke={FORECAST_COLORS.forecast}
+      strokeWidth={1.5} strokeDasharray="3 2" points={future} />}
   </svg>;
 };
+
+/**
+ * The predicted medians a line may draw after the history: none for a counter, whose forecast is a
+ * rate per second while its history is the counter's own reading — the card gives that one its own
+ * scale, which a sparkline cannot.
+ */
+function forecastMedians(series: ForecastSeriesView | undefined): number[] {
+  const result = series?.result;
+  if (!result?.forecast || result.context?.profile?.transformation === 'COUNTER_RATE') return [];
+  return predictedPoints(result.forecast).map(p => p.q50);
+}
 
 const MetricRowView: React.FC<{
   metric: MetricConfig;
@@ -48,7 +73,7 @@ const MetricRowView: React.FC<{
       <span className={`font-semibold tabular-nums shrink-0 ${st.text}`}>
         {metric.lastValue === null ? '—' : metric.lastValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
       </span>
-      <span className="hidden sm:inline-flex text-primary"><Sparkline values={metric.history ?? []} /></span>
+      <span className="hidden sm:inline-flex text-primary"><Sparkline values={metric.history ?? []} forecast={forecastMedians(forecastSeries)} /></span>
       <span className="hidden md:flex items-center gap-1.5 shrink-0 w-56 min-w-0">
         {reach && forecastSeries
           ? <span className={`truncate text-xs font-medium ${reach.level === 'critical' ? 'text-[#f58c8c]' : 'text-[#f5c264]'}`}
