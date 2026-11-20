@@ -202,6 +202,27 @@ before the button is pressed. Forecasts send no alerts. Nominal quantiles
 are not guaranteed confidence. See the [pilot runbook](notes/timesfm-pilot.md) for quality gates,
 source authorization, persistence and failover behavior.
 
+## Alerting on a predicted threshold
+
+The Metrics page reads each forecast against its metric's own warning and critical thresholds and
+says so on the card ("Warning expected in ~12 min"), but it sends nothing: a predicted threshold is a
+reading of the forecast, not an alert. The same reading is published for Prometheus, so an operator can
+alert on it in Alertmanager:
+
+```promql
+# A critical threshold the median forecast reaches within half an hour
+explorer_forecast_threshold_eta_seconds{level="critical", likelihood="expected"} < 1800
+```
+
+`explorer_forecast_threshold_eta_seconds{metric_id, level, likelihood}` is the number of seconds until the
+first predicted point at or past the threshold; `level` is `warning` or `critical`, `likelihood` is
+`expected` (the median reaches it) or `possible` (only the edge of the 80 % band does). A series exists
+only while a threshold is predicted within the horizon, and a counter's rate forecast is never compared
+with its thresholds. It is recomputed after each forecast-pilot cycle, so a threshold edited on a metric
+shows at the next cycle. The value floors at zero and a forecast that stops being refreshed keeps saying
+zero: pair the rule with `explorer_metric_last_success_timestamp_seconds`, as the card's own alert rule
+does. The reading is `ForecastThresholdReach`, the server twin of the page's `forecastBreach.ts`.
+
 ## Operator API
 
 | Endpoint | Purpose |

@@ -1697,6 +1697,8 @@ export interface ForecastStatus {
   shadowEnabled: boolean;
   /** Whether a forecasting model (TimesFM) is configured: without one, no forecast can be created. */
   modelAvailable: boolean;
+  /** When the next forecast cycle starts; null while one is running, or with no pilot. */
+  nextCycleAt?: number | null;
 }
 /** @java ForecastSetupService.Check */
 export interface ForecastPreparationCheck {
@@ -1907,4 +1909,15 @@ export interface AssistantMetricResponse {
   name: string | null;
   type: string;
   description: string | null;
+}
+/** @java MetricRefreshCosts.Cost */
+export interface MetricRefreshCost {
+  lastDurationMs: number;
+  collectionIntervalMs: number;
+}
+/** @java MetricRefreshCosts */
+export interface MetricRefreshCosts {
+  tickMs: number;
+  /** Absent for a metric not refreshed yet in this process. */
+  metrics: Record<string, MetricRefreshCost>;
 }

@@ -27,11 +27,18 @@ public final class ForecastPilotScheduler implements SmartLifecycle {
 
   private final ForecastPilotService pilot;
   private final Duration interval;
+  /** Run after each cycle, on this thread: what is derived from the forecasts the cycle just wrote. */
+  private final Runnable afterCycle;
   private volatile ScheduledExecutorService executor;
 
   public ForecastPilotScheduler(ForecastPilotService pilot, Duration interval) {
+    this(pilot, interval, () -> {});
+  }
+
+  public ForecastPilotScheduler(ForecastPilotService pilot, Duration interval, Runnable afterCycle) {
     this.pilot = pilot;
     this.interval = interval;
+    this.afterCycle = afterCycle;
   }
 
   @Override
@@ -50,6 +57,13 @@ public final class ForecastPilotScheduler implements SmartLifecycle {
       pilot.refresh();
     } catch (RuntimeException e) {
       LOG.warn("Forecast pilot cycle failed", e);
+    }
+    // After a failed cycle too: the previous forecasts are still the latest ones, and what is
+    // derived from them (the threshold-reach series) has to keep counting down from them.
+    try {
+      afterCycle.run();
+    } catch (RuntimeException e) {
+      LOG.warn("Forecast pilot post-cycle step failed", e);
     }
   }
 

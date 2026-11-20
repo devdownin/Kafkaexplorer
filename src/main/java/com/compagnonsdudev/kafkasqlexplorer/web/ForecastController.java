@@ -41,12 +41,18 @@ public class ForecastController {
    * one rather than leading an operator through a preparation that cannot end in a forecast.
    */
   public record Status(boolean enabled, String state, List<SeriesView> series, boolean shadowEnabled,
-                       boolean modelAvailable) {}
+                       boolean modelAvailable,
+                       /**
+                        * When the next forecast cycle starts; null while one is running, or with no
+                        * pilot. The cards say when their forecast was made and when the next one is
+                        * due, so a forecast that stopped moving is not mistaken for a stable one.
+                        */
+                       Long nextCycleAt) {}
 
   @GetMapping
   public ResponseEntity<Status> status() {
     var p = services.getIfAvailable();
-    if (p == null) return ResponseEntity.ok(new Status(false, "DISABLED", List.of(), false, false));
+    if (p == null) return ResponseEntity.ok(new Status(false, "DISABLED", List.of(), false, false, null));
     try {
       var rows = new java.util.ArrayList<SeriesView>();
       // One series per row, each read on its own (METRICS-FORECAST-UX-AUDIT.md B2): a single record
@@ -55,9 +61,9 @@ public class ForecastController {
       // The list carries no history points (P1): up to 512 per series were sent every 30 s to a
       // page that draws one series, whose detail is GET /{seriesId}.
       for (var s : p.series()) rows.add(view(p, s, false));
-      return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows), p.shadowEnabled(), p.modelAvailable()));
+      return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows), p.shadowEnabled(), p.modelAvailable(), p.nextScheduledAt()));
     } catch (Exception e) {
-      return ResponseEntity.status(503).body(new Status(true, "UNAVAILABLE", List.of(), p.shadowEnabled(), p.modelAvailable()));
+      return ResponseEntity.status(503).body(new Status(true, "UNAVAILABLE", List.of(), p.shadowEnabled(), p.modelAvailable(), p.nextScheduledAt()));
     }
   }
 

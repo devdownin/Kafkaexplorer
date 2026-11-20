@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import axios from 'axios';
 import userEvent from '@testing-library/user-event';
 import { FORECAST_COLORS } from './forecastColors';
@@ -56,6 +56,20 @@ describe('ForecastPanel chart', () => {
       : String(url).endsWith('/progress') ? progress : {} }));
     render(<ForecastPanel />);
     expect(await screen.findByText('Threshold ≥ 11')).toBeInTheDocument();
+  });
+
+  // One clock for the page: given one, the panel reads once per tick and runs no timer of its own.
+  it('reads once per tick of the page clock it is given', async () => {
+    vi.mocked(axios.get).mockClear();
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
+    const listReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) => url === '/api/forecasts').length;
+    const { rerender } = render(<ForecastPanel clock={0} />);
+    await screen.findByText('80 % interval');
+    expect(listReads()).toBe(1);
+    rerender(<ForecastPanel clock={0} />);
+    expect(listReads()).toBe(1);
+    rerender(<ForecastPanel clock={1} />);
+    await waitFor(() => expect(listReads()).toBe(2));
   });
 
   // The metric's own thresholds, drawn as the card draws them: a near one on the chart, a far one named.

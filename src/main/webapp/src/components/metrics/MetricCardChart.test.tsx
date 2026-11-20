@@ -103,4 +103,30 @@ describe('MetricCard forecast chart', () => {
     expect(screen.getByText(/a rate per second; the value above is the counter’s own reading/)).toBeInTheDocument();
     expect(screen.getByLabelText('Metric chart legend')).toHaveTextContent('Observed (/s)');
   });
+
+  it('says when its forecast was made and when the next cycle is due', () => {
+    const made = structuredClone(series) as unknown as { result: Record<string, unknown> };
+    made.result.generatedAt = Date.UTC(2026, 10, 20, 14, 32);
+    render(<ToastProvider><MetricCard metric={metric} onEdit={() => {}} onDelete={() => {}} onRefresh={() => {}}
+      refreshing={false} forecastSeries={made as unknown as ForecastSeriesView} nextForecastAt={Date.UTC(2026, 10, 20, 14, 35)}
+      forecast={{ stage: 'OBSERVING', label: 'Observing', tone: 'neutral', detail: 'Observing' }} /></ToastProvider>);
+    expect(screen.getByLabelText('Forecast freshness')).toHaveTextContent(/Made at \d{1,2}:\d{2}.* · next cycle ~\d{1,2}:\d{2}/);
+  });
+
+  it('says on the card when its refresh slows the whole loop, and stays quiet otherwise', () => {
+    const { rerender } = render(<ToastProvider><MetricCard metric={metric} onEdit={() => {}} onDelete={() => {}}
+      onRefresh={() => {}} refreshing={false} refreshDurationMs={18000} refreshTickMs={30000} /></ToastProvider>);
+    expect(screen.getByLabelText('Refresh cost')).toHaveTextContent('Last refresh took 18 s of the 30 s cycle');
+    rerender(<ToastProvider><MetricCard metric={metric} onEdit={() => {}} onDelete={() => {}}
+      onRefresh={() => {}} refreshing={false} refreshDurationMs={800} refreshTickMs={30000} /></ToastProvider>);
+    expect(screen.queryByLabelText('Refresh cost')).toBeNull();
+  });
+
+  it('hands its actions the metric id, so the page can give every card the same functions', () => {
+    const onEdit = vi.fn();
+    render(<ToastProvider><MetricCard metric={metric} onEdit={onEdit} onDelete={() => {}} onRefresh={() => {}}
+      refreshing={false} /></ToastProvider>);
+    screen.getByRole('button', { name: 'Edit this metric' }).click();
+    expect(onEdit).toHaveBeenCalledWith('m-1');
+  });
 });

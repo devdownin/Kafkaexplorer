@@ -1038,7 +1038,7 @@ export const forecastSeries = {
 
 /** GET /api/forecasts — the list is a summary: the same row with only its latest 60 history points. */
 export const forecastStatus = {
-  enabled: true, state: 'AVAILABLE', shadowEnabled: false, modelAvailable: true,
+  enabled: true, state: 'AVAILABLE', shadowEnabled: false, modelAvailable: true, nextCycleAt: NOW + FORECAST_STEP,
   series: [{ ...forecastSeries, result: { ...forecastResult, context: { ...forecastContext, points: forecastContext.points.slice(-60) } } }],
 };
 
@@ -1102,4 +1102,13 @@ export const assistantStatus = {
   contextWindowTokens: 0,
   providerCode: 'OPENROUTER',
   dataRetentionRefused: true,
+};
+
+// What each metric's last refresh cost: both cheap here, so no card carries the slow-refresh note.
+export const metricRefreshCosts = {
+  tickMs: 30000,
+  metrics: {
+    'm-orders-volume': { lastDurationMs: 420, collectionIntervalMs: 30000 },
+    'm-hop-latency': { lastDurationMs: 1350, collectionIntervalMs: 30000 },
+  },
 };

@@ -12,6 +12,9 @@ import { thresholdDirection } from '../../pages/metricAlert';
  * worded as one. Critical is looked for before warning, since it is the one that matters.
  *
  * This describes the forecast; it is not an alert. Nothing is sent, and the card says the same.
+ *
+ * **Read twice, edited together:** `ForecastThresholdReach.java` is the same rule on the server, which
+ * publishes it as `explorer_forecast_threshold_eta_seconds`; its test runs this file's cases.
  */
 export interface ForecastThresholdReach {
   level: 'critical' | 'warning';
