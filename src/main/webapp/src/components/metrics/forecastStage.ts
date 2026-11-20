@@ -10,6 +10,8 @@ export interface ForecastStageSummary {
   label: string;
   tone: BadgeTone;
   detail: string;
+  /** How far the current wait has got, 0 to 1, where it is a count: the history before a first forecast, the quality block after. */
+  progress?: number;
 }
 
 /** `~25 min`, `~3 h`, `~2 d`: an estimate from the sampling interval, worded as one. */
@@ -40,6 +42,7 @@ export function forecastStage(series: ForecastSeriesView): ForecastStageSummary 
     return {
       stage: 'COLLECTING', label: 'Collecting', tone: 'neutral',
       detail: `History ${have} / ${series.minimumContextPoints} points · first forecast in ${about(series.minimumContextPoints - have, step)}`,
+      progress: series.minimumContextPoints > 0 ? have / series.minimumContextPoints : undefined,
     };
   }
   const a = series.activation;
@@ -57,7 +60,8 @@ export function forecastStage(series: ForecastSeriesView): ForecastStageSummary 
     : a.blockPoints < a.blockPointsRequired
       ? `Observing · ${filling} · approvable in ${about(a.blockPointsRequired - a.blockPoints, step)} if it passes`
       : `Observing · ${a.reason ?? filling}`;
-  return { stage: 'OBSERVING', label: 'Observing', tone: 'neutral', detail };
+  return { stage: 'OBSERVING', label: 'Observing', tone: 'neutral', detail,
+    progress: a.lastBlockPassed !== false && a.blockPointsRequired > 0 ? Math.min(1, a.blockPoints / a.blockPointsRequired) : undefined };
 }
 
 export type StepState = 'done' | 'current' | 'pending' | 'failed';

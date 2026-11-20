@@ -710,6 +710,21 @@ everything against the top edge. The panel's chart had its own three: a one-step
 measured curve and the median, a value axis from zero that flattened both under a high threshold,
 and recharts' default white tooltip with a near-white date. `forecastColors.ts` gives the forecast a
 cyan that is none of the status colours.
+
+**The card reads the forecast against the metric's thresholds** (`forecastBreach.ts`, pure and
+tested): the first predicted point whose median is at or past the critical, then the warning,
+threshold is "expected"; failing that, the cautious edge of the 80 % band (q90 upwards, q10
+downwards) makes it "possible" — a baseline forecast, having no band, can only be "expected". The
+direction is `thresholdDirection`'s, so a ratio that breaks by falling is read downwards. It is a
+reading, never an alert, and the card says so. Two rules sit beside it. **A threshold is never lost
+to the fitted scale**: within one span of the plotted range it widens the scale and is drawn, beyond
+it it is named under the chart as off scale — drawn in a corner it covered the forecast. **A
+counter's thresholds stay off its forecast**: the forecast is a rate per second and the thresholds
+were set on the counter's reading, so comparing them would be a unit error worded as a prediction.
+The stage line carries `progress` (history before the first forecast, then the quality block,
+none after a failed block), drawn as a bar; and the assistant's confirmation counts the points
+already recorded, from the history preview it reads anyway, since the journal records a metric from
+the moment it runs and "~2 h" was usually wrong.
 **No model, no way to create one.** `GET /api/forecasts` carries `modelAvailable` — whether the forecasting client exists (`ForecastPilotService.modelAvailable()`, i.e. `explorer.forecasting.inference.enabled`), read from configuration and not probed, so a service that is briefly down does not make the page withdraw the assistant and offer it again a minute later. The page derives `canCreateForecast` from it and from `enabled`: false, and the card's **Forecast**, the assistant and the panel's **Configure a forecast** are all absent, while the panel stays and says why, keeping its preparation diagnostic since that is what tells an operator what to enable. Known only once the status has been read: a way to create a forecast that appears and then goes is worse than one absent for the first second. Timestral does not count on its own — it is a shadow built under the same switch as TimesFM and never served. A series that already exists stays visible and operable whatever this says.
 
 **The panel reads as one timeline: history → forecast → quality → approval.** It used to say the
