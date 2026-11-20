@@ -747,6 +747,17 @@ page's state through a ref assigned in a layout effect, so a memoised card never
 The relative "updated … ago" is its own self-refreshing component, since a memoised card would freeze it;
 the forecast's "Made at / next cycle" is an instant for the same reason.
 
+**The compact layout is a list, not smaller cards** (`MetricRow`): a line draws its history as a plain
+SVG polyline where a card draws two Recharts graphs, which is what makes forty of them cheaper than four
+cards. It reads the predicted threshold through the same `forecastReachFor` as the card's badge, and the
+choice is a per-viewer convenience in `localStorage` (a storage that throws just means cards). The
+predicted-threshold badge carries its own next steps: `forecastBreachRule` (`pages/metricLinks.ts`) writes
+the Alertmanager rule on `explorer_forecast_threshold_eta_seconds`, paired with
+`explorer_metric_last_success_timestamp_seconds` because the ETA floors at zero and a forecast that stopped
+being refreshed would otherwise fire for ever; `metricTopics` names the topics a template reads. The
+reliability badge has a trend beside it (`reliabilityTrend`): the open cohorts' coverage, oldest first,
+called a direction only past five points so two noisy cohorts are not read as one.
+
 **One reading of the forecast, three surfaces.** `forecastReachFor` (the reach, in milliseconds, or `null` for a rate forecast) feeds the card's badge and the page's *Breach predicted* filter and *next predicted breach* sort, so the list and the card cannot disagree; `placeThresholds` (`thresholdPlacement.ts`) decides which of a metric's thresholds a chart draws and which it names at the edge, for the card and the Forecast panel alike. `forecastReliability` turns the quality window's 80 % coverage into a word (Reliable from 70 %, Fair from 50 %, Watch below, Early under ten points) — a badge for the glance, the numbers in its tooltip.
 
 **The card reads the forecast against the metric's thresholds** (`forecastBreach.ts`, pure and

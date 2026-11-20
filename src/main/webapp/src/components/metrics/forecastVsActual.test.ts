@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { describe, expect, it } from 'vitest';
 import type { ForecastQualityWindow, MetricForecast } from '../../api/types';
-import { compareWithActual, forecastReliability, lastCheck } from './forecastVsActual';
+import { compareWithActual, forecastReliability, lastCheck, reliabilityTrend } from './forecastVsActual';
 
 const step = 60000;
 const previous = { historyEndAt: 0, points: [1, 2, 3, 4].map(i => ({ at: i * step, central: 100, q10: 90, q50: 100, q90: 110 })) } as MetricForecast;
@@ -42,5 +42,20 @@ describe('forecastReliability', () => {
     expect(forecastReliability({ points: 30, coverage: 0.55 })).toMatchObject({ level: 'fair', tone: 'warning' });
     expect(forecastReliability({ points: 30, coverage: 0.3 })).toMatchObject({ level: 'watch', tone: 'error' });
     expect(forecastReliability({ points: 9, coverage: 1 })).toMatchObject({ level: 'early', tone: 'neutral' });
+  });
+});
+
+describe('reliabilityTrend', () => {
+  const cohort = (coverage: number) => ({ through: 1, points: 30, baselineMae: {}, meanAbsActual: 1,
+    quality: { mae: 1, mase: null, meanPinballLoss: 0, q10Q90Coverage: coverage, meanIntervalWidth: 0 } });
+  const window = (...coverages: number[]) => ({ open: coverages.map(cohort), lastBlock: null, failedBlocks: 0 }) as unknown as ForecastQualityWindow;
+  it('reads the direction from the first to the last open cohort, past five points of coverage', () => {
+    expect(reliabilityTrend(window(0.6, 0.7, 0.85))).toEqual({ coverages: [0.6, 0.7, 0.85], direction: 'improving' });
+    expect(reliabilityTrend(window(0.9, 0.7))?.direction).toBe('degrading');
+    expect(reliabilityTrend(window(0.8, 0.82))?.direction).toBe('steady');
+  });
+  it('says nothing from fewer than two cohorts', () => {
+    expect(reliabilityTrend(window(0.8))).toBeNull();
+    expect(reliabilityTrend(null)).toBeNull();
   });
 });
