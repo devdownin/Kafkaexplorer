@@ -144,6 +144,25 @@ class ForecastPilotServiceTest {
     when(client.forecast(anyList(), eq(2))).thenReturn(List.of(forecast(context, 1)));
   }
 
+  /**
+   * The forecast set beside what happened is one whose history ended a whole horizon before the
+   * latest one's: every point it predicted is then inside the latest context, measured.
+   */
+  @Test
+  void thePreviousForecastIsOneWhoseWholeHorizonHasBeenMeasured() throws Exception {
+    var latest = record(context, 1, "READY");
+    when(store.latest(connection, spec.seriesId())).thenReturn(latest);
+    var older = record(context(context.toExclusive() - spec.horizon() * spec.profile().stepMillis()), 2, "READY");
+    long bound = context.toExclusive() - spec.horizon() * spec.profile().stepMillis();
+    when(store.matured(connection, spec.seriesId(), bound, 0)).thenReturn(older);
+    assertEquals(older.forecast(), pilot.previous(spec.seriesId()));
+
+    when(store.matured(connection, spec.seriesId(), bound, 0)).thenReturn(null);
+    assertNull(pilot.previous(spec.seriesId()));
+    when(store.latest(connection, spec.seriesId())).thenReturn(null);
+    assertNull(pilot.previous(spec.seriesId()));
+  }
+
   @Test
   void contentionNeverStartsPreparationOrInference() throws Exception {
     when(store.acquire(eq(connection), anyString())).thenReturn(false);

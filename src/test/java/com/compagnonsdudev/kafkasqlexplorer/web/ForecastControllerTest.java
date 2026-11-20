@@ -49,6 +49,27 @@ class ForecastControllerTest {
     assertEquals(404, controller().shadow("unknown").getStatusCode().value());
   }
 
+  /** The forecast set beside what happened: the latest one whose horizon has been measured. */
+  @Test
+  void servesThePreviousMeasuredForecastAndSaysWhenThereIsNone() throws Exception {
+    var s = series("a".repeat(64));
+    when(pilot.resolve(s.seriesId())).thenReturn(s);
+    when(pilot.previous(s.seriesId())).thenReturn(null);
+    assertEquals(204, controller().previous(s.seriesId()).getStatusCode().value());
+
+    var forecast = new MetricForecast("r", s.seriesId(), "v1", "i", "p", "ms", 60_000L, "timesfm", "rev", "a", "q50", 1,
+        java.util.List.of(new MetricForecast.Point(120_000L, 2, 1, 2, 3)));
+    when(pilot.previous(s.seriesId())).thenReturn(forecast);
+    var response = controller().previous(s.seriesId());
+    assertEquals(200, response.getStatusCode().value());
+    assertEquals(forecast, response.getBody());
+
+    when(pilot.resolve("unknown")).thenThrow(new IllegalArgumentException("unknown"));
+    assertEquals(404, controller().previous("unknown").getStatusCode().value());
+    when(pilot.previous(s.seriesId())).thenThrow(new IllegalStateException("db down"));
+    assertEquals(503, controller().previous(s.seriesId()).getStatusCode().value());
+  }
+
   private static ForecastPilotProperties.Series series(String id) {
     return new ForecastPilotProperties.Series(id, "metric-" + id.charAt(0), "local", "v1", "ms",
         java.util.List.of("orders"), java.util.List.of(),

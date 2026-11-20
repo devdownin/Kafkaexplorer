@@ -107,6 +107,32 @@ public class ForecastController {
    */
   static final int LIST_HISTORY_POINTS = 60;
 
+  /**
+   * What the latest fully measured forecast predicted: the panel sets it beside the measured curve,
+   * already in the series' own record. 204 while no forecast has matured.
+   */
+  @GetMapping("/{seriesId}/previous")
+  public ResponseEntity<MetricForecast> previous(@PathVariable String seriesId) {
+    var p = services.getIfAvailable();
+    if (p == null) return ResponseEntity.notFound().build();
+    String id;
+    try {
+      // The configured series' own id from here on: the path value is only a key to look it up,
+      // and is never written to the log (it is whatever the caller sent).
+      id = p.resolve(seriesId).seriesId();
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.notFound().build();
+    }
+    try {
+      var forecast = p.previous(id);
+      return forecast == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(forecast);
+    } catch (Exception e) {
+      org.slf4j.LoggerFactory.getLogger(ForecastController.class)
+          .warn("Previous forecast of {} could not be read: {}", id, e.toString());
+      return ResponseEntity.status(503).build();
+    }
+  }
+
   /** The record with only its latest history points: the counts and the status stay, the rest goes. */
   static ForecastRecord withoutHistory(ForecastRecord r) {
     if (r == null || r.context() == null) return r;

@@ -54,6 +54,7 @@ const API = [
   [m => m === '/api/forecasts/candidates', () => F.forecastCandidates],
   [m => /^\/api\/forecasts\/candidates\/[^/]+\/history$/.test(m), () => F.forecastHistory],
   [m => /^\/api\/forecasts\/[a-f0-9]{64}\/progress$/.test(m), () => F.forecastProgress],
+  [m => /^\/api\/forecasts\/[a-f0-9]{64}\/previous$/.test(m), () => F.forecastPrevious],
   // No shadow model on this deployment: the panel reads a 404 as "not configured" and stops asking.
   [m => /^\/api\/forecasts\/[a-f0-9]{64}\/shadow$/.test(m), () => ({ [STATUS]: 404 })],
   [m => /^\/api\/forecasts\/[a-f0-9]{64}$/.test(m), () => F.forecastSeries],
