@@ -36,6 +36,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the approval does (a non-canonical stored form read another series), and deleting a metric gives its
   history enrolment slot back (the 101st distinct metric of a process was silently not recorded;
   refusals are now counted in `explorer_forecast_history_enrollment_refused_total`).
+- **The Dashboard's two diagnostic links have a 24 px target.** "Inspect topics" and "Open
+  dead-letter explorer" (added with the actionable diagnostics) measured 16 px high, which put the
+  Dashboard at 3 undersized targets against a budget of 1 and failed the layout check of the
+  screenshots job on every pull request. `min-h-6`, as `SortButton` and `Tooltip` do; the budgets
+  are unchanged.
 Nothing yet.
 
 ## [2.7.0] — 2026-11-19
