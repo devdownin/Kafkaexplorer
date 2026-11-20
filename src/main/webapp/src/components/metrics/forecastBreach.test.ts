@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { describe, expect, it } from 'vitest';
 import type { ForecastSeriesView } from '../../api/types';
-import { forecastReachFor, forecastThresholdReach, predictedPoints } from './forecastBreach';
+import { forecastReachFor, forecastThresholdReach, predictedPoints, whatIfReach } from './forecastBreach';
 
 const points = (medians: number[], spread = 50) =>
   medians.map((q50, i) => ({ at: 1000 + i * 60000, central: q50, q50, q10: q50 - spread, q90: q50 + spread }));
@@ -54,5 +54,15 @@ describe('predictedPoints and forecastReachFor', () => {
   it('never compares the counter thresholds with a rate forecast, and says nothing without a forecast', () => {
     expect(forecastReachFor({ warningThreshold: 800, criticalThreshold: 1600 }, series('COUNTER_RATE'))).toBeNull();
     expect(forecastReachFor({ warningThreshold: 800, criticalThreshold: 1600 }, undefined)).toBeNull();
+  });
+});
+
+describe('whatIfReach', () => {
+  it('reads a tried threshold on the median, then on the band edge, in the direction given', () => {
+    expect(whatIfReach(points([700, 820, 900]), 800, false, true)).toMatchObject({ likelihood: 'expected', steps: 2 });
+    expect(whatIfReach(points([700, 760, 770]), 800, false, true)).toMatchObject({ likelihood: 'possible', steps: 2 });
+    expect(whatIfReach(points([700, 760, 770]), 800, false, false)).toBeNull();
+    expect(whatIfReach(points([0.99, 0.96, 0.9], 0.01), 0.95, true, true)).toMatchObject({ likelihood: 'expected', steps: 3 });
+    expect(whatIfReach(points([700]), Number.NaN, false, true)).toBeNull();
   });
 });

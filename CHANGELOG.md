@@ -24,6 +24,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dashed continuation of the measured history, from the last measured point and at the same step width;
   at most half as many predicted points as measured ones, so a short history is not squeezed into a corner
   (the card's own fix). None for a counter, whose forecast is a rate per second beside a counter's reading.
+- **Forecasts: fewer reads, and more to do with what they say.** The pilot service keeps each series'
+  latest record between writes: `GET /api/forecasts` read and decoded every series' whole record (up to
+  512 context points) on every poll of every tab, to strip its history; a local write drops the entry, a
+  write by another instance shows within 15 s, and STALE is still judged on every read. The page asks for
+  the forecasts again only once the pilot's next cycle is due (`nextCycleAt`, at least every two minutes),
+  and the panel's per-series reads wait while it is off screen. A card says how far a new forecast moved
+  its predicted threshold ("4 min sooner than the previous forecast"); the panel lets a threshold be tried
+  before it is set; *Forecast all eligible* creates the missing forecasts in one confirmed batch and names
+  each refusal; and *Notify me* raises a browser notification when a forecast newly predicts a threshold,
+  while the page is open — nothing is sent anywhere else.
 
 - **MCP: `kex_list_forecast_threshold_reaches`, the card's predicted threshold for an agent.** The only
   forecast-threshold tool, `kex_list_predicted_threshold_breaches`, judges a series' configured threshold

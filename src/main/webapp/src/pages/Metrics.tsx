@@ -31,8 +31,8 @@ import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop
 import { ForecastSetupWizard } from '../components/metrics/ForecastSetupWizard';
 import { ForecastPanel } from '../components/metrics/ForecastPanel';
 import { AutoCreateRefused, createForecastFromMetric } from '../components/metrics/forecastAutoCreate';
-import { forecastStage, type ForecastStageSummary } from '../components/metrics/forecastStage';
-import { groupReasons, keepUnchanged } from './metricsPolling';
+import { about, forecastStage, type ForecastStageSummary } from '../components/metrics/forecastStage';
+import { EMPTY_REACH_MEMORY, forecastReadDue, groupReasons, keepUnchanged, nextReachMemory } from './metricsPolling';
 import { forecastReachFor, type MetricForecastReach } from '../components/metrics/forecastBreach';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
@@ -440,10 +440,14 @@ const Metrics: React.FC = () => {
    * reports, so a deployment that refreshes every minute is read every minute.
    */
   const pollMs = refreshCosts && refreshCosts.tickMs >= 5000 ? refreshCosts.tickMs : 30000;
+  // When the forecasts were last read and when the pilot's next cycle starts: the forecast panel is
+  // only asked again once something can have changed (`forecastReadDue`). Written by the panel's
+  // status callback and read by this timer, never during render.
+  const forecastReads = useRef<{ lastAt: number | null; nextCycleAt: number | null }>({ lastAt: null, nextCycleAt: null });
   useEffect(() => startVisiblePolling(() => {
     void fetchMetrics();
     void fetchRefreshCosts();
-    setForecastClock(c => c + 1);
+    if (forecastReadDue(Date.now(), forecastReads.current.nextCycleAt, forecastReads.current.lastAt)) setForecastClock(c => c + 1);
   }, pollMs), [pollMs, fetchMetrics, fetchRefreshCosts]);
 
   /** Called with every preview that arrived: drops the labels the new topic's message does not carry. */
@@ -1034,6 +1038,84 @@ const Metrics: React.FC = () => {
   const onPrepareCard = useCallback((id: string) => cardActions.current?.prepare(id), []);
   const onShowCard = useCallback((id: string) => cardActions.current?.show(id), []);
   const forecastFilterAvailable = Boolean(forecastStatus?.enabled) && forecastStatus!.series.length > 0;
+  /*
+   * What the page remembers of each metric's predicted threshold, from one forecast to the next:
+   * how far a new forecast moved it (the card says "4 min sooner than the previous forecast"), and
+   * which reaches are news — the ones a browser notification is for, when the operator asked.
+   */
+  const [reachMemory, setReachMemory] = useState(EMPTY_REACH_MEMORY);
+  const notificationsSupported = typeof window !== 'undefined' && 'Notification' in window;
+  const [notify, setNotify] = useState(() => {
+    try { return notificationsSupported && localStorage.getItem('metrics.notify') === 'on'; } catch { return false; }
+  });
+  useEffect(() => {
+    if (!forecastStatus) return;
+    const current = [...forecastReaches].map(([metricId, reach]) => ({
+      metricId, key: forecastSeriesByMetric.get(metricId)?.result?.key ?? '', at: reach.at, level: reach.level }));
+    const { memory, news } = nextReachMemory(reachMemory, current);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- derived from the forecasts a poll brought
+    if (memory !== reachMemory) setReachMemory(memory);
+    if (notify && news.length && notificationsSupported && Notification.permission === 'granted') {
+      for (const item of news) {
+        const series = forecastSeriesByMetric.get(item.metricId);
+        const steps = series ? Math.max(1, Math.round((item.at - Date.now()) / series.stepMillis)) : 0;
+        try {
+          new Notification(`${metricNames[item.metricId] ?? item.metricId}: ${item.level} threshold predicted`, {
+            body: series ? `In ${about(steps, series.stepMillis)}, by its forecast. Nothing else was sent.` : 'By its forecast.',
+            tag: `kex-forecast-${item.metricId}`,
+          });
+        } catch { /* a browser that refuses to construct one: the card still says it */ }
+      }
+    }
+  }, [forecastStatus, forecastReaches, forecastSeriesByMetric, reachMemory, notify, notificationsSupported, metricNames]);
+  const toggleNotify = async () => {
+    if (notify) {
+      setNotify(false);
+      try { localStorage.setItem('metrics.notify', 'off'); } catch { /* not remembered */ }
+      return;
+    }
+    const permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission;
+    if (permission !== 'granted') {
+      toast('This browser does not allow notifications for this page: allow them in its site settings, then try again.', 'error');
+      return;
+    }
+    setNotify(true);
+    try { localStorage.setItem('metrics.notify', 'on'); } catch { /* not remembered, still applied */ }
+  };
+  /*
+   * Every metric that can be forecast now and has no forecast yet, created in one go. Sequential
+   * (each creation reads the metric's history) and summarised: what started, and for each refusal
+   * the server's own reason — the last slot taken by an earlier one in the same batch included.
+   */
+  const bulkCandidates = canCreateForecast && forecastCandidates
+    ? metrics.filter(m => forecastReasons.get(m.id) === undefined && !forecastMetricIds.includes(m.id)) : [];
+  const [bulk, setBulk] = useState<{ running: boolean; done: number; total: number;
+    refused: { name: string; reason: string }[] } | null>(null);
+  const forecastAllEligible = async () => {
+    const targets = bulkCandidates;
+    if (!targets.length || bulk?.running) return;
+    if (!await confirm({ title: `Forecast ${targets.length} metric${targets.length > 1 ? 's' : ''}?`, icon: 'insights',
+      confirmLabel: 'Forecast all',
+      description: `Each one is created from its recorded history with the suggested settings, one after the other: ${targets.map(m => m.name || m.id).join(', ')}.` })) return;
+    const refused: { name: string; reason: string }[] = [];
+    let started = 0;
+    setBulk({ running: true, done: 0, total: targets.length, refused });
+    for (const [i, metric] of targets.entries()) {
+      try {
+        await createForecastFromMetric(metric.id);
+        started++;
+      } catch (e) {
+        const reason = e instanceof AutoCreateRefused ? e.message
+          : axios.isAxiosError(e) && typeof e.response?.data?.reason === 'string' ? e.response.data.reason : 'Creation failed';
+        refused.push({ name: metric.name || metric.id, reason });
+      }
+      setBulk({ running: true, done: i + 1, total: targets.length, refused: [...refused] });
+    }
+    setBulk({ running: false, done: targets.length, total: targets.length, refused });
+    setForecastRevision(v => v + 1);
+    toast(`${started} forecast${started === 1 ? '' : 's'} started${refused.length ? `, ${refused.length} refused` : ''}.`,
+      refused.length && !started ? 'error' : 'success');
+  };
   const filteredMetrics = metrics
     .filter(m => filterType === 'all' || m.type === filterType)
     .filter(m => filterStatus === 'all' || getStatus(m) === filterStatus)
@@ -1120,6 +1202,21 @@ const Metrics: React.FC = () => {
               <option value="breach">Sort: next predicted breach</option>
             </Select>
           )}
+          {canCreateForecast && bulkCandidates.length > 0 && (
+            <Button variant="outline" size="sm" icon="insights" loading={bulk?.running} onClick={() => void forecastAllEligible()}
+              aria-label={`Forecast all eligible metrics (${bulkCandidates.length})`}>
+              {bulk?.running ? `Creating ${bulk.done} / ${bulk.total}…` : `Forecast all eligible (${bulkCandidates.length})`}
+            </Button>
+          )}
+          {notificationsSupported && forecastFilterAvailable && (
+            <button type="button" aria-pressed={notify} onClick={() => void toggleNotify()}
+              title="A browser notification when a forecast newly predicts a threshold, while this page is open. Nothing is sent anywhere else."
+              className={`inline-flex items-center gap-1 px-2.5 h-9 text-xs rounded-lg border border-outline-variant transition-colors ${notify
+                ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}>
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">{notify ? 'notifications_active' : 'notifications_off'}</span>
+              Notify me
+            </button>
+          )}
           <div role="group" aria-label="Layout" className="inline-flex rounded-lg border border-outline-variant overflow-hidden">
             {(['cards', 'compact'] as const).map(option => (
               <button key={option} type="button" aria-pressed={view === option} onClick={() => chooseView(option)}
@@ -1149,6 +1246,16 @@ const Metrics: React.FC = () => {
           <span className="font-semibold">Why no forecast: </span>
           {groupReasons(filteredMetrics.map(m => forecastReasons.get(m.id)))
             .map(({ reason, count }) => `${count} × ${reason}`).join(' · ')}
+        </div>
+      )}
+
+      {bulk && !bulk.running && bulk.refused.length > 0 && (
+        <div role="note" aria-label="Forecasts not started" className="text-xs text-on-surface-variant -mt-2 flex items-start gap-2">
+          <span><span className="font-semibold">Not started: </span>
+            {bulk.refused.map(r => `${r.name} — ${r.reason}`).join(' · ')}</span>
+          <button type="button" className="ml-auto text-outline hover:text-on-surface" aria-label="Dismiss" onClick={() => setBulk(null)}>
+            <span className="material-symbols-outlined text-[14px]" aria-hidden="true">close</span>
+          </button>
         </div>
       )}
 
@@ -1202,6 +1309,7 @@ const Metrics: React.FC = () => {
               nextForecastAt={forecastSeriesByMetric.has(metric.id) ? forecastStatus?.nextCycleAt ?? null : null}
               refreshDurationMs={refreshCosts?.metrics[metric.id]?.lastDurationMs}
               refreshTickMs={refreshCosts?.tickMs}
+              reachShiftMs={reachMemory.shifts[metric.id]}
             />
           )) : (
             <div className="col-span-full text-center py-12 text-on-surface-variant text-sm">
@@ -1230,6 +1338,7 @@ const Metrics: React.FC = () => {
           }} />
       </section>}
       <ForecastPanel refresh={forecastRevision} clock={forecastClock} focus={forecastFocus} metricNames={metricNames} metricThresholds={metricThresholds} onStatus={status => {
+        if (status) forecastReads.current = { lastAt: Date.now(), nextCycleAt: status.nextCycleAt ?? null };
         // Series by series, as the list: a series that did not move stays the same object.
         setForecastStatus(previous => {
           if (!status || !previous) return status;

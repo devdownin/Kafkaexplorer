@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { describe, expect, it } from 'vitest';
-import { clockTime, groupReasons, keepUnchanged, refreshCostNote } from './metricsPolling';
+import { EMPTY_REACH_MEMORY, clockTime, forecastReadDue, groupReasons, keepUnchanged, nextReachMemory, reachShiftText, refreshCostNote } from './metricsPolling';
 
 describe('keepUnchanged', () => {
   const key = (m: { id: string }) => m.id;
@@ -46,5 +46,44 @@ describe('clockTime', () => {
   it('formats an instant, and nothing without one', () => {
     expect(clockTime(Date.UTC(2026, 10, 20, 14, 32))).toMatch(/\d{1,2}:\d{2}/);
     expect(clockTime(null)).toBeNull();
+  });
+});
+
+describe('forecastReadDue', () => {
+  it('reads first, while a cycle runs, once the next cycle is due, and at least every two minutes', () => {
+    expect(forecastReadDue(1000, 5000, null)).toBe(true);
+    expect(forecastReadDue(1000, null, 900)).toBe(true);
+    expect(forecastReadDue(1000, 5000, 900)).toBe(false);
+    expect(forecastReadDue(5000, 5000, 900)).toBe(true);
+    expect(forecastReadDue(200_000, 900_000, 60_000)).toBe(true);
+  });
+});
+
+describe('nextReachMemory', () => {
+  const reach = (metricId: string, key: string, at: number, level: 'warning' | 'critical' = 'warning') => ({ metricId, key, at, level });
+  it('learns on the first read without calling anything news', () => {
+    const { memory, news } = nextReachMemory(EMPTY_REACH_MEMORY, [reach('a', 'k1', 1000)]);
+    expect(news).toEqual([]);
+    expect(memory.initialized).toBe(true);
+  });
+  it('measures how far a new forecast moved the same threshold, and keeps it until the next one', () => {
+    const first = nextReachMemory(EMPTY_REACH_MEMORY, [reach('a', 'k1', 720_000)]).memory;
+    const second = nextReachMemory(first, [reach('a', 'k2', 480_000)]);
+    expect(second.memory.shifts.a).toBe(-240_000);
+    expect(nextReachMemory(second.memory, [reach('a', 'k2', 480_000)]).memory).toBe(second.memory);
+  });
+  it('calls a new reach and an escalation to critical news, and nothing else', () => {
+    const first = nextReachMemory(EMPTY_REACH_MEMORY, [reach('a', 'k1', 1000)]).memory;
+    const { news } = nextReachMemory(first, [reach('a', 'k2', 900, 'critical'), reach('b', 'k1', 5000)]);
+    expect(news).toEqual([{ metricId: 'a', level: 'critical', at: 900 }, { metricId: 'b', level: 'warning', at: 5000 }]);
+  });
+});
+
+describe('reachShiftText', () => {
+  it('says how far and which way, and nothing under a minute', () => {
+    expect(reachShiftText(-240_000)).toBe(' · 4 min sooner than the previous forecast');
+    expect(reachShiftText(7_200_000)).toBe(' · 2 h later than the previous forecast');
+    expect(reachShiftText(30_000)).toBe('');
+    expect(reachShiftText(undefined)).toBe('');
   });
 });

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Badge, Button, Checkbox, Field, Select, Table, TableBody, TableHead, TableRow, Td, Th, useConfirm } from '../ui';
+import { Badge, Button, Checkbox, Field, Input, Select, Table, TableBody, TableHead, TableRow, Td, Th, useConfirm } from '../ui';
 import { copyText } from '../../clipboard';
 import type { BadgeTone } from '../ui';
 import type {
@@ -18,6 +18,7 @@ import { ForecastTimeline } from './ForecastTimeline';
 import { about, forecastStage } from './forecastStage';
 import { FORECAST_COLORS, THRESHOLD_COLORS } from './forecastColors';
 import { placeThresholds } from './thresholdPlacement';
+import { predictedPoints, whatIfReach } from './forecastBreach';
 
 /**
  * READY only says a forecast was produced, not that it can be approved: a green badge beside a
@@ -124,6 +125,25 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   // Followed during render rather than in an effect: it takes hold once the list carries the series.
   if (focus !== seenFocus) { setSeenFocus(focus); if (focus) { setSelected(focus); setCopied(false); setAction(null); } }
   const [revision, setRevision] = useState(0);
+  /*
+   * Whether the panel is on screen. It sits at the bottom of the page and read the shown series'
+   * detail, progress and shadow on every tick for nobody; off screen, those reads wait and the
+   * first one happens as it scrolls into view. The list itself is always read — the cards need it.
+   * Without IntersectionObserver (an old browser, the test DOM) the panel counts as on screen.
+   */
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const [onScreen, setOnScreen] = useState(true);
+  useEffect(() => {
+    const element = sectionRef.current;
+    if (!element || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(entries => setOnScreen(entries.some(e => e.isIntersecting)),
+      { rootMargin: '200px' });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  // A threshold the operator is only trying out: drawn, and read like the metric's own.
+  const [whatIf, setWhatIf] = useState('');
+  const [whatIfBelow, setWhatIfBelow] = useState<boolean | null>(null);
   /** P4: the preparation checks are read when their section is opened, not on every visit. */
   const [preparationOpen, setPreparationOpen] = useState(false);
   const [detail, setDetail] = useState<ForecastSeriesView | null>(null);
@@ -156,7 +176,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   const shadowConfigured = status?.shadowEnabled !== false;
   const wantProgress = summaryOpen || Boolean(status?.series.find(s => s.seriesId === seriesId)?.thresholdConfigured);
   useEffect(() => {
-    if (!seriesId) return;
+    if (!seriesId || !onScreen) return;
     // A series that answered 404 has no shadow configured: asking again every tick answers the same.
     let noShadow = !shadowConfigured;
     const path = `/api/forecasts/${encodeURIComponent(seriesId)}`;
@@ -187,7 +207,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
       }
       if (!signal.aborted) setShadow({ seriesId, view });
     }, clock === undefined);
-  }, [seriesId, revision, refresh, clock, shadowConfigured, wantProgress]);
+  }, [seriesId, revision, refresh, clock, shadowConfigured, wantProgress, onScreen]);
   const latestKey = status?.series.find(s => s.seriesId === seriesId)?.result?.key;
   const previousKey = `${seriesId}|${latestKey}`;
   useEffect(() => {
@@ -258,6 +278,12 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
     own && !ownRate ? [{ label: 'warning', value: own.warning, color: THRESHOLD_COLORS.warn },
       { label: 'critical', value: own.critical, color: THRESHOLD_COLORS.crit }] : []);
   for (const l of placed.lines) plotted.push(l.value);
+  const whatIfValue = whatIf.trim() === '' ? Number.NaN : Number(whatIf);
+  // The direction the metric's own thresholds imply (critical below warning reads downwards), until chosen.
+  const below = whatIfBelow ?? Boolean(own && own.warning !== null && own.critical !== null && own.critical < own.warning);
+  const tried = Number.isFinite(whatIfValue) && result
+    ? whatIfReach(predictedPoints(result.forecast), whatIfValue, below, result.strategy === 'TIMESFM') : null;
+  if (Number.isFinite(whatIfValue)) plotted.push(whatIfValue);
   const low = plotted.length ? Math.min(...plotted) : 0;
   const high = plotted.length ? Math.max(...plotted) : 1;
   const pad = (high - low) * 0.1 || Math.abs(high) * 0.1 || 1;
@@ -355,7 +381,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
    * chart sat 500 px into a 914 px panel, under four tiles, three folds and a destructive button,
    * and the approval was last.
    */
-  return <section className="card p-5 space-y-4" aria-label="Metrics Forecast">
+  return <section ref={sectionRef} className="card p-5 space-y-4" aria-label="Metrics Forecast">
     <h2 className="text-lg font-semibold">Metrics Forecast</h2>
     {error && <p role="alert">{error}</p>}
     {!status && !error && <p>Loading forecast status…</p>}
@@ -433,12 +459,30 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
             <Line dataKey="median" stroke={FORECAST_COLORS.forecast} strokeWidth={2} strokeDasharray="6 3" dot={false} name={result.strategy === 'TIMESFM' ? 'Median forecast' : 'Baseline forecast'} isAnimationActive={false} />
             {placed.lines.map(l => <ReferenceLine key={l.label} y={l.value} stroke={l.color} strokeDasharray="4 4"
               label={{ value: `${l.label} ${number(l.value)}`, position: 'insideBottomRight', fill: l.color, fontSize: 11 }} />)}
+            {Number.isFinite(whatIfValue) && <ReferenceLine y={whatIfValue} stroke={FORECAST_COLORS.forecast} strokeDasharray="2 2"
+              label={{ value: `what if ${number(whatIfValue)}`, position: 'insideTopLeft', fill: FORECAST_COLORS.forecast, fontSize: 11 }} />}
             {threshold && <ReferenceLine y={threshold.threshold} ifOverflow="extendDomain" stroke={FORECAST_COLORS.warning} strokeDasharray="4 4"
               label={{ value: `Threshold ${threshold.direction === 'ABOVE' ? '≥' : '≤'} ${threshold.threshold}`, position: 'insideTopRight', fill: FORECAST_COLORS.warning, fontSize: 11 }} />}
           </ComposedChart></ResponsiveContainer>
         </div>
         {placed.offScale.length > 0 && <p className="text-xs font-mono" aria-label="Thresholds off the chart scale">
           {placed.offScale.map(t => <span key={t.label} className="mr-3" style={{ color: t.color }}>{t.up ? '↑' : '↓'} {t.label} {number(t.value)} <span className="text-outline">off scale</span></span>)}</p>}
+        {/* Try a threshold before setting it: when this forecast would reach it, read as the card reads
+            the metric's own. Nothing is saved — to keep it, edit the metric. */}
+        <div className="flex flex-wrap items-end gap-2 text-sm" aria-label="Try a threshold">
+          <Field label="Try a threshold" className="w-40">{p => <Input {...p} type="number" inputMode="decimal" value={whatIf}
+            onChange={e => setWhatIf(e.target.value)} placeholder={result.context.outputUnit || 'value'} />}</Field>
+          <Select className="w-auto" aria-label="Direction of the tried threshold" value={below ? 'below' : 'above'}
+            onChange={e => setWhatIfBelow(e.target.value === 'below')}>
+            <option value="above">reached upwards (≥)</option>
+            <option value="below">reached downwards (≤)</option>
+          </Select>
+          {Number.isFinite(whatIfValue) && <p role="status" className="pb-2">
+            {tried
+              ? `Reached ${tried.likelihood === 'expected' ? 'on the median' : 'on the edge of the 80 % band'} in ${about(tried.steps, series!.stepMillis)}.`
+              : 'Not reached within the forecast horizon.'}
+            <span className="text-on-surface-variant"> Nothing is saved: to keep it, edit the metric.</span></p>}
+        </div>
         {compare && <p role="status" aria-label="Previous forecast against what happened" className="text-sm">
           {!previousShown ? 'Reading the previous forecast…'
             : previousShown.failed ? 'The previous forecast could not be read. Retry after the next refresh.'
