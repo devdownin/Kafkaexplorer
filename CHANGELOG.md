@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A metric's forecast reads as the continuation of its curve.** The card's button is now
+  **Forecast**: one click creates it (with the cycle the history shows), it is disabled with the
+  reason when no forecast is possible and gone once one exists. The card draws the last hour the
+  model read on a time axis shared with the prediction, a "now" marker and a cyan dashed median with
+  its 80 % band — the median was never drawn before (an `AreaChart` ignores `<Line>`) and shared
+  the healthy-card colour. In the panel the median starts on the last measurement, the value axis
+  fits the data and the threshold instead of starting at zero, and the tooltip is dark.
+  `GET /api/forecasts` now keeps the latest 60 context points per series.
 - **The rest of the second forecast audit.** A counter reset no longer refuses the whole 512-point
   context: it starts after the last reset once 128 points follow it, and says how far it has got until
   then. Cycle detection reads the history on its regular grid, a missing or imputed point as a hole,

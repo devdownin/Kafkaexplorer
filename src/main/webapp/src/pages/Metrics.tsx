@@ -1027,8 +1027,8 @@ const Metrics: React.FC = () => {
           trouvée — et en dessous des métriques existantes, qui restent le sujet de la page. */}
       {canCreateForecast && forecastRequest && <section aria-labelledby="metric-forecast-preparation" className="space-y-3 scroll-mt-20">
         <div className="flex items-center justify-between gap-3">
-          <h3 id="metric-forecast-preparation" tabIndex={-1} className="text-lg font-semibold outline-none">Prepare a forecast</h3>
-          <Button variant="ghost" size="sm" icon="close" onClick={() => setForecastRequest(null)}>Close forecast preparation</Button>
+          <h3 id="metric-forecast-preparation" tabIndex={-1} className="text-lg font-semibold outline-none">Forecast setup</h3>
+          <Button variant="ghost" size="sm" icon="close" onClick={() => setForecastRequest(null)}>Close forecast setup</Button>
         </div>
         <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId}
           onApplied={seriesId => {

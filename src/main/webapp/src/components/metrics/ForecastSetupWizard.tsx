@@ -108,7 +108,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
           return;
         }
         take(candidate);
-        // The card's "Prepare a forecast" action creates the series, not merely a draft.
+        // The card's "Forecast" action creates the series, not merely a draft.
         // The candidate catalogue supplies the exact definition version and source dependencies;
         // no second copy of the metric or manually entered SQL is needed.
         if (autoStarted.current || forecastMetricIds.includes(candidate.metricId)) return;
@@ -117,6 +117,21 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
         setAutoCreating(true);
         setBusy(true);
         const stepMillis = Number(cadenceFor(candidate));
+        /*
+         * The cycle the history shows, as the form would have proposed it: the one-click path
+         * forced "None" and lost a daily or hourly pattern the assistant detects on the same read.
+         * A preview that cannot be read costs the cycle, never the creation.
+         */
+        let seasonality = 'NONE';
+        try {
+          const { data: history } = await axios.get<ForecastHistoryPreview>(
+            `/api/forecasts/candidates/${encodeURIComponent(candidate.metricId)}/history`,
+            { params: { stepMillis }, signal: controller.signal, timeout: 10000 });
+          const cycle = SEASONALITIES.find(o => o.value === history?.suggestedSeasonality);
+          if (cycle && cycle.period > 0 && seasonFits(cycle.period, stepMillis)) seasonality = cycle.value;
+        } catch {
+          if (controller.signal.aborted) return;
+        }
         const request: ForecastDraftRequest = {
           metricId: candidate.metricId,
           definitionVersion: candidate.definitionVersion,
@@ -131,7 +146,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
           threshold: null,
           direction: 'ABOVE',
           confirmed: true,
-          seasonality: 'NONE',
+          seasonality,
         };
         try {
           const { data: result } = await axios.post<ForecastApplied>('/api/forecasts/series', request,

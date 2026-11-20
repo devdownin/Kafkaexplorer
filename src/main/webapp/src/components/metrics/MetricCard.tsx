@@ -16,14 +16,14 @@
  */
 
 import React from 'react';
-import { AreaChart, Area, Line, LineChart, ResponsiveContainer, ReferenceLine, ReferenceArea, Tooltip, YAxis } from 'recharts';
+import { Area, ComposedChart, Line, LineChart, ResponsiveContainer, ReferenceLine, ReferenceArea, Tooltip, XAxis, YAxis } from 'recharts';
 // Recharts exporte lui aussi un `Tooltip` : le nôtre est aliasé, comme dans la page.
 import { Badge, Button, Tooltip as InfoTooltip } from '../ui';
 import { useToast } from '../Toast';
 import { copyText } from '../../clipboard';
 import { describeQueryError } from '../../pages/queryError';
 import type { ForecastSeriesView, MetricConfig } from '../../api/types';
-import type { ForecastStageSummary } from './forecastStage';
+import { about, type ForecastStageSummary } from './forecastStage';
 import { FORECAST_COLORS } from './forecastColors';
 import { buildAlertRule, thresholdDirection } from '../../pages/metricAlert';
 import { componentSeries, describeMeasurement, describeMetricScope, scopeNoteOf } from '../../pages/metricScope';
@@ -82,22 +82,40 @@ export const MetricCard: React.FC<{
   // context. Reuse the metric's observed sparkline without extra requests per visible card.
   const prediction = forecastSeries?.result?.forecast;
   const forecastProfile = forecastSeries?.result?.context.profile;
-  const rateForecast = forecastProfile?.transformation === 'COUNTER_RATE';
+  const counterRate = forecastProfile?.transformation === 'COUNTER_RATE';
   // Rates are not the same quantity as raw counter values: use a separate, hidden axis instead
   // of making a per-second forecast appear comparable to a cumulative observation.
   const forecastPoints = (prediction?.points ?? []).filter(p =>
     Number.isFinite(p.q50) && Number.isFinite(p.at) && p.at > prediction!.historyEndAt)
     .sort((a, b) => a.at - b.at);
+  /*
+   * With a forecast, the card draws the series the model read — the latest points of its prepared
+   * context, which `/api/forecasts` keeps — on a time axis shared with the prediction. The metric's
+   * own sparkline is a handful of untimed values: 30 predicted points squeezed it into a fifth of the
+   * width, and for a counter it was a cumulative count beside a forecast rate. An imputed point is a
+   * filled gap, not a measurement, so it stays a hole here.
+   */
+  const contextHistory = prediction && forecastPoints.length
+    ? (forecastSeries?.result?.context.points ?? []).filter(p => p.endAt <= prediction.historyEndAt) : [];
+  const timed = contextHistory.filter(p => !p.imputed && Number.isFinite(p.value)).length >= 2;
+  // Without the context (an older server), a rate is not the sparkline's quantity: separate scale.
+  const rateForecast = counterRate && !timed;
   const hasInterval = !rateForecast && forecastSeries?.result?.strategy === 'TIMESFM' &&
     forecastPoints.some(p => Number.isFinite(p.q10) && Number.isFinite(p.q90) && p.q90 >= p.q10);
   const chartData: { i: number; v: number | null; predicted: number | null; lower: number | null; band: number | null; at?: number; kind: 'observed' | 'forecast' }[] =
-    observed.map((v, i) => ({ i, v: Number.isFinite(v) ? v : null, predicted: null, lower: null, band: null, kind: 'observed' }));
-  if (chartData.length && forecastPoints.length && !rateForecast) {
-    // Join the two strokes at the observed boundary; no point is counted as a prediction here.
-    chartData[chartData.length - 1].predicted = chartData[chartData.length - 1].v;
+    timed
+      ? contextHistory.map((p, i) => ({ i, v: !p.imputed && Number.isFinite(p.value) ? p.value as number : null,
+        predicted: null, lower: null, band: null, at: p.endAt, kind: 'observed' as const }))
+      : observed.map((v, i) => ({ i, v: Number.isFinite(v) ? v : null, predicted: null, lower: null, band: null, kind: 'observed' }));
+  const lastMeasured = [...chartData].reverse().find(p => p.v !== null);
+  if (lastMeasured && forecastPoints.length && !rateForecast) {
+    // Join the two strokes at the last measured point; no point is counted as a prediction here.
+    lastMeasured.predicted = lastMeasured.v;
   }
+  const boundary = timed ? lastMeasured?.at ?? prediction!.historyEndAt : chartData.length - 1;
+  const observedCount = chartData.length;
   forecastPoints.forEach((p, i) => chartData.push({
-    i: observed.length + i, v: null, predicted: p.q50,
+    i: observedCount + i, v: null, predicted: p.q50,
     lower: hasInterval && Number.isFinite(p.q10) && Number.isFinite(p.q90) && p.q90 >= p.q10 ? p.q10 : null,
     band: hasInterval && Number.isFinite(p.q10) && Number.isFinite(p.q90) && p.q90 >= p.q10 ? p.q90 - p.q10 : null,
     at: p.at, kind: 'forecast',
@@ -201,7 +219,8 @@ export const MetricCard: React.FC<{
       {/* Sparkline */}
       <div className="px-3 pb-2">
         {chartData.length > 0 ? (() => {
-          const vals = observed.filter(Number.isFinite);
+          const vals = timed ? chartData.flatMap(p => p.kind === 'observed' && p.v !== null ? [p.v] : [])
+            : observed.filter(Number.isFinite);
           const minV = Math.min(...(vals.length ? vals : forecastPoints.map(p => p.q50)));
           const maxV = Math.max(...(vals.length ? vals : forecastPoints.map(p => p.q50)));
           const plotted = rateForecast && vals.length ? vals : [...vals, ...forecastPoints.flatMap(p => hasInterval && Number.isFinite(p.q10) && Number.isFinite(p.q90) ? [p.q10, p.q90] : [p.q50])];
@@ -211,7 +230,10 @@ export const MetricCard: React.FC<{
           return (
             <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60">
               <ResponsiveContainer width="100%" height={80}>
-                <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+                {/* A ComposedChart, not an AreaChart: recharts' AreaChart draws only its <Area>
+                    children, so the forecast's median <Line> was silently never drawn — the card
+                    showed the band and called it "Forecast". */}
+                <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
                   <defs>
                     <linearGradient id={`grad-${metric.id}`} x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%"   stopColor={strokeColor} stopOpacity={0.35} />
@@ -219,11 +241,19 @@ export const MetricCard: React.FC<{
                     </linearGradient>
                   </defs>
                   <YAxis yAxisId="observed" domain={rateForecast ? [minV - pad, maxV + pad]
-                    : [plotMin - Math.max((plotMax - plotMin) * 0.15, 1), plotMax + Math.max((plotMax - plotMin) * 0.15, 1)]} hide />
+                    : [plotMin - Math.max((plotMax - plotMin) * 0.15, 1), plotMax + Math.max((plotMax - plotMin) * 0.15, 1)]}
+                    hide allowDataOverflow />
+                  {/* `allowDataOverflow` is what makes the domain above the domain: without it recharts
+                      widened it to the interval's stacked floor, which starts at zero, so the curve and
+                      its forecast were pressed against the top edge and the median hid inside the band. */}
                   {rateForecast && <YAxis yAxisId="forecast" orientation="right" hide domain={['auto', 'auto']} />}
-                  {forecastPoints.length > 0 && <ReferenceArea yAxisId="observed" x1={observed.length - 1}
-                    x2={chartData.length - 1} fill={FORECAST_COLORS.forecast} fillOpacity={0.045}
-                    strokeOpacity={0} ifOverflow="hidden" />}
+                  <XAxis dataKey={timed ? 'at' : 'i'} type="number" domain={['dataMin', 'dataMax']} hide />
+                  {forecastPoints.length > 0 && <ReferenceArea yAxisId="observed" x1={boundary}
+                    x2={timed ? forecastPoints[forecastPoints.length - 1].at : chartData.length - 1}
+                    fill={FORECAST_COLORS.forecast} fillOpacity={0.06} strokeOpacity={0} ifOverflow="hidden" />}
+                  {forecastPoints.length > 0 && <ReferenceLine yAxisId="observed" x={boundary} stroke={FORECAST_COLORS.band}
+                    strokeOpacity={0.6} strokeDasharray="2 2"
+                    label={{ value: 'now', position: 'insideTopLeft', fontSize: 8, fill: FORECAST_COLORS.band, dy: -2 }} />}
                   {metric.warningThreshold !== null && (
                     <ReferenceLine yAxisId="observed" y={metric.warningThreshold} stroke="#f5c264" strokeDasharray="4 3" strokeWidth={1}
                       label={{ value: 'warn', position: 'insideTopRight', fontSize: 8, fill: '#f5c264', dy: -2 }} />
@@ -238,7 +268,7 @@ export const MetricCard: React.FC<{
                   {hasInterval && <Area yAxisId="observed" type="monotone" dataKey="lower"
                     stroke="none" fill="transparent" stackId="forecast-band" isAnimationActive={false} />}
                   {hasInterval && <Area yAxisId="observed" type="monotone" dataKey="band"
-                    stroke="none" fill={FORECAST_COLORS.forecast} fillOpacity={0.18}
+                    stroke="none" fill={FORECAST_COLORS.forecast} fillOpacity={0.2}
                     stackId="forecast-band" isAnimationActive={false} />}
                   {forecastPoints.length > 0 && <Line yAxisId={rateForecast ? 'forecast' : 'observed'}
                     type="monotone" dataKey="predicted" stroke={FORECAST_COLORS.forecast}
@@ -253,7 +283,7 @@ export const MetricCard: React.FC<{
                         <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[10px] font-mono"
                           style={{ color: point.kind === 'forecast' ? FORECAST_COLORS.forecast : strokeColor }}>
                           <div>{point.kind === 'forecast' ? 'Forecast' : 'Observed'}: {value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-                          {point.kind === 'forecast' && point.at && <div>{new Date(point.at).toLocaleString()}</div>}
+                          {point.at && <div className="text-on-surface-variant">{new Date(point.at).toLocaleString()}</div>}
                           {point.kind === 'forecast' && point.lower !== null && point.band !== null && (
                             <div>80% interval: {point.lower.toLocaleString(undefined, { maximumFractionDigits: 2 })} – {(point.lower + point.band).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
                           )}
@@ -261,16 +291,20 @@ export const MetricCard: React.FC<{
                       ) : null;
                     }}
                   />
-                </AreaChart>
+                </ComposedChart>
               </ResponsiveContainer>
               {forecastPoints.length > 0 && <div className="flex flex-wrap gap-3 px-3 pt-1.5 text-[10px] font-mono" aria-label="Metric chart legend">
-                <span className="text-on-surface-variant flex items-center gap-1"><span className="w-3 h-0.5" style={{ background: strokeColor }} />Observed</span>
-                <span className="flex items-center gap-1" style={{ color: FORECAST_COLORS.forecast }}><span className="w-3 border-t-2 border-dashed" style={{ borderColor: FORECAST_COLORS.forecast }} />Forecast{rateForecast ? ' (per second, separate scale)' : ''}</span>
+                <span className="text-on-surface-variant flex items-center gap-1"><span className="w-3.5 h-0.5 rounded-full" style={{ background: strokeColor }} />Observed{timed && counterRate ? ' (per second)' : ''}</span>
+                <span className="flex items-center gap-1" style={{ color: FORECAST_COLORS.forecast }}>
+                  <svg width="14" height="4" aria-hidden="true"><line x1="0" y1="2" x2="14" y2="2" stroke={FORECAST_COLORS.forecast} strokeWidth="2" strokeDasharray="4 2" /></svg>
+                  Forecast{rateForecast ? ' (per second, separate scale)' : ''}</span>
                 {hasInterval && <span className="text-on-surface-variant flex items-center gap-1"><span className="w-3 h-2 rounded-sm" style={{ background: FORECAST_COLORS.forecast, opacity: 0.3 }} />80% prediction interval</span>}
               </div>}
               <div className="flex items-center justify-between px-3 py-1.5 border-t border-primary/5 text-[10px] font-mono">
                 <span className="text-outline">min <span className="text-on-surface-variant">{minV.toLocaleString(undefined, { maximumFractionDigits: 1 })}</span></span>
-                <span className="text-outline">{chartData.length} pts</span>
+                <span className="text-outline">{timed && forecastSeries
+                  ? `${about(observedCount, forecastSeries.stepMillis)} + ${about(forecastPoints.length, forecastSeries.stepMillis)} ahead`
+                  : `${chartData.length} pts`}</span>
                 <span className="text-outline">max <span className="text-on-surface-variant">{maxV.toLocaleString(undefined, { maximumFractionDigits: 1 })}</span></span>
               </div>
             </div>
@@ -427,14 +461,16 @@ export const MetricCard: React.FC<{
       {forecast ? <div role="group" className="px-4 py-2 border-t border-outline-variant/60 text-xs flex flex-wrap items-center gap-2" aria-label={`Forecast status of ${metric.name || metric.id}`}>
         <span className="font-semibold">Forecast</span><Badge tone={forecast.tone}>{forecast.label}</Badge><span>{forecast.detail}</span>
       </div> : null}
-      {(forecast || onPrepareForecast) && <div className="px-4 pb-2">
-        <span title={forecast ? 'A forecast already exists for this metric' : forecastUnavailableReason}
+      {/* One click creates the forecast with the defaults the server suggests; nothing to fill in.
+          Once it exists the status row above stands in for it, rather than a greyed-out duplicate. */}
+      {!forecast && onPrepareForecast && <div className="px-4 py-2">
+        <span title={forecastUnavailableReason ?? 'Create a forecast for this metric with the suggested settings'}
           className="inline-flex" aria-label={forecastUnavailableReason || undefined}>
-          <Button variant="ghost" disabled={Boolean(forecast || forecastUnavailableReason || refreshing)} onClick={onPrepareForecast}>
-            Prepare a forecast
+          <Button variant="outline" size="sm" icon="insights" disabled={Boolean(forecastUnavailableReason || refreshing)} onClick={onPrepareForecast}>
+            Forecast
           </Button>
         </span>
-        {!forecast && forecastUnavailableReason && (
+        {forecastUnavailableReason && (
           <p className="text-[10px] text-on-surface-variant mt-1" role="note">{forecastUnavailableReason}</p>
         )}
       </div>}

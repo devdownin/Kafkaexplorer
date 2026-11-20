@@ -85,16 +85,17 @@ class ForecastControllerTest {
     org.junit.jupiter.api.Assertions.assertFalse(rows.get(1).error().contains("payload cannot be decoded"));
   }
 
-  /** METRICS-FORECAST-UX-AUDIT.md P1: the list carries no history points; the detail does. */
+  /** METRICS-FORECAST-UX-AUDIT.md P1: the list carries only the latest points a card draws; the detail all. */
   @Test
-  void theListOmitsHistoryPointsAndTheDetailKeepsThem() throws Exception {
+  void theListKeepsOnlyTheLatestHistoryPointsAndTheDetailKeepsThem() throws Exception {
     var s = series("a".repeat(64));
     when(pilot.series()).thenReturn(java.util.List.of(s));
     when(pilot.resolve(s.seriesId())).thenReturn(s);
     when(pilot.get(s.seriesId())).thenReturn(record(s.seriesId(), 512));
 
     var listed = controller().status().getBody().series().getFirst().result();
-    assertEquals(0, listed.context().points().size());
+    assertEquals(ForecastController.LIST_HISTORY_POINTS, listed.context().points().size());
+    assertEquals(511 * 60_000L, listed.context().points().getLast().endAt(), "the latest points, not the first");
     assertEquals(512, listed.context().observedPoints());
     assertEquals(512, controller().series(s.seriesId()).getBody().result().context().points().size());
 
