@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Housekeeping: `unused/`.** Two files nothing referenced moved there, path preserved, so a `git mv`
+  restores them: `docs/SQL-BOUNDED-FLINK-STUDY.md` and the SPA's `LoadingSpinner.tsx`. Everything else that
+  looked orphaned is loaded by convention (workflows, test discovery, issue templates) or named by a note.
+
 - **CI drives the Metrics page against the forecast demo.** `ci/demo-forecast-ui.mjs` runs in the
   `forecast-stack` job after the backend smoke: the list's *Has a forecast* / *No forecast* filters keep
   what the server lists, *Breach predicted (N)* keeps N cards each with its badge, the sort keeps every
