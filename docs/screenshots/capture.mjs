@@ -146,7 +146,7 @@ const SCREENS = [
     url: '/metrics',
     settle: async page => {
       await page.locator('button:enabled').filter({ hasText: /^\s*(insights)?\s*Forecast\s*$/ }).first().click();
-      await page.getByText(/^Forecast started for gauge_volume_demo_orders_1_received\./).waitFor();
+      await page.getByText(/Forecast started for gauge_volume_demo_orders_1_received\./).waitFor();
     },
     anchor: '[aria-label="Forecast status of gauge_volume_demo_orders_1_received"]',
   },
