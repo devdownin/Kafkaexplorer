@@ -75,6 +75,8 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
   const [approved, setApproved] = useState(false);
   const [draft, setDraft] = useState<ForecastDraft | null>(null);
   const [applied, setApplied] = useState<ForecastApplied | null>(null);
+  // History already recorded when the series started: the first forecast needs only the rest.
+  const [recordedAtStart, setRecordedAtStart] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -108,7 +110,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
           return;
         }
         take(candidate);
-        // The card's "Prepare a forecast" action creates the series, not merely a draft.
+        // The card's "Forecast" action creates the series, not merely a draft.
         // The candidate catalogue supplies the exact definition version and source dependencies;
         // no second copy of the metric or manually entered SQL is needed.
         if (autoStarted.current || forecastMetricIds.includes(candidate.metricId)) return;
@@ -117,6 +119,23 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
         setAutoCreating(true);
         setBusy(true);
         const stepMillis = Number(cadenceFor(candidate));
+        /*
+         * The cycle the history shows, as the form would have proposed it: the one-click path
+         * forced "None" and lost a daily or hourly pattern the assistant detects on the same read.
+         * A preview that cannot be read costs the cycle, never the creation.
+         */
+        let seasonality = 'NONE';
+        let recorded: number | null = null;
+        try {
+          const { data: history } = await axios.get<ForecastHistoryPreview>(
+            `/api/forecasts/candidates/${encodeURIComponent(candidate.metricId)}/history`,
+            { params: { stepMillis }, signal: controller.signal, timeout: 10000 });
+          if (Number.isFinite(history?.observedPoints)) recorded = history.observedPoints;
+          const cycle = SEASONALITIES.find(o => o.value === history?.suggestedSeasonality);
+          if (cycle && cycle.period > 0 && seasonFits(cycle.period, stepMillis)) seasonality = cycle.value;
+        } catch {
+          if (controller.signal.aborted) return;
+        }
         const request: ForecastDraftRequest = {
           metricId: candidate.metricId,
           definitionVersion: candidate.definitionVersion,
@@ -131,13 +150,13 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
           threshold: null,
           direction: 'ABOVE',
           confirmed: true,
-          seasonality: 'NONE',
+          seasonality,
         };
         try {
           const { data: result } = await axios.post<ForecastApplied>('/api/forecasts/series', request,
             { signal: controller.signal, timeout: 10000 });
           if (typeof result?.seriesId !== 'string') throw new Error('Invalid forecast response');
-          if (!controller.signal.aborted) { setApplied(result); onApplied?.(result.seriesId); }
+          if (!controller.signal.aborted) { setSeasonality(seasonality); setRecordedAtStart(recorded); setApplied(result); onApplied?.(result.seriesId); }
         } catch (e) {
           if (!controller.signal.aborted) setError(axios.isAxiosError(e) && typeof e.response?.data?.reason === 'string'
             ? `Automatic creation failed: ${e.response.data.reason}. Review the configuration below.`
@@ -210,7 +229,7 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
       if (mode === 'apply') {
         const { data } = await axios.post<ForecastApplied>('/api/forecasts/series', request, options);
         if (typeof data?.seriesId !== 'string') throw new Error('Invalid approval response');
-        if (!abort.current?.signal.aborted) { setApplied(data); onApplied?.(data.seriesId); }
+        if (!abort.current?.signal.aborted) { setRecordedAtStart(preview?.observedPoints ?? null); setApplied(data); onApplied?.(data.seriesId); }
       } else {
         const { data } = await axios.post<ForecastDraft>('/api/forecasts/configuration', request, options);
         if (typeof data?.configuration !== 'string' || !Array.isArray(data.instructions)) throw new Error('Invalid configuration response');
@@ -353,7 +372,14 @@ export function ForecastSetupWizard({ initialMetricId, onApplied, forecastMetric
     </form>}
     {applied && <div role="status" className="space-y-2 text-sm">
       <p className="font-semibold">Forecast started for {selected?.name || selected?.metricId}.</p>
-      <p>It is now the series shown in Metrics Forecast below. {firstSpan ? `Its first forecast follows after ${firstPoints} points, ${firstSpan}` : 'Its first forecast follows once enough points exist'}; then quality is judged over realised values before approval is offered.</p>
+      {/* It said "after 128 points, ~2 h" whatever was already recorded, while the journal keeps
+          every metric's history from the moment it runs: a metric with a day behind it has its first
+          forecast at the next cycle, not in two hours. */}
+      <p>It is now the series shown in Metrics Forecast below. {firstPoints !== null && recordedAtStart !== null && recordedAtStart >= firstPoints
+        ? 'Its first forecast is computed at the next cycle, from the history already recorded'
+        : firstPoints !== null && recordedAtStart !== null
+          ? `${recordedAtStart} of the ${firstPoints} points it needs are already recorded; its first forecast follows in ${about(firstPoints - recordedAtStart, Number(cadence))}`
+          : firstSpan ? `Its first forecast follows after ${firstPoints} points, ${firstSpan}` : 'Its first forecast follows once enough points exist'}; then quality is judged over realised values before approval is offered.</p>
       <Button variant="secondary" onClick={startOver}>Configure another metric</Button>
     </div>}
     {draft && <>

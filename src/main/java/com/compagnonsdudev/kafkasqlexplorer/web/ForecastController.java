@@ -98,14 +98,24 @@ public class ForecastController {
     }
   }
 
-  /** The record without its history points: the counts and the status stay, the 512 points go. */
+  /**
+   * How many of the latest history points the list keeps: what a metric card draws before its
+   * forecast. The card had only the metric's own sparkline, a handful of untimed values, so 30
+   * predicted points squeezed the measured curve into a fifth of its width — and for a counter it
+   * was another quantity (a cumulative count) than the rate being forecast. Sixty points of the
+   * prepared series are the forecast's own unit and grid, ~3 KB per series against 44 KB for all.
+   */
+  static final int LIST_HISTORY_POINTS = 60;
+
+  /** The record with only its latest history points: the counts and the status stay, the rest goes. */
   static ForecastRecord withoutHistory(ForecastRecord r) {
     if (r == null || r.context() == null) return r;
     var c = r.context();
+    var points = c.points();
     var light = new PreparedMetricSeries(c.status(), c.reason(), c.seriesId(), c.definitionVersion(),
         c.sourceUnit(), c.outputUnit(), c.fromInclusive(), c.toExclusive(), c.profile(),
         c.profileFingerprint(), c.inputFingerprint(), c.observedPoints(), c.missingPoints(),
-        c.imputedPoints(), List.of());
+        c.imputedPoints(), points.subList(Math.max(0, points.size() - LIST_HISTORY_POINTS), points.size()));
     return new ForecastRecord(r.key(), r.generatedAt(), r.state(), r.strategy(), r.visibility(), light,
         r.forecast(), r.quality(), r.evaluatedPoints(), r.evaluatedThrough(), r.baselineMae(), r.reason(),
         r.qualityWindow());

@@ -195,12 +195,12 @@ beforeEach(() => {
 describe('Metrics page', () => {
   it('opens the forecast assistant from the matching metric card and aborts it on close', async () => {
     stubApi([templateMetric], [suggestion], READY_FORECASTS); const user = userEvent.setup(); await renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Prepare a forecast' }));
+    await user.click(await screen.findByRole('button', { name: 'Forecast' }));
     // Opened for that metric, its sources are there at once (METRICS-FORECAST-UX-AUDIT.md U4).
     expect(await screen.findByRole('list', { name: 'All source topics: selected' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Prepare a forecast' })).toHaveFocus();
+    expect(screen.getByRole('heading', { name: 'Forecast setup' })).toHaveFocus();
     expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/forecasts/configuration', expect.anything(), expect.anything());
-    await user.click(screen.getByRole('button', { name: 'Close forecast preparation' }));
+    await user.click(screen.getByRole('button', { name: 'Close forecast setup' }));
     expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
   });
   /*
@@ -213,16 +213,16 @@ describe('Metrics page', () => {
     await renderPage();
 
     expect(await screen.findByText(/No forecasting model is configured/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Prepare a forecast' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Forecast' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Configure a forecast' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Prepare a forecast' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Forecast setup' })).toBeNull();
   });
   it('offers none either while the pilot itself is off', async () => {
     stubApi([templateMetric]);
     await renderPage();
 
     expect(await screen.findByText(/Forecast pilot disabled/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Prepare a forecast' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Forecast' })).toBeNull();
   });
   it('disables forecast preparation when the backend marks a metric ineligible', async () => {
     stubApi([templateMetric], [suggestion], READY_FORECASTS);
@@ -240,8 +240,8 @@ describe('Metrics page', () => {
     });
     await renderPage();
     expect(await screen.findByText('Unsupported metric transformation')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
-    expect(screen.queryByRole('heading', { name: 'Prepare a forecast' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Forecast' })).toBeDisabled();
+    expect(screen.queryByRole('heading', { name: 'Forecast setup' })).toBeNull();
   });
 
   it('disables forecast preparation when the backend cannot apply a forecast', async () => {
@@ -259,7 +259,7 @@ describe('Metrics page', () => {
     });
     await renderPage();
     expect(await screen.findByText('Forecast storage is not configured')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Forecast' })).toBeDisabled();
   });
 
   it('shows where a forecast stands on its card instead of offering to prepare another', async () => {
@@ -272,9 +272,10 @@ describe('Metrics page', () => {
     const status = await screen.findByLabelText(`Forecast status of ${templateMetric.name}`);
     expect(status).toHaveTextContent('Collecting');
     expect(status).toHaveTextContent('History 68 / 128 points · first forecast in ~60 min');
-    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+    // The status row stands in for the action: no greyed-out duplicate of it.
+    expect(screen.queryByRole('button', { name: 'Forecast' })).toBeNull();
   });
-  it('extends the selected metric chart with a distinguishable forecast and disables preparation', async () => {
+  it('extends the selected metric chart with a distinguishable forecast and offers no second one', async () => {
     const historyEndAt = Date.now();
     const forecastSeries = {
       seriesId: 'b'.repeat(64), metricId: templateMetric.id, environment: 'local',
@@ -293,7 +294,30 @@ describe('Metrics page', () => {
     await renderPage();
     expect(await screen.findByLabelText('Metric chart legend')).toHaveTextContent('Observed');
     expect(screen.getByLabelText('Metric chart legend')).toHaveTextContent('Forecast');
-    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Forecast' })).toBeNull();
+  });
+  /*
+   * The card draws the series the model read, on the forecast's time axis: the metric's own
+   * sparkline is a handful of untimed values that 30 predicted points squeezed to a fifth of the width.
+   */
+  it('draws the forecast series history on the card, on the same time axis as the forecast', async () => {
+    const historyEndAt = Date.UTC(2026, 10, 20, 12);
+    const points = Array.from({ length: 60 }, (_, i) => ({ endAt: historyEndAt - (59 - i) * 60000, value: 400 + i, imputed: false, samples: 1 }));
+    const forecastPoints = Array.from({ length: 30 }, (_, i) => ({ at: historyEndAt + (i + 1) * 60000, central: 460, q50: 460, q10: 450, q90: 470 }));
+    stubApi([templateMetric], [suggestion], { ...READY_FORECASTS, series: [{
+      seriesId: 'c'.repeat(64), metricId: templateMetric.id, environment: 'local',
+      stepMillis: 60000, minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+      activation: { eligible: false, reason: 'Collecting quality evidence', blockPoints: 0,
+        blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: { state: 'READY', strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'Forecast ready',
+        context: { status: 'READY', observedPoints: 512, outputUnit: 'milliseconds',
+          profile: { transformation: 'GAUGE_MEAN', stepMillis: 60000, contextPoints: 512 }, points },
+        forecast: { historyEndAt, points: forecastPoints }, quality: null } }] });
+    await renderPage();
+    await screen.findByLabelText('Metric chart legend');
+    // Sixty measured minutes, then thirty predicted ones — not "N pts" of a sparkline.
+    expect(screen.getByText('~60 min + ~30 min ahead')).toBeInTheDocument();
+    expect(screen.getByText('400')).toBeInTheDocument(); // min of the context, not of the sparkline
   });
   it('renders a template metric, whose SQL is null by construction', async () => {
     stubApi([templateMetric]);

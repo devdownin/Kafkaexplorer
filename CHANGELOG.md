@@ -25,6 +25,23 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   11.0.5 and `zod` (an ESLint plugin's, memory exhaustion) to 4.6.7, through `overrides` since no
   parent release carries them yet. Only `dompurify` ships in the application; the other two are
   build-time. `npm audit` reports none.
+- **A metric card says when its forecast reaches a threshold.** "Warning expected in ~12 min
+  (≥ 2,150, median)" when the median reaches the metric's own warning or critical threshold,
+  "possible" when only the 80 % band does, critical before warning, in the direction the two
+  thresholds imply — a reading of the forecast, not an alert. A threshold near the curve widens the
+  card's scale to stay drawn; one far away is named under the chart ("↑ crit 7,600 off scale")
+  instead of silently leaving it. A counter's forecast is a rate per second, so its thresholds are
+  neither drawn nor compared there, and the card says the chart is a rate. The forecast status
+  carries a progress bar, and the assistant counts the history already recorded when it says when
+  the first forecast follows (it promised "~2 h" whatever was there).
+- **A metric's forecast reads as the continuation of its curve.** The card's button is now
+  **Forecast**: one click creates it (with the cycle the history shows), it is disabled with the
+  reason when no forecast is possible and gone once one exists. The card draws the last hour the
+  model read on a time axis shared with the prediction, a "now" marker and a cyan dashed median with
+  its 80 % band — the median was never drawn before (an `AreaChart` ignores `<Line>`) and shared
+  the healthy-card colour. In the panel the median starts on the last measurement, the value axis
+  fits the data and the threshold instead of starting at zero, and the tooltip is dark.
+  `GET /api/forecasts` now keeps the latest 60 context points per series.
 - **Forecast polling no longer decodes what it throws away.** `GET /api/forecasts`, polled every
   30 s, decoded each series' whole latest result (512-point context included) only to drop the points;
   the latest result key is now read first and the payload decoded only when it changed, results being

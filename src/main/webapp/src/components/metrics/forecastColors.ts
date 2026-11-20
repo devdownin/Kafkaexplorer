@@ -14,8 +14,14 @@ export const FORECAST_COLORS = {
   observed: '#6ee7a0',
   /** A filled gap and a threshold: the warning token — neither is a measurement. */
   warning: '#f5c264',
-  /** What the model says: the primary token. */
-  forecast: '#a3adff',
+  /**
+   * What the model says: its own colour, deliberately no token of the palette. It was the primary
+   * token — which is also the stroke of every healthy metric card, so on a card the forecast and the
+   * measurement it continues were the same lavender and only a dash told them apart. Cyan is none
+   * of the status colours (success, warning, error, primary) and reads apart from each on the dark
+   * surfaces, so a prediction is never mistaken for a measurement of any state.
+   */
+  forecast: '#56c8e8',
   /** The 80 % interval's band and the chart's quiet furniture: on-surface-variant. */
   band: '#9aa3b2',
 } as const;

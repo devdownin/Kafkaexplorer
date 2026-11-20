@@ -32,6 +32,46 @@ describe('ForecastSetupWizard', () => {
     }), expect.objectContaining({ timeout: 10000 }));
     expect(onApplied).toHaveBeenCalledWith('forecast-lag');
   });
+  it('creates it with the cycle the history shows, as the form would propose it', async () => {
+    const candidates = { metrics: [metric], total: 1, truncated: false,
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 };
+    vi.mocked(axios.get).mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/history')
+      ? { status: 'READY', reason: 'ok', observedPoints: 600, requiredPoints: 128, unit: 'milliseconds', points: [],
+        suggestedSeasonality: 'HOURLY', correlation: 0.9 }
+      : candidates }));
+    vi.mocked(axios.post).mockResolvedValue({ data: { seriesId: 'forecast-lag' } });
+    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+    expect(await screen.findByText('Forecast started for Lag.')).toBeTruthy();
+    expect(axios.post).toHaveBeenCalledWith('/api/forecasts/series',
+      expect.objectContaining({ seasonality: 'HOURLY' }), expect.anything());
+  });
+  // It promised "after 128 points, ~2 h" whatever was already recorded.
+  it('counts the history already recorded when it says when the first forecast follows', async () => {
+    const candidates = { metrics: [metric], total: 1, truncated: false,
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 };
+    for (const [observed, sentence] of [[600, 'Its first forecast is computed at the next cycle, from the history already recorded'],
+      [100, '100 of the 128 points it needs are already recorded; its first forecast follows in ~28 min']] as const) {
+      vi.mocked(axios.get).mockImplementation((url: string) => Promise.resolve({ data: url.endsWith('/history')
+        ? { status: 'READY', reason: 'ok', observedPoints: observed, requiredPoints: 128, unit: 'milliseconds', points: [],
+          suggestedSeasonality: null, correlation: null }
+        : candidates }));
+      vi.mocked(axios.post).mockResolvedValue({ data: { seriesId: 'forecast-lag' } });
+      render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+      expect(await screen.findByText(new RegExp(sentence.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).toBeTruthy();
+      cleanup();
+    }
+  });
+  it('still creates it without a cycle when the history cannot be read', async () => {
+    const candidates = { metrics: [metric], total: 1, truncated: false,
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 };
+    vi.mocked(axios.get).mockImplementation((url: string) => url.endsWith('/history')
+      ? Promise.reject(new Error('down')) : Promise.resolve({ data: candidates }));
+    vi.mocked(axios.post).mockResolvedValue({ data: { seriesId: 'forecast-lag' } });
+    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+    expect(await screen.findByText('Forecast started for Lag.')).toBeTruthy();
+    expect(axios.post).toHaveBeenCalledWith('/api/forecasts/series',
+      expect.objectContaining({ seasonality: 'NONE' }), expect.anything());
+  });
   it('keeps the editable assistant if automatic creation is refused', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1,
       clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 } });
