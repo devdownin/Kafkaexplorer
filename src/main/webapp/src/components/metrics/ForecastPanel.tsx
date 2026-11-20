@@ -70,9 +70,15 @@ function isProgress(data: Progress | undefined, seriesId: string): data is Progr
     && data.requiredPoints === 512 && Array.isArray(data.topics) && Array.isArray(data.groups);
 }
 
-export function ForecastPanel({ onStatus, refresh = 0, focus = '' }: {
-  /** A series to show: the one the assistant just started, which was otherwise left behind the first. */
+export function ForecastPanel({ onStatus, refresh = 0, focus = '', metricNames = {} }: {
+  /**
+   * The series to show: the one a card's Details asked for, or the one just started. The card is
+   * where a series is chosen — every forecast belongs to a metric card — so the panel has no
+   * selector of its own: it repeated the list of cards, in metric ids instead of names.
+   */
   focus?: string;
+  /** Metric names by id, so the panel says which metric it shows the way the card does. */
+  metricNames?: Record<string, string>;
   /** Receives every status the panel polls, so the page can show it on the cards without a second poll. */
   onStatus?: (status: ForecastStatus | null) => void;
   /** Bumped by the page after an approval, to poll at once rather than at the next tick. */
@@ -83,9 +89,7 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '' }: {
   const [progressError, setProgressError] = useState('');
   const [shadow, setShadow] = useState<{ seriesId: string; view: ShadowView } | null>(null);
   const [selected, setSelected] = useState(focus);
-  // Followed during render rather than in an effect: it takes hold once the list carries the series.
   const [seenFocus, setSeenFocus] = useState(focus);
-  if (focus !== seenFocus) { setSeenFocus(focus); if (focus) setSelected(focus); }
   const [error, setError] = useState('');
   // A refusal belongs to the button that was clicked and must outlive the next poll: sharing
   // `error` with the poll made it vanish within 30 s, and a failing poll overwrite it.
@@ -96,6 +100,8 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '' }: {
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Followed during render rather than in an effect: it takes hold once the list carries the series.
+  if (focus !== seenFocus) { setSeenFocus(focus); if (focus) { setSelected(focus); setCopied(false); setAction(null); } }
   const [revision, setRevision] = useState(0);
   /** P4: the preparation checks are read when their section is opened, not on every visit. */
   const [preparationOpen, setPreparationOpen] = useState(false);
@@ -305,10 +311,11 @@ export function ForecastPanel({ onStatus, refresh = 0, focus = '' }: {
     {status?.enabled && status.modelAvailable !== false && status.series.length === 0 && <p>Forecast pilot enabled. Configure approved series, PostgreSQL history and TimesFM inference to calculate forecasts.</p>}
     {status?.enabled && status.series.length > 0 && <>
       <div className="flex flex-wrap items-end gap-3">
-        <Field label="Series" className="min-w-64">{p => <Select {...p} value={series?.seriesId ?? ''}
-          onChange={e => { setSelected(e.target.value); setCopied(false); setAction(null); }}>
-          {status.series.map(s => <option key={s.seriesId} value={s.seriesId}>{s.metricId} · {s.environment}</option>)}
-        </Select>}</Field>
+        {series && <div className="min-w-64 pb-1">
+          <h3 className="font-semibold font-mono break-all" aria-label="Forecast series">{metricNames[series.metricId] ?? series.metricId}</h3>
+          <p className="text-xs text-on-surface-variant">{series.environment}{status.series.length > 1
+            ? ` · ${status.series.length} forecasts — Details on a metric card shows its own` : ''}</p>
+        </div>}
         {result && <span className="flex flex-wrap gap-1 pb-1.5" aria-label="Forecast status">
           <Badge tone={STATE_TONE[result.state] ?? 'warning'} title={result.state}>{STATE_LABEL[result.state] ?? result.state}</Badge>
           <Badge tone={NEUTRAL_STRATEGIES.has(result.strategy) ? 'neutral' : 'warning'} title={result.strategy}>

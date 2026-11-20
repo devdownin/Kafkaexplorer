@@ -299,6 +299,21 @@ describe('Metrics page', () => {
     // The status row stands in for the action: no greyed-out duplicate of it.
     expect(screen.queryByRole('button', { name: 'Forecast' })).toBeNull();
   });
+  // Every forecast belongs to a card: the card's Details is how the panel is pointed at it.
+  it('points the forecast panel at a card\'s series from its Details button', async () => {
+    const series = (id: string, metricId: string) => ({ seriesId: id, metricId, environment: 'local', stepMillis: 60000,
+      minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+      activation: { eligible: false, reason: 'No forecast', blockPoints: 0, blockPointsRequired: 180, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: { state: 'WARMING_UP', strategy: 'UNAVAILABLE', visibility: 'SHADOW', reason: 'Collecting history', forecast: null, quality: null,
+        baselineMae: {}, evaluatedPoints: 0, context: { status: 'WARMING_UP', observedPoints: 68, points: [], outputUnit: 'milliseconds' } } });
+    const second = { ...templateMetric, id: 'm-2', name: 'gauge_second' };
+    stubApi([templateMetric, second], [suggestion], { enabled: true, state: 'AVAILABLE',
+      series: [series('a'.repeat(64), templateMetric.id), series('b'.repeat(64), second.id)] });
+    const user = userEvent.setup(); await renderPage();
+    expect(await screen.findByLabelText('Forecast series')).toHaveTextContent('gauge_latency_a_to_b');
+    await user.click(screen.getByRole('button', { name: 'Show the forecast of gauge_second' }));
+    await waitFor(() => expect(screen.getByLabelText('Forecast series')).toHaveTextContent('gauge_second'));
+  });
   it('extends the selected metric chart with a distinguishable forecast and offers no second one', async () => {
     const historyEndAt = Date.now();
     const forecastSeries = {

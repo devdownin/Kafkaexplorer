@@ -26,7 +26,8 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reason, only if the creation stops. Gone with it: the panel's "Configure a forecast" and the
   form's metric selector, the fields the metric already answers (unit, environment, history cluster
   and collector IDs), and the source attestation for a template metric, whose sources are declared.
-  The forecast panel's five folds are two: Quality and Configuration.
+  The forecast panel's five folds are two: Quality and Configuration, and it has no series selector:
+  a card's **Details** shows that metric's forecast in it, named as the card names it.
 - **A metric card says when its forecast reaches a threshold.** "Warning expected in ~12 min
   (≥ 2,150, median)" when the median reaches the metric's own warning or critical threshold,
   "possible" when only the 80 % band does, critical before warning, in the direction the two

@@ -244,17 +244,27 @@ describe('ForecastPanel', () => {
     });
   });
 
-  // METRICS-FORECAST-UX-AUDIT.md P3: choosing a series reads that series, not the whole list again.
-  it('reads only the chosen series when the selection changes', async () => {
+  // METRICS-FORECAST-UX-AUDIT.md P3: showing another series reads that series, not the whole list again.
+  it('reads only the series a card asks for when it changes', async () => {
     const two = seriesWith(ready);
     const other = { ...two.series[0], seriesId: 'b'.repeat(64), metricId: 'other' };
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...two, series: [two.series[0], other] } : {} }));
-    const user = userEvent.setup(); render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
-    const select = await screen.findByLabelText('Series');
+    const view = render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
+    await screen.findByLabelText('Forecast series');
     vi.mocked(axios.get).mockClear();
-    await user.selectOptions(select, 'b'.repeat(64));
+    view.rerender(<ConfirmProvider><ForecastPanel focus={'b'.repeat(64)} /></ConfirmProvider>);
     await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).toContain(`/api/forecasts/${'b'.repeat(64)}`));
     expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).not.toContain('/api/forecasts');
+  });
+  // The card is where a series is chosen: the panel names the one it shows, by metric name, and has no selector.
+  it('names the series it shows instead of offering a selector', async () => {
+    const two = seriesWith(ready);
+    const other = { ...two.series[0], seriesId: 'b'.repeat(64), metricId: 'other' };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...two, series: [two.series[0], other] } : {} }));
+    render(<ConfirmProvider><ForecastPanel focus={'b'.repeat(64)} metricNames={{ other: 'Orders lag' }} /></ConfirmProvider>);
+    expect(await screen.findByLabelText('Forecast series')).toHaveTextContent('Orders lag');
+    expect(screen.getByText(/2 forecasts — Details on a metric card shows its own/)).toBeTruthy();
+    expect(screen.queryByLabelText('Series')).toBeNull();
   });
 
   it('shows the series the assistant just started, not whichever is first', async () => {
@@ -262,9 +272,9 @@ describe('ForecastPanel', () => {
     const started = { ...two.series[0], seriesId: 'b'.repeat(64), metricId: 'started' };
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...two, series: [two.series[0], started] } : {} }));
     const view = render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
-    expect(await screen.findByLabelText('Series')).toHaveValue('a'.repeat(64));
+    expect(await screen.findByLabelText('Forecast series')).toHaveTextContent(two.series[0].metricId);
     view.rerender(<ConfirmProvider><ForecastPanel focus={'b'.repeat(64)} refresh={1} /></ConfirmProvider>);
-    await vi.waitFor(() => expect(screen.getByLabelText('Series')).toHaveValue('b'.repeat(64)));
+    await vi.waitFor(() => expect(screen.getByLabelText('Forecast series')).toHaveTextContent('started'));
   });
 
   it('lets the chart show more of the 512-point context', async () => {
@@ -289,7 +299,9 @@ describe('ForecastPanel', () => {
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...status, series: [broken, status.series[0]] } : {} }));
     render(<ConfirmProvider><ForecastPanel /></ConfirmProvider>);
     expect(await screen.findByRole('alert')).toHaveTextContent('could not be read');
-    expect(screen.getAllByRole('option')).toHaveLength(2);
+    // The broken one is named, and the list still counts both.
+    expect(screen.getByLabelText('Forecast series')).toHaveTextContent('broken');
+    expect(screen.getByText(/2 forecasts/)).toBeTruthy();
   });
 
   // METRICS-FORECAST-UX-AUDIT.md B3: collecting history is not a fallback.

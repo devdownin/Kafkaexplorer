@@ -214,6 +214,7 @@ const Metrics: React.FC = () => {
     for (const s of forecastStatus?.series ?? []) if (!stages.has(s.metricId)) stages.set(s.metricId, forecastStage(s));
     return stages;
   }, [forecastStatus]);
+  const metricNames = useMemo(() => Object.fromEntries(metrics.map(m => [m.id, m.name || m.id])), [metrics]);
   const forecastSeriesByMetric = useMemo(() => {
     const series = new Map<string, ForecastStatus['series'][number]>();
     for (const s of forecastStatus?.series ?? []) if (!series.has(s.metricId)) series.set(s.metricId, s);
@@ -1020,6 +1021,10 @@ const Metrics: React.FC = () => {
                   }
                 : undefined}
               forecastCreating={creatingForecastId === metric.id}
+              onShowForecast={forecastSeriesByMetric.has(metric.id) ? () => {
+                setForecastFocus(forecastSeriesByMetric.get(metric.id)!.seriesId);
+                document.querySelector('section[aria-label="Metrics Forecast"]')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+              } : undefined}
               forecastUnavailableReason={canCreateForecast ? (
                 forecastCandidatesError ? 'Forecast eligibility could not be verified. Retry after reloading.'
                   : !forecastCandidates ? 'Checking forecast eligibility…'
@@ -1066,7 +1071,7 @@ const Metrics: React.FC = () => {
             setForecastRevision(v => v + 1);
           }} />
       </section>}
-      <ForecastPanel refresh={forecastRevision} focus={forecastFocus} onStatus={status => {
+      <ForecastPanel refresh={forecastRevision} focus={forecastFocus} metricNames={metricNames} onStatus={status => {
         setForecastStatus(status);
         // Once the server lists the new series, its status becomes authoritative. A later
         // withdrawal can then re-enable the metric's Prepare action.

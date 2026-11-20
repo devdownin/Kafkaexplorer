@@ -645,7 +645,10 @@ confirm the sources only for free SQL, where they are inferred: a template decla
 one-click path already sent them confirmed, so the form demanded an attestation the faster path did
 not. It names its sampling intervals, states the horizon as a duration, and folds the interval,
 horizon, cycle and threshold under **Advanced** (opened by `flushSync` before focusing an invalid
-threshold — a field inside a closed `<details>` cannot take focus). **The panel has two folds,
+threshold — a field inside a closed `<details>` cannot take focus). **The card is also where a series
+is chosen**: its **Details** points the Metrics Forecast panel at that series (`focus`) and scrolls to
+it, and the panel names the metric it shows (by name, from `metricNames`) instead of offering a
+*Series* selector, which repeated the cards in metric ids. **The panel has two folds,
 where it had five**: *Quality* (the realised scores, the baselines, the shadow comparison) and
 *Configuration* (the effective settings, the history and sources, and the dependency checks, read
 only once it is opened). Sources are chips (`NameListField`) rather than a

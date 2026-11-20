@@ -46,8 +46,10 @@ export const MetricCard: React.FC<{
   forecastSeries?: ForecastSeriesView;
   /** The one-click creation is running for this card. */
   forecastCreating?: boolean;
+  /** Shows this metric's forecast in the Metrics Forecast panel: the card is where a series is chosen. */
+  onShowForecast?: () => void;
   refreshing: boolean;
-}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, forecastCreating = false }) => {
+}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, forecastCreating = false, onShowForecast }) => {
   const { toast } = useToast();
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
@@ -498,6 +500,8 @@ export const MetricCard: React.FC<{
       </div>}
       {forecast ? <div role="group" className="px-4 py-2 border-t border-outline-variant/60 text-xs flex flex-wrap items-center gap-2" aria-label={`Forecast status of ${metric.name || metric.id}`}>
         <span className="font-semibold">Forecast</span><Badge tone={forecast.tone}>{forecast.label}</Badge><span>{forecast.detail}</span>
+        {onShowForecast && <Button variant="ghost" size="sm" className="ml-auto" icon="open_in_full" onClick={onShowForecast}
+          aria-label={`Show the forecast of ${metric.name || metric.id}`}>Details</Button>}
         {/* The wait as a bar as well as a count: the sentence says how much, the bar how far. */}
         {forecast.progress !== undefined && <div role="progressbar" aria-label={`${forecast.label} progress`}
           aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(forecast.progress * 100)}
