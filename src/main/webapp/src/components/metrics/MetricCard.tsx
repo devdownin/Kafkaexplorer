@@ -25,6 +25,7 @@ import { describeQueryError } from '../../pages/queryError';
 import type { ForecastSeriesView, MetricConfig } from '../../api/types';
 import { about, type ForecastStageSummary } from './forecastStage';
 import { FORECAST_COLORS } from './forecastColors';
+import { forecastThresholdReach } from './forecastBreach';
 import { buildAlertRule, thresholdDirection } from '../../pages/metricAlert';
 import { componentSeries, describeMeasurement, describeMetricScope, scopeNoteOf } from '../../pages/metricScope';
 import {
@@ -113,6 +114,15 @@ export const MetricCard: React.FC<{
     lastMeasured.predicted = lastMeasured.v;
   }
   const boundary = timed ? lastMeasured?.at ?? prediction!.historyEndAt : chartData.length - 1;
+  /*
+   * The metric's thresholds are set on its own value. A counter's forecast is a rate per second —
+   * another quantity — so on that chart they are neither drawn nor compared with the forecast.
+   */
+  const thresholdsApply = !(timed && counterRate);
+  const reach = thresholdsApply && forecastPoints.length
+    ? forecastThresholdReach(forecastPoints, metric.warningThreshold, metric.criticalThreshold,
+      forecastSeries?.result?.strategy === 'TIMESFM')
+    : null;
   const observedCount = chartData.length;
   forecastPoints.forEach((p, i) => chartData.push({
     i: observedCount + i, v: null, predicted: p.q50,
@@ -224,9 +234,26 @@ export const MetricCard: React.FC<{
           const minV = Math.min(...(vals.length ? vals : forecastPoints.map(p => p.q50)));
           const maxV = Math.max(...(vals.length ? vals : forecastPoints.map(p => p.q50)));
           const plotted = rateForecast && vals.length ? vals : [...vals, ...forecastPoints.flatMap(p => hasInterval && Number.isFinite(p.q10) && Number.isFinite(p.q90) ? [p.q10, p.q90] : [p.q50])];
-          const plotMin = Math.min(...plotted);
-          const plotMax = Math.max(...plotted);
-          const pad = (maxV - minV) * 0.15 || 1;
+          let plotMin = Math.min(...plotted);
+          let plotMax = Math.max(...plotted);
+          /*
+           * A threshold close to the curve widens the scale to stay on it; one far away would flatten
+           * the curve to a line, so it is named at the edge it lies beyond instead of vanishing — the
+           * fitted axis had made every distant threshold disappear without a trace.
+           */
+          const offScale: { label: string; value: number; up: boolean; color: string }[] = [];
+          const thresholdLines: { label: string; value: number; color: string }[] = [];
+          if (thresholdsApply) {
+            const span = Math.max(plotMax - plotMin, Math.abs(plotMax) * 0.01, 1);
+            for (const [label, value, color] of [['warn', metric.warningThreshold, '#f5c264'], ['crit', metric.criticalThreshold, '#f58c8c']] as const) {
+              if (value === null || !Number.isFinite(value)) continue;
+              const distance = value > plotMax ? value - plotMax : value < plotMin ? plotMin - value : 0;
+              if (distance <= span) {
+                plotMin = Math.min(plotMin, value); plotMax = Math.max(plotMax, value);
+                thresholdLines.push({ label, value, color });
+              } else offScale.push({ label, value, up: value > plotMax, color });
+            }
+          }
           return (
             <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60">
               <ResponsiveContainer width="100%" height={80}>
@@ -240,8 +267,8 @@ export const MetricCard: React.FC<{
                       <stop offset="100%" stopColor={strokeColor} stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
-                  <YAxis yAxisId="observed" domain={rateForecast ? [minV - pad, maxV + pad]
-                    : [plotMin - Math.max((plotMax - plotMin) * 0.15, 1), plotMax + Math.max((plotMax - plotMin) * 0.15, 1)]}
+                  <YAxis yAxisId="observed"
+                    domain={[plotMin - Math.max((plotMax - plotMin) * 0.15, 1), plotMax + Math.max((plotMax - plotMin) * 0.15, 1)]}
                     hide allowDataOverflow />
                   {/* `allowDataOverflow` is what makes the domain above the domain: without it recharts
                       widened it to the interval's stacked floor, which starts at zero, so the curve and
@@ -254,14 +281,10 @@ export const MetricCard: React.FC<{
                   {forecastPoints.length > 0 && <ReferenceLine yAxisId="observed" x={boundary} stroke={FORECAST_COLORS.band}
                     strokeOpacity={0.6} strokeDasharray="2 2"
                     label={{ value: 'now', position: 'insideTopLeft', fontSize: 8, fill: FORECAST_COLORS.band, dy: -2 }} />}
-                  {metric.warningThreshold !== null && (
-                    <ReferenceLine yAxisId="observed" y={metric.warningThreshold} stroke="#f5c264" strokeDasharray="4 3" strokeWidth={1}
-                      label={{ value: 'warn', position: 'insideTopRight', fontSize: 8, fill: '#f5c264', dy: -2 }} />
-                  )}
-                  {metric.criticalThreshold !== null && (
-                    <ReferenceLine yAxisId="observed" y={metric.criticalThreshold} stroke="#f58c8c" strokeDasharray="4 3" strokeWidth={1}
-                      label={{ value: 'crit', position: 'insideTopRight', fontSize: 8, fill: '#f58c8c', dy: -2 }} />
-                  )}
+                  {thresholdLines.map(t => (
+                    <ReferenceLine key={t.label} yAxisId="observed" y={t.value} stroke={t.color} strokeDasharray="4 3" strokeWidth={1}
+                      label={{ value: t.label, position: 'insideTopRight', fontSize: 8, fill: t.color, dy: -2 }} />
+                  ))}
                   <Area yAxisId="observed" type="monotone" dataKey="v" stroke={strokeColor} strokeWidth={2}
                     fill={`url(#grad-${metric.id})`} dot={false}
                     activeDot={{ r: 3, fill: strokeColor, strokeWidth: 0 }} isAnimationActive={false} />
@@ -293,6 +316,17 @@ export const MetricCard: React.FC<{
                   />
                 </ComposedChart>
               </ResponsiveContainer>
+              {/* Beside the chart rather than over it: drawn in a corner they covered the forecast. */}
+              {offScale.length > 0 && <div className="flex flex-wrap gap-x-3 px-3 pt-1 text-[10px] font-mono" aria-label="Thresholds off the chart scale">
+                {offScale.map(t => <span key={t.label} style={{ color: t.color }}>{t.up ? '↑' : '↓'} {t.label} {t.value.toLocaleString()} <span className="text-outline">off scale</span></span>)}
+              </div>}
+              {reach && forecastSeries && <div role="status" aria-label="Forecast threshold"
+                className={`mx-3 mt-1.5 flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium ${reach.level === 'critical'
+                  ? 'bg-error-container/40 text-[#f58c8c]' : 'bg-[#f5c264]/10 text-[#f5c264]'}`}>
+                <span aria-hidden="true" className="material-symbols-outlined text-[14px]">{reach.level === 'critical' ? 'error' : 'warning'}</span>
+                <span>{reach.level === 'critical' ? 'Critical' : 'Warning'} {reach.likelihood} in {about(reach.steps, forecastSeries.stepMillis)}
+                  <span className="font-mono font-normal opacity-80"> ({thresholdDirection(metric.warningThreshold, metric.criticalThreshold) === 'below' ? '≤' : '≥'} {reach.threshold.toLocaleString()}{reach.likelihood === 'possible' ? ', 80% band' : ', median'})</span></span>
+              </div>}
               {forecastPoints.length > 0 && <div className="flex flex-wrap gap-3 px-3 pt-1.5 text-[10px] font-mono" aria-label="Metric chart legend">
                 <span className="text-on-surface-variant flex items-center gap-1"><span className="w-3.5 h-0.5 rounded-full" style={{ background: strokeColor }} />Observed{timed && counterRate ? ' (per second)' : ''}</span>
                 <span className="flex items-center gap-1" style={{ color: FORECAST_COLORS.forecast }}>
@@ -457,9 +491,17 @@ export const MetricCard: React.FC<{
 
       {forecastPoints.length > 0 && <div className="px-4 pb-2 text-[10px] text-on-surface-variant" role="note">
         Dashed values are predictions, not observations.{hasInterval ? ' The shaded band represents the model’s nominal 80% prediction interval, not a guarantee.' : ''}
+        {timed && counterRate ? ' The chart and its forecast are a rate per second; the value above is the counter’s own reading, so its thresholds are not drawn here.' : ''}
+        {reach ? ' A predicted threshold is a reading of the forecast, not an alert: nothing is sent.' : ''}
       </div>}
       {forecast ? <div role="group" className="px-4 py-2 border-t border-outline-variant/60 text-xs flex flex-wrap items-center gap-2" aria-label={`Forecast status of ${metric.name || metric.id}`}>
         <span className="font-semibold">Forecast</span><Badge tone={forecast.tone}>{forecast.label}</Badge><span>{forecast.detail}</span>
+        {/* The wait as a bar as well as a count: the sentence says how much, the bar how far. */}
+        {forecast.progress !== undefined && <div role="progressbar" aria-label={`${forecast.label} progress`}
+          aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(forecast.progress * 100)}
+          className="basis-full h-1 rounded-full bg-surface-container-highest overflow-hidden">
+          <div className="h-full rounded-full" style={{ width: `${Math.round(forecast.progress * 100)}%`, background: FORECAST_COLORS.forecast }} />
+        </div>}
       </div> : null}
       {/* One click creates the forecast with the defaults the server suggests; nothing to fill in.
           Once it exists the status row above stands in for it, rather than a greyed-out duplicate. */}

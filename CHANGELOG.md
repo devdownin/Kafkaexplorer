@@ -20,6 +20,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A metric card says when its forecast reaches a threshold.** "Warning expected in ~12 min
+  (≥ 2,150, median)" when the median reaches the metric's own warning or critical threshold,
+  "possible" when only the 80 % band does, critical before warning, in the direction the two
+  thresholds imply — a reading of the forecast, not an alert. A threshold near the curve widens the
+  card's scale to stay drawn; one far away is named under the chart ("↑ crit 7,600 off scale")
+  instead of silently leaving it. A counter's forecast is a rate per second, so its thresholds are
+  neither drawn nor compared there, and the card says the chart is a rate. The forecast status
+  carries a progress bar, and the assistant counts the history already recorded when it says when
+  the first forecast follows (it promised "~2 h" whatever was there).
 - **A metric's forecast reads as the continuation of its curve.** The card's button is now
   **Forecast**: one click creates it (with the cycle the history shows), it is disabled with the
   reason when no forecast is possible and gone once one exists. The card draws the last hour the

@@ -48,4 +48,47 @@ describe('MetricCard forecast chart', () => {
     expect(FORECAST_COLORS.forecast).not.toBe('#a3adff');
     expect(screen.getByText('now')).toBeInTheDocument();
   });
+
+  const card = (overrides: Partial<MetricConfig>, view: ForecastSeriesView = series) => render(<ToastProvider>
+    <MetricCard metric={{ ...metric, ...overrides }} onEdit={() => {}} onDelete={() => {}} onRefresh={() => {}}
+      refreshing={false} forecastSeries={view} /></ToastProvider>);
+
+  it('says when the forecast reaches a threshold of the metric, and on which reading', () => {
+    // Medians 460 → 431, band ±20, read upwards: the median is past the 450 warning from the first
+    // point, while the critical at 470 is reached only by the band's top — an expected warning is
+    // the stronger sentence and is the one said.
+    card({ warningThreshold: 450, criticalThreshold: 470 } as Partial<MetricConfig>);
+    expect(screen.getByLabelText('Forecast threshold')).toHaveTextContent('Warning expected in ~1 min (≥ 450, median)');
+  });
+
+  it('reads a threshold crossed downwards when the two thresholds say so', () => {
+    card({ warningThreshold: 450, criticalThreshold: 440 } as Partial<MetricConfig>);
+    // q50 = 460 - i reaches 440 at i = 20, the 21st point.
+    expect(screen.getByLabelText('Forecast threshold')).toHaveTextContent('Critical expected in ~21 min (≤ 440, median)');
+  });
+
+  it('names a threshold too far to draw at the edge it lies beyond instead of dropping it', () => {
+    card({ warningThreshold: 5000, criticalThreshold: 9000 } as Partial<MetricConfig>);
+    const off = screen.getByLabelText('Thresholds off the chart scale');
+    expect(off).toHaveTextContent('↑ warn 5,000');
+    expect(off).toHaveTextContent('↑ crit 9,000');
+    expect(screen.queryByLabelText('Forecast threshold')).toBeNull();
+  });
+
+  it('keeps a near threshold on the chart by widening the scale', () => {
+    // Values 400–480: a warning at 500 is within one span, so it is drawn rather than named at the edge.
+    card({ warningThreshold: 500, criticalThreshold: 600 } as Partial<MetricConfig>);
+    expect(screen.getByText('warn')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Thresholds off the chart scale')).not.toHaveTextContent('warn');
+  });
+
+  it('neither draws nor compares the metric thresholds against a counter forecast, a rate per second', () => {
+    const rate = structuredClone(series) as unknown as { result: { context: { profile: { transformation: string } } } };
+    rate.result.context.profile.transformation = 'COUNTER_RATE';
+    card({ type: 'COUNTER', warningThreshold: 450, criticalThreshold: 500 } as Partial<MetricConfig>, rate as unknown as ForecastSeriesView);
+    expect(screen.queryByLabelText('Forecast threshold')).toBeNull();
+    expect(screen.queryByText('warn')).toBeNull();
+    expect(screen.getByText(/a rate per second; the value above is the counter’s own reading/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Metric chart legend')).toHaveTextContent('Observed (per second)');
+  });
 });

@@ -19,7 +19,12 @@ describe('forecastStage', () => {
   });
   it('counts history towards the first forecast and says when it is due', () => {
     const s = series({ forecast: null, context: { status: 'WARMING_UP', observedPoints: 68 } as ForecastRecord['context'] });
-    expect(forecastStage(s)).toMatchObject({ stage: 'COLLECTING', detail: 'History 68 / 128 points · first forecast in ~60 min' });
+    expect(forecastStage(s)).toMatchObject({ stage: 'COLLECTING', detail: 'History 68 / 128 points · first forecast in ~60 min',
+      progress: 68 / 128 });
+  });
+  it('gives the quality block as progress, and none once a block failed', () => {
+    expect(forecastStage(series({})).progress).toBeCloseTo(40 / 180);
+    expect(forecastStage(series({}, { lastBlockPassed: false })).progress).toBeUndefined();
   });
   it('names what blocks a series that is not merely warming up', () => {
     const s = series({ forecast: null, reason: 'Gaps exceed the preparation policy',
