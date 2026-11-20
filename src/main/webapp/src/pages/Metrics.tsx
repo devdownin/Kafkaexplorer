@@ -36,6 +36,7 @@ import { groupReasons, keepUnchanged } from './metricsPolling';
 import { forecastReachFor, type MetricForecastReach } from '../components/metrics/forecastBreach';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
+import { MetricRow } from '../components/metrics/MetricRow';
 import { TemplateParamsEditor } from '../components/metrics/TemplateParamsEditor';
 import { MetricDraftAssist } from '../components/assistant/MetricDraftAssist';
 import { useAssistantStatus } from '../components/assistant/useAssistantStatus';
@@ -308,6 +309,15 @@ const Metrics: React.FC = () => {
   // have a forecast at all. Both views read the same reach the card's badge does.
   const [filterForecast, setFilterForecast] = useState<'all' | 'breach' | 'running' | 'none'>('all');
   const [sortBy, setSortBy] = useState<'severity' | 'breach'>('severity');
+  // Cards, or one line per metric for a deployment with dozens of them. Remembered in this browser
+  // only — a per-viewer convenience, so a storage that throws (private window) just means cards.
+  const [view, setView] = useState<'cards' | 'compact'>(() => {
+    try { return localStorage.getItem('metrics.view') === 'compact' ? 'compact' : 'cards'; } catch { return 'cards'; }
+  });
+  const chooseView = (next: 'cards' | 'compact') => {
+    setView(next);
+    try { localStorage.setItem('metrics.view', next); } catch { /* not remembered, still applied */ }
+  };
   const [nameIsAuto, setNameIsAuto]     = useState(restoredEditor?.nameIsAuto ?? false);
   const [labelPreview, setLabelPreview] = useState<MetricLabelPreview | null>(null);
   const [labelPreviewLoading, setLabelPreviewLoading] = useState(false);
@@ -1110,6 +1120,17 @@ const Metrics: React.FC = () => {
               <option value="breach">Sort: next predicted breach</option>
             </Select>
           )}
+          <div role="group" aria-label="Layout" className="inline-flex rounded-lg border border-outline-variant overflow-hidden">
+            {(['cards', 'compact'] as const).map(option => (
+              <button key={option} type="button" aria-pressed={view === option} onClick={() => chooseView(option)}
+                title={option === 'cards' ? 'Cards with charts' : 'One line per metric'}
+                className={`inline-flex items-center gap-1 px-2.5 h-9 text-xs transition-colors ${view === option
+                  ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}>
+                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">{option === 'cards' ? 'grid_view' : 'view_list'}</span>
+                {option === 'cards' ? 'Cards' : 'Compact'}
+              </button>
+            ))}
+          </div>
           {filtersActive && (
             <button onClick={() => { setFilterType('all'); setFilterStatus('all'); setFilterForecast('all'); }}
               className="text-[12px] text-on-surface-variant hover:text-on-surface transition-colors flex items-center gap-1">
@@ -1149,7 +1170,20 @@ const Metrics: React.FC = () => {
             : 'Pick one of the quick-start templates below, or create your own.'}
           action={<Button variant="primary" icon="add" onClick={() => openEdit()}>Add metric</Button>}
         />
-      )) : (
+      )) : view === 'compact' ? (
+        filteredMetrics.length > 0 ? (
+          <ul aria-label="Metrics" className="rounded-xl border border-outline-variant bg-surface-container-low overflow-hidden">
+            {filteredMetrics.map(metric => (
+              <MetricRow key={metric.id} metric={metric} refreshing={refreshingId === metric.id}
+                onEdit={onEditCard} onRefresh={onRefreshCard}
+                onShowForecast={forecastSeriesByMetric.has(metric.id) ? onShowCard : undefined}
+                forecast={forecastStages.get(metric.id)} forecastSeries={forecastSeriesByMetric.get(metric.id)} />
+            ))}
+          </ul>
+        ) : (
+          <div className="text-center py-12 text-on-surface-variant text-sm">No metrics match the current filters.</div>
+        )
+      ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filteredMetrics.length > 0 ? filteredMetrics.map(metric => (
             <MetricCard

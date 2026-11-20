@@ -129,4 +129,25 @@ describe('MetricCard forecast chart', () => {
     screen.getByRole('button', { name: 'Edit this metric' }).click();
     expect(onEdit).toHaveBeenCalledWith('m-1');
   });
+
+  it('offers, beside a predicted threshold, the alert rule to raise and the topic to look at', () => {
+    card({ warningThreshold: 450, criticalThreshold: 470, templateType: 'TOPIC_TRANSIT_LATENCY',
+      templateParams: { sourceTopic: 'demo.orders', targetTopic: 'demo.shipped' } } as Partial<MetricConfig>);
+    const badge = screen.getByLabelText('Forecast threshold');
+    expect(badge.querySelector('[aria-label="Copy an alert rule for this predicted threshold"]')).not.toBeNull();
+    expect(screen.getByLabelText('Open topic demo.orders')).toHaveAttribute('href', '/topic/demo.orders');
+    expect(screen.getByLabelText('Open topic demo.shipped')).toBeInTheDocument();
+  });
+
+  it('draws where the reliability is going beside the badge that says where it is', () => {
+    const scored = structuredClone(series) as unknown as { result: Record<string, unknown> };
+    const cohort = (coverage: number) => ({ through: 1, points: 30, baselineMae: {}, meanAbsActual: 1,
+      quality: { mae: 4, mase: null, meanPinballLoss: 0, q10Q90Coverage: coverage, meanIntervalWidth: 0 } });
+    scored.result.qualityWindow = { open: [cohort(0.9), cohort(0.75), cohort(0.6)], lastBlock: null, failedBlocks: 0 };
+    render(<ToastProvider><MetricCard metric={metric} onEdit={() => {}} onDelete={() => {}} onRefresh={() => {}}
+      refreshing={false} forecastSeries={scored as unknown as ForecastSeriesView}
+      forecast={{ stage: 'OBSERVING', label: 'Observing', tone: 'neutral', detail: 'Observing' }} /></ToastProvider>);
+    expect(screen.getByLabelText('Reliability trend')).toHaveTextContent('degrading');
+    expect(screen.getByRole('img', { name: 'Coverage degrading: 90% → 75% → 60%' })).toBeInTheDocument();
+  });
 });

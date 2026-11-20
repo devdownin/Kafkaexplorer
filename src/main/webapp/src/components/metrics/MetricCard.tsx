@@ -26,7 +26,9 @@ import type { ForecastSeriesView, MetricConfig } from '../../api/types';
 import { about, type ForecastStageSummary } from './forecastStage';
 import { FORECAST_COLORS, THRESHOLD_COLORS } from './forecastColors';
 import { forecastReachFor, predictedPoints } from './forecastBreach';
-import { forecastReliability, lastCheck } from './forecastVsActual';
+import { forecastReliability, lastCheck, reliabilityTrend } from './forecastVsActual';
+import { forecastBreachRule, metricTopics } from '../../pages/metricLinks';
+import { Link, useInRouterContext } from 'react-router-dom';
 import { placeThresholds } from './thresholdPlacement';
 import { clockTime, refreshCostNote } from '../../pages/metricsPolling';
 import { buildAlertRule, thresholdDirection } from '../../pages/metricAlert';
@@ -47,6 +49,32 @@ const RelativeTime: React.FC<{ at: number | null }> = ({ at }) => {
     return () => window.clearInterval(timer);
   }, []);
   return <>{relativeTime(at)}</>;
+};
+
+/** A topic's page: an in-app link inside the router, a plain one where the card is rendered alone. */
+const TopicLink: React.FC<{ topic: string; className?: string; children: React.ReactNode }> = ({ topic, className, children }) => {
+  const inRouter = useInRouterContext();
+  const to = `/topic/${encodeURIComponent(topic)}`;
+  return inRouter
+    ? <Link to={to} className={className} aria-label={`Open topic ${topic}`}>{children}</Link>
+    : <a href={to} className={className} aria-label={`Open topic ${topic}`}>{children}</a>;
+};
+
+/**
+ * The coverage of each open cohort, oldest first, as a few dots on a line: where the forecast is
+ * going, beside the badge that says where it is. Nominal 80 % is the dashed rule.
+ */
+const CoverageTrend: React.FC<{ coverages: number[]; direction: string }> = ({ coverages, direction }) => {
+  const w = 44, h = 14;
+  const x = (i: number) => coverages.length === 1 ? w / 2 : 2 + i * (w - 4) / (coverages.length - 1);
+  const y = (c: number) => h - 2 - Math.max(0, Math.min(1, c)) * (h - 4);
+  return <svg width={w} height={h} role="img" className="shrink-0"
+    aria-label={`Coverage ${direction}: ${coverages.map(c => `${Math.round(c * 100)}%`).join(' → ')}`}>
+    <line x1={0} x2={w} y1={y(0.8)} y2={y(0.8)} stroke="currentColor" strokeOpacity={0.35} strokeDasharray="2 2" />
+    <polyline fill="none" stroke={FORECAST_COLORS.forecast} strokeWidth={1.5}
+      points={coverages.map((c, i) => `${x(i)},${y(c)}`).join(' ')} />
+    {coverages.map((c, i) => <circle key={i} cx={x(i)} cy={y(c)} r={1.6} fill={FORECAST_COLORS.forecast} />)}
+  </svg>;
 };
 
 const MetricCardView: React.FC<{
@@ -339,6 +367,20 @@ const MetricCardView: React.FC<{
                 <span aria-hidden="true" className="material-symbols-outlined text-[14px]">{reach.level === 'critical' ? 'error' : 'warning'}</span>
                 <span>{reach.level === 'critical' ? 'Critical' : 'Warning'} {reach.likelihood} in {about(reach.steps, forecastSeries.stepMillis)}
                   <span className="font-mono font-normal opacity-80"> ({thresholdDirection(metric.warningThreshold, metric.criticalThreshold) === 'below' ? '≤' : '≥'} {reach.threshold.toLocaleString()}{reach.likelihood === 'possible' ? ', 80% band' : ', median'})</span></span>
+                {/* What to do about it, from where it is said: the alert to raise elsewhere, the topic to look at. */}
+                <span className="ml-auto flex items-center gap-0.5 shrink-0">
+                  <button type="button" title="Copy an alert rule for this predicted threshold"
+                    aria-label="Copy an alert rule for this predicted threshold"
+                    className="inline-flex items-center justify-center w-6 h-6 rounded hover:bg-surface-container-high transition-colors"
+                    onClick={() => void copyText(forecastBreachRule(metric, reach.level, reach.likelihood))
+                      .then(ok => toast(ok ? 'Forecast alert rule copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))}>
+                    <span aria-hidden="true" className="material-symbols-outlined text-[14px]">notification_add</span>
+                  </button>
+                  {metricTopics(metric).slice(0, 2).map(topic => <TopicLink key={topic} topic={topic}
+                    className="inline-flex items-center justify-center w-6 h-6 rounded hover:bg-surface-container-high transition-colors">
+                    <span aria-hidden="true" className="material-symbols-outlined text-[14px]">open_in_new</span>
+                  </TopicLink>)}
+                </span>
               </div>}
               {forecastPoints.length > 0 && <div className="flex items-center gap-3 px-3 pt-1.5 text-[10px] font-mono whitespace-nowrap" aria-label="Metric chart legend">
                 <span className="text-on-surface-variant flex items-center gap-1"><span className="w-3.5 h-0.5 rounded-full" style={{ background: strokeColor }} />Observed{timed && counterRate ? ' (/s)' : ''}</span>
@@ -539,6 +581,13 @@ const MetricCardView: React.FC<{
               <span tabIndex={0} className="rounded"><Badge tone={reliability.tone}>{reliability.label}</Badge></span>
             </InfoTooltip>
             <span>{percent}% of {check.points} points in the band</span>
+            {(() => {
+              const trend = reliabilityTrend(forecastSeries?.result?.qualityWindow);
+              return trend && <span className="flex items-center gap-1" aria-label="Reliability trend">
+                <CoverageTrend coverages={trend.coverages} direction={trend.direction} />
+                <span className={trend.direction === 'degrading' ? 'text-warning' : ''}>{trend.direction}</span>
+              </span>;
+            })()}
           </span>;
         })()}
         {/* The wait as a bar as well as a count: the sentence says how much, the bar how far. */}
