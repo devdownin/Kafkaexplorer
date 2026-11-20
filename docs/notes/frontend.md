@@ -672,13 +672,15 @@ preview is the series that would start. It draws the recorded points under the s
 how many of the first forecast's points exist, or the preparation's own reason when there is
 nothing to draw. Two proposals come out of the same read: the repeating cycle (`detectCycle`:
 autocorrelation at the daily and hourly lags, longest first, only when the history covers one and
-a half cycles and the correlation clears 0.5 — scaled by n / (n − lag), since an unscaled sum read
+a half cycles, the correlation clears 0.5 **and stands 0.5 above the one at half the lag** — a cycle
+is a peak, while a drifting series is correlated at every lag: without that test 94.5 % of random
+walks were given one (`METRICS-FORECAST-AUDIT-2.md` B1); scaled by n / (n − lag), since an unscaled sum read
 a perfect 288-lag cycle over 512 points as 0.44 and never found a daily pattern) and a threshold
 (1.5× the latest recorded value, a button, never written for the operator). **A cycle the operator
 chose is never replaced.** The horizon is a duration (`Looks ahead`: 15 minutes to 12 hours, only
 those the interval carries in 1 to 60 points); the environment sits under **Advanced**. The
 panel's chart draws from `forecastColors.ts` — the app's own tokens, where it used Tailwind's stock
-green, amber and indigo — and shows 60, 180 or all 512 context points. **`/progress` is read only
+green, amber and indigo — and shows 60, 180 or all 512 context points — only those the context can fill. **`/progress` is read only
 where its answer is on screen**: the threshold line on the chart (`SeriesView.thresholdConfigured`)
 or the open "Summary" fold, which removes the third request of the 30-second cycle for a series
 with neither (METRICS-FORECAST-UX-AUDIT.md P2).

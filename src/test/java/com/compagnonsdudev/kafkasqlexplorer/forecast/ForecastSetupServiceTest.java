@@ -358,4 +358,72 @@ class ForecastSetupServiceTest {
     // A flat series has no variance to correlate: zero, not NaN.
     assertEquals(0.0, ForecastSetupService.autocorrelation(java.util.Collections.nCopies(400, 5.0), 12));
   }
+
+  /** METRICS-FORECAST-AUDIT-2.md B1: a drift is not a cycle. */
+  @Test void aSeriesThatMerelyDriftsHasNoCycle() {
+    var random = new java.util.Random(42); int claimed = 0;
+    for (int run = 0; run < 200; run++) {
+      var walk = new ArrayList<Double>(); double x = 100;
+      for (int i = 0; i < 300; i++) { x += random.nextGaussian(); walk.add(x); }
+      var found = ForecastSetupService.detectCycle(walk, 300_000L);
+      if (found != null && !"NONE".equals(found[0])) claimed++;
+    }
+    // 94.5 % of 400 draws claimed an hourly cycle before the peak test.
+    assertTrue(claimed <= 4, claimed + " of 200 random walks were given a cycle");
+  }
+
+  @Test void aTrendUnderAnHourlyCycleStillShowsTheCycle() {
+    var random = new java.util.Random(3); var found = new ArrayList<String>();
+    for (int run = 0; run < 50; run++) {
+      var v = new ArrayList<Double>();
+      for (int i = 0; i < 300; i++) v.add(0.3 * i + 30 * Math.sin(2 * Math.PI * i / 12) + 3 * random.nextGaussian());
+      found.add(ForecastSetupService.detectCycle(v, 300_000L)[0]);
+    }
+    assertEquals(List.of("HOURLY"), found.stream().distinct().toList());
+  }
+
+  /** METRICS-FORECAST-AUDIT-2.md B2: the preview reads the series the approval would start. */
+  @Test void theHistoryPreviewNormalisesTheMetricLikeTheApproval() throws Exception {
+    // As stored by an older version: no type and no execution mode, which normalisation fills.
+    metric = new MetricConfig("lag", "Consumer lag", null, "private SQL", "description", null, null, 4d, 1L, null,
+        List.of(), Map.of(), null, "CONSUMER_TIME_LAG", Map.of("topic", "orders", "group", "worker"), null, null, List.of());
+    root.getHistory().setClusterId("cluster"); root.getHistory().setCollectorId("collector");
+    var canonical = MetricService.normalizeObservationDefinition(metric);
+    String version = MetricObservation.collectedVersion(canonical, "kafka:29092", "collector");
+    String id = MetricObservation.seriesId("cluster", version, "lag", "value", MetricService.pinnedLabels(canonical));
+    assertNotEquals(version, MetricObservation.collectedVersion(metric, "kafka:29092", "collector"),
+        "the premise: the stored form and the canonical one do not share an identity");
+    var points = new ArrayList<PreparedMetricSeries.Point>();
+    for (int i = 0; i < 5; i++) points.add(new PreparedMetricSeries.Point(60_000L * (i + 1), 10.0 + i, false, 1));
+    when(preparation.prepare(eq(id), eq(version), eq("milliseconds"), anyLong(), any())).thenReturn(new PreparedMetricSeries(
+        PreparedMetricSeries.Status.WARMING_UP, "collecting", id, version, "milliseconds", "milliseconds", 0, 1,
+        new SeriesPreparationProfile(60_000L, 512, SeriesPreparationProfile.Transformation.GAUGE_MEAN), "p", "i", 5, 0, 0, points));
+    var preview = setup.historyPreview("lag", 60_000L);
+    assertEquals(5, preview.points().size());
+    assertEquals("WARMING_UP", preview.status());
+  }
+
+  /** METRICS-FORECAST-AUDIT-2.md B6: a hole in the history is a hole, not a shorter history. */
+  @Test void holesInTheHistoryDoNotShiftTheCycle() {
+    var grid = new ArrayList<Double>();
+    for (int i = 0; i < 500; i++) grid.add(100 + 40 * Math.sin(2 * Math.PI * i / 288));
+    double full = ForecastSetupService.autocorrelation(grid, 288);
+    for (int i = 150; i < 190; i++) grid.set(i, null); // a collector outage of 40 points
+    var found = ForecastSetupService.detectCycle(grid, 300_000L);
+    assertEquals("DAILY", found[0]);
+    // Dropping the holes read 0.64 here; on the grid the correlation is unchanged in substance.
+    assertTrue(Math.abs(Double.parseDouble(found[1]) - full) < 0.1, found[1] + " vs " + full);
+  }
+
+  /** METRICS-FORECAST-AUDIT-2.md P2: the preview reads the history once per closed step. */
+  @Test void theHistoryPreviewReadsOncePerStep() throws Exception {
+    root.getHistory().setClusterId("cluster"); root.getHistory().setCollectorId("collector");
+    var profile = new SeriesPreparationProfile(900_000L, 512, SeriesPreparationProfile.Transformation.GAUGE_MEAN);
+    when(preparation.prepare(anyString(), anyString(), anyString(), anyLong(), any())).thenReturn(new PreparedMetricSeries(
+        PreparedMetricSeries.Status.WARMING_UP, "collecting", "s", "v", "milliseconds", "milliseconds", 0, 1,
+        profile, "p", "i", 0, 0, 0, List.of()));
+    setup.historyPreview("lag", 900_000L);
+    setup.historyPreview("lag", 900_000L);
+    verify(preparation, times(1)).prepare(anyString(), anyString(), anyString(), anyLong(), any());
+  }
 }

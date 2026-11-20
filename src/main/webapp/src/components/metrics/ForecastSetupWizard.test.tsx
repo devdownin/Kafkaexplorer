@@ -321,6 +321,33 @@ describe('ForecastSetupWizard', () => {
     expect(screen.queryByRole('button', { name: /1.5× latest/ })).toBeNull();
   });
 
+  // METRICS-FORECAST-AUDIT-2.md B4: a BELOW threshold is suggested below the latest value.
+  it('suggests a threshold on the side of its direction', async () => {
+    withHistory({ ...HISTORY, suggestedSeasonality: null }); const user = await sources();
+    expect(await screen.findByRole('button', { name: 'Use 209 (1.5× latest)' })).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText('Threshold direction'), 'BELOW');
+    // Latest 139: 1.5× would be a threshold already crossed.
+    expect(screen.getByRole('button', { name: 'Use 69.5 (0.5× latest)' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /1.5× latest/ })).toBeNull();
+  });
+  // METRICS-FORECAST-AUDIT-2.md B5: no history is drawn under an interval it was not read at.
+  it('drops the previous interval\'s history while the new one is read', async () => {
+    let answer: (value: unknown) => void = () => {};
+    let reads = 0;
+    vi.mocked(axios.get).mockImplementation(url => {
+      if (!String(url).endsWith('/history')) return Promise.resolve({ data: { metrics: [{ ...metric, suggestedStepMillis: 300000 }],
+        total: 1, truncated: false, clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 } });
+      reads++;
+      return reads === 1 ? Promise.resolve({ data: HISTORY }) : new Promise(resolve => { answer = resolve; });
+    });
+    const user = await sources();
+    expect(await screen.findByRole('figure', { name: 'Recorded history' })).toHaveTextContent('at 5 minutes');
+    await user.selectOptions(screen.getByLabelText('Sampling interval'), '900000');
+    expect(screen.queryByRole('figure', { name: 'Recorded history' })).toBeNull();
+    answer({ data: HISTORY });
+    expect(await screen.findByRole('figure', { name: 'Recorded history' })).toHaveTextContent('at 15 minutes');
+  });
+
   // METRICS-FORECAST-UX-AUDIT.md B6: a metric that already has a series is named, and cannot be chosen.
   it('marks a metric that is already forecast instead of refusing it after the submit', async () => {
     render(<ConfirmProvider><ForecastSetupWizard forecastMetricIds={['lag']} /></ConfirmProvider>);

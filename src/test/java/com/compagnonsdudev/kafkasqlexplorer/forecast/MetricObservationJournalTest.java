@@ -149,4 +149,26 @@ class MetricObservationJournalTest {
             store.points);
         assertEquals(PreparedMetricSeries.Status.READY, prepared.status(), prepared.reason());
     }
+
+    /** METRICS-FORECAST-AUDIT-2.md B3: a deleted metric gives its enrolment slot back. */
+    @Test
+    void aDeletedMetricGivesItsEnrolmentSlotBack() {
+        var p = config(); p.setMetricIds(Set.of());
+        var registry = new SimpleMeterRegistry();
+        var journal = new MetricObservationJournal(p, new Store(), registry);
+        for (int i = 0; i < MetricHistoryProperties.MAX_METRICS; i++) assertTrue(journal.selects(metric("old" + i)));
+        assertFalse(journal.selects(metric("new")), "the bound is real");
+        assertFalse(journal.selects(metric("new")));
+        assertEquals(2.0, registry.counter("explorer_forecast_history_enrollment_refused_total").count(),
+            "every refusal is counted, not only the first one logged");
+        journal.forget("old0");
+        assertTrue(journal.selects(metric("new")), "the slot of the deleted metric is free again");
+        journal.forget("never-enrolled");
+    }
+
+    private static MetricConfig metric(String id) {
+        return new MetricConfig(id, "Lag " + id, "GAUGE", "SELECT 1 AS metric_value", null, null, null, null, null, null,
+            List.of(), Map.of(), null, "CONSUMER_TIME_LAG", Map.of("topic", "orders", "group", "billing"),
+            "TEMPLATE_BOUNDED_SCAN", null, List.of());
+    }
 }
