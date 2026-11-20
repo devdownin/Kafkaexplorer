@@ -185,9 +185,15 @@ Un unique JAR Spring Boot 4.1 embarquant Apache Flink 2.3 comme moteur SQL, avec
 
 Un serveur MCP optionnel, dans le même processus (Spring AI 2.0), expose ces mêmes services à un agent LLM — mêmes caches, mêmes budgets, aucun second client Kafka — derrière une garde calquée sur KIP-1318 : la portée ressource appliquée au SQL autant qu'aux noms de topics, un allow/deny par outil tenu par l'absence de `tools/list`, une limite de débit, des jetons d'approbation, le DLP sur tout ce qui sort, et un journal d'appels en ajout seul. Inactif sauf `explorer.mcp.enabled=true`, en lecture seule une fois actif, et derrière un jeton bearer sur TLS dès lors. Voir **[SPEC-MCP.md](SPEC-MCP.md)**.
 
-Les outils de revue opérationnelle `kex_topic_configuration`, `kex_topic_policy_review`, `kex_consumer_lag_trend` et `kex_dlq_review` exposent les mesures et les limites de leurs diagnostics. Définissez `explorer.mcp.lag-history-directory` sur un volume accessible en écriture depuis chaque instance et prenant en charge les verrous interprocessus : le relevé de lag reste alors disponible après un redémarrage (validité de 48 heures par défaut, configurable). Sans ce volume, le relevé reste dans le processus pendant 30 minutes. Les règles de topic dépendent de l'environnement déclaré et les liens DLQ vers source, retry et runbook restent des déclarations à vérifier. Les exemples de configuration figurent dans [`docs/DOCKERHUB.md`](docs/DOCKERHUB.md) et `application.yml`.
+Les outils de revue opérationnelle `kex_topic_configuration`, `kex_topic_policy_review`, `kex_consumer_lag_trend` et `kex_dlq_review` exposent les mesures et les limites de leurs diagnostics. Définissez `explorer.mcp.lag-history-directory` sur un volume accessible en écriture depuis chaque instance et prenant en charge les verrous interprocessus : le relevé de lag reste alors disponible après un redémarrage (validité de 48 heures par défaut, configurable). Sans ce volume, le relevé reste dans le processus pendant 30 minutes. Les règles de topic dépendent de l'environnement déclaré et les liens DLQ vers source, retry et runbook restent des déclarations à vérifier. Les exemples de configuration figurent dans [`docs/DOCKERHUB-OPERATIONS.md`](docs/DOCKERHUB-OPERATIONS.md) et `application.yml`.
 
 Plongée dans l'architecture : **[docs/architecture.md](docs/architecture.md)**
+
+**Prévoir depuis la carte d'une métrique** : appuyez sur **Forecast** et la prévision est créée à partir
+de l'historique enregistré de la métrique, tracée dans le prolongement de sa courbe. La carte dit quand
+un des seuils de la métrique est prévu, la fiabilité de la prévision et l'heure de la suivante. Rien
+n'est envoyé ; la même lecture est la série Prometheus `explorer_forecast_threshold_eta_seconds`, sur
+laquelle vous pouvez alerter. `./demo.sh --forecast` la fait tourner de bout en bout sans configuration.
 
 Le panneau **Metrics Forecast** propose un diagnostic, un catalogue de métriques candidates,
 un assistant de configuration avec approbation, le suivi de l’historique et une synthèse des résultats.

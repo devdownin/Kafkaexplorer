@@ -20,6 +20,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Docs: Docker Hub, GitHub Pages and READMEs caught up with the forecasts.** The Docker Hub overview
+  describes forecasting from a metric card and alerting on `explorer_forecast_threshold_eta_seconds`, and
+  stays under its 25,000-byte limit by sending the MCP review configuration to `DOCKERHUB-OPERATIONS.md`,
+  which already carried it. On the GitHub Pages site, the "work in progress" list named three pull requests
+  merged since, and the forecast section still described the retired "Prepare a forecast" flow.
+
 - **Metrics page: one clock, cards that render only when they change, and what each forecast and refresh
   costs.** The list was read every 15 s while the server recomputes every 30 s, and the forecast panel ran
   a second loop beside it; both now read on one clock, at the tick the server reports. Each card is

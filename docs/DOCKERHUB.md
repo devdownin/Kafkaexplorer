@@ -287,38 +287,8 @@ measured facts from configured expectations:
 | `kex_topic_policy_review(topic, environment)` | Compares observed replication, in-sync replicas, retention and cleanup policy with your rule for that environment. Missing rules return `NOT_CONFIGURED`. |
 | `kex_dlq_review(queueTopic)` | Checks DLQ/source/retry metadata and a bounded header sample. Connector, monitoring and replay references are declarations; no replay happens. |
 
-For scheduled checks or multiple Explorer instances, set
-`EXPLORER_MCP_LAG_HISTORY_DIRECTORY=/shared/lag` and mount **the same writable directory**
-on every instance. The backing filesystem must support interprocess file locks. The
-shared baseline lasts 48 hours by default (`EXPLORER_MCP_LAG_HISTORY_TTL_MS=172800000`);
-without the mount the baseline lasts 30 minutes in one process and is lost on restart.
-
-Configure expectations on Explorer, for example:
-
-```yaml
-explorer:
-  mcp:
-    topic-policies:
-      - environment: prod
-        min-replicas: 3
-        min-in-sync-replicas: 2
-        min-retention-ms: 86400000
-        max-retention-ms: 604800000
-        cleanup-policy: delete
-    dlq-routes:
-      - queue-topic: orders.dlq
-        source-topic: orders
-        retry-topics: [orders.retry]
-        connector-name: orders-sink
-        monitoring-reference: dashboards/orders-dlq
-        replay-runbook: runbooks/orders-dlq.md
-```
-
-These are examples, not suggested universal thresholds. Forecast thresholds are likewise
-operator-owned and include direction, horizon, confidence, history quality and series/version
-provenance. Scope agent access to the
-appropriate topic and group prefixes. The [complete deployment reference](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/DOCKERHUB-OPERATIONS.md#operational-mcp-reviews)
-explains the properties and limitations.
+The lag-history mount for scheduled checks, the environment rules and the declared DLQ links are
+in the [deployment reference](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/DOCKERHUB-OPERATIONS.md#operational-mcp-reviews).
 
 ## ⚙️ Essential settings
 
@@ -369,9 +339,19 @@ docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
 Ports, one plan for the three: **8080** Kafka SQL Explorer · **8081** Kex-anHarness · **8088** / **8089** SpectraLLM UI / API · **9092** Kafka. SpectraLLM's own stack keeps 80 / 8080 when it runs alone; `SPECTRA_UI_PORT=8088 SPECTRA_API_PORT=8089` puts it beside the other two.
 <!-- ecosystem:end -->
 
-## Metric forecasts
+## 🔮 Metric forecasts
 
-**Prepare a forecast** in Metrics extends the observed chart with predictions. [Guide](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md).
+Press **Forecast** on a metric card: the forecast is created from the metric's recorded history and drawn
+as the continuation of its curve. The card then says when a threshold is predicted ("Warning expected in
+~12 min"), how reliable the forecast has been against what happened, and when the next one is due.
+Nothing is sent, but the same reading is a Prometheus series you can alert on:
+
+```promql
+explorer_forecast_threshold_eta_seconds{level="critical", likelihood="expected"} < 1800
+```
+
+`./demo.sh --forecast` runs the whole thing with live traffic and seeded history, nothing to configure.
+[Guide](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md).
 
 ## 📚 More
 
