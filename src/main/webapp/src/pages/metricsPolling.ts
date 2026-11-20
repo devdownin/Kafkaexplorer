@@ -66,3 +66,68 @@ export function clockTime(at: number | null | undefined): string | null {
   return at === null || at === undefined || !Number.isFinite(at) ? null
     : new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
+
+/**
+ * Whether the page should read the forecasts on this tick. A forecast only changes when the pilot's
+ * cycle writes one, and the server says when the next cycle starts (`nextCycleAt`): reading every
+ * 30 s in between fetched the same answer. Read when nothing has been read yet, while a cycle runs
+ * (`nextCycleAt` is null then), once the next cycle is due, and at least every `maxGapMs` — the
+ * history a series is still collecting moves with each metric refresh, not with the cycle.
+ */
+export function forecastReadDue(now: number, nextCycleAt: number | null | undefined,
+  lastReadAt: number | null, maxGapMs = 120_000): boolean {
+  if (lastReadAt === null) return true;
+  if (nextCycleAt === null || nextCycleAt === undefined) return true;
+  if (now - lastReadAt >= maxGapMs) return true;
+  return now >= nextCycleAt;
+}
+
+/** What the page remembers of each metric's predicted threshold between two forecasts. */
+export interface ReachSeen { key: string; at: number; level: 'warning' | 'critical' }
+export interface ReachMemory {
+  /** False until the first forecasts have been read: nothing is "new" on the first look. */
+  initialized: boolean;
+  seen: Record<string, ReachSeen>;
+  /** How far the predicted instant moved at the last new forecast (ms, negative = sooner). */
+  shifts: Record<string, number>;
+}
+export const EMPTY_REACH_MEMORY: ReachMemory = { initialized: false, seen: {}, shifts: {} };
+
+/**
+ * The memory after one read, and the reaches that are news: a metric whose forecast did not reach a
+ * threshold before and does now, or one that escalated from warning to critical. A shift is kept
+ * only when a new forecast (another result key) predicts the same level: comparing the instants of
+ * two different thresholds says nothing.
+ */
+export function nextReachMemory(memory: ReachMemory,
+  current: { metricId: string; key: string; at: number; level: 'warning' | 'critical' }[]):
+  { memory: ReachMemory; news: { metricId: string; level: 'warning' | 'critical'; at: number }[] } {
+  const seen: Record<string, ReachSeen> = {};
+  const shifts: Record<string, number> = {};
+  const news: { metricId: string; level: 'warning' | 'critical'; at: number }[] = [];
+  for (const reach of current) {
+    const before = memory.seen[reach.metricId];
+    seen[reach.metricId] = { key: reach.key, at: reach.at, level: reach.level };
+    if (!before) {
+      if (memory.initialized) news.push({ metricId: reach.metricId, level: reach.level, at: reach.at });
+      continue;
+    }
+    if (before.key === reach.key) {
+      if (memory.shifts[reach.metricId] !== undefined) shifts[reach.metricId] = memory.shifts[reach.metricId];
+      continue;
+    }
+    if (before.level === reach.level) shifts[reach.metricId] = reach.at - before.at;
+    else if (reach.level === 'critical' && memory.initialized) news.push({ metricId: reach.metricId, level: reach.level, at: reach.at });
+  }
+  const unchanged = memory.initialized && JSON.stringify(seen) === JSON.stringify(memory.seen)
+    && JSON.stringify(shifts) === JSON.stringify(memory.shifts);
+  return { memory: unchanged ? memory : { initialized: true, seen, shifts }, news };
+}
+
+/** " · 4 min sooner than the previous forecast", or nothing under a minute's difference. */
+export function reachShiftText(shiftMs: number | undefined): string {
+  if (shiftMs === undefined || Math.abs(shiftMs) < 60_000) return '';
+  const minutes = Math.round(Math.abs(shiftMs) / 60_000);
+  const amount = minutes < 90 ? `${minutes} min` : `${Math.round(minutes / 60)} h`;
+  return ` · ${amount} ${shiftMs < 0 ? 'sooner' : 'later'} than the previous forecast`;
+}

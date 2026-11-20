@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import axios from 'axios';
 import userEvent from '@testing-library/user-event';
 import { FORECAST_COLORS } from './forecastColors';
@@ -56,6 +56,41 @@ describe('ForecastPanel chart', () => {
       : String(url).endsWith('/progress') ? progress : {} }));
     render(<ForecastPanel />);
     expect(await screen.findByText('Threshold ≥ 11')).toBeInTheDocument();
+  });
+
+  it('reads a threshold the operator only tries out, as the card reads the metric\u2019s own', async () => {
+    const withHistory = structuredClone(status) as typeof status & { series: { result: { forecast: Record<string, unknown> } }[] };
+    withHistory.series[0].result.forecast.historyEndAt = 0;
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? withHistory : {} }));
+    const user = userEvent.setup();
+    render(<ForecastPanel />);
+    const input = await screen.findByRole('spinbutton', { name: 'Try a threshold' });
+    await user.type(input, '11');
+    expect(screen.getByLabelText('Try a threshold', { selector: 'div' })).toHaveTextContent('Reached on the edge of the 80 % band in ~1 min');
+    await user.clear(input);
+    await user.type(input, '50');
+    expect(screen.getByLabelText('Try a threshold', { selector: 'div' })).toHaveTextContent('Not reached within the forecast horizon');
+  });
+
+  it('waits to read the shown series until the panel is on screen', async () => {
+    let callback: ((entries: { isIntersecting: boolean }[]) => void) | undefined;
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(cb: (entries: { isIntersecting: boolean }[]) => void) { callback = cb; }
+      observe() { callback?.([{ isIntersecting: false }]); }
+      disconnect() {}
+    });
+    try {
+      vi.mocked(axios.get).mockClear();
+      vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
+      render(<ForecastPanel />);
+      await screen.findByText('80 % interval');
+      const detailReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) => String(url).startsWith(`/api/forecasts/${id}`)).length;
+      expect(detailReads()).toBe(0);
+      act(() => callback?.([{ isIntersecting: true }]));
+      await waitFor(() => expect(detailReads()).toBeGreaterThan(0));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   // One clock for the page: given one, the panel reads once per tick and runs no timer of its own.

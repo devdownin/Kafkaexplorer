@@ -223,6 +223,16 @@ shows at the next cycle. The value floors at zero and a forecast that stops bein
 zero: pair the rule with `explorer_metric_last_success_timestamp_seconds`, as the card's own alert rule
 does. The reading is `ForecastThresholdReach`, the server twin of the page's `forecastBreach.ts`.
 
+## From the Metrics page
+
+- **Forecast all eligible** creates the missing forecasts in one confirmed batch, one after the other, and
+  names each metric that was not started with the server's reason (the last series slot taken, for example).
+- **Try a threshold**, in the forecast panel, draws a value and says when this forecast would reach it — on
+  the median, or on the edge of the 80 % band — without saving anything.
+- A card says how far a new forecast moved its predicted threshold ("4 min sooner than the previous forecast").
+- **Notify me** raises a browser notification when a forecast newly predicts a threshold, while the page is
+  open. It is local to that browser; for alerts that reach people, use the Prometheus series above.
+
 ## Operator API
 
 | Endpoint | Purpose |

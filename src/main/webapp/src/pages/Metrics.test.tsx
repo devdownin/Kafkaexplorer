@@ -252,6 +252,44 @@ describe('Metrics page', () => {
     await user.click(within(list).getByRole('button', { name: 'Edit gauge_latency_a_to_b' }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
+  it('forecasts every eligible metric in one go, once confirmed, and says which were not started and why', async () => {
+    const other = { ...templateMetric, id: 'm-2', name: 'gauge_other' };
+    stubApi([templateMetric, other], [suggestion], READY_FORECASTS);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, body?: unknown) => {
+      if (url !== '/api/forecasts/series') return post(url, body);
+      return (body as { metricId: string }).metricId === 'm-2'
+        ? Promise.reject({ response: { data: { reason: 'All 1 forecast series are in use' } } })
+        : Promise.resolve({ data: { seriesId: 'forecast-1' } });
+    });
+    mockedAxios.isAxiosError.mockReturnValue(true);
+    const user = userEvent.setup(); await renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Forecast all eligible metrics (2)' }));
+    await user.click(await screen.findByRole('button', { name: 'Forecast all' }));
+    expect(await screen.findByLabelText('Forecasts not started')).toHaveTextContent('gauge_other — All 1 forecast series are in use');
+    expect(mockedAxios.post.mock.calls.filter(([url]) => url === '/api/forecasts/series')).toHaveLength(2);
+    mockedAxios.isAxiosError.mockReset();
+  });
+
+  it('offers browser notifications only where the browser has them, and remembers the choice', async () => {
+    const requestPermission = vi.fn().mockResolvedValue('granted');
+    vi.stubGlobal('Notification', Object.assign(vi.fn(), { permission: 'default', requestPermission }));
+    try {
+      const series = { seriesId: 'm-1'.padEnd(64, 'x'), metricId: 'm-1', environment: 'e', stepMillis: 60000,
+        minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+        activation: { eligible: false, reason: 'not yet', blockPoints: 0, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+        result: null };
+      stubApi([templateMetric], [suggestion], { ...READY_FORECASTS, series: [series] });
+      const user = userEvent.setup(); await renderPage();
+      await user.click(await screen.findByRole('button', { name: /Notify me/ }));
+      expect(requestPermission).toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: /Notify me/ })).toHaveAttribute('aria-pressed', 'true');
+      expect(localStorage.getItem('metrics.notify')).toBe('on');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('opens the form for that metric, on the reason, only when the one-click creation stops', async () => {
     stubApi([templateMetric], [suggestion], READY_FORECASTS);
     const post = mockedAxios.post.getMockImplementation()!;

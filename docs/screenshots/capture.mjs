@@ -132,8 +132,11 @@ const SCREENS = [
     name: 'metrics-forecast',
     url: '/metrics',
     // The interval's legend entry is drawn once the series' own record has arrived, the threshold
-    // once its progress has: two requests, so both are waited for.
+    // once its progress has: two requests, so both are waited for. The panel reads a series' detail
+    // only while it is on screen (an IntersectionObserver), so it is scrolled to first, as a reader
+    // would — waiting at the top of the page waits for a request that is, by design, never made.
     settle: async page => {
+      await page.locator('section[aria-label="Metrics Forecast"]').scrollIntoViewIfNeeded();
       await page.getByText('80 % interval').first().waitFor();
       await page.getByText(/Threshold ≥/).first().waitFor();
     },

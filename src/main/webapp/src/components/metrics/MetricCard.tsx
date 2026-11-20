@@ -30,7 +30,7 @@ import { forecastReliability, lastCheck, reliabilityTrend } from './forecastVsAc
 import { forecastBreachRule, metricTopics } from '../../pages/metricLinks';
 import { Link, useInRouterContext } from 'react-router-dom';
 import { placeThresholds } from './thresholdPlacement';
-import { clockTime, refreshCostNote } from '../../pages/metricsPolling';
+import { clockTime, reachShiftText, refreshCostNote } from '../../pages/metricsPolling';
 import { buildAlertRule, thresholdDirection } from '../../pages/metricAlert';
 import { componentSeries, describeMeasurement, describeMetricScope, scopeNoteOf } from '../../pages/metricScope';
 import {
@@ -100,7 +100,9 @@ const MetricCardView: React.FC<{
   /** What this metric's last refresh cost, and the loop's tick it is measured against. */
   refreshDurationMs?: number;
   refreshTickMs?: number;
-}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, forecastCreating = false, onShowForecast, nextForecastAt = null, refreshDurationMs, refreshTickMs }) => {
+  /** How far the latest forecast moved the predicted threshold from the previous one (ms, negative = sooner). */
+  reachShiftMs?: number;
+}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, forecastCreating = false, onShowForecast, nextForecastAt = null, refreshDurationMs, refreshTickMs, reachShiftMs }) => {
   const { toast } = useToast();
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
@@ -366,7 +368,8 @@ const MetricCardView: React.FC<{
                   ? 'bg-error-container/40 text-[#f58c8c]' : 'bg-[#f5c264]/10 text-[#f5c264]'}`}>
                 <span aria-hidden="true" className="material-symbols-outlined text-[14px]">{reach.level === 'critical' ? 'error' : 'warning'}</span>
                 <span>{reach.level === 'critical' ? 'Critical' : 'Warning'} {reach.likelihood} in {about(reach.steps, forecastSeries.stepMillis)}
-                  <span className="font-mono font-normal opacity-80"> ({thresholdDirection(metric.warningThreshold, metric.criticalThreshold) === 'below' ? '≤' : '≥'} {reach.threshold.toLocaleString()}{reach.likelihood === 'possible' ? ', 80% band' : ', median'})</span></span>
+                  <span className="font-mono font-normal opacity-80"> ({thresholdDirection(metric.warningThreshold, metric.criticalThreshold) === 'below' ? '≤' : '≥'} {reach.threshold.toLocaleString()}{reach.likelihood === 'possible' ? ', 80% band' : ', median'})</span>
+                  {reachShiftText(reachShiftMs) && <span className="font-normal opacity-90">{reachShiftText(reachShiftMs)}</span>}</span>
                 {/* What to do about it, from where it is said: the alert to raise elsewhere, the topic to look at. */}
                 <span className="ml-auto flex items-center gap-0.5 shrink-0">
                   <button type="button" title="Copy an alert rule for this predicted threshold"
