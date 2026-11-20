@@ -76,3 +76,25 @@ export function forecastReliability(check: { points: number; coverage: number })
   if (check.coverage >= 0.5) return { level: 'fair', label: 'Fair', tone: 'warning' };
   return { level: 'watch', label: 'Watch', tone: 'error' };
 }
+
+/**
+ * Whether the forecast is getting better or worse at holding its band — the badge reads the last
+ * scored cohort only, which says how it did, not where it is going.
+ *
+ * The open cohorts of the quality window, oldest first, each with its 80 % band coverage. A trend
+ * needs two of them; "improving" or "degrading" only past five points of coverage, so the noise of
+ * two cohorts of thirty points is not read as a direction.
+ */
+export interface ReliabilityTrend {
+  coverages: number[];
+  direction: 'improving' | 'degrading' | 'steady';
+}
+
+export function reliabilityTrend(window: ForecastQualityWindow | null | undefined): ReliabilityTrend | null {
+  const coverages = (window?.open ?? [])
+    .map(cohort => cohort.quality?.q10Q90Coverage)
+    .filter((c): c is number => typeof c === 'number' && Number.isFinite(c));
+  if (coverages.length < 2) return null;
+  const change = coverages[coverages.length - 1] - coverages[0];
+  return { coverages, direction: change >= 0.05 ? 'improving' : change <= -0.05 ? 'degrading' : 'steady' };
+}
