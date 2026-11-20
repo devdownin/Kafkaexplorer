@@ -499,6 +499,17 @@ jobs:
       # preparer, PostgreSQL and TimesFM — the one place the seeder's SQL meets all three.
       - name: The demo's live traffic and seeded history produce forecasts
         run: python3 ci/demo-forecast.py
+      # And the page, in a real browser: the Metrics list's forecast filter and sort, the count it
+      # announces against the cards it keeps, the forecast panel's thresholds. Relations only, never
+      # whether the "breach expected" badge is on screen — that depends on where the demo's curve is
+      # in its three-hour cycle, and a check on it would pass at some hours and fail at others.
+      - name: The Metrics page agrees with the forecasts the server holds
+        run: |
+          set -euo pipefail
+          npm install -g playwright@1
+          playwright install --with-deps chromium
+          NODE_PATH="$(npm root -g)" node ci/demo-forecast-ui.mjs http://127.0.0.1:8080 \
+            --expect demo-live-unshipped,demo-live-backlog
       - name: Capture service logs
         if: failure()
         run: |

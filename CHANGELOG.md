@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **CI drives the Metrics page against the forecast demo.** `ci/demo-forecast-ui.mjs` runs in the
+  `forecast-stack` job after the backend smoke: the list's *Has a forecast* / *No forecast* filters keep
+  what the server lists, *Breach predicted (N)* keeps N cards each with its badge, the sort keeps every
+  card, and the forecast panel draws the metric's own thresholds. Relations only — never whether the
+  badge is showing, which depends on where the demo's curve is in its cycle.
 - **Kafka 4.4.0.** `kafka-clients` (`kafka.version`), every bundled broker image
   (`apache/kafka:4.4.0`, the CI's `apache/kafka-native:4.4.0`), the Testcontainers broker and the
   docs, badges and pins that name the version. Unchanged on purpose: `flink-connector-kafka`
