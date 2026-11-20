@@ -45,7 +45,7 @@ Plus the base-image line, matched against the `FROM` of both runtime images.
      unchecked rather than silently blessed.
 
      Abbreviated claims resolve by prefix at a component boundary ("Flink 2.3" against 2.3.0,
-     the `Kafka-4.3_KRaft` badge against 4.3.1); a claim about an exact artifact version is
+     the `Kafka-4.4_KRaft` badge against 4.4.0); a claim about an exact artifact version is
      compared exactly. Badges are checked on **both** halves, the alt text and the URL, since
      they are two copies of one number and either can be edited alone.
 
@@ -267,7 +267,7 @@ def version_claims(name: str, text: str) -> list[tuple[str, str, str, str]]:
             rf'https://img\.shields\.io/badge/{re.escape(label)}-([^-)\s]+)-')
         for alt, message in badge.findall(text):
             actual = pom_version(source)
-            # `Kafka-4.3_KRaft` says 4.3 and then says what it is; compare the version part.
+            # `Kafka-4.4_KRaft` says 4.4 and then says what it is; compare the version part.
             for half, raw in (('badge alt text', alt), ('badge URL', message)):
                 lead = re.match(r'[\d.]+', raw.strip())
                 found.append((f'{label} {half}', lead.group(0) if lead else raw.strip(),

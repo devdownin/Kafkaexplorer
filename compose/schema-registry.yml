@@ -3,7 +3,7 @@
 #   docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d
 #
 # This was `docker-compose-kafka4.yml`, a base file of its own, and the rename is the
-# point rather than tidiness. Every stack in this repository runs Kafka 4.3 in KRaft —
+# point rather than tidiness. Every stack in this repository runs Kafka 4.4 in KRaft —
 # `docker-compose.yml` included — so a file called "kafka4" advertised a choice that had
 # stopped existing, on the stack the README recommends, which is the first thing a
 # newcomer reads. What it actually adds is a Schema Registry and the seeder that needs

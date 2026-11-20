@@ -34,13 +34,13 @@ root, while the real one is at `src/main/webapp/node_modules`.
 
 ## The bundled stacks
 
-All bundled compose stacks run **Kafka 4.3 in KRaft mode** (`apache/kafka:4.3.1`, single combined broker+controller node — no Zookeeper anywhere, `compose/image.yml` included). CI runs no broker of its own: `KafkaClusterIntegrationTest` starts one through Testcontainers (`apache/kafka-native:4.3.1`), which is also why it works on a developer machine. Prefer that over a workflow-level `services:` block if a new test needs a broker.
+All bundled compose stacks run **Kafka 4.4 in KRaft mode** (`apache/kafka:4.4.0`, single combined broker+controller node — no Zookeeper anywhere, `compose/image.yml` included). CI runs no broker of its own: `KafkaClusterIntegrationTest` starts one through Testcontainers (`apache/kafka-native:4.4.0`), which is also why it works on a developer machine. Prefer that over a workflow-level `services:` block if a new test needs a broker.
 
 ```bash
-# Kafka 4.3 (KRaft) + Schema Registry + app + demo topics (recommended)
+# Kafka 4.4 (KRaft) + Schema Registry + app + demo topics (recommended)
 docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d
 
-# Kafka 4.3 (KRaft) + app + demo topics, without Schema Registry
+# Kafka 4.4 (KRaft) + app + demo topics, without Schema Registry
 docker compose up -d
 
 # Demo data setup (creates 79 topics)
@@ -322,7 +322,7 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
 
   | File | Kind | What it is |
   |---|---|---|
-  | `docker-compose.yml` | base | Kafka 4.3 KRaft + explorer + demo seeder. The one everything layers onto. |
+  | `docker-compose.yml` | base | Kafka 4.4 KRaft + explorer + demo seeder. The one everything layers onto. |
   | `compose/schema-registry.yml` | overlay | Schema Registry + the Avro seeder. Was `docker-compose-kafka4.yml`. |
   | `compose/llama-cpp.yml` | overlay | One local llama.cpp model (a GGUF: `LLAMA_CPP_MODEL_FILE` / `_NAME` / `_URL`, Gemma 4 E4B by default) for Process Mining **and** the SQL & metric assistant. Was `compose/ollama.yml`, and `docker-compose-llm.yml` before that. |
   | `compose/mcp.yml` | overlay | The MCP server on, its guards as variables, and a smoke probe. |
@@ -371,7 +371,7 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   JSON, the server chooses, and reading only one of them is a probe that works until the transport
   is reconfigured.
 
-  **The `kafka4` name was a lie worth removing.** Every stack here runs Kafka 4.3 in KRaft —
+  **The `kafka4` name was a lie worth removing.** Every stack here runs Kafka 4.4 in KRaft —
   `docker-compose.yml` included — so a file named for that advertised a choice that had stopped
   existing, on the stack the README recommends, which is the first thing a newcomer reads. What
   it adds is a Schema Registry, and it is named for that now.

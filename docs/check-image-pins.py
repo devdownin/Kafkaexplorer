@@ -10,7 +10,7 @@ Three checks, all offline, all on facts already in the repository.
 
 1. **Nothing floats.** An image with no tag, or tagged `latest`, serves whatever was published
    the day of the pull. The tree pins everything else — base images by digest in the
-   Dockerfiles, `apache/kafka:4.3.1`, `chromadb/chroma` — and the comment on
+   Dockerfiles, `apache/kafka:4.4.0`, `chromadb/chroma` — and the comment on
    one of those pins once claimed it was "the only floating tag left in the tree" while
    `curlimages/curl:latest` sat two services below it. A claim about pinning is exactly the
    kind that decays unread.

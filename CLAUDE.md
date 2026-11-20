@@ -91,7 +91,7 @@ npm test        # Vitest (jsdom + @testing-library/react); test:watch for watch 
 
 ### Docker
 
-All bundled stacks run **Kafka 4.3 in KRaft mode** (`apache/kafka:4.3.1`, single combined node, no
+All bundled stacks run **Kafka 4.4 in KRaft mode** (`apache/kafka:4.4.0`, single combined node, no
 Zookeeper anywhere). There is **one base file at the repository root** and everything else in
 `compose/` is an overlay or a standalone stack.
 
@@ -164,7 +164,7 @@ the seeders' entrypoints also strip `\r`, so a CRLF checkout does not break the 
   connector was built against**, not a range, and no `-2.3` build is published yet. Check Maven
   Central before assuming a bump exists.
 - **Frontend**: React 19, TypeScript, Vite, Tailwind CSS, Monaco Editor.
-- **Kafka**: `kafka-clients` 4.3.1 (`kafka.version` override in pom.xml, which wins over Spring
+- **Kafka**: `kafka-clients` 4.4.0 (`kafka.version` override in pom.xml, which wins over Spring
   Boot's managed version *and* over what `io.confluent` 8.3.1 pulls transitively — one client
   version across the whole build, never two). Compatible with Kafka 2.1+ brokers on the classic
   protocol. The live Process Mining consumer speaks the KIP-848 protocol
