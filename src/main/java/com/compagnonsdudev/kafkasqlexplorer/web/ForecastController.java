@@ -115,17 +115,20 @@ public class ForecastController {
   public ResponseEntity<MetricForecast> previous(@PathVariable String seriesId) {
     var p = services.getIfAvailable();
     if (p == null) return ResponseEntity.notFound().build();
+    String id;
     try {
-      p.resolve(seriesId);
+      // The configured series' own id from here on: the path value is only a key to look it up,
+      // and is never written to the log (it is whatever the caller sent).
+      id = p.resolve(seriesId).seriesId();
     } catch (IllegalArgumentException e) {
       return ResponseEntity.notFound().build();
     }
     try {
-      var forecast = p.previous(seriesId);
+      var forecast = p.previous(id);
       return forecast == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(forecast);
     } catch (Exception e) {
       org.slf4j.LoggerFactory.getLogger(ForecastController.class)
-          .warn("Previous forecast of {} could not be read: {}", seriesId, e.toString());
+          .warn("Previous forecast of {} could not be read: {}", id, e.toString());
       return ResponseEntity.status(503).build();
     }
   }
