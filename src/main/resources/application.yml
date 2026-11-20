@@ -51,7 +51,7 @@ kafka:
   # Rebalance protocol for the group-managed (subscribe) consumer used by live
   # Process Mining sessions. "consumer" is KIP-848 incremental rebalancing and is
   # what every bundled stack already set explicitly, so this aligns the shipped
-  # configuration with the brokers this project runs (Kafka 4.3 in KRaft mode).
+  # configuration with the brokers this project runs (Kafka 4.4 in KRaft mode).
   # It **requires a Kafka 4.x broker**: against an older one, set "classic" here
   # or export KAFKA_CONSUMER_GROUP_PROTOCOL=classic — that protocol works with
   # any broker version and is what `KafkaConfig` still falls back to when the

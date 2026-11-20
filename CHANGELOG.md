@@ -25,6 +25,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   what the server lists, *Breach predicted (N)* keeps N cards each with its badge, the sort keeps every
   card, and the forecast panel draws the metric's own thresholds. Relations only — never whether the
   badge is showing, which depends on where the demo's curve is in its cycle.
+- **Kafka 4.4.0.** `kafka-clients` (`kafka.version`), every bundled broker image
+  (`apache/kafka:4.4.0`, the CI's `apache/kafka-native:4.4.0`), the Testcontainers broker and the
+  docs, badges and pins that name the version. Unchanged on purpose: `flink-connector-kafka`
+  (5.0.0-2.2 is still the latest published) and Confluent 8.3.1.
 
 - **The Metrics page reads at a glance.** The card's disclaimer paragraph is an ⓘ beside a one-line
   legend, its chart is taller (120 px), and "Last checked: 87 % … mean error" became a *Reliable / Fair /

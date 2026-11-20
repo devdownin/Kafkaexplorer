@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * <p>`kafka.consumer-group-protocol` is deliberately two different values in two places: the field
  * in {@link KafkaConfig} keeps `classic`, which works against any broker version and is what an
  * absent property must still mean, while `application.yml` ships `consumer` — KIP-848 — because
- * every bundled stack runs Kafka 4.3 in KRaft mode and already set it explicitly. A split like
+ * every bundled stack runs Kafka 4.4 in KRaft mode and already set it explicitly. A split like
  * that is only safe while something reads it: `docs/check-config-table.py` compares the
  * *documented* default against the YAML and would not notice the YAML line being deleted, and the
  * Java default is exactly what would then silently take over — the deployment would fall back to
