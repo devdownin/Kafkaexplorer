@@ -128,7 +128,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
 
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 lg:hidden animate-fade-in"
+          className="kse-drawer-backdrop fixed inset-0 z-40 lg:hidden animate-fade-in"
           onClick={() => setMobileOpen(false)}
           aria-hidden="true"
         />
