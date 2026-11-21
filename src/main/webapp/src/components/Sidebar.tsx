@@ -53,7 +53,7 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
 
   return (
     <aside
-      className={`kse-sidebar fixed left-3 top-3 bottom-3 h-auto flex flex-col px-3 py-4 z-50 transition-all duration-300 w-64 ${
+      className={`kse-sidebar fixed left-0 top-0 bottom-0 lg:left-3 lg:top-3 lg:bottom-3 h-auto flex flex-col px-3 py-4 z-50 transition-all duration-300 w-64 ${
         isCollapsed ? 'lg:w-[68px]' : 'lg:w-64'
       } ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
     >
@@ -101,7 +101,7 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
       <button
         onClick={() => { navigate('/query'); onMobileClose?.(); }}
         title="New query"
-        className={`mb-4 bg-primary text-on-primary rounded-xl kse-interactive font-medium flex items-center justify-center transition-all hover:bg-primary-fixed active:scale-[0.99] ${
+        className={`mb-4 bg-primary text-on-primary rounded-xl kse-interactive font-medium flex items-center justify-center transition-all hover:bg-primary-dim active:scale-[0.99] ${
           isCollapsed ? 'w-10 h-10 mx-auto' : 'py-2 px-3 gap-2'
         }`}
       >
