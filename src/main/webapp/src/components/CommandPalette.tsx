@@ -158,7 +158,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
           annonçait un dialogue de la taille du viewport, et rangeait le clic-pour-fermer
           *dans* le dialogue au lieu de l'extérieur. Le voile ne garde que ce clic. */}
       <div
-        className="w-full max-w-xl bg-surface-container border border-outline-variant rounded-xl shadow-2xl overflow-hidden animate-slide-up"
+        className="kse-glass-thick kse-modal w-full max-w-xl overflow-hidden animate-slide-up"
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
