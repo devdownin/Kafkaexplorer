@@ -888,7 +888,7 @@ that leaves the page empty is not a toast. *The dashboard's* state column says "
 text and keeps badges for the exceptions, so the one dead-letter topic stands out; the diagnostic
 overview's first cell counts silent topics with `detectSilence`, **over the rows whose activity was
 measured** — the column is read per page, not per cluster, and the cell says so. *A metric card's*
-actions are revealed by `group-hover/card` and `group-focus-within/card` behind a
+actions are revealed by the card group's hover and focus-within variants behind a
 `[@media(hover:hover)]` guard, so they are always visible on touch, where nothing hovers; delete
 lives in `MoreActions` (closes on Escape, an outside click, or once chosen). The screenshot server
 answers `/api/compare/topics` now, so the docs capture of Compare shows pickers rather than an error.
