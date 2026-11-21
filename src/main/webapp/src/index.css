@@ -299,3 +299,166 @@ body { background: rgb(var(--kse-background)); }
 @media (prefers-reduced-motion: reduce) {
   .kse-interactive { transform: none !important; }
 }
+
+
+/* Spatial refinement v3 — optical depth, not repeated decorative blur.
+   Layer 0: opaque reading surfaces; layer 1: controls; layer 2: navigation;
+   layer 3: transient dialogs. Keep the scene stationary while scrolling. */
+:root { accent-color: rgb(var(--kse-primary)); }
+@layer base {
+  :focus-visible {
+    outline-color: var(--focus-ring);
+    outline-offset: 3px;
+  }
+  ::selection { background: rgb(var(--kse-primary) / .18); }
+}
+.kse-app-shell {
+  background: var(--scene);
+  background-attachment: fixed;
+}
+/* The edge has two optical cues: a soft upper rim and a lower separator.
+   No filter is applied per navigation item, card, or data cell. */
+.kse-sidebar, .kse-header {
+  border-color: var(--glass-edge);
+  box-shadow:
+    inset 0 1px 0 var(--glass-inner-edge),
+    inset 0 -1px 0 rgb(var(--kse-outline-variant) / .10),
+    var(--depth-2);
+}
+.kse-header { box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-1); }
+.kse-sidebar {
+  background-image: linear-gradient(146deg, var(--glass-reflection), transparent 37%);
+}
+.kse-header {
+  background-image: linear-gradient(160deg, var(--glass-reflection), transparent 50%);
+}
+/* Less glass as an overlay becomes closer: opacity and shadow, not
+   increasingly vivid or saturated color. */
+.kse-glass-thin, .kse-glass-regular, .kse-glass-thick {
+  border-color: var(--glass-edge);
+}
+.kse-glass-thin::before, .kse-glass-regular::before, .kse-glass-thick::before {
+  background: linear-gradient(177deg, var(--glass-reflection), transparent 34%);
+}
+.kse-elevation-flat { box-shadow: inset 0 1px 0 var(--glass-inner-edge); }
+.kse-elevation-raised {
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-2);
+}
+.kse-elevation-floating {
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-3);
+}
+.kse-surface {
+  border-color: var(--glass-card-border);
+  background-image: linear-gradient(180deg, var(--glass-card-top), transparent 28%);
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-1);
+}
+.card-hover:hover { box-shadow: var(--depth-2); }
+.nav-active {
+  background: var(--glass-selected-bg);
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge),
+    inset 0 0 0 1px var(--glass-selected-edge), var(--depth-1);
+}
+.kse-sidebar nav a {
+  position: relative;
+  transition: background-color 180ms ease, color 180ms ease,
+    box-shadow 180ms ease, transform 180ms var(--spatial-ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  .kse-sidebar nav a:not(.nav-active):hover { transform: translateX(2px); }
+}
+/* Keyboard focus and current route must remain distinct from hover. */
+.kse-sidebar nav a:focus-visible, .kse-control:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.kse-control {
+  transition: transform 180ms var(--spatial-ease), background-color 180ms ease,
+    color 180ms ease, box-shadow 180ms ease;
+}
+.kse-control:enabled:active { transform: scale(.985); }
+.kse-control:disabled { transform: none; box-shadow: none; }
+.kse-control:enabled:hover { box-shadow: var(--depth-1); }
+/* Inputs should read as a precise recess rather than another glass card. */
+.kse-input {
+  background: var(--glass-input-bg);
+  border-color: var(--glass-input-border);
+  box-shadow: inset 0 1px 2px rgb(20 30 50 / .05);
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+.kse-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: inset 0 1px 2px rgb(20 30 50 / .05),
+    0 0 0 3px rgb(var(--kse-primary) / .10);
+}
+.kse-input[aria-invalid="true"] { border-color: rgb(var(--kse-error) / .7); }
+.kse-input:disabled { opacity: .65; }
+/* Header search and secondary actions are lightweight, not separately blurred. */
+.kse-search-trigger {
+  border: 1px solid var(--glass-input-border);
+  background: var(--glass-control-bg);
+  border-radius: 9999px;
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge);
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+.kse-search-trigger:hover {
+  background: var(--glass-control-hover);
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-1);
+}
+.kse-header-action {
+  border-radius: var(--radius-control);
+  transition: background-color 180ms ease, color 180ms ease, transform 120ms ease;
+}
+.kse-header-action:hover { background: var(--glass-control-hover); }
+.kse-header-action:active { transform: scale(.985); }
+.kse-drawer-backdrop {
+  background: var(--glass-drawer-bg);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.kse-glass-thick.kse-modal { border-radius: var(--radius-modal); }
+@media (max-width: 1023px) {
+  .kse-sidebar {
+    border-radius: 0 var(--radius-panel) var(--radius-panel) 0;
+    border-left: 0;
+    background: var(--glass-thick-bg);
+    -webkit-backdrop-filter: blur(12px) saturate(125%);
+    backdrop-filter: blur(12px) saturate(125%);
+  }
+  .kse-header {
+    -webkit-backdrop-filter: blur(8px) saturate(125%);
+    backdrop-filter: blur(8px) saturate(125%);
+  }
+}
+@media (min-width: 1024px) {
+  .kse-sidebar { border-radius: var(--radius-panel); border-left: 1px solid var(--glass-edge); }
+}
+@media (max-width: 640px) {
+  .kse-glass-thick, .kse-glass-regular, .kse-glass-thin {
+    -webkit-backdrop-filter: blur(12px) saturate(125%);
+    backdrop-filter: blur(12px) saturate(125%);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .kse-sidebar, .kse-header, .kse-glass-thin, .kse-glass-regular,
+  .kse-glass-thick, .glass-overlay, .confirm-overlay, .kse-drawer-backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: rgb(var(--kse-surface-container) / .99);
+  }
+}
+@media (forced-colors: active) {
+  .kse-sidebar, .kse-header, .kse-surface,
+  .kse-glass-thin, .kse-glass-regular, .kse-glass-thick,
+  .kse-input, .kse-search-trigger, .nav-active {
+    border: 1px solid CanvasText;
+    box-shadow: none;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .kse-glass-thin::before, .kse-glass-regular::before, .kse-glass-thick::before { display: none; }
+  :focus-visible { outline: 2px solid Highlight; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kse-control, .kse-sidebar nav a, .kse-header-action { transition: none !important; transform: none !important; }
+}
