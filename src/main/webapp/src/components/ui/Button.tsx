@@ -19,7 +19,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const VARIANTS: Record<ButtonVariant, string> = {
   primary:
-    'bg-primary text-on-primary hover:bg-primary-fixed active:scale-[0.99] disabled:opacity-50',
+    'bg-primary text-on-primary hover:bg-primary-dim active:scale-[0.99] disabled:opacity-50',
   secondary:
     'bg-surface-container-high text-on-surface hover:bg-surface-container-highest border border-outline-variant disabled:opacity-50',
   outline:
@@ -60,7 +60,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       ref={ref}
       type={type}
       className={cn(
-        'inline-flex items-center justify-center rounded-md font-medium transition-all duration-150 select-none disabled:cursor-not-allowed',
+        'kse-control inline-flex items-center justify-center rounded-xl font-medium select-none disabled:cursor-not-allowed',
         VARIANTS[variant],
         SIZES[size],
         className,
