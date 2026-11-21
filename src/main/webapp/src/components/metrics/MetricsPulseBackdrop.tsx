@@ -31,7 +31,7 @@ import {
 /** Canvas cannot consume CSS vars: resolve the semantic accent once per theme change. */
 function readAccent(): string {
   const channels = getComputedStyle(document.documentElement).getPropertyValue('--kse-primary').trim();
-  return channels ? `rgb(${channels.replace(/\\s+/g, ' ')})` : 'rgb(163 173 255)';
+  return channels ? `rgb(${channels})` : 'rgb(163 173 255)';
 }
 
 /**
