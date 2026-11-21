@@ -202,7 +202,7 @@ const NodeShape: React.FC<{
         {label}
       </text>
       <text x={cx} y={y + NODE_H + 15} textAnchor="middle" fill={cfg.color}
-        fontSize={9} fontFamily="Inter, sans-serif" opacity={0.65}>
+        fontSize={9} fontFamily="Inter, sans-serif">
         {subLabel}
       </text>
     </g>
