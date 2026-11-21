@@ -23,7 +23,7 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Forecast chart: an accessible alternative.** The panel's chart carries a summary label (observed and
   predicted point counts, the forecast's range) and a "Chart data as a table" disclosure listing every
   point — time, kind (observed, imputed, predicted), value and the 80 % band — which was reachable only on
-  hover. Rendered only when opened.
+  hover. Rendered only when opened. The card's two charts are named too (latest value, predicted range; the components chart lists its series).
 - **Compact layout: the forecast continues the sparkline.** Each line now carries its forecast's median as a
   dashed continuation of the measured history, from the last measured point and at the same step width;
   at most half as many predicted points as measured ones, so a short history is not squeezed into a corner

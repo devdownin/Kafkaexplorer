@@ -156,4 +156,9 @@ describe('MetricCard forecast chart', () => {
       onDelete={() => {}} onRefresh={() => {}} refreshing={false} forecastSeries={series} reachShiftMs={-240_000} /></ToastProvider>);
     expect(screen.getByLabelText('Forecast threshold')).toHaveTextContent('4 min sooner than the previous forecast');
   });
+
+  it('names its chart for a screen reader: latest value and the predicted range', () => {
+    card({});
+    expect(screen.getByRole('img', { name: /latency: .*latest 459.*30 predicted points, median from 460 to 431/ })).toBeInTheDocument();
+  });
 });

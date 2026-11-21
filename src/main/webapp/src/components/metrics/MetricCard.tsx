@@ -298,7 +298,11 @@ const MetricCardView: React.FC<{
           ] : []);
           const { min: plotMin, max: plotMax, lines: thresholdLines, offScale } = placed;
           return (
-            <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60">
+            <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60" role="img"
+              aria-label={[`${metric.name || metric.id}: ${observed.filter(Number.isFinite).length || vals.length} measured points`,
+                metric.lastValue !== null ? `latest ${metric.lastValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : null,
+                forecastPoints.length ? `${forecastPoints.length} predicted points, median from ${forecastPoints[0].q50.toLocaleString(undefined, { maximumFractionDigits: 2 })} to ${forecastPoints[forecastPoints.length - 1].q50.toLocaleString(undefined, { maximumFractionDigits: 2 })}; every point is in the forecast panel's table` : null,
+              ].filter(Boolean).join(', ')}>
               <ResponsiveContainer width="100%" height={120}>
                 {/* A ComposedChart, not an AreaChart: recharts' AreaChart draws only its <Area>
                     children, so the forecast's median <Line> was silently never drawn — the card
@@ -432,7 +436,8 @@ const MetricCardView: React.FC<{
           rien mesuré ne doit pas être relié comme s'il avait mesuré. */}
       {series.length > 0 && (
         <div className="px-3 pb-2">
-          <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60">
+          <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60" role="img"
+            aria-label={`Components over time: ${series.map(x => x.label).join(', ')}`}>
             <ResponsiveContainer width="100%" height={56}>
               <LineChart data={seriesData} margin={{ top: 6, right: 8, left: 0, bottom: 2 }}>
                 <YAxis hide domain={['dataMin', 'dataMax']} />
