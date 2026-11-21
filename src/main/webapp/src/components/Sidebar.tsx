@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import type { FC } from 'react';
+import { useEffect, useRef, useState, type FC } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { NAV_ITEMS, CONFIG_ITEM, HELP_ITEM, groupNavItems } from '../navigation';
 
@@ -27,6 +27,22 @@ const StreamMark: FC<{ size?: number }> = ({ size = 20 }) => (
 const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, onMobileClose }) => {
   const navigate = useNavigate();
   const sections = groupNavItems(NAV_ITEMS);
+  const navRef = useRef<HTMLElement>(null);
+  const [moreBelow, setMoreBelow] = useState(false);
+  const measureNav = () => {
+    const nav = navRef.current;
+    if (nav) setMoreBelow(nav.scrollHeight - nav.scrollTop - nav.clientHeight > 4);
+  };
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measureNav);
+    observer.observe(nav);
+    // The content too: its height settles after the first paint (fonts, icons), which moves the edge.
+    Array.from(nav.children).forEach(child => observer.observe(child));
+    measureNav();
+    return () => observer.disconnect();
+  }, [isCollapsed]);
 
   const linkClasses = (isActive: boolean) =>
     `group flex items-center rounded-lg transition-colors duration-150 cursor-pointer w-full ` +
@@ -85,7 +101,7 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
       <button
         onClick={() => { navigate('/query'); onMobileClose?.(); }}
         title="New query"
-        className={`mb-5 bg-primary text-on-primary rounded-lg font-medium flex items-center justify-center transition-all hover:bg-primary-fixed active:scale-[0.99] ${
+        className={`mb-4 bg-primary text-on-primary rounded-lg font-medium flex items-center justify-center transition-all hover:bg-primary-fixed active:scale-[0.99] ${
           isCollapsed ? 'w-10 h-10 mx-auto' : 'py-2 px-3 gap-2'
         }`}
       >
@@ -93,9 +109,12 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
         {!isCollapsed && <span className="text-[13px]">New query</span>}
       </button>
 
-      <nav className="flex-1 overflow-y-auto space-y-1 min-h-0" aria-label="Primary">
+      {/* The list scrolls when the window is short; a last entry cut flat looks like a defect, so an
+          edge fades while there is more below. */}
+      <nav ref={navRef} onScroll={measureNav}
+        className={`flex-1 overflow-y-auto space-y-1 min-h-0 ${moreBelow ? 'kse-fade-bottom' : ''}`} aria-label="Primary">
         {sections.map((section, i) => (
-          <div key={section.group ?? `top-${i}`} className={i > 0 ? 'pt-4' : ''}>
+          <div key={section.group ?? `top-${i}`} className={i > 0 ? 'pt-3' : ''}>
             {section.group && !isCollapsed && (
               <p className="px-3 pb-1.5 text-[11px] font-medium uppercase tracking-[0.05em] text-outline select-none">
                 {section.group}

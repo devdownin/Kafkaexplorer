@@ -1504,7 +1504,7 @@ const TopicExplorer: React.FC = () => {
             <Editor
               height="100%"
               defaultLanguage="sql"
-              theme="vs-dark"
+              theme="kse-dark"
               value={data.ddl}
               options={{ readOnly: true, fontSize: 12, fontFamily: 'JetBrains Mono', minimap: { enabled: false }, padding: { top: 16 }, scrollBeyondLastLine: false }}
             />

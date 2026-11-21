@@ -868,3 +868,13 @@ names them: a title there would cost the editor or the graph a line of height on
 word the breadcrumb says. A new screen picks its kind; it does not get a header "for consistency".
 **A KPI tile's top accent says a state** (`Stat`'s `tone`): the health tile, a count past a threshold.
 A tile accented because it is "important" makes the row read as four different things.
+
+**Four finishing touches, and why each is where it is.** The sidebar's `nav` scrolls on a short window
+and used to cut its last entry flat; `Sidebar` now measures overflow (a `ResizeObserver` on the list *and
+its sections* — the content settles after the first paint, which a list-only observer misses) and applies
+`.kse-fade-bottom` only while more is below. The Metrics backdrop is a choice (`kse:metrics-backdrop`,
+default off): the condition `hasRunningMetric` still decides whether it *may* show, the toggle decides
+whether it does. Monaco's `kse-dark` theme is defined in `monaco-setup.ts` from the surface tokens of
+`tailwind.config.js`; a page asks for it by name, and a colour changed in the config is changed there
+too. The metric cards use `repeat(auto-fit, minmax(min(100%, 22rem), 1fr))`, so two metrics share the
+width where `xl:grid-cols-3` left a column empty.

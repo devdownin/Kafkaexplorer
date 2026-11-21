@@ -24,6 +24,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (green, or red when degraded); the counts no longer do, so the row reads as one family. The topic table's
   controls are two rows instead of one crowded wrap: the filter and the saved views above, the display
   options (the four toggles, Activity, Scale, Show) in a group of their own below, at one control height.
+- **UI polish.** The sidebar's last entry (Process Mining) is no longer cut flat on a 900 px window: tighter
+  spacing, and an edge that fades only while the list really scrolls. The Metrics page's animated
+  background is now opt-in (a *Background* toggle, remembered on this browser; off by default) — lines
+  drifting across the cards read as noise on a page kept open to be read. The SQL editors use a Monaco
+  theme in the application's own colours (`kse-dark`) instead of `vs-dark`'s neutral grey. The metric
+  cards fill the page width (`auto-fit`) instead of leaving a column empty.
 - **Stream Flow metrics: labels from the payload.** The drawer can add up to three fields of the latest
   record of the topic (the hop's source) as labels — the existing `labelTopic` / `labelFields`
   mechanism. A field that visibly changes with every record (an id, an instant, a UUID, a measured
