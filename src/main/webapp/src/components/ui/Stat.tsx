@@ -37,7 +37,7 @@ const ICON_TONES = {
 
 /** Tuile de métrique : étiquette discrète + valeur en chiffres tabulaires. */
 export const Stat: FC<StatProps> = ({ label, value, hint, icon, tone = 'none', loading = false, className }) => (
-  <div className={cn('bg-surface-container rounded-xl ring-1 ring-white/[0.045] p-5', TONES[tone], className)}>
+  <div className={cn('kse-surface kse-stat rounded-[var(--radius-card)] p-4 sm:p-5', TONES[tone], className)}>
     <div className="flex items-center justify-between mb-2">
       <p className="text-[11px] font-medium uppercase tracking-[0.05em] text-on-surface-variant">{label}</p>
       {icon && <span aria-hidden="true" className={cn('material-symbols-outlined text-[18px]', ICON_TONES[tone])}>{icon}</span>}
