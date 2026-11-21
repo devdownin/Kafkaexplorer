@@ -44,3 +44,47 @@ The visualization palette distinguishes observations, predictions, thresholds an
 | Axis and metadata | 6.95:1 | 6.64:1 |
 
 These samples meet WCAG AA for ordinary text against their tested opaque reference surfaces. Alpha-blended strokes, diminished labels, overlapping lines and transparent regions require separate visual verification. Chart series remain distinguishable through dashes and labels, rather than color alone.
+
+## Third-pass optical refinement
+
+The material system now separates **the backdrop** (static ambient gradients),
+**the reading plane** (opaque cards, SQL editors, tables) and **the floating
+planes** (header, sidebar, command palette, confirmations). The individual
+navigation links, chart series and table cells do not receive their own
+backdrop filters.
+
+The light theme uses a secondary, low-opacity inside rim so white panels
+retain their silhouettes against the pale scene. The dark theme uses an even
+weaker internal reflection to avoid glossy, high-chroma surfaces. Each shared
+glass primitive now has a functional elevation policy: flat for embedded
+surfaces, raised for the usual context panel, floating for dialogs. The
+palette defines separate optical-edge, reflection, selected, input and control
+tokens for each theme.
+
+### Interaction and contrast decisions
+
+- Primary hover uses a darker accent, retaining contrast with its foreground
+  instead of switching to the pale fixed-primary token.
+- The header search trigger is a lightweight capsule with no dedicated blur;
+  the floating palette retains thick glass and a more clearly separated
+  result selection.
+- Active navigation uses a tonal fill and an inset edge rather than a saturated
+  block. Hover motion is limited to devices supporting precise pointers.
+- Inputs read as inset surfaces, not nested floating cards; invalid fields keep
+  a separate semantic border.
+- Sidebar drawer extends to the viewport edge on mobile, and desktop spacing
+  still starts at the existing 1024px breakpoint.
+
+### Rendering and accessibility safeguards
+
+CSS only applies backdrop blur to the sidebar, header and overlays; it is not
+added to cards or repeated controls. Below tablet width the blur radius and
+saturation decrease. Reduced transparency makes floating materials opaque;
+forced-colors removes optical shadows and preserves explicit borders.
+Reduced-motion removes visual movement without changing functionality.
+
+Review light/dark screenshots at narrow phone, tablet and desktop sizes,
+including theme switching with an open search panel, selected navigation and
+disabled controls. Verify actual composited contrast and measure scroll GPU
+cost in a browser performance profile before classifying the design as fully
+visually validated.
