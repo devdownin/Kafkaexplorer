@@ -75,7 +75,7 @@ const EntityNode: React.FC<{
 }> = ({ entity, x, y, selected, dimmed, tint, highlighted, orphanKeys, sizing, onClick }) => {
   const { columns, hidden } = displayedColumns(entity, sizing);
   const height = entityHeight(entity, sizing);
-  const stroke = selected ? '#ffffff' : tint.accent;
+  const stroke = selected ? 'var(--viz-primary)' : tint.accent;
   const exactCount = entity.messageCount !== null
     ? `${entity.messageCount.toLocaleString()} messages`
     : 'message count unavailable';
@@ -111,7 +111,7 @@ const EntityNode: React.FC<{
           fill={tint.accent} fillOpacity={0.08} stroke={tint.accent} strokeWidth={1} strokeOpacity={0.3} />
       )}
       <rect x={x} y={y} width={width} height={height} rx={8}
-        fill="#12151a" stroke={stroke} strokeWidth={selected ? 2 : 1.2} strokeOpacity={selected ? 1 : 0.7} />
+        fill="var(--viz-node-bg)" stroke={stroke} strokeWidth={selected ? 2 : 1.2} strokeOpacity={selected ? 1 : 0.7} />
       {/* En-tête : nom de table + topic d'origine, teinté par domaine */}
       <rect x={x} y={y} width={width} height={sizing.headerH} rx={8} fill={tint.header} />
       <rect x={x} y={y + sizing.headerH - 8} width={width} height={8} fill={tint.header} />
@@ -119,7 +119,7 @@ const EntityNode: React.FC<{
         fontFamily="JetBrains Mono, monospace">
         {elide(entity.id, sizing.titleChars)}
       </text>
-      <text x={x + 10} y={y + subtitleY} fill="#79839a" fontSize={sizing.subtitleSize}
+      <text x={x + 10} y={y + subtitleY} fill="var(--viz-node-muted)" fontSize={sizing.subtitleSize}
         fontFamily="Inter, sans-serif">
         {elide(entity.topic, sizing.subtitleChars)}
         {entity.format ? ` · ${entity.format}` : ''}
@@ -145,8 +145,8 @@ const EntityNode: React.FC<{
             )}
             <text x={x + 10} y={rowY} fontSize={sizing.rowSize} fontFamily="JetBrains Mono, monospace"
               fontWeight={lit ? 'bold' : 'normal'}
-              fill={lit ? '#f5c264' : column.primaryKey ? '#7ee2a8'
-                : column.references ? '#f5c264' : orphan ? '#8d8577' : '#c5cad6'}>
+              fill={lit ? 'var(--viz-warning)' : column.primaryKey ? 'var(--viz-observed)'
+                : column.references ? 'var(--viz-warning)' : orphan ? 'var(--viz-node-muted)' : 'var(--viz-node-text)'}>
               {/* Un chemin raccourci garde son original atteignable — même règle que le compte
                   compacté de l'en-tête : une valeur abrégée sans son original ne se vérifie plus. */}
               {name !== column.name && <title>{column.name}</title>}
@@ -1710,7 +1710,7 @@ const DataModel: React.FC = () => {
                     width={Math.max(1, sizing.width * layout.scale)}
                     height={Math.max(1, entityHeight(entity, sizing) * layout.scale)}
                     rx={1}
-                    fill={selectedId === entity.id ? '#a3adff' : tintOf(entity.topic).accent}
+                    fill={selectedId === entity.id ? 'var(--viz-primary)' : tintOf(entity.topic).accent}
                     fillOpacity={selectedId === entity.id ? 0.9 : 0.45}
                   />
                 );
@@ -1950,7 +1950,7 @@ const DataModel: React.FC = () => {
                   vérifiable est affirmée, à savoir si un topic sélectionné porte ce nom. */}
               {selectedOrphans.length > 0 && (
                 <div className="mt-3 space-y-1.5 border-t border-outline-variant/40 pt-2">
-                  <p className="text-[11px] font-bold text-[#f5c264] uppercase tracking-wider">
+                  <p className="text-[11px] font-bold text-warning uppercase tracking-wider">
                     Key-like, no relation ({selectedOrphans.length})
                   </p>
                   {selectedOrphans.map(orphan => (
