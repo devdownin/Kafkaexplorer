@@ -144,3 +144,7 @@ The repository already provides the Playwright fixture utilities
 for visual/viewport validation; actual cross-theme screenshots and GPU
 measurements must be performed in a browser. Successful typecheck, lint
 and unit tests are necessary but are not a substitute for those checks.
+
+### Reproducible cross-theme probe
+
+Run `node docs/screenshots/theme-probe.mjs http://127.0.0.1:4173 /tmp/kse-theme-shots` after starting the stub-backed SPA via the documented screenshot harness. It tests 32 combinations (Dashboard, Metrics, Query, Data Model × light/dark × 375/768/1024/1440 px). It fails on missing theme/selector, horizontal document overflow or offscreen primary page actions, and writes screenshots when the output directory is supplied. This probe was added as an optional developer tool, not silently declared as executed in CI.
