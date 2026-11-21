@@ -1091,19 +1091,19 @@ const StreamFlow: React.FC = () => {
             <div className="absolute bottom-6 left-20 z-10 flex flex-col gap-1 rounded-lg border border-outline-variant bg-surface-container/90 px-3 py-2 text-[11px] text-on-surface-variant">
               {missingInB.size > 0 && (
                 <span className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className="inline-block h-3 w-5 rounded border border-dashed" style={{ borderColor: '#ffd479' }} />
+                  <span aria-hidden="true" className="inline-block h-3 w-5 rounded border border-dashed" style={{ borderColor: 'var(--viz-graph-warning)' }} />
                   not seen by {comparison?.params.messageKey}
                 </span>
               )}
               {insight.slowestHopTopic && (
                 <span className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className="inline-block h-[3px] w-5 rounded" style={{ background: '#ffd479' }} />
+                  <span aria-hidden="true" className="inline-block h-[3px] w-5 rounded" style={{ background: 'var(--viz-graph-warning)' }} />
                   slowest hop
                 </span>
               )}
               {insight.clockSkewTopics.length > 0 && (
                 <span className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className="inline-block w-5 border-t-[3px] border-dashed" style={{ borderColor: '#f2b8b5' }} />
+                  <span aria-hidden="true" className="inline-block w-5 border-t-[3px] border-dashed" style={{ borderColor: 'var(--viz-graph-critical)' }} />
                   hop goes backwards (clock skew)
                 </span>
               )}
@@ -1151,7 +1151,7 @@ const StreamFlow: React.FC = () => {
             >
               <defs>
                 <marker id="sf-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                  <polygon points="0 0, 10 3.5, 0 7" fill="#a3adff" opacity="0.6" />
+                  <polygon points="0 0, 10 3.5, 0 7" fill="var(--viz-edge)" opacity="0.6" />
                 </marker>
               </defs>
 
@@ -1170,7 +1170,7 @@ const StreamFlow: React.FC = () => {
                   // pas seulement dans le tableau : c'est là que l'œil se pose en premier.
                   const slowest = insight.slowestHopTopic === edge.target;
                   const skewed = insight.clockSkewTopics.includes(edge.target);
-                  const stroke = skewed ? '#f2b8b5' : slowest ? '#ffd479' : '#a3adff';
+                  const stroke = skewed ? 'var(--viz-graph-critical)' : slowest ? 'var(--viz-graph-warning)' : 'var(--viz-edge)';
                   const d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
                   const hopLabel = `Hop ${edge.source} to ${edge.target}: create metrics`;
                   const chosen = metricHop?.from === edge.source && metricHop?.to === edge.target;
@@ -1199,7 +1199,7 @@ const StreamFlow: React.FC = () => {
                       />
                       {edge.label && (
                         <text x={mx} y={Math.min(y1, y2) - 8} textAnchor="middle"
-                          fill={slowest || skewed ? stroke : '#9aa3b2'} fontSize="10"
+                          fill={slowest || skewed ? stroke : 'var(--viz-node-muted)'} fontSize="10"
                           fontWeight={slowest || skewed ? 'bold' : undefined}>
                           {edge.label}{skewed ? ' ⚠' : ''}
                         </text>
@@ -1241,18 +1241,18 @@ const StreamFlow: React.FC = () => {
                       {/* En comparaison, un topic que l'autre clé n'a pas traversé est la
                           divergence elle-même : il se voit sur le graphe, pas seulement en table. */}
                       <rect width={nodeW} height={nodeH} rx="8"
-                        fill={selected ? '#1b2030' : '#12151a'}
-                        stroke={missingInB.has(node.id) ? '#ffd479' : '#a3adff'}
+                        fill={selected ? 'var(--viz-node-selected)' : 'var(--viz-node-bg)'}
+                        stroke={missingInB.has(node.id) ? 'var(--viz-graph-warning)' : 'var(--viz-edge)'}
                         strokeDasharray={missingInB.has(node.id) ? '5 3' : undefined}
                         strokeWidth={selected ? 2.5 : 1.5} strokeOpacity={selected ? 1 : 0.6} />
                       <text x={cx} y={ts ? nodeH / 2 - 8 : nodeH / 2 + 4}
-                        textAnchor="middle" fill="white" fontSize="11"
+                        textAnchor="middle" fill="var(--viz-node-text)" fontSize="11"
                         fontFamily="JetBrains Mono, monospace" fontWeight="bold">
                         {node.label.length > 20 ? node.label.slice(0, 19) + '…' : node.label}
                       </text>
                       {ts && (
                         <text x={cx} y={nodeH / 2 + 10} textAnchor="middle"
-                          fill="#a3adff" fontSize="9" fontFamily="Inter, sans-serif" opacity="0.7">
+                          fill="var(--viz-edge)" fontSize="9" fontFamily="Inter, sans-serif" opacity="0.7">
                           {ts}{node.hits ? ` · ${node.hits}${capped ? '+' : ''} match${node.hits > 1 || capped ? 'es' : ''}` : ''}
                         </text>
                       )}
