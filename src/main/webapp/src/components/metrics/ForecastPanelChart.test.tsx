@@ -47,6 +47,20 @@ describe('ForecastPanel chart', () => {
     expect(await screen.findByText('Imputed (gap filled)')).toBeInTheDocument();
   });
 
+  // Accessibility: the chart's numbers are otherwise reachable only by hovering.
+  it('offers the chart points as a table, and summarises the chart for a screen reader', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
+    render(<ForecastPanel />);
+    const chart = await screen.findByRole('img', { name: /3 observed points, 3 predicted/ });
+    expect(chart).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: /Measured values/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText('Chart data as a table'));
+    const table = await screen.findByRole('table', { name: /Measured values/ });
+    expect(table).toHaveTextContent('Observed');
+    expect(table).toHaveTextContent('Predicted');
+    expect(table).toHaveTextContent('8 – 12');
+  });
+
   // METRICS-FORECAST-UX-AUDIT.md B5: the threshold a breach is judged against is on the chart.
   it('draws the configured threshold', async () => {
     const progress = { seriesId: id, state: 'READY', reason: 'ok', observedPoints: 3, requiredPoints: 512, missingPoints: 0, imputedPoints: 0,

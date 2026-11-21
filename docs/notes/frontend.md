@@ -830,3 +830,8 @@ lines say what was asked and whether the planner accepted it (as SQL comments, s
 check), or a filled form whose thresholds are left alone and whose preview still decides. The
 privacy sentence appears where one types, read off `localDeployment`, the Settings banner's rule.
 
+
+**The forecast chart has a table alternative.** Chart numbers were reachable only by hovering, so
+`ForecastPanel` carries a `Chart data as a table` disclosure built from the same `chart` array the
+plot reads (time, kind, value, 80 % band), plus a summary `aria-label` on the `role="img"`. The table
+mounts only once opened: sixty-odd rows per panel are not worth rendering for everyone.
