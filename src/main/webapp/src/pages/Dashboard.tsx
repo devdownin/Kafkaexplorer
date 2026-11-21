@@ -407,7 +407,7 @@ const Dashboard: React.FC = () => {
   }, [activityTopics, activityWindow, refreshChoice]);
 
   if (loading) return (
-    <div className="p-4 md:p-6 space-y-6">
+    <div className="kse-page p-4 md:p-6 space-y-6">
       <PageHeader title="Dashboard" description="Live overview of your Kafka cluster — topics, throughput and registered Flink tables." />
       <StatGridSkeleton count={4} />
       <div className="skeleton-shimmer h-5 w-28" />
@@ -551,7 +551,7 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* Prioritise actionable signals without treating topic names as proof of an incident. */}
-      <section aria-label="Diagnostic overview" className="rounded-lg border border-outline-variant bg-surface-container-low p-4 space-y-3">
+      <section aria-label="Diagnostic overview" className="kse-surface p-4 md:p-5 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-on-surface">Diagnostic overview</h2>
           <span className="text-xs text-on-surface-variant">Based on the latest dashboard snapshot</span>
@@ -560,7 +560,7 @@ const Dashboard: React.FC = () => {
           {/* Silent producers, in place of a "Cluster connection" cell that repeated the health tile
               just above. Counted over the rows whose activity was measured — the column is read for
               the page shown, not for the cluster — and the cell says so. */}
-          <div className="rounded-md bg-surface-container p-3">
+          <div className="kse-inset-panel rounded-xl p-3.5">
             <div className="text-xs text-on-surface-variant">Topics that went silent</div>
             {!activity ? (
               <>
