@@ -70,6 +70,34 @@ monaco.editor.defineTheme(KSE_THEME, {
   },
 });
 
+
+/** Separate Monaco language/editor palette for the light spatial theme. */
+monaco.editor.defineTheme('kse-light', {
+  base: 'vs',
+  inherit: true,
+  rules: [],
+  colors: {
+    'editor.background': '#f9fbfe',
+    'editor.foreground': '#1c293a',
+    'editorLineNumber.foreground': '#77879a',
+    'editorLineNumber.activeForeground': '#3444a2',
+    'editor.lineHighlightBackground': '#edf2f8',
+    'editor.lineHighlightBorder': '#edf2f8',
+    'editor.selectionBackground': '#c4ceff88',
+    'editor.inactiveSelectionBackground': '#dce4ff66',
+    'editorCursor.foreground': '#4453b8',
+    'editorGutter.background': '#f9fbfe',
+    'editorWidget.background': '#ffffff',
+    'editorWidget.border': '#c9d4e1',
+    'editorSuggestWidget.background': '#ffffff',
+    'editorSuggestWidget.border': '#c9d4e1',
+    'editorSuggestWidget.selectedBackground': '#e3e8ff',
+    'scrollbarSlider.background': '#a8b6c766',
+    'scrollbarSlider.hoverBackground': '#a8b6c799',
+    'minimap.background': '#f9fbfe',
+  },
+});
+
 /**
  * Formateur SQL, enregistré **ici** et non dans une page.
  *
