@@ -1252,7 +1252,7 @@ const StreamFlow: React.FC = () => {
                       </text>
                       {ts && (
                         <text x={cx} y={nodeH / 2 + 10} textAnchor="middle"
-                          fill="var(--viz-edge)" fontSize="9" fontFamily="Inter, sans-serif" opacity="0.7">
+                          fill="var(--viz-edge)" fontSize="9" fontFamily="Inter, sans-serif">
                           {ts}{node.hits ? ` · ${node.hits}${capped ? '+' : ''} match${node.hits > 1 || capped ? 'es' : ''}` : ''}
                         </text>
                       )}
