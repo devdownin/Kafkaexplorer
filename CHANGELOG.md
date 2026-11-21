@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Stream Flow: create metrics from a topic of the graph.** Select a topic and press *Create metrics*:
+  a drawer proposes the transit latency of the hop into and out of it (the server's own suggestion,
+  thresholds derived from the measured hop), the records lost on each hop, the consumer lag of a group
+  reading it and the records produced to it. Tick, untick the labels you do not want, create — no SQL.
+- **Fixed Prometheus labels on a metric** (`templateParams.staticLabels`, at most 8): added to every
+  series of the metric, checked on save (label names only, never `metric_id` / `metric_name` /
+  `metric_type`). Stream Flow names the hop it measures with them (`source_topic`, `target_topic`,
+  `topic`, `consumer_group`).
 - **Forecast chart: an accessible alternative.** The panel's chart carries a summary label (observed and
   predicted point counts, the forecast's range) and a "Chart data as a table" disclosure listing every
   point — time, kind (observed, imputed, predicted), value and the 80 % band — which was reachable only on
