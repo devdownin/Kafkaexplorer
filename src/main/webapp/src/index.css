@@ -295,7 +295,8 @@ body { background: rgb(var(--kse-background)); }
   outline-offset: 2px;
 }
 @media (hover: hover) and (pointer: fine) {
-  .kse-interactive:hover { transform: translateY(-1px); box-shadow: var(--depth-2); }
+  /* Elevation by shadow alone: a card that moves under the pointer is a card that moves under the click. */
+  .kse-interactive:hover { box-shadow: var(--depth-2); }
   .kse-sidebar nav a:not(.nav-active):hover { transform: translateX(2px); }
 }
 
@@ -358,6 +359,14 @@ body { background: rgb(var(--kse-background)); }
 .nav-active .material-symbols-outlined { --icon-fill: 1; }
 
 /* ═══ Feedback and motion ═══ */
+/* Page entrance: a short fade with a barely-there scale, replayed per section (Layout). It ends on
+   `transform: none`, so nothing keeps a containing block for fixed descendants afterwards. The
+   global reduced-motion rule shortens it to nothing. */
+@keyframes kse-page-in {
+  from { opacity: 0; transform: scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+.kse-page-enter { transform-origin: 50% 0; animation: kse-page-in 180ms var(--spatial-ease); }
 @keyframes shimmer {
   0%   { background-position: -600px 0; }
   100% { background-position:  600px 0; }

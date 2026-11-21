@@ -206,3 +206,9 @@ contrast: the ratios above are computed from the tokens.
   `TrendLine` of `totalMessages` at each refresh *of this visit* (30 samples, in memory only). Fewer
   than two samples draw nothing — the tile says the trend builds up, rather than drawing a dash
   that pretends to be one. A constant series is a flat mid-line, not noise stretched over the range.
+
+## Seventh pass — motion and type
+
+- **Page entrance**: `kse-page-enter` (180 ms fade, scale .985 → 1) on a `h-full` wrapper in `Layout`, keyed on the first path segment, so a section change replays it but a route parameter change does not remount the page. It ends on `transform: none` so no containing block outlives it for fixed descendants.
+- **Hover**: `.kse-interactive` lifts by shadow alone; the 1 px translate is gone. KPI tiles (`Stat`) are not interactive and get no hover — an effect on something that cannot be clicked is a false affordance.
+- **Type**: page titles 24 → 30 px with −0.02em tracking; `Stat` labels are sentence case at 12 px instead of 11 px capitals. Small caps were not used: without an `smcp` feature in the subset font the browser synthesises them at about 9 px, below the micro-text floor this stylesheet enforces. Tabular figures on the Cluster configuration values (KPI values and metric cards already had them).

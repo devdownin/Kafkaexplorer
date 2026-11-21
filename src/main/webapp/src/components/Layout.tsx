@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import type { FC, ReactNode } from 'react';
 import axios from 'axios';
 import Sidebar from './Sidebar';
@@ -52,6 +53,10 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   const [searchTables, setSearchTables] = useState<string[]>([]);
 
   const { preference: themePreference, theme, cycle: cycleTheme } = useThemePreference();
+
+  // The entrance replays when the *section* changes, not on every path change: keying on the whole
+  // pathname would remount a page (and drop its state) when only a route parameter moves.
+  const section = useLocation().pathname.split('/')[1] ?? '';
 
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -142,7 +147,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
           bootstrapServers={bootstrapServers}
         />
         <main className="flex-1 overflow-y-auto custom-scrollbar relative" onScroll={event => setContentScrolled(event.currentTarget.scrollTop > 8)}>
-          {children}
+          <div key={section} className="kse-page-enter h-full">{children}</div>
         </main>
       </div>
 
