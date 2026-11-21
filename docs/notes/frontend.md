@@ -859,3 +859,12 @@ record makes a series that is never continued. One record cannot prove a field i
 `payloadLabelRisk` only rules out what visibly is not (an id-like name, a UUID, an instant, a
 measured number, long text) and says why, and at most `MAX_PAYLOAD_LABELS` (3) can be chosen. The
 labels are read from the hop's source, or from the topic itself.
+
+**Which screens carry a `PageHeader`, and which do not, on purpose.** Report screens — Dashboard,
+Metrics, Audit, Cluster, Dead Letter, Settings, Help, MCP, Process Mining, Topic hierarchy — open on a
+title and a sentence. **Workspaces** — SQL Editor, Stream Flow, Compare, Lineage, Data Model, Topic
+Explorer — are full-bleed tools with a toolbar of their own, and the header bar's breadcrumb already
+names them: a title there would cost the editor or the graph a line of height on every window, for a
+word the breadcrumb says. A new screen picks its kind; it does not get a header "for consistency".
+**A KPI tile's top accent says a state** (`Stat`'s `tone`): the health tile, a count past a threshold.
+A tile accented because it is "important" makes the row read as four different things.

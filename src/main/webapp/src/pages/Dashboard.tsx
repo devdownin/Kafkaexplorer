@@ -512,12 +512,11 @@ const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat
           label="Total Topics" icon="format_list_bulleted"
-          tone={topicDiff !== 0 ? 'primary' : 'none'}
           value={data.topics.length.toLocaleString()}
           hint={<span className={topicDiff !== 0 ? 'text-primary' : ''}>{topicTrend}</span>}
         />
         <Stat
-          label="Message Count" icon="bolt" tone="primary"
+          label="Message Count" icon="bolt"
           value={formatCount(data.totalMessages)}
           hint={data.totalMessages > 0 ? 'Active ingest' : 'No activity'}
         />
@@ -603,7 +602,14 @@ const Dashboard: React.FC = () => {
               )}
             </div>
 
-            <div className="flex items-center gap-3 shrink-0">
+          </div>
+        </div>
+
+        {/* Display options, on a row of their own: the filter above is what one types into all day,
+            these are what one sets once. Same control height throughout. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-2 border-y border-outline-variant/40"
+          role="group" aria-label="Topic display options">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               {/*
                 * `filters` distingue les deux natures de bascule qui se ressemblent ici. « Hide … »
                 * change la liste, donc la pagination courante décrit un ensemble qui n'existe plus
@@ -630,6 +636,7 @@ const Dashboard: React.FC = () => {
               ))}
             </div>
 
+            <div className="flex flex-wrap items-center gap-3">
             {/*
               * La fenêtre pilote la colonne, et « Off » en fait partie : la mesure coûte des
               * allers-retours au broker pour chaque ligne affichée, donc elle doit pouvoir
@@ -692,7 +699,7 @@ const Dashboard: React.FC = () => {
                 {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
               </Select>
             </div>
-          </div>
+            </div>
         </div>
 
         <Table>

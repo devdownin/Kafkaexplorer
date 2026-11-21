@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Dashboard, second pass.** An accent on a KPI tile now means a state: only *Cluster Health* carries one
+  (green, or red when degraded); the counts no longer do, so the row reads as one family. The topic table's
+  controls are two rows instead of one crowded wrap: the filter and the saved views above, the display
+  options (the four toggles, Activity, Scale, Show) in a group of their own below, at one control height.
 - **Stream Flow metrics: labels from the payload.** The drawer can add up to three fields of the latest
   record of the topic (the hop's source) as labels — the existing `labelTopic` / `labelFields`
   mechanism. A field that visibly changes with every record (an id, an instant, a UUID, a measured
