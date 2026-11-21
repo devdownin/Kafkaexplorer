@@ -6,7 +6,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import ErrorBanner from '../components/ErrorBanner';
 import {
-  PageHeader, Stat, Badge, Button, EmptyState,
+  PageHeader, Stat, TrendLine, Badge, Button, EmptyState,
   Table, TableHead, TableBody, TableRow, Th, Td,
   Input, Select, StatGridSkeleton, TableSkeleton,
   Switch, SortButton,
@@ -39,6 +39,8 @@ const PAGE_SIZES = [10, 25, 50, 100];
 const ACTIVITY_TIMEOUT_MS = 20000;
 const TOPIC_COUNT_KEY = 'dashboard.lastTopicCount';
 const SAVED_TOPIC_VIEW_KEY = 'dashboard.savedTopicView';
+/** How many refreshes the Message Count trend line keeps (about two and a half minutes at 5 s). */
+const SPARK_SAMPLES = 30;
 interface SavedTopicView { query: string; hideEmpty: boolean; hideDlt: boolean; hideInternal: boolean; }
 const PAGE_SIZE_KEY = 'dashboard.pageSize';
 type SortKey = 'name' | 'size' | 'state' | 'lastMessage';
@@ -72,6 +74,8 @@ const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [data, setData] = useState<DashboardData | null>(null);
+  /** `totalMessages` at each refresh of this visit — what the Message Count trend line draws. */
+  const [messageSamples, setMessageSamples] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState(() => params.get('q') ?? '');
@@ -198,6 +202,10 @@ const Dashboard: React.FC = () => {
     try {
       const response = await axios.get('/api/dashboard');
       setData(response.data);
+      if (typeof response.data?.totalMessages === 'number') {
+        const total: number = response.data.totalMessages;
+        setMessageSamples(prev => [...prev, total].slice(-SPARK_SAMPLES));
+      }
       // `loadDashboard` ne tourne que depuis un effet ou un gestionnaire, jamais pendant le
       // rendu — ce que la règle, qui raisonne sur la portée du composant, ne peut pas voir.
       //
@@ -515,21 +523,7 @@ const Dashboard: React.FC = () => {
 
       {/* KPI Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Stat
-          label="Total Topics" icon="format_list_bulleted"
-          value={data.topics.length.toLocaleString()}
-          hint={<span className={topicDiff !== 0 ? 'text-primary' : ''}>{topicTrend}</span>}
-        />
-        <Stat
-          label="Message Count" icon="bolt"
-          value={formatCount(data.totalMessages)}
-          hint={data.totalMessages > 0 ? 'Active ingest' : 'No activity'}
-        />
-        <Stat
-          label="Flink Tables" icon="database"
-          value={data.tables.length.toLocaleString()}
-          hint={data.tables.length > 0 ? `${data.tables.length} registered` : 'None registered'}
-        />
+        {/* Bento: the cluster verdict is the large tile; counts are small; the ingest curve gets a full-width strip. */}
         {/*
           * Cette tuile comptait les jobs Flink, avec l'état du cluster pour seule couleur et pour
           * seul sous-titre. Le compte est parti avec le tableau « Flink SQL Jobs » — plus rien ne
@@ -538,6 +532,7 @@ const Dashboard: React.FC = () => {
           * est ce que la tuile disait vraiment : le cluster répond, ou non.
           */}
         <Stat
+          size="lg" className="sm:col-span-2"
           label="Cluster Health" icon={data.health ? 'check_circle' : 'error'}
           tone={data.health ? 'success' : 'error'}
           value={data.health ? 'Healthy' : 'Degraded'}
@@ -547,6 +542,26 @@ const Dashboard: React.FC = () => {
               {data.health ? 'Broker reachable' : 'Broker unreachable'}
             </span>
           }
+        />
+        <Stat
+          label="Total Topics" icon="format_list_bulleted"
+          value={data.topics.length.toLocaleString()}
+          hint={<span className={topicDiff !== 0 ? 'text-primary' : ''}>{topicTrend}</span>}
+        />
+        <Stat
+          label="Flink Tables" icon="database"
+          value={data.tables.length.toLocaleString()}
+          hint={data.tables.length > 0 ? `${data.tables.length} registered` : 'None registered'}
+        />
+        <Stat
+          className="sm:col-span-2 lg:col-span-4"
+          label="Message Count" icon="bolt"
+          value={formatCount(data.totalMessages)}
+          hint={data.totalMessages > 0 ? 'Active ingest' : 'No activity'}
+          aside={messageSamples.length >= 2
+            ? <TrendLine values={messageSamples} width={220} height={40}
+                label={`Total message count at each of the last ${messageSamples.length} refreshes of this visit`} />
+            : <p className="text-[12px] text-on-surface-variant">The trend builds up as the page refreshes.</p>}
         />
       </div>
 

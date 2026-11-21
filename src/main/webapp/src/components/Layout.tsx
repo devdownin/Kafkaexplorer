@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import type { FC, ReactNode } from 'react';
 import axios from 'axios';
 import Sidebar from './Sidebar';
@@ -11,6 +12,7 @@ import { setCatalog } from '../catalogStore';
 import { DESKTOP_QUERY } from '../breakpoints';
 import type { Health } from './connectionStatus';
 import type { DashboardResponse } from '../api/types';
+import { useThemePreference } from '../theme';
 
 /*
  * Le rail de navigation en flux — donc l'écran considéré comme « desktop » — commence à `lg`,
@@ -50,18 +52,11 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   const [searchTopics, setSearchTopics] = useState<string[]>([]);
   const [searchTables, setSearchTables] = useState<string[]>([]);
 
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    try {
-      const saved = localStorage.getItem('kse.theme');
-      if (saved === 'light' || saved === 'dark') return saved;
-    } catch { /* Storage can be disabled. */ }
-    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-  });
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.classList.toggle('dark', theme === 'dark');
-    try { localStorage.setItem('kse.theme', theme); } catch { /* Optional persistence. */ }
-  }, [theme]);
+  const { preference: themePreference, theme, cycle: cycleTheme } = useThemePreference();
+
+  // The entrance replays when the *section* changes, not on every path change: keying on the whole
+  // pathname would remount a page (and drop its state) when only a route parameter moves.
+  const section = useLocation().pathname.split('/')[1] ?? '';
 
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -143,7 +138,8 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
         <Header
           theme={theme}
           scrolled={contentScrolled}
-          onThemeToggle={() => setTheme(value => value === 'light' ? 'dark' : 'light')}
+          themePreference={themePreference}
+          onThemeToggle={cycleTheme}
           onMenuClick={() => setMobileOpen(true)}
           onSearchClick={() => setPaletteOpen(true)}
           isHealthy={isHealthy}
@@ -151,7 +147,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
           bootstrapServers={bootstrapServers}
         />
         <main className="flex-1 overflow-y-auto custom-scrollbar relative" onScroll={event => setContentScrolled(event.currentTarget.scrollTop > 8)}>
-          {children}
+          <div key={section} className="kse-page-enter h-full">{children}</div>
         </main>
       </div>
 

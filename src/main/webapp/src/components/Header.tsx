@@ -4,6 +4,7 @@
 import type { FC } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { resolvePageName } from '../navigation';
+import { nextPreference, type ThemePreference } from '../theme';
 import { connectionLabel, connectionTitle, connectionTone, type Health } from './connectionStatus';
 
 const PILL_TONES = {
@@ -19,7 +20,10 @@ const DOT_TONES = {
 } as const;
 
 interface HeaderProps {
+  /** The resolved scheme actually painted. */
   theme: 'light' | 'dark';
+  /** What the user chose; `system` follows the OS live. Defaults to the resolved theme. */
+  themePreference?: ThemePreference;
   /** Strengthen the optical separation when the content plane has scrolled. */
   scrolled?: boolean;
   onThemeToggle: () => void;
@@ -44,7 +48,12 @@ interface HeaderProps {
  * chaud par `POST /api/config`. Ce qui est vérifiable voyage à côté : l'adresse d'amorçage
  * effective, lue dans la configuration en cours d'exécution, en infobulle.
  */
-const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName, bootstrapServers, theme, onThemeToggle, scrolled = false }) => {
+const APPEARANCE_LABEL: Record<ThemePreference, string> = { system: 'system', light: 'light', dark: 'dark' };
+const APPEARANCE_ICON: Record<ThemePreference, string> = { system: 'contrast', light: 'light_mode', dark: 'dark_mode' };
+
+const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName, bootstrapServers, theme, themePreference, onThemeToggle, scrolled = false }) => {
+  const appearance = themePreference ?? theme;
+  const themeLabel = `Appearance: ${APPEARANCE_LABEL[appearance]}${appearance === 'system' ? ` (${theme})` : ''}. Switch to ${APPEARANCE_LABEL[nextPreference(appearance)]}`;
   const location = useLocation();
   const navigate = useNavigate();
   const pageName = resolvePageName(location.pathname);
@@ -98,12 +107,11 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
         <button
           type="button"
           onClick={onThemeToggle}
-          title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-          aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
-          aria-pressed={theme === 'light'}
+          title={themeLabel}
+          aria-label={themeLabel}
           className="kse-header-action p-2 text-on-surface-variant hover:text-on-surface"
         >
-          <span aria-hidden="true" className="material-symbols-outlined text-[19px]">{theme === 'light' ? 'dark_mode' : 'light_mode'}</span>
+          <span aria-hidden="true" className="material-symbols-outlined text-[19px]">{APPEARANCE_ICON[appearance]}</span>
         </button>
         <button
           onClick={() => navigate('/help')}

@@ -10,7 +10,7 @@ import '../monaco-setup';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
 import {
-  Button, Badge, Input, Select, EmptyState, Tooltip, useConfirm, cn,
+  Button, Badge, Input, Select, EmptyState, Tooltip, Segmented, useConfirm, cn,
   useVirtualRows,
 } from '../components/ui';
 import {
@@ -59,30 +59,6 @@ import type {
   QueryCancelResponse,
   AssistantSqlResponse,
 } from '../api/types';
-
-/** Contrôle segmenté compact (offset de lecture). */
-function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
-  value: T; onChange: (v: T) => void; options: { value: T; label: string }[]; ariaLabel: string;
-}) {
-  return (
-    <div role="group" aria-label={ariaLabel} className="inline-flex bg-surface-container-low border border-outline-variant rounded-lg p-0.5">
-      {options.map(o => (
-        <button
-          key={o.value}
-          onClick={() => onChange(o.value)}
-          aria-pressed={value === o.value}
-          className={cn(
-            'px-3 h-7 text-[12px] font-medium rounded transition-colors',
-            value === o.value ? 'bg-surface-container-highest text-on-surface shadow-sm' : 'text-on-surface-variant hover:text-on-surface',
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 
 interface Tab { id: string; name: string; sql: string; }
 

@@ -6,6 +6,7 @@ import type { FC } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NAV_ITEMS, CONFIG_ITEM, HELP_ITEM } from '../navigation';
 import { buildTraceLinkForKey } from '../pages/streamFlowLogic';
+import { GlassModal } from './ui/Spatial';
 
 const RECENT_TOPICS_KEY = 'commandPalette.recentTopics';
 const MAX_RECENT_TOPICS = 6;
@@ -157,8 +158,8 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
       {/* Le dialogue est la carte, pas le voile : `role` sur le conteneur `fixed inset-0`
           annonçait un dialogue de la taille du viewport, et rangeait le clic-pour-fermer
           *dans* le dialogue au lieu de l'extérieur. Le voile ne garde que ce clic. */}
-      <div
-        className="kse-glass-thick kse-modal w-full max-w-xl overflow-hidden animate-slide-up"
+      <GlassModal
+        className="w-full max-w-xl overflow-hidden animate-slide-up"
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
@@ -225,7 +226,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
           <span className="flex items-center gap-1"><kbd className="border border-outline-variant rounded px-1">↑</kbd><kbd className="border border-outline-variant rounded px-1">↓</kbd> navigate</span>
           <span className="flex items-center gap-1"><kbd className="border border-outline-variant rounded px-1">↵</kbd> open</span>
         </div>
-      </div>
+      </GlassModal>
     </div>
   );
 };

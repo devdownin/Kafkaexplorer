@@ -29,7 +29,7 @@ describe('Button', () => {
 
   it('applies the primary variant surface class', () => {
     render(<Button variant="primary">Go</Button>);
-    expect(screen.getByRole('button', { name: 'Go' })).toHaveClass('bg-primary');
+    expect(screen.getByRole('button', { name: 'Go' })).toHaveClass('kse-btn-prominent');
   });
 
   it('forwards its ref to the underlying button element', () => {

@@ -18,6 +18,7 @@ import { describeDataPolicy, type LlmPolicyFacts } from './llmPolicy';
 import { describeTestTimeout, testTimeoutMs } from './llmTimeout';
 import type { LlmModelShortlist, LlmTestResponse } from '../api/types';
 import { AssistantSettings } from '../components/assistant/AssistantSettings';
+import { AppearanceSettings } from '../components/AppearanceSettings';
 import {
   describeKeyStatus, describeModelCheck, describeModelIdentity, hasModelWarning,
 } from './llmModelCheck';
@@ -1572,6 +1573,8 @@ const Config: React.FC = () => {
           <span>{saveNote}</span>
         </div>
       )}
+
+      <AppearanceSettings />
 
       {/* Actions */}
       <div className="flex items-center justify-between pt-2">

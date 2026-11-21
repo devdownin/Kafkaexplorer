@@ -11,8 +11,14 @@ cd src/main/webapp && npm ci
 
 cd ../../../docs/screenshots
 node server.mjs /tmp/kse-site 4173 &
-node capture.mjs http://127.0.0.1:4173 ../img
+node capture.mjs http://127.0.0.1:4173 ../img          # light: <screen>.png
+node capture.mjs http://127.0.0.1:4173 ../img dark     # dark:  <screen>-dark.png
 ```
+
+The light set is what the READMEs and the Docker Hub overview show — they render on a light page and
+cannot swap an image by colour scheme. The dark set is served by the Pages site (`docs/index.html`),
+which picks one or the other with `<picture>` and the visitor's `prefers-color-scheme`. Regenerate both
+after a UI change, or the site shows one scheme out of date.
 
 Requires Node 22+ and Playwright with a Chromium build (`npm i -g playwright && playwright
 install chromium`). The capture exits non-zero if any screen fails — nine screenshots out of

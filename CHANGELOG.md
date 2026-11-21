@@ -20,10 +20,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-Nothing yet.
-
-## [2.8.1] — 2026-11-21
-
+- **A spatial interface, light or dark.** The application follows the system appearance — or a choice made
+  from the header: System, Light, Dark — and the choice no longer freezes the first time it is read. Floating
+  navigation (sidebar, header, palette, dialogs, tooltips, toasts) is glass; tables, charts and the SQL editor
+  stay opaque. Settings → Appearance adds six accent colours (every pair held at 4.5:1 or more in both
+  schemes) and a compact density. Along the way: the light-theme outline of 24 cards that did not render, input
+  borders held at 3:1, an iOS-style switch, a sliding segmented control, a two-ring focus indicator, a
+  dashboard in bento composition, and Data Model nodes that follow the scheme. The documentation screenshots
+  are regenerated in both schemes (`docs/img/<screen>.png` and `<screen>-dark.png`), and the Pages site
+  follows the visitor's system with the same tokens. Rationale, pass by pass, in
+  `docs/notes/spatial-light-theme.md`.
 - **Forecast demo: five live series instead of two.** `./demo.sh --forecast` now feeds five topic pairs
   (`demo.live.*`) and seeds nine hours of history for each: the unshipped orders (a ramp towards its
   thresholds) and the request backlog (an hourly cycle) as before, plus imports creeping up with noise, a

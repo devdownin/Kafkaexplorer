@@ -19,7 +19,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const VARIANTS: Record<ButtonVariant, string> = {
   primary:
-    'bg-primary text-on-primary hover:bg-primary-dim active:scale-[0.99] disabled:opacity-50',
+    'kse-btn-prominent text-on-primary active:scale-[0.99] disabled:opacity-50',
   secondary:
     'bg-surface-container-high text-on-surface hover:bg-surface-container-highest border border-outline-variant disabled:opacity-50',
   outline:

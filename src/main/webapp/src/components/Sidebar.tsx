@@ -101,7 +101,7 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
       <button
         onClick={() => { navigate('/query'); onMobileClose?.(); }}
         title="New query"
-        className={`mb-4 bg-primary text-on-primary rounded-xl kse-interactive font-medium flex items-center justify-center transition-all hover:bg-primary-dim active:scale-[0.99] ${
+        className={`mb-4 rounded-xl kse-btn-prominent kse-interactive text-on-primary font-medium flex items-center justify-center transition-all active:scale-[0.99] ${
           isCollapsed ? 'w-10 h-10 mx-auto' : 'py-2 px-3 gap-2'
         }`}
       >
@@ -116,7 +116,7 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
         {sections.map((section, i) => (
           <div key={section.group ?? `top-${i}`} className={i > 0 ? 'pt-3' : ''}>
             {section.group && !isCollapsed && (
-              <p className="px-3 pb-1.5 text-[11px] font-medium uppercase tracking-[0.05em] text-outline select-none">
+              <p className="px-3 pb-1.5 text-[12px] font-medium text-outline select-none">
                 {section.group}
               </p>
             )}

@@ -61,7 +61,7 @@ export const TableHead: FC<HTMLAttributes<HTMLTableSectionElement>> = ({ classNa
 export const Th: FC<ThHTMLAttributes<HTMLTableCellElement>> = ({ className, children, ...props }) => (
   <th
     scope="col"
-    className={cn('px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.05em] text-on-surface-variant whitespace-nowrap', className)}
+    className={cn('px-4 py-2.5 text-[12px] font-medium text-on-surface-variant whitespace-nowrap', className)}
     {...props}
   >
     {children}

@@ -428,7 +428,7 @@ const Cluster: React.FC = () => {
                 <div className={
                   item.key === 'unclean.leader.election.enable' && getConfig(item.key) === 'false'
                     ? 'text-sm font-bold text-error uppercase'
-                    : 'text-2xl font-bold text-on-surface'
+                    : 'text-2xl font-bold text-on-surface tabular-nums'
                 }>
                   {getConfig(item.key)}
                 </div>

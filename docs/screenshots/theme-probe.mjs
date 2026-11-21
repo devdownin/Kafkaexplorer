@@ -61,7 +61,7 @@ for (const theme of ['light', 'dark']) {
             offscreenActions,
             headerMaterial: header && getComputedStyle(header).backgroundColor,
             sidebarMaterial: sidebar && getComputedStyle(sidebar).backgroundColor,
-            hasThemeSwitch: Boolean(document.querySelector('button[aria-label^="Switch to "]')),
+            hasThemeSwitch: Boolean(document.querySelector('button[aria-label^="Appearance: "]')),
           };
         });
         const label = `${theme}/${viewport.name}/${route.name}`;

@@ -1393,12 +1393,12 @@ const Metrics: React.FC = () => {
                     <p className="font-bold text-on-surface text-sm">{ex.title}</p>
                     <p className="text-xs text-on-surface-variant mt-0.5 leading-relaxed">{ex.description}</p>
                   </div>
-                  <pre className="text-[11px] font-mono text-on-surface-variant bg-black/20 rounded-lg p-2 overflow-hidden line-clamp-4 whitespace-pre-wrap">
+                  <pre className="text-[11px] font-mono text-on-surface-variant bg-surface-container-high rounded-lg p-2 overflow-hidden line-clamp-4 whitespace-pre-wrap">
                     {ex.sql(firstTable)}
                   </pre>
                   <button
                     onClick={() => openEdit(undefined, ex.type, ex.sql, ex.warn, ex.crit)}
-                    className={`mt-auto w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border ${tm.border} ${tm.color} font-bold text-xs hover:bg-black/20 transition-colors`}
+                    className={`mt-auto w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border ${tm.border} ${tm.color} font-bold text-xs hover:bg-surface-container-high transition-colors`}
                   >
                     <span className="material-symbols-outlined text-sm">add_circle</span>
                     Use this template
