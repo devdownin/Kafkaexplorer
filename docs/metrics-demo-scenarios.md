@@ -11,15 +11,20 @@ The first run builds the Explorer and fetches the pinned TimesFM checkpoint; lat
 
 The overlay, `compose/demo-forecast.yml`, is what both start. The rest of the demo's topics are
 seeded once and then stand still, so a metric over them reads one value for ever and a forecast has
-nothing to extend; these two are fed continuously, and their history is written ahead so a forecast does
+nothing to extend; these five are fed continuously, and their history is written ahead so a forecast does
 not wait the two hours (128 recorded points) it would otherwise need.
 
 | Metric | What it reads | Story | What to look at |
 | --- | --- | --- | --- |
 | `gauge_unshipped_demo_live_orders_minus_shipped` | orders taken and not yet shipped: records in `demo.live.orders` minus those in `demo.live.shipped` | the warehouse falls behind for three hours (about 20 towards 450 orders), then a bulk shipment drains it; a small hourly ripple | warning at 300 and critical at 400: for about half an hour before each, the card says **"Warning expected in ~N min"**, then "Critical expected". **Already forecast** when the page opens |
 | `gauge_backlog_demo_live_requests_minus_processed` | records produced to `demo.live.requests` minus those produced to `demo.live.processed` | an hourly cycle between 10 and 130 records | the forecast **follows** the cycle rather than extrapolating a line; the history preview finds the hourly cycle; the warning at 110 is crossed near each peak and the critical at 135 never. **Not forecast yet**: press **Forecast** on its card |
+| `gauge_imports_demo_live_imports_minus_indexed` | imports not yet indexed: `demo.live.imports` minus `demo.live.indexed` | a slow, noisy climb from about 25 to 235 over four hours, then a reindex drains it | a **trend with noise on it**: the forecast extends the slope and its 80 % band widens with the distance; warning 180, critical 220. **Not forecast yet** |
+| `gauge_events_demo_live_events_minus_archived` | events not yet archived: `demo.live.events` minus `demo.live.archived` | noisy and stationary, around 80 (±30), no cycle | **nothing to announce**: a flat forecast and a wide band, and the warning at 150 never reached — what an uncertain series looks like, and that a forecast is not always news. **Not forecast yet** |
+| `gauge_tickets_demo_live_tickets_minus_resolved` | tickets open: `demo.live.tickets` minus `demo.live.resolved` | the level shifts between about 50 and 130 every ninety minutes (a three-hour cycle) | **a change no forecast can see coming**: at each handover the forecast holds the old level and the actual leaves it — the reliability badge drops and *Previous forecast vs actual* shows the miss. Warning 100, critical 140. **Not forecast yet** |
 
-Open **Metrics**: both cards already draw a curve, the unshipped-orders one with its forecast beside it.
+Open **Metrics**: the five cards already draw a curve, the unshipped-orders one with its forecast beside it.
+**Forecast all eligible (4)** starts the other four at once — the bulk creation, with each one's own cycle found
+from its history.
 
 1. **The unshipped-orders forecast** — a cyan dashed median and its 80 % band continue the curve; the card
    shows the predicted threshold ("Warning expected in ~12 min (≥ 300, median)") when the forecast gets there.
@@ -29,7 +34,7 @@ Open **Metrics**: both cards already draw a curve, the unshipped-orders one with
 3. **Previous forecast vs actual** in the Metrics Forecast panel, once a forecast has matured (one horizon,
    thirty minutes after the first): the earlier forecast drawn over what then happened, and how it did.
 
-**Why a count, and why these two.** Only a measurement the Explorer records as *complete* can be forecast: a
+**Why a count, and why these five.** Only a measurement the Explorer records as *complete* can be forecast: a
 latency or a consumer delay is recorded as limited-scope (a bounded read of recent rows), and a metric over
 raw SQL as unverified, so neither is ever offered a forecast. The difference of two topics' end offsets is
 exactly that, and a generator can hold it on any curve with nothing to back-date.
@@ -117,3 +122,15 @@ For time-resolved curves and forecasting, use a windowed aggregation on the decl
 6. Confirm that a metric without sufficient history or an approved forecast source disables or explains the forecast action.
 
 The fixture is deterministic in shape but uses the current time as its origin. It does not generate live traffic after seeding: that is what the live forecast demo above adds, on `demo.live.*` topics of its own so that the audit counts these scenarios rely on do not move.
+
+**The five curves, and the noise.** Three of them were added to show a forecast doing something *else* than
+following a ramp or a cycle: a trend with noise, a series with nothing to say, a series that changes
+level. Their noise is not random: `noise()` in `signals.awk` is a function of the minute alone, so the
+seeded past and the live future read the same value at the same minute, in the Kafka image's awk and in
+the PostgreSQL image's, and a restart resumes the same signal.
+
+**The two topics of a pair share their keys.** The k-th record of `demo.live.shipped` carries the key of
+the k-th record of `demo.live.orders` (`orders-1234`), and its `event_time` is when it was written — so
+**Stream Flow** traces `orders-1` through both topics and the time between them is how long that order
+waited. The drawer's *Create metrics* then has a real hop to propose a latency for. The same holds for
+the four other pairs (`requests-N`, `imports-N`, `events-N`, `tickets-N`).
