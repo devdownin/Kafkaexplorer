@@ -1,4 +1,5 @@
 @import 'tailwindcss' source(none);
+@import './spatial-tokens.css';
 @config '../tailwind.config.js';
 
 /* Keep the Tailwind 3 border default for elements without a border color utility. */
@@ -20,9 +21,6 @@
    `text-on-surface*`, `text-primary`… hérite du rendu premium.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-:root {
-  color-scheme: dark;
-}
 
 @layer base {
   body {
@@ -227,4 +225,366 @@
 .kse-fade-bottom {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+}
+
+/* Spatial surfaces: the content plane stays opaque for dense Kafka tables and charts. */
+html, body, #root { min-height: 100%; }
+body { background: rgb(var(--kse-background)); }
+.kse-app-shell { background: var(--scene); }
+.kse-sidebar {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-panel);
+  background: var(--glass-regular-bg);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--depth-2);
+  -webkit-backdrop-filter: blur(var(--blur-regular)) saturate(160%);
+  backdrop-filter: blur(var(--blur-regular)) saturate(160%);
+}
+.kse-header {
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  background: var(--glass-thin-bg);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--depth-1);
+  -webkit-backdrop-filter: blur(var(--blur-thin)) saturate(150%);
+  backdrop-filter: blur(var(--blur-thin)) saturate(150%);
+}
+.kse-surface {
+  background: rgb(var(--kse-surface-container) / .94);
+  border: 1px solid rgb(var(--kse-outline-variant) / .5);
+  border-radius: var(--radius-card);
+  box-shadow: var(--depth-1);
+}
+.kse-glass-thin, .kse-glass-regular, .kse-glass-thick {
+  position: relative;
+  isolation: isolate;
+  border: 1px solid var(--glass-border);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--depth-2);
+}
+.kse-glass-thin { background: var(--glass-thin-bg); -webkit-backdrop-filter: blur(var(--blur-thin)) saturate(150%); backdrop-filter: blur(var(--blur-thin)) saturate(150%); }
+.kse-glass-regular { background: var(--glass-regular-bg); -webkit-backdrop-filter: blur(var(--blur-regular)) saturate(160%); backdrop-filter: blur(var(--blur-regular)) saturate(160%); }
+.kse-glass-thick { background: var(--glass-thick-bg); box-shadow: inset 0 1px 0 var(--glass-highlight), var(--depth-3); -webkit-backdrop-filter: blur(var(--blur-thick)) saturate(175%); backdrop-filter: blur(var(--blur-thick)) saturate(175%); }
+.kse-glass-thin::before, .kse-glass-regular::before, .kse-glass-thick::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(180deg, var(--glass-highlight), transparent 35%);
+}
+.kse-interactive { transition: transform 180ms cubic-bezier(.2,.8,.2,1), box-shadow 180ms ease, background-color 180ms ease; }
+@media (hover: hover) and (pointer: fine) { .kse-interactive:hover { transform: translateY(-1px); box-shadow: var(--depth-2); } }
+.kse-interactive:active { transform: scale(.985); }
+.kse-modal { border-radius: var(--radius-modal); }
+.kse-input { border-radius: var(--radius-control); box-shadow: inset 0 1px 2px rgba(20,30,50,.04); }
+.kse-input:focus-visible { outline: 2px solid rgb(var(--kse-primary)); outline-offset: 2px; }
+:root[data-theme="light"] .nav-active {
+  background: rgba(255,255,255,.70);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.8), 0 3px 10px rgba(20,30,50,.06);
+}
+:root[data-theme="light"] .header-border::after { display: none; }
+:root[data-theme="light"] .card-hover:hover { box-shadow: var(--depth-2); }
+:root[data-theme="light"] .skeleton-shimmer {
+  background: linear-gradient(90deg,#e7edf5,rgba(255,255,255,.8),#e7edf5);
+  background-size: 600px 100%;
+}
+:root[data-theme="light"] .kse-scroll-table thead th { background-color: rgb(var(--kse-surface-container-high)); }
+:root[data-theme="light"] .glass { background: var(--glass-regular-bg); border-color: var(--glass-border); box-shadow: var(--depth-2); }
+:root[data-theme="light"] .graph-bg { background-image: radial-gradient(circle,var(--graph-dot) 1px,transparent 1px); }
+:root[data-theme="light"] .bg-scene::before { display: none; }
+.glass-overlay, .confirm-overlay { background: var(--veil); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+::-webkit-scrollbar-thumb, .custom-scrollbar::-webkit-scrollbar-thumb { background: var(--scroll-thumb); }
+:root[data-theme="light"] .ring-white\\/\\[0\\.045\\] { --tw-ring-color: rgb(var(--kse-outline-variant) / .55); }
+@media (max-width: 1023px) {
+  .kse-sidebar { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+  .kse-header { -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+}
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .kse-sidebar, .kse-header, .kse-glass-thin, .kse-glass-regular, .kse-glass-thick { background: rgb(var(--kse-surface-container) / .98); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kse-interactive { transform: none !important; }
+}
+
+
+/* Spatial refinement v3 — optical depth, not repeated decorative blur.
+   Layer 0: opaque reading surfaces; layer 1: controls; layer 2: navigation;
+   layer 3: transient dialogs. Keep the scene stationary while scrolling. */
+:root { accent-color: rgb(var(--kse-primary)); }
+@layer base {
+  :focus-visible {
+    outline-color: var(--focus-ring);
+    outline-offset: 3px;
+  }
+  ::selection { background: rgb(var(--kse-primary) / .18); }
+}
+.kse-app-shell {
+  background: var(--scene);
+  background-attachment: fixed;
+}
+/* The edge has two optical cues: a soft upper rim and a lower separator.
+   No filter is applied per navigation item, card, or data cell. */
+.kse-sidebar, .kse-header {
+  border-color: var(--glass-edge);
+  box-shadow:
+    inset 0 1px 0 var(--glass-inner-edge),
+    inset 0 -1px 0 rgb(var(--kse-outline-variant) / .10),
+    var(--depth-2);
+}
+.kse-header { box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-1); }
+.kse-sidebar {
+  background-image: linear-gradient(146deg, var(--glass-reflection), transparent 37%);
+}
+.kse-header {
+  background-image: linear-gradient(160deg, var(--glass-reflection), transparent 50%);
+}
+/* Less glass as an overlay becomes closer: opacity and shadow, not
+   increasingly vivid or saturated color. */
+.kse-glass-thin, .kse-glass-regular, .kse-glass-thick {
+  border-color: var(--glass-edge);
+}
+.kse-glass-thin::before, .kse-glass-regular::before, .kse-glass-thick::before {
+  background: linear-gradient(177deg, var(--glass-reflection), transparent 34%);
+}
+.kse-elevation-flat { box-shadow: inset 0 1px 0 var(--glass-inner-edge); }
+.kse-elevation-raised {
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-2);
+}
+.kse-elevation-floating {
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-3);
+}
+.kse-surface {
+  border-color: var(--glass-card-border);
+  background-image: linear-gradient(180deg, var(--glass-card-top), transparent 28%);
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-1);
+}
+.card-hover:hover { box-shadow: var(--depth-2); }
+.nav-active {
+  background: var(--glass-selected-bg);
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge),
+    inset 0 0 0 1px var(--glass-selected-edge), var(--depth-1);
+}
+.kse-sidebar nav a {
+  position: relative;
+  transition: background-color 180ms ease, color 180ms ease,
+    box-shadow 180ms ease, transform 180ms var(--spatial-ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  .kse-sidebar nav a:not(.nav-active):hover { transform: translateX(2px); }
+}
+/* Keyboard focus and current route must remain distinct from hover. */
+.kse-sidebar nav a:focus-visible, .kse-control:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.kse-control {
+  transition: transform 180ms var(--spatial-ease), background-color 180ms ease,
+    color 180ms ease, box-shadow 180ms ease;
+}
+.kse-control:enabled:active { transform: scale(.985); }
+.kse-control:disabled { transform: none; box-shadow: none; }
+.kse-control:enabled:hover { box-shadow: var(--depth-1); }
+/* Inputs should read as a precise recess rather than another glass card. */
+.kse-input {
+  background: var(--glass-input-bg);
+  border-color: var(--glass-input-border);
+  box-shadow: inset 0 1px 2px rgb(20 30 50 / .05);
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+.kse-input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: inset 0 1px 2px rgb(20 30 50 / .05),
+    0 0 0 3px rgb(var(--kse-primary) / .10);
+}
+.kse-input[aria-invalid="true"] { border-color: rgb(var(--kse-error) / .7); }
+.kse-input:disabled { opacity: .65; }
+/* Header search and secondary actions are lightweight, not separately blurred. */
+.kse-search-trigger {
+  border: 1px solid var(--glass-input-border);
+  background: var(--glass-control-bg);
+  border-radius: 9999px;
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge);
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+.kse-search-trigger:hover {
+  background: var(--glass-control-hover);
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-1);
+}
+.kse-header-action {
+  border-radius: var(--radius-control);
+  transition: background-color 180ms ease, color 180ms ease, transform 120ms ease;
+}
+.kse-header-action:hover { background: var(--glass-control-hover); }
+.kse-header-action:active { transform: scale(.985); }
+.kse-drawer-backdrop {
+  background: var(--glass-drawer-bg);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+.kse-glass-thick.kse-modal { border-radius: var(--radius-modal); }
+@media (max-width: 1023px) {
+  .kse-sidebar {
+    border-radius: 0 var(--radius-panel) var(--radius-panel) 0;
+    border-left: 0;
+    background: var(--glass-thick-bg);
+    -webkit-backdrop-filter: blur(12px) saturate(125%);
+    backdrop-filter: blur(12px) saturate(125%);
+  }
+  .kse-header {
+    -webkit-backdrop-filter: blur(8px) saturate(125%);
+    backdrop-filter: blur(8px) saturate(125%);
+  }
+}
+@media (min-width: 1024px) {
+  .kse-sidebar { border-radius: var(--radius-panel); border-left: 1px solid var(--glass-edge); }
+}
+@media (max-width: 640px) {
+  .kse-glass-thick, .kse-glass-regular, .kse-glass-thin {
+    -webkit-backdrop-filter: blur(12px) saturate(125%);
+    backdrop-filter: blur(12px) saturate(125%);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .kse-sidebar, .kse-header, .kse-glass-thin, .kse-glass-regular,
+  .kse-glass-thick, .glass-overlay, .confirm-overlay, .kse-drawer-backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: rgb(var(--kse-surface-container) / .99);
+  }
+}
+@media (forced-colors: active) {
+  .kse-sidebar, .kse-header, .kse-surface,
+  .kse-glass-thin, .kse-glass-regular, .kse-glass-thick,
+  .kse-input, .kse-search-trigger, .nav-active {
+    border: 1px solid CanvasText;
+    box-shadow: none;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .kse-glass-thin::before, .kse-glass-regular::before, .kse-glass-thick::before { display: none; }
+  :focus-visible { outline: 2px solid Highlight; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kse-control, .kse-sidebar nav a, .kse-header-action { transition: none !important; transform: none !important; }
+}
+
+/* The header becomes slightly more opaque over scrolled content.
+   The only state change is the >8px threshold in the main scroll container. */
+.kse-header {
+  transition: background-color 180ms ease, box-shadow 180ms ease,
+    border-color 180ms ease;
+}
+.kse-header-scrolled {
+  background-color: var(--glass-regular-bg);
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-2);
+  -webkit-backdrop-filter: blur(var(--blur-regular)) saturate(155%);
+  backdrop-filter: blur(var(--blur-regular)) saturate(155%);
+}
+@media (max-width: 1023px) {
+  .kse-header-scrolled {
+    -webkit-backdrop-filter: blur(10px) saturate(130%);
+    backdrop-filter: blur(10px) saturate(130%);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .kse-header-scrolled {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: rgb(var(--kse-surface-container) / .99);
+  }
+}
+
+/* Fourth pass — data-dense work surfaces. Translucency belongs to navigation,
+   not to tables, editors or visual evidence. These panels stay opaque. */
+.kse-page {
+  color: rgb(var(--kse-on-surface));
+}
+.kse-page-header {
+  padding-bottom: .25rem;
+}
+.kse-page-actions {
+  align-self: flex-start;
+}
+.kse-page-actions > * { max-width: 100%; }
+.kse-inset-panel {
+  background: rgb(var(--kse-surface-container-low));
+  border: 1px solid rgb(var(--kse-outline-variant) / .53);
+  box-shadow: inset 0 1px 2px rgb(22 32 52 / .035);
+}
+.kse-stat {
+  min-width: 0;
+  background-color: rgb(var(--kse-surface-container));
+}
+.kse-stat p { overflow-wrap: anywhere; }
+.kse-data-table {
+  background: rgb(var(--kse-surface-container));
+  box-shadow: 0 1px 2px rgb(16 25 44 / .025);
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+.kse-scroll-table thead th {
+  background-color: rgb(var(--kse-surface-container-high));
+  box-shadow: inset 0 -1px 0 rgb(var(--kse-outline-variant) / .68);
+}
+.kse-data-table tbody tr:focus-within {
+  background-color: rgb(var(--kse-primary) / .055);
+}
+.kse-data-table th, .kse-data-table td {
+  font-variant-numeric: tabular-nums;
+}
+.kse-empty-state-icon {
+  border: 1px solid rgb(var(--kse-outline-variant) / .55);
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-1);
+}
+.kse-chart-viewport {
+  background: rgb(var(--kse-surface-container-low) / .62);
+  border: 1px solid rgb(var(--kse-outline-variant) / .45);
+  border-radius: 14px;
+  padding: 10px 8px 6px 0;
+}
+/* Recharts' popup is the only floating part of the plot. Keep labels above the plot. */
+.kse-forecast-panel .recharts-legend-wrapper {
+  color: var(--viz-axis);
+}
+.kse-forecast-panel .recharts-default-legend {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+}
+.kse-forecast-panel .recharts-legend-item {
+  margin-right: 0 !important;
+  white-space: nowrap;
+}
+.kse-query-workbench {
+  background: rgb(var(--kse-surface));
+}
+.kse-workbench-toolbar {
+  background: rgb(var(--kse-surface-container-low));
+  box-shadow: inset 0 -1px 0 rgb(var(--kse-outline-variant) / .45);
+}
+.kse-query-workbench [role="tabpanel"] {
+  background: rgb(var(--kse-surface));
+}
+.kse-model-canvas {
+  background-color: rgb(var(--kse-surface-container-lowest));
+}
+.kse-canvas-toolbar {
+  box-shadow: inset 0 1px 0 var(--glass-inner-edge), var(--depth-2);
+}
+@media (max-width: 767px) {
+  .kse-page-header { gap: 12px; }
+  .kse-page-header > :first-child { flex-basis: 100%; }
+  .kse-page-actions { width: 100%; }
+  .kse-page-actions > div { max-width: 100%; }
+  .kse-workbench-toolbar { gap: 8px; }
+  .kse-empty-state { padding-inline: 1rem; }
+}
+@media (prefers-contrast: more) {
+  .kse-surface, .kse-stat, .kse-data-table, .kse-inset-panel,
+  .kse-chart-viewport, .kse-empty-state-icon {
+    border-color: rgb(var(--kse-outline));
+  }
+}
+@media (forced-colors: active) {
+  .kse-data-table, .kse-chart-viewport, .kse-inset-panel,
+  .kse-stat, .kse-empty-state-icon {
+    background: Canvas;
+    color: CanvasText;
+    border: 1px solid CanvasText;
+  }
 }

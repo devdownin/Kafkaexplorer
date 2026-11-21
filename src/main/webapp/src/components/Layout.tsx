@@ -50,9 +50,23 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   const [searchTopics, setSearchTopics] = useState<string[]>([]);
   const [searchTables, setSearchTables] = useState<string[]>([]);
 
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      const saved = localStorage.getItem('kse.theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+    } catch { /* Storage can be disabled. */ }
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  });
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    try { localStorage.setItem('kse.theme', theme); } catch { /* Optional persistence. */ }
+  }, [theme]);
+
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [contentScrolled, setContentScrolled] = useState(false);
   const [isDesktop, setIsDesktop] = useState(
     () => typeof window !== 'undefined' && window.matchMedia(DESKTOP_QUERY).matches,
   );
@@ -105,7 +119,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   const effectiveCollapsed = isDesktop ? isCollapsed : false;
 
   return (
-    <div className="h-screen overflow-hidden bg-background bg-scene">
+    <div className="kse-app-shell h-screen overflow-hidden bg-background">
       <Sidebar
         isCollapsed={effectiveCollapsed}
         onToggle={() => setIsCollapsed((c) => !c)}
@@ -115,7 +129,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
 
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 lg:hidden animate-fade-in"
+          className="kse-drawer-backdrop fixed inset-0 z-40 lg:hidden animate-fade-in"
           onClick={() => setMobileOpen(false)}
           aria-hidden="true"
         />
@@ -123,17 +137,20 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
 
       <div
         className={`h-screen flex flex-col min-w-0 transition-all duration-300 ml-0 ${
-          effectiveCollapsed ? 'lg:ml-[68px]' : 'lg:ml-64'
+          effectiveCollapsed ? 'lg:ml-[92px]' : 'lg:ml-[276px]'
         }`}
       >
         <Header
+          theme={theme}
+          scrolled={contentScrolled}
+          onThemeToggle={() => setTheme(value => value === 'light' ? 'dark' : 'light')}
           onMenuClick={() => setMobileOpen(true)}
           onSearchClick={() => setPaletteOpen(true)}
           isHealthy={isHealthy}
           clusterName={clusterName}
           bootstrapServers={bootstrapServers}
         />
-        <main className="flex-1 overflow-y-auto custom-scrollbar relative">
+        <main className="flex-1 overflow-y-auto custom-scrollbar relative" onScroll={event => setContentScrolled(event.currentTarget.scrollTop > 8)}>
           {children}
         </main>
       </div>

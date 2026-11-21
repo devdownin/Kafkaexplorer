@@ -75,7 +75,7 @@ const EntityNode: React.FC<{
 }> = ({ entity, x, y, selected, dimmed, tint, highlighted, orphanKeys, sizing, onClick }) => {
   const { columns, hidden } = displayedColumns(entity, sizing);
   const height = entityHeight(entity, sizing);
-  const stroke = selected ? '#ffffff' : tint.accent;
+  const stroke = selected ? 'var(--viz-primary)' : tint.accent;
   const exactCount = entity.messageCount !== null
     ? `${entity.messageCount.toLocaleString()} messages`
     : 'message count unavailable';
@@ -111,7 +111,7 @@ const EntityNode: React.FC<{
           fill={tint.accent} fillOpacity={0.08} stroke={tint.accent} strokeWidth={1} strokeOpacity={0.3} />
       )}
       <rect x={x} y={y} width={width} height={height} rx={8}
-        fill="#12151a" stroke={stroke} strokeWidth={selected ? 2 : 1.2} strokeOpacity={selected ? 1 : 0.7} />
+        fill="var(--viz-node-bg)" stroke={stroke} strokeWidth={selected ? 2 : 1.2} strokeOpacity={selected ? 1 : 0.7} />
       {/* En-tête : nom de table + topic d'origine, teinté par domaine */}
       <rect x={x} y={y} width={width} height={sizing.headerH} rx={8} fill={tint.header} />
       <rect x={x} y={y + sizing.headerH - 8} width={width} height={8} fill={tint.header} />
@@ -119,7 +119,7 @@ const EntityNode: React.FC<{
         fontFamily="JetBrains Mono, monospace">
         {elide(entity.id, sizing.titleChars)}
       </text>
-      <text x={x + 10} y={y + subtitleY} fill="#79839a" fontSize={sizing.subtitleSize}
+      <text x={x + 10} y={y + subtitleY} fill="#c4cbd8" fontSize={sizing.subtitleSize}
         fontFamily="Inter, sans-serif">
         {elide(entity.topic, sizing.subtitleChars)}
         {entity.format ? ` · ${entity.format}` : ''}
@@ -141,19 +141,19 @@ const EntityNode: React.FC<{
           <g key={column.name}>
             {lit && (
               <rect x={x + 4} y={rowY - sizing.rowH + rowBaseline} width={width - 8}
-                height={sizing.rowH} rx={3} fill="#f5c264" fillOpacity={0.18} />
+                height={sizing.rowH} rx={3} fill="var(--viz-warning)" fillOpacity={0.18} />
             )}
             <text x={x + 10} y={rowY} fontSize={sizing.rowSize} fontFamily="JetBrains Mono, monospace"
               fontWeight={lit ? 'bold' : 'normal'}
-              fill={lit ? '#f5c264' : column.primaryKey ? '#7ee2a8'
-                : column.references ? '#f5c264' : orphan ? '#8d8577' : '#c5cad6'}>
+              fill={lit ? 'var(--viz-warning)' : column.primaryKey ? 'var(--viz-observed)'
+                : column.references ? 'var(--viz-warning)' : orphan ? 'var(--viz-node-muted)' : 'var(--viz-node-text)'}>
               {/* Un chemin raccourci garde son original atteignable — même règle que le compte
                   compacté de l'en-tête : une valeur abrégée sans son original ne se vérifie plus. */}
               {name !== column.name && <title>{column.name}</title>}
               {marker ? `${marker} ` : ''}{name}
             </text>
             <text x={x + width - 10} y={rowY} textAnchor="end" fontSize={sizing.typeSize}
-              fontFamily="JetBrains Mono, monospace" fill="#79839a">
+              fontFamily="JetBrains Mono, monospace" fill="var(--viz-node-muted)">
               {column.type}
             </text>
           </g>
@@ -161,7 +161,7 @@ const EntityNode: React.FC<{
       })}
       {hidden > 0 && (
         <text x={x + 10} y={y + sizing.headerH + (columns.length + 1) * sizing.rowH - rowBaseline}
-          fontSize={sizing.typeSize} fontFamily="Inter, sans-serif" fill="#79839a" fontStyle="italic">
+          fontSize={sizing.typeSize} fontFamily="Inter, sans-serif" fill="var(--viz-node-muted)" fontStyle="italic">
           +{hidden} more column{hidden > 1 ? 's' : ''}
         </text>
       )}
@@ -955,7 +955,7 @@ const DataModel: React.FC = () => {
       {edgeTip && (
         <div
           style={{ position: 'fixed', left: edgeTip.x + 14, top: edgeTip.y - 70, zIndex: 100, pointerEvents: 'none' }}
-          className="bg-background-dark/95 border border-outline-variant rounded-lg px-3 py-2 shadow-2xl text-xs max-w-[280px]"
+          className="kse-glass-thick rounded-xl px-3 py-2 text-on-surface text-xs max-w-[280px]"
           role="tooltip"
         >
           <p className="font-mono text-on-surface break-all leading-snug">
@@ -976,7 +976,7 @@ const DataModel: React.FC = () => {
       {/* Fond du tiroir, sous le seuil seulement : cliquer à côté referme, comme le tiroir de
           navigation du shell. */}
       {!isDesktop && topicsDrawerOpen && (
-        <div className="absolute inset-0 bg-black/60 z-30" aria-hidden="true"
+        <div className="kse-drawer-backdrop absolute inset-0 z-30" aria-hidden="true"
           onClick={() => setTopicsDrawerOpen(false)} />
       )}
 
@@ -1184,7 +1184,7 @@ const DataModel: React.FC = () => {
                 )}
               </div>
               {columnMatchNote && (
-                <p className={`text-[11px] leading-snug ${columnMatches.size === 0 ? 'text-outline' : 'text-[#f5c264]'}`}
+                <p className={`text-[11px] leading-snug ${columnMatches.size === 0 ? 'text-outline' : 'text-warning'}`}
                   role="status">
                   {columnMatchNote}
                 </p>
@@ -1294,7 +1294,7 @@ const DataModel: React.FC = () => {
                           /* Le nom accessible du groupe porte déjà le domaine et son compte ;
                              laisser lire l'en-tête en plus les dirait deux fois. */
                           <p aria-hidden="true"
-                            className="sticky top-0 z-[1] flex items-center gap-1.5 px-2 py-1 bg-surface-container-low/95 backdrop-blur-xs text-[11px] text-on-surface-variant">
+                            className="sticky top-0 z-[1] flex items-center gap-1.5 px-2 py-1 bg-surface-container-low text-[11px] text-on-surface-variant">
                             <span className="w-2 h-2 rounded-sm shrink-0 border"
                               style={{
                                 backgroundColor: tintOf(group.entities[0].topic).header,
@@ -1584,13 +1584,13 @@ const DataModel: React.FC = () => {
                       {!diffIsEmpty(diff) && (
                         <div className="space-y-0.5 text-[11px] leading-snug max-h-48 overflow-y-auto custom-scrollbar">
                           {diff.addedEntities.map(e => (
-                            <p key={`ae-${e.id}`} className="text-[#7ee2a8] font-mono truncate" title={e.topic}>+ {e.id}</p>
+                            <p key={`ae-${e.id}`} className="text-success font-mono truncate" title={e.topic}>+ {e.id}</p>
                           ))}
                           {diff.removedEntities.map(e => (
                             <p key={`re-${e.id}`} className="text-error font-mono truncate line-through" title={e.topic}>- {e.id}</p>
                           ))}
                           {diff.addedRelations.map((r, i) => (
-                            <p key={`ar-${i}`} className="text-[#7ee2a8] font-mono truncate">
+                            <p key={`ar-${i}`} className="text-success font-mono truncate">
                               + {r.from}.{r.fromColumn} → {r.to}
                             </p>
                           ))}
@@ -1600,7 +1600,7 @@ const DataModel: React.FC = () => {
                             </p>
                           ))}
                           {diff.changedRelations.map((c, i) => (
-                            <p key={`cr-${i}`} className="text-[#f5c264] font-mono truncate">
+                            <p key={`cr-${i}`} className="text-warning font-mono truncate">
                               ~ {c.relation.from}.{c.relation.fromColumn} → {c.relation.to}
                               {' '}({c.from.toLowerCase()} → {c.to.toLowerCase()})
                             </p>
@@ -1618,7 +1618,7 @@ const DataModel: React.FC = () => {
       )}
 
       {/* ── Canevas ── */}
-      <main className="flex-1 relative overflow-hidden graph-bg bg-background-dark">
+      <main className="kse-model-canvas flex-1 relative overflow-hidden graph-bg bg-background-dark">
 
         {/* Bandeau : couverture + avertissements */}
         <div ref={bannerRef} className="absolute top-4 left-4 right-4 z-10 flex flex-col items-start gap-2 pointer-events-none">
@@ -1660,7 +1660,7 @@ const DataModel: React.FC = () => {
 
         {/* Zoom */}
         {model && graphEntities.length > 0 && (
-          <div className="absolute bottom-6 left-4 z-10 flex flex-col bg-surface-container border border-outline-variant rounded-xl overflow-hidden shadow-xl">
+          <div className="kse-canvas-toolbar absolute bottom-4 left-3 md:bottom-6 md:left-4 z-10 flex flex-col bg-surface-container border border-outline-variant rounded-xl overflow-hidden shadow-xl">
             <button onClick={() => zoomFromCenter(1.25)} aria-label="Zoom in"
               className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
               <span aria-hidden="true" className="material-symbols-outlined text-lg">add</span>
@@ -1680,7 +1680,7 @@ const DataModel: React.FC = () => {
             Un clic y déplace la vue, ce qui est le seul geste qu'une vue d'ensemble doit offrir :
             elle situe, et permet d'aller là où l'on regarde. */}
         {minimap && (
-          <div className="absolute bottom-6 right-4 z-10 bg-surface-container/95 border border-outline-variant rounded-lg shadow-xl overflow-hidden">
+          <div className="absolute bottom-4 right-3 md:bottom-6 md:right-4 z-10 bg-surface-container/95 border border-outline-variant rounded-lg shadow-xl overflow-hidden">
             <svg
               width={MINIMAP_W} height={MINIMAP_H}
               role="button" tabIndex={0}
@@ -1710,7 +1710,7 @@ const DataModel: React.FC = () => {
                     width={Math.max(1, sizing.width * layout.scale)}
                     height={Math.max(1, entityHeight(entity, sizing) * layout.scale)}
                     rx={1}
-                    fill={selectedId === entity.id ? '#a3adff' : tintOf(entity.topic).accent}
+                    fill={selectedId === entity.id ? 'var(--viz-primary)' : tintOf(entity.topic).accent}
                     fillOpacity={selectedId === entity.id ? 0.9 : 0.45}
                   />
                 );
@@ -1740,7 +1740,7 @@ const DataModel: React.FC = () => {
             le cas le plus trompeur des deux, puisque rien ne bouge à l'écran.
             Indéterminé assumé : une seule requête, donc aucun pourcentage à afficher. */}
         {loading && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background-dark/70 backdrop-blur-[1px]">
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70">
             <div className="flex flex-col items-center gap-3 px-6 text-center" role="status">
               <Spinner />
               <p className="text-sm text-on-surface font-medium tabular-nums">
@@ -1932,7 +1932,7 @@ const DataModel: React.FC = () => {
               <div className="space-y-0.5">
                 {entityById.get(selectedId)!.columns.map(column => (
                   <div key={column.name} className="flex items-baseline gap-2 text-[11px] font-mono">
-                    <span className={column.primaryKey ? 'text-[#7ee2a8]' : column.references ? 'text-[#f5c264]' : 'text-on-surface'}>
+                    <span className={column.primaryKey ? 'text-success' : column.references ? 'text-warning' : 'text-on-surface'}>
                       {column.primaryKey ? '🔑 ' : column.references ? '→ ' : ''}{column.name}
                     </span>
                     <span className="text-outline ml-auto shrink-0">{column.type}</span>
@@ -1950,7 +1950,7 @@ const DataModel: React.FC = () => {
                   vérifiable est affirmée, à savoir si un topic sélectionné porte ce nom. */}
               {selectedOrphans.length > 0 && (
                 <div className="mt-3 space-y-1.5 border-t border-outline-variant/40 pt-2">
-                  <p className="text-[11px] font-bold text-[#f5c264] uppercase tracking-wider">
+                  <p className="text-[11px] font-bold text-warning uppercase tracking-wider">
                     Key-like, no relation ({selectedOrphans.length})
                   </p>
                   {selectedOrphans.map(orphan => (

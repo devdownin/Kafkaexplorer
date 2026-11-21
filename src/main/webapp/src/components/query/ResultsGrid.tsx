@@ -58,7 +58,7 @@ export const ResultsGrid = React.memo(function ResultsGrid({
   const span = columns.length + (showRowKind ? 1 : 0);
   return (
     <table className={cn('w-full text-left border-collapse', virtualized && 'table-fixed')}>
-      <thead className="sticky top-0 bg-surface-container-high/90 backdrop-blur-xs z-10">
+      <thead className="sticky top-0 bg-surface-container-high z-10">
         <tr>
           {showRowKind && (
             <th scope="col" style={{ width: '2.5rem' }}
@@ -100,7 +100,7 @@ export const ResultsGrid = React.memo(function ResultsGrid({
           return (
             <tr key={absIndex} ref={virtualized && i === 0 ? measureRow : undefined}
               aria-selected={selected}
-              className={cn('transition-colors', selected ? 'bg-primary/10' : 'hover:bg-surface-container-high/40')}>
+              className={cn('transition-colors', selected ? 'bg-primary/10' : 'hover:bg-surface-container-high/45')}>
               {showRowKind && (() => {
                 const kind = rowKindOf(row);
                 return (

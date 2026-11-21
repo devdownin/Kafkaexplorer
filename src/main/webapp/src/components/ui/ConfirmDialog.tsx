@@ -96,7 +96,7 @@ export const ConfirmProvider: FC<{ children: ReactNode }> = ({ children }) => {
           onClick={() => settle(false)}
         >
           <div
-            className="w-full max-w-lg bg-surface-container border border-outline-variant rounded-xl shadow-2xl p-5 animate-slide-up"
+            className="kse-glass-thick kse-modal w-full max-w-lg p-5 animate-slide-up"
             role="dialog"
             aria-modal="true"
             aria-labelledby="confirm-title"

@@ -4,7 +4,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
 
-let mermaidInitialized = false;
+let mermaidInitializedFor: 'light' | 'dark' | null = null;
 /*
  * The id mermaid stamps on the SVG it returns. Module-scoped so it stays unique across remounts —
  * a per-component counter restarts at zero, and two diagrams sharing an id is invalid markup.
@@ -17,6 +17,16 @@ interface MermaidRendererProps {
 
 const MermaidRenderer: React.FC<MermaidRendererProps> = ({ chart }) => {
   const [error, setError] = useState<string | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
+    document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
+  );
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setTheme(document.documentElement.dataset.theme === 'light' ? 'light' : 'dark');
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
   /*
    * The rendered SVG is state, not something written into a ref's node.
    *
@@ -42,23 +52,23 @@ const MermaidRenderer: React.FC<MermaidRendererProps> = ({ chart }) => {
 
     const renderChart = async () => {
       try {
-        if (!mermaidInitialized) {
+        if (mermaidInitializedFor !== theme) {
           mermaid.initialize({
             startOnLoad: false,
             // The flowchart is written by a language model, so this input is not ours. 'strict' is
             // mermaid's own default; stating it means a future default cannot quietly relax it.
             securityLevel: 'strict',
-            theme: 'dark',
+            theme: theme === 'light' ? 'default' : 'dark',
             themeVariables: {
-              primaryColor: '#272e55',
-              primaryTextColor: '#e8eaf0',
-              primaryBorderColor: '#a3adff',
-              lineColor: '#79839a',
-              secondaryColor: '#191d24',
-              tertiaryColor: '#12151a',
+              primaryColor: theme === 'light' ? '#e3e8ff' : '#272e55',
+              primaryTextColor: theme === 'light' ? '#1c293a' : '#e8eaf0',
+              primaryBorderColor: theme === 'light' ? '#4453b8' : '#a3adff',
+              lineColor: theme === 'light' ? '#4a5b70' : '#79839a',
+              secondaryColor: theme === 'light' ? '#e9eef6' : '#191d24',
+              tertiaryColor: theme === 'light' ? '#ffffff' : '#12151a',
             },
           });
-          mermaidInitialized = true;
+          mermaidInitializedFor = theme;
         }
 
         const { svg: rendered } = await mermaid.render(`mermaid-${++svgSequence}`, chart);
@@ -73,7 +83,7 @@ const MermaidRenderer: React.FC<MermaidRendererProps> = ({ chart }) => {
     };
 
     void renderChart();
-  }, [chart]);
+  }, [chart, theme]);
 
   if (!chart || chart.trim() === '') {
     return (

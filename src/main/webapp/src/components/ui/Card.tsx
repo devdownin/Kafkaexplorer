@@ -13,12 +13,12 @@ export interface CardProps extends HTMLAttributes<HTMLDivElement> {
 
 const PADDINGS = { none: '', sm: 'p-4', md: 'p-5', lg: 'p-6' } as const;
 
-/** Panneau de contenu : surface + liseré 1 px + rayon 12 px. */
+/** Opaque, legible reading plane. Only floating navigation uses backdrop blur. */
 export const Card: FC<CardProps> = ({ interactive = false, padding = 'md', className, children, ...props }) => (
   <div
     className={cn(
-      'bg-surface-container rounded-xl ring-1 ring-white/[0.045]',
-      interactive && 'card-hover cursor-pointer',
+      'kse-surface',
+      interactive && 'kse-interactive card-hover cursor-pointer',
       PADDINGS[padding],
       className,
     )}
@@ -37,12 +37,12 @@ export interface CardHeaderProps {
 }
 
 export const CardHeader: FC<CardHeaderProps> = ({ title, description, actions, className }) => (
-  <div className={cn('flex items-start justify-between gap-3 mb-4', className)}>
-    <div className="min-w-0">
+  <div className={cn('flex flex-wrap items-start justify-between gap-3 mb-4', className)}>
+    <div className="min-w-0 flex-1">
       <h3 className="text-[14px] font-semibold text-on-surface tracking-tight">{title}</h3>
       {description && <p className="text-[12px] text-on-surface-variant mt-0.5 leading-relaxed">{description}</p>}
     </div>
-    {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+    {actions && <div className="flex flex-wrap items-center gap-2 min-w-0">{actions}</div>}
   </div>
 );
 

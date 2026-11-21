@@ -203,7 +203,7 @@ describe('ForecastPanel chart', () => {
   it('marks the start of the forecast and joins it to the last measurement', async () => {
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
     const { container } = render(<ForecastPanel />);
-    expect(await screen.findByText('now')).toBeInTheDocument();
+    expect(await screen.findByText('Forecast begins')).toBeInTheDocument();
     const median = container.querySelector('.recharts-line path[stroke-dasharray="6 3"]');
     // Three predicted points plus the measured one it starts from: four vertices, three segments.
     expect(median?.getAttribute('d')?.match(/[ML]/g)?.length ?? (median?.getAttribute('d')?.match(/C/g)?.length ?? 0) + 1).toBe(4);

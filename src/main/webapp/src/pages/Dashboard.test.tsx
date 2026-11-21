@@ -132,8 +132,7 @@ describe('Dashboard layout', () => {
   it('accents a tile only for a state: the health tile, not the counts', async () => {
     stubApi();
     renderPage();
-    const tile = (label: string) => screen.getByText(label).closest('div.ring-1')?.parentElement?.closest('div.ring-1')
-      ?? screen.getByText(label).closest('div.ring-1');
+    const tile = (label: string) => screen.getByText(label).closest('.kse-stat');
     await screen.findByText('Total Topics');
     expect(tile('Cluster Health')?.className).toContain('border-t-success');
     expect(tile('Total Topics')?.className).not.toContain('border-t-primary');

@@ -387,8 +387,8 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
    * chart sat 500 px into a 914 px panel, under four tiles, three folds and a destructive button,
    * and the approval was last.
    */
-  return <section ref={sectionRef} className="card p-5 space-y-4" aria-label="Metrics Forecast">
-    <h2 className="text-lg font-semibold">Metrics Forecast</h2>
+  return <section ref={sectionRef} className="kse-surface kse-forecast-panel p-4 md:p-5 space-y-4" aria-label="Metrics Forecast">
+    <h2 className="text-lg font-semibold text-on-surface tracking-tight">Metrics Forecast</h2>
     {error && <p role="alert">{error}</p>}
     {/* The panel in its own shape — a status line, then the chart's height — rather than a sentence. */}
     {!status && !error && <div role="status" aria-label="Loading forecast status" className="space-y-3">
@@ -429,7 +429,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
             {windows.map(n => <option key={n} value={n}>Last {n} points · {about(n, series?.stepMillis ?? 60000)}</option>)}
           </Select>}</Field>
         </div>
-        <div style={{ height: 260 }} role="img" aria-label={chartSummary}>
+        <div className="kse-chart-viewport" style={{ height: 278 }} role="img" aria-label={chartSummary}>
           <ResponsiveContainer><ComposedChart data={chart}>
             <CartesianGrid stroke={FORECAST_COLORS.band} strokeOpacity={0.12} vertical={false} />
             <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={tick}
@@ -442,25 +442,25 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
             {forecastStart !== undefined && <ReferenceArea x1={forecastStart} x2={chart[chart.length - 1].at}
               fill={FORECAST_COLORS.forecast} fillOpacity={0.05} strokeOpacity={0} ifOverflow="hidden" />}
             {forecastStart !== undefined && <ReferenceLine x={forecastStart} stroke={FORECAST_COLORS.band} strokeDasharray="3 3"
-              label={{ value: 'now', position: 'insideTopLeft', fill: FORECAST_COLORS.band, fontSize: 11 }} />}
+              label={{ value: 'Forecast begins', position: 'insideTopLeft', fill: 'var(--viz-axis)', fontSize: 11 }} />}
             {/* The band is drawn as a floor plus a width, so its own tooltip value is the width — shown
                 beside the floor it read as an interval narrower than its lower edge. The tooltip takes
                 the page's surface: recharts' default is white, which put a near-white date on white. */}
             <Tooltip labelFormatter={v => new Date(Number(v)).toLocaleString()}
-              contentStyle={{ background: '#191d24', border: '1px solid #2a303b', borderRadius: 8, fontSize: 12 }}
-              labelStyle={{ color: '#9aa3b2', marginBottom: 4 }} itemStyle={{ padding: 0 }}
-              cursor={{ stroke: FORECAST_COLORS.band, strokeOpacity: 0.4 }}
+              contentStyle={{ background: 'var(--viz-tooltip-bg)', border: '1px solid var(--viz-tooltip-border)', color: 'var(--viz-tooltip-text)', borderRadius: 8, fontSize: 12 }}
+              labelStyle={{ color: 'var(--viz-axis)', marginBottom: 4 }} itemStyle={{ padding: 0 }}
+              cursor={{ stroke: 'var(--viz-axis)', strokeOpacity: 0.5, strokeDasharray: '3 3' }}
               formatter={(value, name, item) => name === '80 % interval' && item?.payload
                 ? [`${number(item.payload.q10)} – ${number(item.payload.q90)}`, name]
                 : name === 'Previous 80 % interval' && item?.payload
                   ? [`${number(item.payload.prevQ10)} – ${number(item.payload.prevQ90)}`, name]
                   : [number(value), name]} />
-            <Legend wrapperStyle={{ fontSize: 12, paddingTop: 4 }} />
+            <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8, color: 'var(--viz-axis)' }} />
             {/* Two separate children, never a fragment: recharts 2 does not find a graphical item
                 inside `<>…</>`, so the band and its legend entry were never drawn
                 (METRICS-FORECAST-UX-AUDIT.md B1). */}
             {result.strategy === 'TIMESFM' && <Area dataKey="floor" stackId="interval" stroke="none" fill="transparent" tooltipType="none" legendType="none" isAnimationActive={false} />}
-            {result.strategy === 'TIMESFM' && <Area dataKey="band" stackId="interval" stroke="none" fill={FORECAST_COLORS.forecast} fillOpacity={0.18} name="80 % interval" isAnimationActive={false} />}
+            {result.strategy === 'TIMESFM' && <Area dataKey="band" stackId="interval" stroke="none" fill={FORECAST_COLORS.forecast} fillOpacity={0.14} name="80 % interval" isAnimationActive={false} />}
             {previous && <Area dataKey="prevFloor" stackId="previous" stroke="none" fill="transparent" tooltipType="none" legendType="none" isAnimationActive={false} />}
             {previous && <Area dataKey="prevBand" stackId="previous" stroke="none" fill={FORECAST_COLORS.previous} fillOpacity={0.22} name="Previous 80 % interval" isAnimationActive={false} />}
             {previous && <Line dataKey="prevMedian" stroke={FORECAST_COLORS.previous} strokeWidth={2} strokeDasharray="2 3" dot={false} name="Previous forecast" isAnimationActive={false} />}
