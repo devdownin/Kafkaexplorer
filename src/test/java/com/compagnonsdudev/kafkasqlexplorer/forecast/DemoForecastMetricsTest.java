@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 /**
- * The forecast demo's two metrics are defined in {@code scripts/demo-forecast/seed.sh}, as JSON, and
+ * The forecast demo's five metrics are defined in {@code scripts/demo-forecast/seed.sh}, as JSON, and
  * their whole point is that the Metrics page offers a forecast for them. Whether it does is decided
  * here, by {@link ForecastEligibility}, and by what the journal records as forecastable — which a
  * shell script cannot see. A first version of the demo was built on a transit latency: it parsed,
@@ -32,10 +32,11 @@ class DemoForecastMetricsTest {
   }
 
   @Test
-  void bothDemoMetricsAreOfferedAForecastAndNeverBlockedFromOne() throws Exception {
+  void everyDemoMetricIsOfferedAForecastAndNeverBlockedFromOne() throws Exception {
     var metrics = demoMetrics();
     assertEquals(
-        java.util.List.of("demo-live-unshipped", "demo-live-backlog"),
+        java.util.List.of(
+            "demo-live-unshipped", "demo-live-backlog", "demo-live-creep", "demo-live-jitter", "demo-live-shift"),
         metrics.stream().map(MetricConfig::id).toList());
     for (var m : metrics) {
       assertEquals(java.util.List.of(), ForecastEligibility.blockers(m), m.id());
