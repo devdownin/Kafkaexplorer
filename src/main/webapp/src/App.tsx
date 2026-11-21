@@ -45,7 +45,7 @@ const NotFound: FC = () => (
     </p>
     <Link
       to="/"
-      className="mt-5 inline-flex items-center gap-2 h-9 px-4 rounded-md bg-primary text-on-primary text-[13px] font-medium hover:bg-primary-fixed transition-colors"
+      className="mt-5 inline-flex items-center gap-2 h-9 px-4 rounded-md bg-primary text-on-primary text-[13px] font-medium hover:bg-primary-dim transition-colors"
     >
       <span aria-hidden="true" className="material-symbols-outlined text-[16px]">arrow_back</span>
       Back to Dashboard
