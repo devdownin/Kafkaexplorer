@@ -1151,7 +1151,7 @@ const Metrics: React.FC = () => {
     // il est `fixed z-50`, la Sidebar aussi, et la Sidebar est en dehors de cette page. Le modal
     // passerait sous la barre latérale. Le calque passe donc derrière le contenu par l'ordre du
     // DOM entre deux éléments positionnés `z-auto`, pas par un `-z-10` qui exigerait ce contexte.
-    <div className="relative p-6 overflow-y-auto h-full">
+    <div className="kse-page relative p-4 md:p-6 overflow-y-auto h-full">
 
       <MetricsPulseBackdrop active={backdropOn && anyMetricRunning} />
 
@@ -1175,7 +1175,7 @@ const Metrics: React.FC = () => {
       />
 
       {/* Summary bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Stat label="Total" value={metrics.length} />
         <Stat label="Healthy" value={counts.ok} tone={counts.ok > 0 ? 'success' : 'none'} />
         <Stat label="Warning" value={counts.warning} tone={counts.warning > 0 ? 'warning' : 'none'} />
