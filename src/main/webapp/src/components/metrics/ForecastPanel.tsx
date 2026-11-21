@@ -100,6 +100,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
    */
   clock?: number;
 }) {
+  const [tableOpen, setTableOpen] = useState(false);
   const [status, setStatus] = useState<ForecastStatus | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [progressError, setProgressError] = useState('');
@@ -293,6 +294,11 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   const yDomain: [number, number] = [Math.max(low >= 0 ? 0 : -Infinity, Math.floor((low - pad) / step) * step),
     Math.ceil((high + pad) / step) * step];
   const number = (v: unknown) => typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(v);
+  const observedCount = chart.filter(p => 'actual' in p && typeof p.actual === 'number').length;
+  const predictedRows = chart.filter(p => !('actual' in p) && !('imputed' in p) && typeof p.median === 'number');
+  const chartSummary = `Measured history and forecast: ${observedCount} observed points`
+    + (predictedRows.length ? `, ${predictedRows.length} predicted, from ${number(predictedRows[0].median)} to ${number(predictedRows[predictedRows.length - 1].median)}` : '')
+    + '. The same points are in the table below.';
   const quality = result?.quality;
   const comparisons = result && quality
     ? [
@@ -419,7 +425,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
             {windows.map(n => <option key={n} value={n}>Last {n} points · {about(n, series?.stepMillis ?? 60000)}</option>)}
           </Select>}</Field>
         </div>
-        <div style={{ height: 260 }} role="img" aria-label="Measured history and forecast">
+        <div style={{ height: 260 }} role="img" aria-label={chartSummary}>
           <ResponsiveContainer><ComposedChart data={chart}>
             <CartesianGrid stroke={FORECAST_COLORS.band} strokeOpacity={0.12} vertical={false} />
             <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={tick}
@@ -465,6 +471,27 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
               label={{ value: `Threshold ${threshold.direction === 'ABOVE' ? '≥' : '≤'} ${threshold.threshold}`, position: 'insideTopRight', fill: FORECAST_COLORS.warning, fontSize: 11 }} />}
           </ComposedChart></ResponsiveContainer>
         </div>
+        {/* The same points as the chart, for a screen reader and for a keyboard: the numbers are
+            otherwise reachable only by hovering. Rendered only when opened — sixty-odd rows per panel. */}
+        <details className="text-sm" onToggle={e => setTableOpen((e.currentTarget as HTMLDetailsElement).open)}>
+          <summary className="cursor-pointer text-outline">Chart data as a table</summary>
+          {tableOpen && <Table rowCount={chart.length} maxBodyHeight="16rem">
+            <caption className="sr-only">Measured values, predicted median and 80 % band, one row per point</caption>
+            <TableHead><TableRow><Th>Time</Th><Th>Kind</Th><Th>Value</Th><Th>80 % band</Th></TableRow></TableHead>
+            <TableBody>{chart.map(p => {
+              const measured = 'actual' in p && typeof p.actual === 'number' ? p.actual : null;
+              const imputed = 'imputed' in p && typeof p.imputed === 'number' ? p.imputed : null;
+              const predicted = !('actual' in p) && !('imputed' in p) && typeof p.median === 'number';
+              const value = measured ?? imputed ?? (predicted ? p.median : null);
+              return <TableRow key={p.at}>
+                <Td>{tick(p.at)}</Td>
+                <Td>{imputed !== null ? 'Imputed' : predicted ? 'Predicted' : 'Observed'}</Td>
+                <Td>{value === null || value === undefined ? '—' : number(value)}</Td>
+                <Td>{predicted && 'q10' in p && typeof p.q10 === 'number' && 'q90' in p && typeof p.q90 === 'number' ? `${number(p.q10)} – ${number(p.q90)}` : '—'}</Td>
+              </TableRow>;
+            })}</TableBody>
+          </Table>}
+        </details>
         {placed.offScale.length > 0 && <p className="text-xs font-mono" aria-label="Thresholds off the chart scale">
           {placed.offScale.map(t => <span key={t.label} className="mr-3" style={{ color: t.color }}>{t.up ? '↑' : '↓'} {t.label} {number(t.value)} <span className="text-outline">off scale</span></span>)}</p>}
         {/* Try a threshold before setting it: when this forecast would reach it, read as the card reads
