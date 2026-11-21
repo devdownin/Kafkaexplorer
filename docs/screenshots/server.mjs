@@ -31,6 +31,7 @@ const MIME = {
 /** Routes are matched in order; the first predicate that answers wins. */
 const API = [
   [m => m === '/api/dashboard', () => F.dashboard],
+  [m => m === '/api/compare/topics', () => F.TOPICS],
   // Reçoit l'URL : la colonne d'activité ne mesure que les topics affichés, donc la réponse
   // dépend de la requête — les autres routes ignorent simplement l'argument.
   [m => m === '/api/dashboard/activity', url => F.topicActivity(url)],

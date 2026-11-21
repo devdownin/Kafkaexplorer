@@ -878,3 +878,17 @@ whether it does. Monaco's `kse-dark` theme is defined in `monaco-setup.ts` from 
 `tailwind.config.js`; a page asks for it by name, and a colour changed in the config is changed there
 too. The metric cards use `repeat(auto-fit, minmax(min(100%, 22rem), 1fr))`, so two metrics share the
 width where `xl:grid-cols-3` left a column empty.
+
+**Third pass, and the rule each item follows.** *Lineage* frames its graph on arrival and on `0` — but
+not below `READABLE_SCALE` (0.8): a graph wider than the canvas starts from its sources and scrolls, as
+Stream Flow does, because a framed graph whose labels cannot be read has been framed for nothing. Its
+legend names the types from `TYPE_PLURAL` (`${type}s` wrote "Querys"). *Compare* uses the shared
+`Combobox`, and a topic list that failed to load is said in both panes (`role="alert"`): a failure
+that leaves the page empty is not a toast. *The dashboard's* state column says "Healthy" in plain
+text and keeps badges for the exceptions, so the one dead-letter topic stands out; the diagnostic
+overview's first cell counts silent topics with `detectSilence`, **over the rows whose activity was
+measured** — the column is read per page, not per cluster, and the cell says so. *A metric card's*
+actions are revealed by `group-hover/card` and `group-focus-within/card` behind a
+`[@media(hover:hover)]` guard, so they are always visible on touch, where nothing hovers; delete
+lives in `MoreActions` (closes on Escape, an outside click, or once chosen). The screenshot server
+answers `/api/compare/topics` now, so the docs capture of Compare shows pickers rather than an error.

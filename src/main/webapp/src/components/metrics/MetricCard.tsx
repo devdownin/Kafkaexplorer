@@ -15,7 +15,7 @@
  * modèle de données.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Area, ComposedChart, Line, LineChart, ResponsiveContainer, ReferenceLine, ReferenceArea, Tooltip, XAxis, YAxis } from 'recharts';
 // Recharts exporte lui aussi un `Tooltip` : le nôtre est aliasé, comme dans la page.
 import { Badge, Button, Tooltip as InfoTooltip } from '../ui';
@@ -75,6 +75,39 @@ const CoverageTrend: React.FC<{ coverages: number[]; direction: string }> = ({ c
       points={coverages.map((c, i) => `${x(i)},${y(c)}`).join(' ')} />
     {coverages.map((c, i) => <circle key={i} cx={x(i)} cy={y(c)} r={1.6} fill={FORECAST_COLORS.forecast} />)}
   </svg>;
+};
+
+/**
+ * The card's secondary actions, behind "⋯": deleting a metric sat as an icon beside Refresh and
+ * Edit, one slip from them on every card. Closes on Escape, on a click outside, and once chosen.
+ */
+const MoreActions: React.FC<{ onDelete: () => void }> = ({ onDelete }) => {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, [open]);
+  return (
+    <div ref={root} className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-haspopup="menu" aria-expanded={open}
+        title="More actions" aria-label="More actions" className="p-1 text-on-surface-variant hover:text-primary transition-colors">
+        <span aria-hidden="true" className="material-symbols-outlined text-base">more_horiz</span>
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full mt-1 z-20 min-w-40 rounded-lg border border-outline-variant bg-surface-container-high shadow-xl py-1">
+          <button type="button" role="menuitem" onClick={() => { setOpen(false); onDelete(); }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[13px] text-error hover:bg-error/10">
+            <span aria-hidden="true" className="material-symbols-outlined text-base">delete</span>Delete metric
+          </button>
+        </div>
+      )}
+    </div>
+  );
 };
 
 const MetricCardView: React.FC<{
@@ -187,7 +220,7 @@ const MetricCardView: React.FC<{
   const strokeColor = status === 'critical' ? '#f58c8c' : status === 'warning' ? '#f5c264' : '#a3adff';
 
   return (
-    <div className="flex flex-col rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden card-hover">
+    <div className="group/card flex flex-col rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden card-hover">
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
         <div className="flex items-center gap-2 min-w-0">
@@ -217,7 +250,9 @@ const MetricCardView: React.FC<{
             </InfoTooltip>
           )}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        {/* Shown on hover and on keyboard focus where a pointer can hover; always shown on touch,
+            where nothing hovers. The menu open keeps them shown. */}
+        <div className="flex items-center gap-1 shrink-0 transition-opacity [@media(hover:hover)]:opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100">
           <button onClick={() => onRefresh(metric.id)} disabled={refreshing} title="Refresh now" aria-label="Refresh this metric now"
             className="p-1 text-on-surface-variant hover:text-primary transition-colors disabled:opacity-40">
             <span className={`material-symbols-outlined text-base ${refreshing ? 'animate-spin' : ''}`}>refresh</span>
@@ -226,10 +261,7 @@ const MetricCardView: React.FC<{
             className="p-1 text-on-surface-variant hover:text-primary transition-colors">
             <span className="material-symbols-outlined text-base">edit</span>
           </button>
-          <button onClick={() => onDelete(metric.id)} title="Delete" aria-label="Delete this metric"
-            className="p-1 text-on-surface-variant hover:text-error transition-colors">
-            <span className="material-symbols-outlined text-base">delete</span>
-          </button>
+          <MoreActions onDelete={() => onDelete(metric.id)} />
         </div>
       </div>
 

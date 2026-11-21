@@ -180,4 +180,11 @@ describe('Compare', () => {
     // Reported as a successful load of nothing, not as "Failed to fetch topic samples".
     await waitFor(() => expect(screen.getByText(/Loaded 0 \+ 0 messages/)).toBeInTheDocument());
   });
+
+  it('says in the panes why the topic list is empty, rather than in a toast that leaves', async () => {
+    mockedAxios.get.mockRejectedValue(new Error('broker unreachable'));
+    renderPage();
+    const alerts = await screen.findAllByRole('alert');
+    expect(alerts.some(a => /The topics could not be loaded: broker unreachable/.test(a.textContent ?? ''))).toBe(true);
+  });
 });

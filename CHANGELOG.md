@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **UI, third pass.** Lineage opens framed on its graph (at a readable scale, scrolling from its sources when
+  wider) and names its node types in plain English ("Queries", not "Querys"). Compare's topic pickers are
+  searchable fields with a border instead of borderless `<select>`s that read as a bare chevron, and a topic
+  list that cannot be loaded is said in the panes rather than in a toast. The SQL editor says what to do when
+  it is empty. The dashboard says a healthy topic quietly — a coloured badge only for what is not — and its
+  diagnostic overview counts the topics that went silent (on the rows measured) instead of repeating the
+  health tile. A metric card's actions show on hover and keyboard focus (always on touch), and deleting it
+  is behind a "⋯" menu rather than an icon beside Refresh and Edit.
 - **Dashboard, second pass.** An accent on a KPI tile now means a state: only *Cluster Health* carries one
   (green, or red when degraded); the counts no longer do, so the row reads as one family. The topic table's
   controls are two rows instead of one crowded wrap: the filter and the saved views above, the display

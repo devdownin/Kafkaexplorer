@@ -2142,6 +2142,9 @@ const QueryWorkbench: React.FC = () => {
                     padding: { top: 16 }, scrollBeyondLastLine: false, automaticLayout: true,
                     suggestOnTriggerCharacters: true,
                     quickSuggestions: { other: true, comments: false, strings: false },
+                    // An empty editor says what to do: a blank pane with a blinking cursor gave no
+                    // hint that the examples below, or the sidebar, are where a first query starts.
+                    placeholder: 'Write a Flink SQL query, or start from an example below — Ctrl+Enter runs it',
                   }}
                 />
               </div>

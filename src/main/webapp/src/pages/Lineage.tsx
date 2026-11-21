@@ -40,6 +40,10 @@ const nodeConfig: Record<string, { shape: 'circle' | 'rect' | 'diamond' | 'hex';
 
 /** Le cadrage de départ, et ce que le bouton « recentrer » et la touche `0` visent. */
 const RESET_VIEW = { x: 40, y: 20, scale: 1 };
+/** The smallest scale framing goes to: node labels are 10 px, unreadable much below this. */
+const READABLE_SCALE = 0.8;
+/** The legend's names, written out: `${type}s` gave "Querys". */
+const TYPE_PLURAL = { topic: 'Topics', table: 'Tables', view: 'Views', query: 'Queries' } as const;
 
 const NODE_W = 140;
 const NODE_H = 48;
@@ -220,7 +224,7 @@ const Lineage: React.FC = () => {
   // Pan / zoom / clavier : la mécanique est partagée avec Stream Flow et Data Model
   // (`useGraphViewport`), la politique — ce que `0` et `Échap` font — reste ici.
   const {
-    transform, setTransform, svgRef, canvas, panBy, zoomFromCenter, isPanning,
+    transform, setTransform, svgRef, canvas, panBy, zoomFromCenter, isPanning, viewport,
     onPointerDown, onPointerMove, onPointerUp,
   } = useGraphViewport({
     initial: RESET_VIEW,
@@ -330,7 +334,35 @@ const Lineage: React.FC = () => {
   }, [positions, setTransform, canvas]);
 
 
-  const resetView = useCallback(() => setTransform(RESET_VIEW), [setTransform]);
+  /**
+   * The whole graph in view, never enlarged past 1. It opened at a fixed origin, so a view node
+   * three columns to the right was cut by the edge of the canvas on an ordinary window, and the
+   * first thing the page asked was to drag it into sight. `0` and the button do the same.
+   */
+  const resetView = useCallback(() => {
+    const box = viewport();
+    const placed = Object.values(positions);
+    if (!box || placed.length === 0) { setTransform(RESET_VIEW); return; }
+    const LABEL_BELOW = 20; // the type line drawn under each node
+    const pad = 32;
+    const minX = Math.min(...placed.map(p => p.x)), minY = Math.min(...placed.map(p => p.y));
+    const maxX = Math.max(...placed.map(p => p.x + NODE_W)), maxY = Math.max(...placed.map(p => p.y + NODE_H + LABEL_BELOW));
+    const fit = Math.min(1, (box.width - 2 * pad) / (maxX - minX), (box.height - 2 * pad) / (maxY - minY));
+    // Framing must not make it unreadable: below READABLE_SCALE the graph starts from its sources
+    // on the left, at a size where labels can be read, and scrolls — as Stream Flow does.
+    const scale = Math.max(READABLE_SCALE, fit);
+    const width = (maxX - minX) * scale;
+    setTransform({
+      x: width + 2 * pad <= box.width ? (box.width - width) / 2 - minX * scale : pad - minX * scale,
+      y: (box.height - (maxY - minY) * scale) / 2 - minY * scale,
+      scale,
+    });
+  }, [viewport, positions, setTransform]);
+
+  // Framed when the graph arrives, and when the canvas first exists.
+  useEffect(() => {
+    if (data.nodes.length > 0) resetView();
+  }, [data.nodes, canvas, resetView]);
 
   /**
    * Le graphe se pilote au clavier : flèches pour se déplacer, +/− pour zoomer, 0 pour recadrer,
@@ -428,7 +460,7 @@ const Lineage: React.FC = () => {
               return (
                 <div key={type} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-surface-container-high">
                   <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: cfg.color, opacity: 0.8 }} />
-                  <span className="capitalize text-on-surface text-xs">{type}s</span>
+                  <span className="text-on-surface text-xs">{TYPE_PLURAL[type]}</span>
                   <span className="ml-auto text-[10px] bg-primary/10 px-1.5 py-0.5 rounded text-primary font-mono">{count}</span>
                 </div>
               );
@@ -517,7 +549,7 @@ const Lineage: React.FC = () => {
             className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
             <span className="material-symbols-outlined text-lg">remove</span>
           </button>
-          <button onClick={resetView} title="Reset view"
+          <button onClick={resetView} title="Fit graph to view"
             className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors">
             <span className="material-symbols-outlined text-lg">center_focus_weak</span>
           </button>
