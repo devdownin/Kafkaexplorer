@@ -28,8 +28,11 @@ import {
  * quels — c'est la partie qui se reprend en silence.
  */
 
-/** `primary` du thème (#a3adff), en composantes, parce que le canevas ne lit pas Tailwind. */
-const PRIMARY_RGB = '163, 173, 255';
+/** Canvas cannot consume CSS vars: resolve the semantic accent once per theme change. */
+function readAccent(): string {
+  const channels = getComputedStyle(document.documentElement).getPropertyValue('--kse-primary').trim();
+  return channels ? `rgb(${channels.replace(/\\s+/g, ' ')})` : 'rgb(163 173 255)';
+}
 
 /**
  * Deux opacités, toutes deux basses, et l'écart entre les deux est délibéré : ce sont les *liens*
@@ -100,6 +103,9 @@ export const MetricsPulseBackdrop: React.FC<MetricsPulseBackdropProps> = ({ acti
        uniquement après une notification du `ResizeObserver` — et qu'elle est **retentée** tant
        qu'elle n'a rien donné, sans quoi un hôte pas encore disposé au montage resterait vide. */
     let needsMeasure = true;
+    let accentColor = readAccent();
+    const themeObserver = typeof MutationObserver === 'undefined' ? null : new MutationObserver(() => { accentColor = readAccent(); });
+    themeObserver?.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     /**
      * Mesure l'hôte et prépare le canevas. Rend `false` tant qu'il n'y a rien à peindre.
@@ -144,7 +150,7 @@ export const MetricsPulseBackdrop: React.FC<MetricsPulseBackdropProps> = ({ acti
       /* Les liens d'abord, les points ensuite : un point posé par-dessus les traits qui le
          rejoignent cache leur extrémité, et le champ se lit alors comme un maillage plutôt que
          comme des points reliés. */
-      ctx.strokeStyle = `rgb(${PRIMARY_RGB})`;
+      ctx.strokeStyle = accentColor;
       ctx.lineWidth = 1;
       for (let i = 0; i < nodes.length; i += 1) {
         for (let j = i + 1; j < nodes.length; j += 1) {
@@ -158,7 +164,7 @@ export const MetricsPulseBackdrop: React.FC<MetricsPulseBackdropProps> = ({ acti
         }
       }
 
-      ctx.fillStyle = `rgb(${PRIMARY_RGB})`;
+      ctx.fillStyle = accentColor;
       ctx.globalAlpha = NODE_ALPHA;
       for (const node of nodes) {
         ctx.beginPath();
@@ -199,6 +205,7 @@ export const MetricsPulseBackdrop: React.FC<MetricsPulseBackdropProps> = ({ acti
     return () => {
       window.cancelAnimationFrame(frame);
       observer?.disconnect();
+      themeObserver?.disconnect();
       reduced?.removeEventListener?.('change', onPreferenceChange);
     };
   }, [active]);
@@ -246,7 +253,7 @@ export const MetricsPulseBackdrop: React.FC<MetricsPulseBackdropProps> = ({ acti
 
          `motion-reduce:hidden` : l'ornement est le premier à disparaître quand l'OS demande
          moins de mouvement. Il est doublé côté JS, où la boucle ne démarre pas du tout. */
-      className="pointer-events-none sticky top-0 h-0 -mx-6 motion-reduce:hidden"
+      className="pointer-events-none sticky top-0 h-0 -mx-4 md:-mx-6 motion-reduce:hidden"
     >
       {/* Le débord horizontal est porté par l'ancre (`-mx-6` ci-dessus) et **pas** par cet hôte,
           qui se contente d'`inset-x-0`. La différence n'est pas cosmétique : avec les marges
