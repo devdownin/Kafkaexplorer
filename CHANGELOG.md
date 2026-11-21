@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [2.8.1] — 2026-11-21
+
 - **Forecast demo: five live series instead of two.** `./demo.sh --forecast` now feeds five topic pairs
   (`demo.live.*`) and seeds nine hours of history for each: the unshipped orders (a ramp towards its
   thresholds) and the request backlog (an hourly cycle) as before, plus imports creeping up with noise, a
@@ -3021,7 +3025,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.7.0...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.8.1...HEAD
+[2.8.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.7.0...v2.8.1
 [2.7.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.5.0...v2.7.0
 [2.5.0]: https://github.com/devdownin/Kafkaexplorer/compare/v0.3.0...v2.5.0
 [0.3.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.4.1...v0.3.0
