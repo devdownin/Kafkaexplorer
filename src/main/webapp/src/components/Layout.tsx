@@ -66,6 +66,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [contentScrolled, setContentScrolled] = useState(false);
   const [isDesktop, setIsDesktop] = useState(
     () => typeof window !== 'undefined' && window.matchMedia(DESKTOP_QUERY).matches,
   );
@@ -141,6 +142,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
       >
         <Header
           theme={theme}
+          scrolled={contentScrolled}
           onThemeToggle={() => setTheme(value => value === 'light' ? 'dark' : 'light')}
           onMenuClick={() => setMobileOpen(true)}
           onSearchClick={() => setPaletteOpen(true)}
@@ -148,7 +150,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
           clusterName={clusterName}
           bootstrapServers={bootstrapServers}
         />
-        <main className="flex-1 overflow-y-auto custom-scrollbar relative">
+        <main className="flex-1 overflow-y-auto custom-scrollbar relative" onScroll={event => setContentScrolled(event.currentTarget.scrollTop > 8)}>
           {children}
         </main>
       </div>
