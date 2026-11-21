@@ -31,8 +31,8 @@ events, without which a tablet cannot pan a graph at all, had to be made three t
 The split is **mechanics in the hook, policy in the pages**. The hook owns the transform state,
 the gestures, the wheel zoom and the viewport measurement, and exposes `panBy` / `zoomAround` /
 `zoomFromCenter` so a page's keyboard handler is a few lines. What stays in each page is what
-genuinely differs: what `0` recadres (a fit for Stream Flow and Data Model, a fixed origin for
-Lineage), what `Escape` deselects, and which node a table selection brings into view. Absorbing
+genuinely differs: what `0` recadres (a fit in all three, each by its own rule — Lineage's stops at a
+readable scale), what `Escape` deselects, and which node a table selection brings into view. Absorbing
 those through three more callbacks would have made the hook harder to read than the forty lines
 it replaces.
 
