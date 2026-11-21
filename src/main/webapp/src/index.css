@@ -1,6 +1,6 @@
 @import 'tailwindcss' source(none);
-@config '../tailwind.config.js';
 @import './spatial-tokens.css';
+@config '../tailwind.config.js';
 
 /* Keep the Tailwind 3 border default for elements without a border color utility. */
 @layer base {
