@@ -72,6 +72,19 @@
   --glass-thick-bg: rgba(24, 27, 34, .86);
   --glass-border: rgba(255, 255, 255, .10);
   --glass-highlight: rgba(255, 255, 255, .055);
+  --glass-edge: rgba(255, 255, 255, .095);
+  --glass-inner-edge: rgba(255, 255, 255, .035);
+  --glass-reflection: rgba(255, 255, 255, .045);
+  --glass-control-bg: rgba(255, 255, 255, .055);
+  --glass-control-hover: rgba(255, 255, 255, .10);
+  --glass-input-bg: rgba(10, 13, 19, .22);
+  --glass-input-border: rgba(255, 255, 255, .14);
+  --glass-selected-bg: rgba(255, 255, 255, .11);
+  --glass-selected-edge: rgba(255, 255, 255, .12);
+  --glass-card-border: rgba(255, 255, 255, .055);
+  --glass-card-top: rgba(255, 255, 255, .03);
+  --glass-drawer-bg: rgba(8, 11, 17, .56);
+  --focus-ring: #a3adff;
   --depth-1: 0 6px 20px rgba(0, 0, 0, .13);
   --depth-2: 0 12px 40px rgba(0, 0, 0, .21);
   --depth-3: 0 28px 80px rgba(0, 0, 0, .34);
@@ -170,6 +183,19 @@
   --glass-thick-bg: rgba(255, 255, 255, .88);
   --glass-border: rgba(255, 255, 255, .68);
   --glass-highlight: rgba(255, 255, 255, .43);
+  --glass-edge: rgba(255, 255, 255, .75);
+  --glass-inner-edge: rgba(255, 255, 255, .78);
+  --glass-reflection: rgba(255, 255, 255, .21);
+  --glass-control-bg: rgba(255, 255, 255, .40);
+  --glass-control-hover: rgba(255, 255, 255, .78);
+  --glass-input-bg: rgba(246, 249, 253, .87);
+  --glass-input-border: rgba(126, 145, 169, .29);
+  --glass-selected-bg: rgba(255, 255, 255, .85);
+  --glass-selected-edge: rgba(115, 135, 166, .16);
+  --glass-card-border: rgba(115, 135, 166, .14);
+  --glass-card-top: rgba(255, 255, 255, .56);
+  --glass-drawer-bg: rgba(28, 41, 58, .24);
+  --focus-ring: #4453b8;
   --depth-1: 0 6px 20px rgba(20, 30, 50, .05);
   --depth-2: 0 12px 40px rgba(20, 30, 50, .08);
   --depth-3: 0 28px 80px rgba(20, 30, 50, .16);
@@ -204,4 +230,5 @@
   --radius-card: 20px;
   --radius-panel: 24px;
   --radius-modal: 28px;
+  --spatial-ease: cubic-bezier(.2, .8, .2, 1);
 }
