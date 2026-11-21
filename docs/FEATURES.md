@@ -45,7 +45,7 @@ A language model drafts Flink SQL, and **never runs or saves anything**: `explor
 - **Measured**: 50 cases run and executed on four candidate models — see `EMBEDDED-LLM-SCOPE.md` §7.1 and `docs/benchmarks/assistant-eval/`.
 
 ## 4. Professional SQL Editor
-- **Monaco Editor**: High-performance SQL editor (VS Code engine) with SQL syntax highlighting and Cyberpunk theme.
+- **Monaco Editor**: High-performance SQL editor (VS Code engine) with SQL syntax highlighting and a light and a dark theme matching the application (`kse-light`, `kse-dark`).
 - **Read Mode Switch**: Toggle between **Earliest** (the oldest retained records) and **Latest** (the most recent ones) directly in the UI. **Latest is the default**, here and in the Topic Explorer's sample, where the switch sits above the sample it governs and gives way to the search's own scope while a search is shown.
 - **Dynamic SQL Hints**: Automatic injection of Flink SQL hints (`/*+ OPTIONS(...) */`) for per-query offset control without DDL changes.
 - **Auto-completion**: Intelligent suggestion of topic names and registered tables (`Ctrl+Space`).

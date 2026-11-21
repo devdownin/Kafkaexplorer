@@ -6,7 +6,11 @@
 // means the capture exercises the same code path a user's shared link does, and it does
 // not break the day a button moves.
 //
-// Usage: node capture.mjs <base-url> <out-dir>
+// Usage: node capture.mjs <base-url> <out-dir> [light|dark]
+//
+// `light` (the default) writes `<name>.png`, which the READMEs and the Docker Hub overview show:
+// those render on a light page and cannot swap an image by colour scheme. `dark` writes
+// `<name>-dark.png`, which the Pages site serves to visitors whose system is dark.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,7 +31,12 @@ try {
   process.exit(2);
 }
 
-const [, , baseUrl = 'http://127.0.0.1:4173', outDir = 'img'] = process.argv;
+const [, , baseUrl = 'http://127.0.0.1:4173', outDir = 'img', theme = 'light'] = process.argv;
+if (theme !== 'light' && theme !== 'dark') {
+  console.error(`Unknown theme "${theme}": expected light or dark.`);
+  process.exit(2);
+}
+const SUFFIX = theme === 'dark' ? '-dark' : '';
 
 const VIEWPORT = { width: 1440, height: 900 };
 const SCALE = 2;
@@ -227,8 +236,12 @@ for (const screen of SCREENS) {
     // identical data.
     locale: 'en-GB',
     timezoneId: 'UTC',
-    colorScheme: 'dark',
+    colorScheme: theme,
   });
+
+  // The app reads its scheme from here before first paint; `colorScheme` alone would only matter
+  // for the "system" preference, and a stored choice is what a shared link would carry.
+  await page.addInitScript(t => localStorage.setItem('kse.theme', t), theme);
 
   /*
    * And fixes the clock, which the locale alone never did.
@@ -262,7 +275,7 @@ for (const screen of SCREENS) {
     if (screen.anchor) await page.locator(screen.anchor).first().evaluate(e => e.scrollIntoView({ block: 'start' }));
     // Let transitions and the graph layout settle; a half-drawn edge is worse than a wait.
     await page.waitForTimeout(700);
-    const file = path.join(outDir, `${screen.name}.png`);
+    const file = path.join(outDir, `${screen.name}${SUFFIX}.png`);
     // Un décor animé rend la capture irrelisible : mesuré sur un même build, deux passages
     // donnaient sept pages identiques au bit près et `metrics.png` différente à chaque fois,
     // 24 437 pixels dispersés — le fond de la page Metrics dérive en continu. C'est la
@@ -297,7 +310,7 @@ if (failures.length) {
   console.error(`\n${failures.length} screen(s) failed:\n  ${failures.join('\n  ')}`);
   process.exit(1);
 }
-console.log(`\nAll ${SCREENS.length} screens captured into ${outDir}/`);
+console.log(`\nAll ${SCREENS.length} ${theme} screens captured into ${outDir}/`);
 if (quantised === 0) {
   console.log('pngquant not found — images left uncompressed (roughly 3× larger than they need to be).');
   console.log('Install it (apt install pngquant / brew install pngquant) or point PNGQUANT at a binary.');
