@@ -859,3 +859,13 @@ record makes a series that is never continued. One record cannot prove a field i
 `payloadLabelRisk` only rules out what visibly is not (an id-like name, a UUID, an instant, a
 measured number, long text) and says why, and at most `MAX_PAYLOAD_LABELS` (3) can be chosen. The
 labels are read from the hop's source, or from the topic itself.
+
+**Four finishing touches, and why each is where it is.** The sidebar's `nav` scrolls on a short window
+and used to cut its last entry flat; `Sidebar` now measures overflow (a `ResizeObserver` on the list *and
+its sections* — the content settles after the first paint, which a list-only observer misses) and applies
+`.kse-fade-bottom` only while more is below. The Metrics backdrop is a choice (`kse:metrics-backdrop`,
+default off): the condition `hasRunningMetric` still decides whether it *may* show, the toggle decides
+whether it does. Monaco's `kse-dark` theme is defined in `monaco-setup.ts` from the surface tokens of
+`tailwind.config.js`; a page asks for it by name, and a colour changed in the config is changed there
+too. The metric cards use `repeat(auto-fit, minmax(min(100%, 22rem), 1fr))`, so two metrics share the
+width where `xl:grid-cols-3` left a column empty.

@@ -16,7 +16,7 @@
  * frontière d'erreur avant d'avoir rendu quoi que ce soit d'observable.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
@@ -1031,13 +1031,31 @@ describe('Metrics pulse backdrop', () => {
     expect(screen.queryByTestId('metrics-pulse-backdrop')).toBeNull();
   });
 
-  it('mounts once at least one metric is running', async () => {
+  /** The background is an opt-in ornament: these cases choose it the way an operator does. */
+  const optIn = () => localStorage.setItem('kse:metrics-backdrop', '1');
+  afterEach(() => localStorage.removeItem('kse:metrics-backdrop'));
+
+  it('is off by default, even while a metric is running, and the toggle turns it on and off', async () => {
+    stubApi([running]);
+    await renderPage();
+    await screen.findByText(running.name);
+    expect(screen.queryByTestId('metrics-pulse-backdrop')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Animated background' }));
+    expect(await screen.findByTestId('metrics-pulse-backdrop')).toBeInTheDocument();
+    expect(localStorage.getItem('kse:metrics-backdrop')).toBe('1');
+    await userEvent.click(screen.getByRole('button', { name: 'Animated background' }));
+    expect(screen.queryByTestId('metrics-pulse-backdrop')).toBeNull();
+  });
+
+  it('mounts once at least one metric is running, when chosen', async () => {
+    optIn();
     stubApi([running]);
     await renderPage();
     await waitFor(() => expect(screen.getByTestId('metrics-pulse-backdrop')).toBeInTheDocument());
   });
 
   it('stays out of the reading order and takes no pointer', async () => {
+    optIn();
     stubApi([running]);
     await renderPage();
     const layer = await screen.findByTestId('metrics-pulse-backdrop');
@@ -1059,6 +1077,7 @@ describe('Metrics pulse backdrop', () => {
    * et la suite de tests n'a pas à la faire taire avec un bouchon.
    */
   it('carries a canvas that draws nothing until something has been laid out', async () => {
+    optIn();
     stubApi([running]);
     await renderPage();
     const layer = await screen.findByTestId('metrics-pulse-backdrop');
@@ -1077,6 +1096,7 @@ describe('Metrics pulse backdrop', () => {
    * ici, c'est la décision : un retour à `absolute inset-0` la reprendrait en silence.
    */
   it('follows the viewport rather than scrolling away with the content', async () => {
+    optIn();
     stubApi([running]);
     await renderPage();
     const layer = await screen.findByTestId('metrics-pulse-backdrop');

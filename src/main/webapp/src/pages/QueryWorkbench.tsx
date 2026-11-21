@@ -2118,7 +2118,7 @@ const QueryWorkbench: React.FC = () => {
                 <Editor
                   height="100%"
                   defaultLanguage="sql"
-                  theme="vs-dark"
+                  theme="kse-dark"
                   value={sql}
                   onChange={val => updateSql(val || '')}
                   onMount={(editor, monacoApi) => {
