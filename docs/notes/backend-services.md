@@ -199,3 +199,12 @@ and one forgotten copy drops the labels silently. Checked on save — at most 8,
 never the metric's own `metric_id` / `metric_name` / `metric_type`, non-empty values of 200
 characters at most — and ignored rather than refused on refresh, so a metric stored before the rule
 keeps running. A label change re-registers the series (`metricShapeChanged` compares `templateParams`).
+
+**The silence of a topic is a cluster measurement** (`KAFKA_CLUSTER_COUNT`, `LATEST_RECORD_AGE`,
+with `topic`): now minus the timestamp of the newest record, read through
+`KafkaAdminService.getLatestMessage` (one record, the broker naming its partition). A measurement
+of an existing template rather than a template of its own: it has the same shape as
+`PRODUCED_OFFSETS` — one topic, no SQL, a gauge — and a new template is an enum value, a validator,
+a descriptor, an editor and a forecast unit for one number. An empty topic and a failed read are
+both errors, never zero: a silence of zero is "a record just arrived", the opposite of both.
+`MetricObservation.unit` reports it in milliseconds.

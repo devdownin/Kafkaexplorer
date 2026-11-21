@@ -845,3 +845,17 @@ the per-hop loss mirrors the server's end-to-end completeness card on one hop â€
 together. Creating is direct, on purpose and unlike the suggestion panel's *Review & add*: the
 operator asked for it from the graph they just read, and the result line names each metric created,
 or the server's refusal. What was created is unticked, so a second click does not duplicate it.
+
+**A link between two topics is a target too.** Each edge of the Stream Flow graph carries a 14 px
+transparent stroke (`role="button"`, Enter / Space) over the drawn line, which stays
+`pointerEvents="none"`; a click opens `FlowMetricDrawer` with `hop` set, which proposes that hop only
+(`hopMetricOptions`: latency ticked, loss ticked instead when the server proposes no latency) and reads
+no consumer group. The open hop's line is drawn thicker. A horizontal edge has a zero-height bounding
+box, which Playwright reports as "not visible": a browser test clicks it with the mouse at its middle.
+
+**Payload labels in the Stream Flow drawer are chosen, not guessed.** A label from the payload is the
+field's value in the *latest* record, read at every refresh â€” so a field that changes with every
+record makes a series that is never continued. One record cannot prove a field is stable;
+`payloadLabelRisk` only rules out what visibly is not (an id-like name, a UUID, an instant, a
+measured number, long text) and says why, and at most `MAX_PAYLOAD_LABELS` (3) can be chosen. The
+labels are read from the hop's source, or from the topic itself.

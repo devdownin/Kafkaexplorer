@@ -20,6 +20,18 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Stream Flow metrics: labels from the payload.** The drawer can add up to three fields of the latest
+  record of the topic (the hop's source) as labels — the existing `labelTopic` / `labelFields`
+  mechanism. A field that visibly changes with every record (an id, an instant, a UUID, a measured
+  number, long text) is shown with the reason and cannot be chosen: it would mint a new series at
+  each refresh.
+- **The silence of a topic** (`KAFKA_CLUSTER_COUNT`, measurement `LATEST_RECORD_AGE`): the age of its
+  newest record, in milliseconds — a producer that stopped shows even when nothing reads the topic.
+  An empty topic or a failed read is an error, never an age of zero. Offered in the Stream Flow
+  drawer and in the metric editor.
+- **Stream Flow: create metrics from a link between two topics.** Each arrow of the graph is now a target
+  (mouse and keyboard): clicking it opens the metrics drawer for that hop only — its transit latency,
+  ticked, and the records it loses, labelled `source_topic` / `target_topic`.
 - **Stream Flow: create metrics from a topic of the graph.** Select a topic and press *Create metrics*:
   a drawer proposes the transit latency of the hop into and out of it (the server's own suggestion,
   thresholds derived from the measured hop), the records lost on each hop, the consumer lag of a group

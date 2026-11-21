@@ -19,6 +19,7 @@
  * - **Consumer lag in time** of the topic, for a group that reads it (the group is required: a
  *   delay is always somebody's).
  * - **Records produced** to the topic, from its end offsets.
+ * - **Silence** of the topic: the age of its newest record (`KAFKA_CLUSTER_COUNT`, `LATEST_RECORD_AGE`).
  *
  * Every metric carries fixed labels naming what it measures (`source_topic` / `target_topic` on a
  * hop, `topic` and `consumer_group` on a topic), bounded by construction — none comes from the
@@ -47,7 +48,7 @@ export function neighboursOf(hits: FlowHit[], topic: string): TopicNeighbours {
   };
 }
 
-export type FlowMetricKind = 'hop-latency' | 'hop-loss' | 'consumer-lag' | 'produced';
+export type FlowMetricKind = 'hop-latency' | 'hop-loss' | 'consumer-lag' | 'produced' | 'silence';
 
 /** One metric the drawer offers: what it is, why it matters here, and the draft it creates. */
 export interface FlowMetricOption {
@@ -198,6 +199,30 @@ export function flowMetricOptions(n: TopicNeighbours, suggestions: MetricSuggest
       criticalThreshold: null,
     },
   });
+  options.push({
+    id: `silence:${n.topic}`,
+    kind: 'silence',
+    title: `Silence of ${n.topic}`,
+    why: 'How long since the newest record arrived, in milliseconds: a producer that stopped, or a step '
+      + 'upstream that stalled, shows here even when nothing reads the topic. Set the threshold from the topic\'s own rhythm.',
+    defaultOn: false,
+    labels: { topic: n.topic },
+    unavailable: null,
+    existing: null,
+    draft: {
+      name: metricName('silence', n.topic),
+      type: 'GAUGE',
+      sql: null,
+      description: `Age of the newest record of ${n.topic}, in milliseconds.`,
+      templateType: 'KAFKA_CLUSTER_COUNT',
+      executionMode: 'TEMPLATE_BOUNDED_SCAN',
+      templateParams: { measurement: 'LATEST_RECORD_AGE', topic: n.topic },
+      labelTopic: null,
+      labelFields: [],
+      warningThreshold: null,
+      criticalThreshold: null,
+    },
+  });
   // Something is always ticked once the proposals are read: where no latency could be proposed,
   // the loss on the first hop is the metric this trace still supports.
   if (suggestions !== null && !options.some(o => o.defaultOn && !o.unavailable)) {
@@ -207,10 +232,56 @@ export function flowMetricOptions(n: TopicNeighbours, suggestions: MetricSuggest
   return options;
 }
 
+/**
+ * The metrics one hop of the trace proposes — the link between two topics, clicked on the graph:
+ * its transit latency (ticked) and the records it loses. Where no latency can be proposed, the
+ * loss is ticked instead, once the proposals are read.
+ */
+export function hopMetricOptions(from: string, to: string, suggestions: MetricSuggestion[] | null,
+  suggestionsError: string | null): FlowMetricOption[] {
+  const latency = latencyOption(from, to, suggestions, suggestionsError, true);
+  const loss = lossOption(from, to);
+  if (suggestions !== null && !latency.defaultOn) loss.defaultOn = true;
+  return [latency, loss];
+}
+
 /** The draft with the ticked labels as fixed labels, ready for `POST /api/metrics`. */
 export function withStaticLabels(draft: Partial<MetricConfig>, labels: Record<string, string>): Partial<MetricConfig> {
   const params = { ...(draft.templateParams ?? {}) };
   if (Object.keys(labels).length) params.staticLabels = labels;
   else delete params.staticLabels;
   return { ...draft, templateParams: params };
+}
+
+// ── Labels read from the payload ─────────────────────────────────────────────
+
+/** At most this many payload fields per metric: each one multiplies the series an alert has to follow. */
+export const MAX_PAYLOAD_LABELS = 3;
+
+const ID_LIKE_KEY = /(^|[._-])(id|uuid|guid|key|ts|time|timestamp|date|datetime|created|updated)$|[a-z0-9](Id|Uuid|At|Time|Date)$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/;
+
+/**
+ * Why a payload field would make a bad label, or null when it looks like one.
+ *
+ * A label taken from the payload is the field's value **in the latest record** of the topic, read at
+ * each refresh: a field that changes with every record (an id, an amount, an instant) makes a new
+ * series at every refresh and none of them is ever continued. One record cannot prove a field is
+ * stable, so this only rules out what visibly is not — by its name or by its value.
+ */
+export function payloadLabelRisk(field: string, value: string): string | null {
+  const v = (value ?? '').trim();
+  if (ID_LIKE_KEY.test(field)) return 'Looks like an identifier or an instant: one value per record.';
+  if (UUID.test(v)) return 'Its value is a UUID: one value per record.';
+  if (ISO_TIME.test(v) || /^\d{10,13}$/.test(v)) return 'Its value is an instant: one value per record.';
+  if (/^-?\d+([.,]\d+)?$/.test(v) && v.replace(/\D/g, '').length >= 4) return 'Its value is a measured number, not a category.';
+  if (v.length > 40) return 'Its value is long free text, not a category.';
+  if (!v) return 'Empty in the latest record.';
+  return null;
+}
+
+/** The draft labelled with payload fields of `topic` (the existing `labelTopic` / `labelFields` mechanism). */
+export function withPayloadLabels(draft: Partial<MetricConfig>, topic: string, fields: string[]): Partial<MetricConfig> {
+  return fields.length ? { ...draft, labelTopic: topic, labelFields: fields } : draft;
 }

@@ -984,10 +984,10 @@ public class MetricService {
         switch (templateType) {
             case KAFKA_CLUSTER_COUNT -> {
                 String measurement = requireParam(params, "measurement");
-                if (!Set.of("TOPIC_COUNT", "BROKER_COUNT", "PRODUCED_OFFSETS").contains(measurement)) {
-                    throw new IllegalArgumentException("measurement must be TOPIC_COUNT, BROKER_COUNT or PRODUCED_OFFSETS");
+                if (!Set.of("TOPIC_COUNT", "BROKER_COUNT", "PRODUCED_OFFSETS", "LATEST_RECORD_AGE").contains(measurement)) {
+                    throw new IllegalArgumentException("measurement must be TOPIC_COUNT, BROKER_COUNT, PRODUCED_OFFSETS or LATEST_RECORD_AGE");
                 }
-                if ("PRODUCED_OFFSETS".equals(measurement)) requireParam(params, "topic");
+                if ("PRODUCED_OFFSETS".equals(measurement) || "LATEST_RECORD_AGE".equals(measurement)) requireParam(params, "topic");
                 if (!"GAUGE".equals(metric.type())) {
                     throw new IllegalArgumentException("KAFKA_CLUSTER_COUNT supports GAUGE metrics only");
                 }
@@ -1225,6 +1225,28 @@ public class MetricService {
 
     private MetricComputationResult computeClusterCount(MetricConfig config) {
         String measurement = requireParam(config.templateParams(), "measurement");
+        if ("LATEST_RECORD_AGE".equals(measurement)) {
+            // How long the topic has been silent: the age of its newest record, in milliseconds.
+            // One record read (the broker names the partition that holds it). An empty topic has no
+            // age, and a failed read is not a silence — both are said, never reported as zero.
+            String topic = requireParam(config.templateParams(), "topic");
+            Optional<KafkaMessage> latest;
+            try {
+                latest = kafkaAdminService.getLatestMessage(topic);
+            } catch (RuntimeException e) {
+                return MetricComputationResult.error("The newest record of " + topic + " could not be read: " + e.getMessage());
+            }
+            if (latest.isEmpty())
+                return MetricComputationResult.error(topic + " holds no record, so it has no age yet");
+            long timestamp = latest.get().timestamp();
+            double value = Math.max(0L, System.currentTimeMillis() - timestamp);
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("measurement", measurement);
+            summary.put("topic", topic);
+            summary.put("latestRecordTimestamp", timestamp);
+            summary.put("source", "Timestamp of the newest record");
+            return new MetricComputationResult(List.of(Map.of("metric_value", value)), value, null, summary);
+        }
         if ("PRODUCED_OFFSETS".equals(measurement)) {
             String topic = requireParam(config.templateParams(), "topic");
             Long produced = kafkaAdminService.getProducedOffsets(topic);

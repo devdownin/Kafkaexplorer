@@ -157,10 +157,11 @@ export const TemplateParamsEditor: React.FC<{
                 <option value="TOPIC_COUNT">Number of topics</option>
                 <option value="BROKER_COUNT">Number of brokers</option>
                 <option value="PRODUCED_OFFSETS">Offsets produced to a topic</option>
+                <option value="LATEST_RECORD_AGE">Silence of a topic (age of its newest record, ms)</option>
               </Select>
             )}
           </Field>
-          {p('measurement') === 'PRODUCED_OFFSETS' && (
+          {(p('measurement') === 'PRODUCED_OFFSETS' || p('measurement') === 'LATEST_RECORD_AGE') && (
             <ParamTopic label="Topic" value={p('topic')} onChange={v => setParam('topic', v)} placeholder="demo.payments" />
           )}
         </>

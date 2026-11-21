@@ -34,4 +34,33 @@ describe('FlowMetricDrawer', () => {
     expect(body.templateParams.staticLabels).toEqual({ source_topic: 'orders' });
     expect(screen.getByRole('button', { name: 'Create 0 metrics' })).toBeDisabled();
   });
+
+  it('proposes only the clicked hop, and reads no consumer group for it', async () => {
+    vi.mocked(axios.get).mockClear();
+    vi.mocked(axios.get).mockResolvedValue({ data: { fields: {} } });
+    vi.mocked(axios.post).mockResolvedValue({ data: { suggestions: [] } });
+    render(<MemoryRouter><FlowMetricDrawer topic="payments" hop={{ from: 'orders', to: 'payments' }}
+      hits={['orders', 'payments', 'shipped'].map(hit)} messageKey="42" searchPath="" onClose={() => {}} /></MemoryRouter>);
+    expect(await screen.findByRole('dialog', { name: 'Create metrics for the hop orders to payments' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Create 1 metric' })).toBeEnabled();
+    expect(screen.getByText('Records lost orders → payments')).toBeInTheDocument();
+    expect(screen.queryByText(/payments → shipped/)).not.toBeInTheDocument();
+    expect(vi.mocked(axios.get).mock.calls.map(([url]) => url)).toEqual(['/api/metrics/label-preview?topic=orders']);
+  });
+
+  it('adds the payload fields chosen as labels, and refuses one that changes with every record', async () => {
+    vi.mocked(axios.get).mockImplementation((url: string) => Promise.resolve({ data: url.startsWith('/api/metrics/label-preview')
+      ? { topic: 'orders', timestamp: 1, message: '{}', fields: { region: 'eu-west', orderId: 'ORD-1042' } } : { groups: [] } }));
+    vi.mocked(axios.post).mockImplementation((url: string) => Promise.resolve({ data: url === '/api/metrics' ? { id: 'n' } : { suggestions: [] } }));
+    render(<MemoryRouter><FlowMetricDrawer topic="payments" hop={{ from: 'orders', to: 'payments' }}
+      hits={['orders', 'payments'].map(hit)} messageKey="42" searchPath="" onClose={() => {}} /></MemoryRouter>);
+    await userEvent.click(await screen.findByText(/Labels from the payload/));
+    expect(await screen.findByRole('checkbox', { name: 'Label orderId' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Label region' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Create 1 metric' }));
+    await waitFor(() => expect(vi.mocked(axios.post).mock.calls.some(([url]) => url === '/api/metrics')).toBe(true));
+    const body = vi.mocked(axios.post).mock.calls.find(([url]) => url === '/api/metrics')?.[1] as { labelTopic: string; labelFields: string[] };
+    expect(body.labelTopic).toBe('orders');
+    expect(body.labelFields).toEqual(['region']);
+  });
 });

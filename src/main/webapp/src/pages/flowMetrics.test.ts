@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MetricSuggestion } from '../api/types';
 import type { FlowHit } from './streamFlowLogic';
-import { flowMetricOptions, hopLatencyId, metricName, neighboursOf, withStaticLabels } from './flowMetrics';
+import { flowMetricOptions, hopLatencyId, hopMetricOptions, payloadLabelRisk, withPayloadLabels, metricName, neighboursOf, withStaticLabels } from './flowMetrics';
 
 const hit = (topic: string): FlowHit => ({ topic, occurrences: 1, firstTimestamp: 1, lastTimestamp: 1, firstPartition: 0,
   firstOffset: 0, firstKey: null, preview: null, latencyFromPreviousMs: 10 });
@@ -24,7 +24,7 @@ describe('flowMetrics', () => {
     const options = flowMetricOptions(neighboursOf(hits, 'payments'),
       [latency('orders', 'payments'), latency('payments', 'shipped')], null, ['billing'], null);
     expect(options.map(o => o.id)).toEqual(['latency:orders>payments', 'loss:orders>payments',
-      'latency:payments>shipped', 'loss:payments>shipped', 'lag:payments', 'produced:payments']);
+      'latency:payments>shipped', 'loss:payments>shipped', 'lag:payments', 'produced:payments', 'silence:payments']);
     expect(options.filter(o => o.defaultOn).map(o => o.id)).toEqual(['latency:orders>payments']);
     expect(options[0].labels).toEqual({ source_topic: 'orders', target_topic: 'payments' });
     expect(options[0].draft.id).toBeUndefined();
@@ -53,5 +53,28 @@ describe('flowMetricOptions without a latency proposal', () => {
     const n = neighboursOf(hits, 'payments');
     expect(flowMetricOptions(n, [], null, [], null).filter(o => o.defaultOn).map(o => o.id)).toEqual(['loss:orders>payments']);
     expect(flowMetricOptions(n, null, null, [], null).filter(o => o.defaultOn)).toEqual([]);
+  });
+});
+
+describe('hopMetricOptions', () => {
+  it('proposes the latency and the loss of one hop, latency ticked, loss ticked instead when no latency is proposed', () => {
+    const withLatency = hopMetricOptions('orders', 'payments', [latency('orders', 'payments')], null);
+    expect(withLatency.map(o => [o.id, o.defaultOn])).toEqual([['latency:orders>payments', true], ['loss:orders>payments', false]]);
+    expect(hopMetricOptions('orders', 'payments', [], null).map(o => o.defaultOn)).toEqual([false, true]);
+    expect(withLatency[1].labels).toEqual({ source_topic: 'orders', target_topic: 'payments' });
+  });
+});
+
+describe('payload labels', () => {
+  it('rules out what visibly changes with every record, and keeps a category', () => {
+    expect(payloadLabelRisk('region', 'eu-west')).toBeNull();
+    expect(payloadLabelRisk('customer.tier', 'gold')).toBeNull();
+    for (const [field, value] of [['orderId', 'ORD-1'], ['order_id', 'x'], ['ref', '3f2b8c1e-1d2a-4b3c-9d8e-0a1b2c3d4e5f'],
+      ['at', '2026-11-21T06:00:00Z'], ['amount', '1250.40'], ['note', 'x'.repeat(41)], ['status', '']])
+      expect(payloadLabelRisk(field, value), field).not.toBeNull();
+  });
+  it('points the labels at the topic they are read from, and leaves a draft alone without any', () => {
+    expect(withPayloadLabels({ labelTopic: null }, 'orders', ['region'])).toEqual({ labelTopic: 'orders', labelFields: ['region'] });
+    expect(withPayloadLabels({ labelTopic: 'a' }, 'orders', [])).toEqual({ labelTopic: 'a' });
   });
 });

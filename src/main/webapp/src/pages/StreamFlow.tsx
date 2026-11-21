@@ -102,6 +102,9 @@ const StreamFlow: React.FC = () => {
   const [selectedTopic, setSelectedTopic]   = useState<string | null>(null);
   // The topic whose metrics drawer is open: created from the graph, on the hop the trace followed.
   const [metricTopic, setMetricTopic]       = useState<string | null>(null);
+  // Or the link between two topics whose metrics drawer is open (the hop, clicked on the graph).
+  const [metricHop, setMetricHop]           = useState<{ from: string; to: string } | null>(null);
+  const openHopMetrics = useCallback((from: string, to: string) => { setMetricTopic(null); setMetricHop({ from, to }); }, []);
   const [detailsOpen, setDetailsOpen]       = useState(true);
   const [hitFilter, setHitFilter]           = useState('');
   /** Tri du tableau de preuves. `chain` — l'ordre des sauts — est le sens même de la trace. */
@@ -1168,11 +1171,28 @@ const StreamFlow: React.FC = () => {
                   const slowest = insight.slowestHopTopic === edge.target;
                   const skewed = insight.clockSkewTopics.includes(edge.target);
                   const stroke = skewed ? '#f2b8b5' : slowest ? '#ffd479' : '#a3adff';
+                  const d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+                  const hopLabel = `Hop ${edge.source} to ${edge.target}: create metrics`;
+                  const chosen = metricHop?.from === edge.source && metricHop?.to === edge.target;
                   return (
                     <g key={`${edge.source}->${edge.target}-${i}`}>
-                      <path
-                        d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
-                        fill="none" stroke={stroke} strokeWidth={slowest || skewed ? 3 : 2}
+                      {/* The link is a target of its own: a hop is what latency and loss are about.
+                          A wide invisible stroke makes a 2 px line clickable. */}
+                      <path d={d} fill="none" stroke="transparent" strokeWidth={14} style={{ cursor: 'pointer' }}
+                        className="focus:outline-hidden focus-visible:outline-2 focus-visible:outline-primary"
+                        tabIndex={0} role="button" aria-label={hopLabel} aria-pressed={chosen}
+                        onClick={() => { if (!dragged.current) openHopMetrics(edge.source, edge.target); }}
+                        onKeyDown={e => {
+                          if (e.key !== 'Enter' && e.key !== ' ') return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openHopMetrics(edge.source, edge.target);
+                        }}>
+                        <title>{`${edge.source} → ${edge.target}: create metrics`}</title>
+                      </path>
+                      <path pointerEvents="none"
+                        d={d}
+                        fill="none" stroke={stroke} strokeWidth={chosen ? 4 : slowest || skewed ? 3 : 2}
                         strokeDasharray={skewed ? '6 4' : undefined}
                         opacity={slowest || skewed ? 0.9 : 0.5}
                         markerEnd="url(#sf-arrow)"
@@ -1246,7 +1266,7 @@ const StreamFlow: React.FC = () => {
           {/* A selected topic proposes its metrics: the hops into and out of it, its consumers. */}
           {hasResult && !loading && selectedTopic && metricTopic !== selectedTopic && hitByTopic.has(selectedTopic) && (
             <div className="absolute left-3 bottom-3 z-10">
-              <Button variant="primary" size="sm" icon="add_chart" onClick={() => setMetricTopic(selectedTopic)}>
+              <Button variant="primary" size="sm" icon="add_chart" onClick={() => { setMetricHop(null); setMetricTopic(selectedTopic); }}>
                 Create metrics for {selectedTopic}
               </Button>
             </div>
@@ -1254,6 +1274,10 @@ const StreamFlow: React.FC = () => {
           {hasResult && !loading && metricTopic && hitByTopic.has(metricTopic) && (
             <FlowMetricDrawer topic={metricTopic} hits={hits} messageKey={messageKey} searchPath={searchPath}
               onClose={() => setMetricTopic(null)} />
+          )}
+          {hasResult && !loading && metricHop && hitByTopic.has(metricHop.from) && hitByTopic.has(metricHop.to) && (
+            <FlowMetricDrawer key={`${metricHop.from}>${metricHop.to}`} topic={metricHop.to} hop={metricHop} hits={hits}
+              messageKey={messageKey} searchPath={searchPath} onClose={() => setMetricHop(null)} />
           )}
 
           {/* No result — dit ce qui a été lu, sinon « introuvable » se confond avec « hors fenêtre » */}
