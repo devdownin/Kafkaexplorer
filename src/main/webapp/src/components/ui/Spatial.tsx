@@ -16,9 +16,9 @@ const materials: Record<GlassMaterial, string> = {
   thick: 'kse-glass-thick',
 };
 const elevations: Record<SpatialElevation, string> = {
-  flat: 'shadow-none',
-  raised: '',
-  floating: 'shadow-2xl',
+  flat: 'kse-elevation-flat',
+  raised: 'kse-elevation-raised',
+  floating: 'kse-elevation-floating',
 };
 export const GlassSurface = forwardRef<HTMLDivElement, GlassSurfaceProps>(function GlassSurface(
   { material = 'regular', elevation = 'raised', className, ...props }, ref,
@@ -49,7 +49,7 @@ export const FloatingToolbar = forwardRef<HTMLDivElement, GlassSurfaceProps>(fun
 export const SpatialButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement>>(function SpatialButton(
   { className, type = 'button', ...props }, ref,
 ) {
-  return <button ref={ref} type={type} className={cn('kse-interactive rounded-xl px-3 py-2 bg-surface-container-high text-on-surface focus-visible:outline-2', className)} {...props} />;
+  return <button ref={ref} type={type} className={cn('kse-control rounded-xl px-3 py-2 bg-surface-container-high text-on-surface focus-visible:outline-2', className)} {...props} />;
 });
 export const SpatialInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function SpatialInput(
   { className, ...props }, ref,
