@@ -12,8 +12,8 @@ import Header from './Header';
  * version asserted by every deployment without ever asking the broker.
  */
 
-const renderHeader = (props: Parameters<typeof Header>[0]) =>
-  render(<RouterProvider router={createMemoryRouter([{ path: '/', element: <Header {...props} /> }], { initialEntries: ['/'] })} />);
+const renderHeader = (props: Omit<Parameters<typeof Header>[0], 'theme' | 'onThemeToggle'>) =>
+  render(<RouterProvider router={createMemoryRouter([{ path: '/', element: <Header theme="dark" onThemeToggle={() => {}} {...props} /> }], { initialEntries: ['/'] })} />);
 
 describe('Header connection pill', () => {
   it('shows the deployment name and the effective bootstrap address on hover', () => {
