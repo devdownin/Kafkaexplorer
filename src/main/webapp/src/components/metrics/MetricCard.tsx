@@ -217,7 +217,7 @@ const MetricCardView: React.FC<{
     at: p.at, kind: 'forecast',
   }));
 
-  const strokeColor = status === 'critical' ? '#f58c8c' : status === 'warning' ? '#f5c264' : '#a3adff';
+  const strokeColor = status === 'critical' ? 'var(--viz-critical)' : status === 'warning' ? 'var(--viz-warning)' : 'var(--viz-primary)';
 
   return (
     <div className="group/card flex flex-col rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden card-hover">
@@ -401,7 +401,7 @@ const MetricCardView: React.FC<{
               </div>}
               {reach && forecastSeries && <div role="status" aria-label="Forecast threshold"
                 className={`mx-3 mt-1.5 flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium ${reach.level === 'critical'
-                  ? 'bg-error-container/40 text-[#f58c8c]' : 'bg-[#f5c264]/10 text-[#f5c264]'}`}>
+                  ? 'bg-error-container/40 text-error' : 'bg-warning-container/40 text-warning'}`}>
                 <span aria-hidden="true" className="material-symbols-outlined text-[14px]">{reach.level === 'critical' ? 'error' : 'warning'}</span>
                 <span>{reach.level === 'critical' ? 'Critical' : 'Warning'} {reach.likelihood} in {about(reach.steps, forecastSeries.stepMillis)}
                   <span className="font-mono font-normal opacity-80"> ({thresholdDirection(metric.warningThreshold, metric.criticalThreshold) === 'below' ? '≤' : '≥'} {reach.threshold.toLocaleString()}{reach.likelihood === 'possible' ? ', 80% band' : ', median'})</span>
@@ -477,7 +477,7 @@ const MetricCardView: React.FC<{
                   <Line key={s.key} type="monotone" dataKey={s.key} stroke={s.color} strokeWidth={1.5}
                     dot={false} connectNulls={false} isAnimationActive={false} />
                 ))}
-                <Tooltip cursor={{ stroke: '#8f93a3', strokeWidth: 1, strokeOpacity: 0.3 }}
+                <Tooltip cursor={{ stroke: 'var(--viz-axis)', strokeWidth: 1, strokeOpacity: 0.3 }}
                   content={({ active, payload }) =>
                     active && payload?.length ? (
                       <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[11px] font-mono space-y-0.5">
