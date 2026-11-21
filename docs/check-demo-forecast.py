@@ -3,15 +3,19 @@
 # Copyright (C) 2026 Kafka Explorer Contributors
 """Hold the forecast demo to the story it tells.
 
-`scripts/demo-forecast/` makes the demo's two live metrics (orders not yet shipped, degrading towards
-their threshold; a request backlog on an hourly cycle) forecastable on the first visit. Three claims hold it up,
-and each was a comment before it was a check:
+`scripts/demo-forecast/` makes the demo's five live metrics (orders not yet shipped, degrading towards
+their threshold; a request backlog on an hourly cycle; imports creeping up with noise; a stationary noisy
+series; a level that shifts) forecastable on the first visit. Three claims hold it up, and each was a
+comment before it was a check:
 
 1.  **The curves say what the docs say.** `signals.awk` is the one definition of both signals, read
     by the live generator and by the history seeder. The unshipped orders must reach the metric's warning
     and then its critical threshold once per three-hour cycle and then drop back; the backlog must
-    repeat every hour, cross its warning near each peak and never reach its critical. The
-    thresholds are not restated here: they are read from the two metric definitions in `seed.sh`,
+    repeat every hour, cross its warning near each peak and never reach its critical. The three
+    others each show one thing a forecast does differently — a noisy climb that reaches its thresholds
+    every four hours, a noisy series that never nears its warning, a level that shifts every three
+    hours — and the noise must be a function of the minute alone, or the seeded past and the live
+    future would not be one signal. The thresholds are not restated here: they are read from the two metric definitions in `seed.sh`,
     so changing one side without the other fails.
 2.  **The generator's plumbing works.** `live.sh` is run for a few ticks against stub Kafka CLIs
     (the same technique as the seeder's decisions): each pair of topics is brought to its curve
@@ -87,6 +91,48 @@ if bk:
         problems.append(f'the backlog reaches its {critical:g} critical ({max(backlog):.0f}): it is a cycle to follow, not a breach')
     if min(backlog) < 0:
         problems.append('the backlog goes negative: records cannot be consumed before they are produced')
+# The three signals that were added to show something different.
+START_DAY = [START + 60 * i for i in range(0, 24 * 60)]
+creep = [evaluate('creep(t)', t) for t in START_DAY]
+jitter = [evaluate('jitter(t)', t) for t in START_DAY]
+shift = [evaluate('shift(t)', t) for t in START_DAY]
+cp = thresholds('demo-live-creep')
+if cp:
+    warning, critical = cp
+    # Noise makes a threshold crossed more than once near it, so what is held is a *cycle* that reaches
+    # each level: six climbs in a day, each ending above its critical and starting below its warning.
+    climbs = sum(1 for a, b in zip(creep, creep[1:]) if a - b > 150)
+    if climbs != 6:
+        problems.append(f'the imports must climb and drain once per 4 h ({climbs} drains read in a day, expected 6)')
+    if max(creep) < critical:
+        problems.append(f'the imports never reach their {critical:g} critical ({max(creep):.0f})')
+    if min(creep) > warning / 2:
+        problems.append(f'the imports never start low ({min(creep):.0f}): there is no climb to forecast')
+jt = thresholds('demo-live-jitter')
+if jt:
+    warning, _ = jt
+    if max(jitter) >= warning:
+        problems.append(f'the events reach their {warning:g} warning ({max(jitter):.0f}): that series is the one with nothing to announce')
+    if max(jitter) - min(jitter) < 30:
+        problems.append('the events barely move: a series without noise shows no band to speak of')
+sh = thresholds('demo-live-shift')
+if sh:
+    warning, critical = sh
+    if min(shift) > warning or max(shift) < warning:
+        problems.append(f'the tickets must pass below and above their {warning:g} warning ({min(shift):.0f}..{max(shift):.0f})')
+    if max(shift) >= critical:
+        problems.append(f'the tickets reach their {critical:g} critical ({max(shift):.0f}): the shift is a change of level, not a breach')
+    # Halfway between the two plateaus, far enough from both that the noise cannot cross it twice.
+    handovers = upward_crossings(shift, (min(shift) + max(shift)) / 2)
+    if handovers != 8:
+        problems.append(f'the tickets must change level once per 3 h cycle ({handovers} handovers in a day, expected 8)')
+# Noise is a function of the minute: the same minute reads the same, a second apart or a restart apart.
+for t in (START + 7, START + 3600 * 5 + 31):
+    a, b = evaluate('noise(t)', t), evaluate('noise(t)', t - t % 60 + 59)
+    if abs(a - b) > 1e-9:
+        problems.append(f'the noise differs inside one minute ({a:.6f} vs {b:.6f}): the seeded past and the live future would not agree')
+    if not -1 <= a <= 1:
+        problems.append(f'the noise leaves [-1, 1]: {a:.3f}')
 period_error = max(abs(evaluate('backlog(t)', START + s) - evaluate('backlog(t)', START + s + 3600)) for s in range(0, 3600, 300))
 if period_error > 0.01:
     problems.append(f'the backlog is not hourly (differs by {period_error:.2f} after 3600 s)')
@@ -108,6 +154,10 @@ with tempfile.TemporaryDirectory() as tmp:
         path = tmp / 'bin' / name
         path.write_text('#!/bin/sh\n' + body + '\n')
         path.chmod(0o755)
+    # Every first topic already holds more records than any curve asks for, so the generator has to
+    # produce to the *second* one — the only way to see the keys it gives them.
+    for left in ('orders', 'requests', 'imports', 'events', 'tickets'):
+        (tmp / 'out' / f'demo.live.{left}').write_text(''.join(f'{left}-{i}|{{}}\n' for i in range(1, 601)))
     env = {'PATH': '/usr/bin:/bin', 'OUT': str(tmp / 'out'), 'KAFKA_BIN': str(tmp / 'bin'), 'DEMO_LIVE_TICK': '1'}
     try:
         subprocess.run(['sh', str(DIR / 'live.sh'), 'stub:9092'], env=env, capture_output=True, text=True, timeout=5)
@@ -121,14 +171,25 @@ with tempfile.TemporaryDirectory() as tmp:
         path = tmp / 'out' / topic
         return path.read_text().splitlines() if path.exists() else []
 
-    now = int(time.time())
+    ended = int(time.time())
     for left, right, curve in (('demo.live.orders', 'demo.live.shipped', 'unshipped(t)'),
-                               ('demo.live.requests', 'demo.live.processed', 'backlog(t)')):
+                               ('demo.live.requests', 'demo.live.processed', 'backlog(t)'),
+                               ('demo.live.imports', 'demo.live.indexed', 'creep(t)'),
+                               ('demo.live.events', 'demo.live.archived', 'jitter(t)'),
+                               ('demo.live.tickets', 'demo.live.resolved', 'shift(t)')):
         gap = len(lines(left)) - len(lines(right))
-        target = evaluate(curve, now)
-        # The curve moves a few records a minute while it runs, and the run is a few seconds.
-        if abs(gap - target) > 12:
-            problems.append(f'live.sh left {left} - {right} at {gap} where the curve says {target:.0f}')
+        # The curve moves a few records a minute while it runs, and the run is a few seconds. The noisy
+        # ones change value at the minute: accept the curve at either end of the run, never neither.
+        reached = [evaluate(curve, ended - lag) for lag in (0, 12)]
+        if min(abs(gap - target) for target in reached) > 12:
+            problems.append(f'live.sh left {left} - {right} at {gap} where the curve says {reached[0]:.0f}')
+        # The two topics of a pair share their keys: the k-th of the second is the k-th of the first.
+        first, second = lines(left), lines(right)
+        shared = min(len(first), len(second))
+        if not shared:
+            problems.append(f'live.sh produced nothing to {right}: the keys of a pair could not be compared')
+        elif [l.split('|')[0] for l in first[:shared]] != [l.split('|')[0] for l in second[:shared]]:
+            problems.append(f'live.sh gave {left} and {right} different keys: a key traced in Stream Flow would not be found in both')
 
 # 3. Both platforms, and the compose registry, name the overlay — and layer the same files. The two
 # scripts are twins that nothing else compares; the forecast-only mode (`--forecast` / `-Forecast`)
@@ -163,5 +224,5 @@ if problems:
     for p in problems:
         print('  ✗', p)
     sys.exit(1)
-print('The forecast demo holds: both curves cross what they should, the generator holds both pairs on '
-      'their curves, and both platforms layer the overlay.')
+print('The forecast demo holds: the five curves do what they say, the generator holds the five pairs on '
+      'their curves under shared keys, and both platforms layer the overlay.')
