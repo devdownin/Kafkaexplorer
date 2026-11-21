@@ -65,7 +65,7 @@ function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
   value: T; onChange: (v: T) => void; options: { value: T; label: string }[]; ariaLabel: string;
 }) {
   return (
-    <div role="group" aria-label={ariaLabel} className="inline-flex bg-surface-container-low border border-outline-variant rounded-md p-0.5">
+    <div role="group" aria-label={ariaLabel} className="inline-flex bg-surface-container-low border border-outline-variant rounded-lg p-0.5">
       {options.map(o => (
         <button
           key={o.value}
@@ -73,7 +73,7 @@ function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
           aria-pressed={value === o.value}
           className={cn(
             'px-3 h-7 text-[12px] font-medium rounded transition-colors',
-            value === o.value ? 'bg-surface-container-highest text-on-surface' : 'text-on-surface-variant hover:text-on-surface',
+            value === o.value ? 'bg-surface-container-highest text-on-surface shadow-sm' : 'text-on-surface-variant hover:text-on-surface',
           )}
         >
           {o.label}
@@ -1830,7 +1830,7 @@ const QueryWorkbench: React.FC = () => {
      * sans rien pousser hors de l'écran : la ligne éditeur/résultats garde `flex-1 min-h-0`, donc
      * elle continue de se partager exactement la hauteur restante.
      */
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="kse-query-workbench flex flex-col h-full overflow-hidden">
       <NarrowWindowNotice />
       <div className="flex flex-1 min-h-0 overflow-hidden">
 
@@ -1888,7 +1888,7 @@ const QueryWorkbench: React.FC = () => {
       {/* ── Main Content ─────────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
-        <header className="h-14 border-b border-outline-variant/60 flex items-center px-4 md:px-6 justify-between gap-4 bg-surface-container-low/40 shrink-0">
+        <header className="kse-workbench-toolbar min-h-14 border-b border-outline-variant/60 flex flex-wrap items-center px-3 md:px-5 py-2 justify-between gap-2 bg-surface-container-low/70 shrink-0">
           {/* Les réglages de lecture défilent au lieu de disparaître. « Offset » était masqué sous
               `md`, « Rows » sous `lg` — mais ils continuaient de s'appliquer : sur une fenêtre
               étroite, la requête partait en EARLIEST/50 sans qu'aucun des deux ne soit visible,
@@ -2017,7 +2017,7 @@ const QueryWorkbench: React.FC = () => {
 
           {/* Editor + Window Assistant */}
           <div className="flex overflow-hidden" style={{ height: `${splitPercent}%` }}>
-            <div className="flex-1 flex flex-col min-w-0 bg-surface/40">
+            <div className="flex-1 flex flex-col min-w-0 bg-surface">
 
               {/* ── Tab bar ── */}
               {/* Une barre d'onglets est un `tablist` : les onglets étaient des `<div onClick>`,
@@ -2181,7 +2181,7 @@ const QueryWorkbench: React.FC = () => {
           </div>
 
           {/* Results panel */}
-          <div className="flex flex-col bg-surface-container-low/40 overflow-hidden" style={{ height: `calc(${100 - splitPercent}% - 0.5rem)` }}>
+          <div className="flex flex-col bg-surface-container-low overflow-hidden" style={{ height: `calc(${100 - splitPercent}% - 0.5rem)` }}>
             <div className="h-10 border-b border-outline-variant/60 flex items-center px-4 justify-between gap-3 bg-surface-container-low/80 shrink-0">
               <div className="flex items-center gap-5 min-w-0">
                 <div className="flex items-center gap-1.5">
