@@ -19,6 +19,8 @@ const DOT_TONES = {
 } as const;
 
 interface HeaderProps {
+  theme: 'light' | 'dark';
+  onThemeToggle: () => void;
   onMenuClick?: () => void;
   /** Ouvre la palette de commandes (⌘K). */
   onSearchClick?: () => void;
@@ -40,14 +42,14 @@ interface HeaderProps {
  * chaud par `POST /api/config`. Ce qui est vérifiable voyage à côté : l'adresse d'amorçage
  * effective, lue dans la configuration en cours d'exécution, en infobulle.
  */
-const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName, bootstrapServers }) => {
+const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName, bootstrapServers, theme, onThemeToggle }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const pageName = resolvePageName(location.pathname);
   const tone = connectionTone({ isHealthy });
 
   return (
-    <header className="header-border flex justify-between items-center gap-3 px-4 md:px-6 h-14 sticky top-0 z-30 bg-surface/80 backdrop-blur-md">
+    <header className="kse-header flex justify-between items-center gap-3 px-4 md:px-6 h-14 shrink-0 sticky top-3 z-30 mx-3 md:mx-4 mt-3 mb-2">
       <div className="flex items-center gap-2 min-w-0">
         <button
           type="button"
@@ -91,6 +93,16 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
           <kbd className="hidden sm:inline text-[11px] text-outline border border-outline-variant rounded px-1 py-0.5">⌘K</kbd>
         </button>
 
+        <button
+          type="button"
+          onClick={onThemeToggle}
+          title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+          aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
+          aria-pressed={theme === 'light'}
+          className="kse-interactive p-1.5 rounded-xl text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
+        >
+          <span aria-hidden="true" className="material-symbols-outlined text-[19px]">{theme === 'light' ? 'dark_mode' : 'light_mode'}</span>
+        </button>
         <button
           onClick={() => navigate('/help')}
           className="p-1.5 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"

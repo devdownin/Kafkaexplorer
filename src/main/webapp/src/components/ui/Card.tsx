@@ -17,8 +17,8 @@ const PADDINGS = { none: '', sm: 'p-4', md: 'p-5', lg: 'p-6' } as const;
 export const Card: FC<CardProps> = ({ interactive = false, padding = 'md', className, children, ...props }) => (
   <div
     className={cn(
-      'bg-surface-container rounded-xl ring-1 ring-white/[0.045]',
-      interactive && 'card-hover cursor-pointer',
+      'kse-surface',
+      interactive && 'kse-interactive card-hover cursor-pointer',
       PADDINGS[padding],
       className,
     )}

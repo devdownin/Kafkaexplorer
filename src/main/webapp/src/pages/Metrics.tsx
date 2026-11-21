@@ -4,7 +4,8 @@
 import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
-import Editor, { useMonaco } from '@monaco-editor/react';
+import { useMonaco } from '@monaco-editor/react';
+import Editor from '../components/ThemedEditor';
 import '../monaco-setup';
 import { useToast } from '../components/Toast';
 import { useCatalog } from '../catalogStore';
@@ -1523,9 +1524,9 @@ const Metrics: React.FC = () => {
                     >
                       {f => (
                         <Select {...f} value={templateType} onChange={e => onTemplateTypeChange(e.target.value)}>
-                          <option value={RAW_SQL} className="bg-[#12151a] text-on-surface">Raw SQL</option>
+                          <option value={RAW_SQL} className="bg-surface-container text-on-surface">Raw SQL</option>
                           {templates.map(t => (
-                            <option key={t.type} value={t.type} className="bg-[#12151a] text-on-surface">{t.label}</option>
+                            <option key={t.type} value={t.type} className="bg-surface-container text-on-surface">{t.label}</option>
                           ))}
                         </Select>
                       )}
@@ -1559,7 +1560,7 @@ const Metrics: React.FC = () => {
                           { value: 'HISTOGRAM', label: 'HISTOGRAM — bucket distribution' },
                           { value: 'SUMMARY',   label: 'SUMMARY — quantile observations' },
                         ].filter(o => allowedTypes.includes(o.value)).map(o => (
-                          <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
+                          <option key={o.value} value={o.value} className="bg-surface-container text-on-surface">{o.label}</option>
                         ))}
                       </Select>
                     )}

@@ -3,7 +3,8 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import Editor, { useMonaco } from '@monaco-editor/react';
+import { useMonaco } from '@monaco-editor/react';
+import Editor from '../components/ThemedEditor';
 import type { editor } from 'monaco-editor';
 import '../monaco-setup';
 import axios from 'axios';

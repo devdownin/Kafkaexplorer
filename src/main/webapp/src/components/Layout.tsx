@@ -50,6 +50,19 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   const [searchTopics, setSearchTopics] = useState<string[]>([]);
   const [searchTables, setSearchTables] = useState<string[]>([]);
 
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      const saved = localStorage.getItem('kse.theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+    } catch { /* Storage can be disabled. */ }
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  });
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    try { localStorage.setItem('kse.theme', theme); } catch { /* Optional persistence. */ }
+  }, [theme]);
+
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -105,7 +118,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   const effectiveCollapsed = isDesktop ? isCollapsed : false;
 
   return (
-    <div className="h-screen overflow-hidden bg-background bg-scene">
+    <div className="kse-app-shell h-screen overflow-hidden bg-background">
       <Sidebar
         isCollapsed={effectiveCollapsed}
         onToggle={() => setIsCollapsed((c) => !c)}
@@ -123,10 +136,12 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
 
       <div
         className={`h-screen flex flex-col min-w-0 transition-all duration-300 ml-0 ${
-          effectiveCollapsed ? 'lg:ml-[68px]' : 'lg:ml-64'
+          effectiveCollapsed ? 'lg:ml-[92px]' : 'lg:ml-[276px]'
         }`}
       >
         <Header
+          theme={theme}
+          onThemeToggle={() => setTheme(value => value === 'light' ? 'dark' : 'light')}
           onMenuClick={() => setMobileOpen(true)}
           onSearchClick={() => setPaletteOpen(true)}
           isHealthy={isHealthy}
