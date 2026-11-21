@@ -86,7 +86,7 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
           onClick={onSearchClick}
           aria-label="Search (Command palette)"
           title="Search — ⌘K"
-          className="flex items-center gap-2 h-8 pl-2.5 pr-2 rounded-md bg-surface-container-low border border-outline-variant/70 text-on-surface-variant hover:text-on-surface hover:border-outline transition-colors"
+          className="kse-search-trigger flex items-center gap-2 h-9 pl-3 pr-2.5 text-on-surface-variant hover:text-on-surface"
         >
           <span aria-hidden="true" className="material-symbols-outlined text-[17px]">search</span>
           <span className="hidden sm:inline text-[13px] w-24 md:w-40 text-left text-outline">Search…</span>
@@ -99,13 +99,13 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
           title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
           aria-label={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
           aria-pressed={theme === 'light'}
-          className="kse-interactive p-1.5 rounded-xl text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
+          className="kse-header-action p-2 text-on-surface-variant hover:text-on-surface"
         >
           <span aria-hidden="true" className="material-symbols-outlined text-[19px]">{theme === 'light' ? 'dark_mode' : 'light_mode'}</span>
         </button>
         <button
           onClick={() => navigate('/help')}
-          className="p-1.5 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
+          className="kse-header-action p-2 text-on-surface-variant hover:text-on-surface"
           title="Help"
           aria-label="Help"
         >
