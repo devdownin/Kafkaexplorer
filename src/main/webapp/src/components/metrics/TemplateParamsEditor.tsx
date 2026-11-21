@@ -84,7 +84,7 @@ const ScanParams: React.FC<{
           {f => (
             <Select {...f} value={windowMs} onChange={e => setParam('windowMs', e.target.value)}>
               {LATENCY_WINDOWS.map(w => (
-                <option key={w.value} value={w.value} className="bg-[#12151a] text-on-surface">{w.label}</option>
+                <option key={w.value} value={w.value} className="bg-surface-container text-on-surface">{w.label}</option>
               ))}
             </Select>
           )}
@@ -101,8 +101,8 @@ const ScanParams: React.FC<{
       >
         {f => (
           <Select {...f} value={readMode} onChange={e => setParam('readMode', e.target.value)}>
-            <option value="latest-offset" className="bg-[#12151a] text-on-surface">The most recent records</option>
-            <option value="earliest-offset" className="bg-[#12151a] text-on-surface">The earliest offset onwards</option>
+            <option value="latest-offset" className="bg-surface-container text-on-surface">The most recent records</option>
+            <option value="earliest-offset" className="bg-surface-container text-on-surface">The earliest offset onwards</option>
           </Select>
         )}
       </Field>
@@ -128,7 +128,7 @@ const ScanParams: React.FC<{
         {f => (
           <Select {...f} value={p('refreshIntervalMs')} onChange={e => setParam('refreshIntervalMs', e.target.value)}>
             {REFRESH_INTERVALS.map(r => (
-              <option key={r.value} value={r.value} className="bg-[#12151a] text-on-surface">{r.label}</option>
+              <option key={r.value} value={r.value} className="bg-surface-container text-on-surface">{r.label}</option>
             ))}
           </Select>
         )}
@@ -183,8 +183,8 @@ export const TemplateParamsEditor: React.FC<{
           >
             {f => (
               <Select {...f} value={p('aggregation') || 'MAX'} onChange={e => setParam('aggregation', e.target.value)}>
-                <option value="MAX" className="bg-[#12151a] text-on-surface">Worst partition (MAX)</option>
-                <option value="AVG" className="bg-[#12151a] text-on-surface">Mean over partitions (AVG)</option>
+                <option value="MAX" className="bg-surface-container text-on-surface">Worst partition (MAX)</option>
+                <option value="AVG" className="bg-surface-container text-on-surface">Mean over partitions (AVG)</option>
               </Select>
             )}
           </Field>
@@ -201,7 +201,7 @@ export const TemplateParamsEditor: React.FC<{
             {f => (
               <Select {...f} value={p('operation') || 'LEFT_MINUS_RIGHT'} onChange={e => setParam('operation', e.target.value)}>
                 {DELTA_OPERATIONS.map(o => (
-                  <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
+                  <option key={o.value} value={o.value} className="bg-surface-container text-on-surface">{o.label}</option>
                 ))}
               </Select>
             )}
@@ -216,9 +216,9 @@ export const TemplateParamsEditor: React.FC<{
           >
             {f => (
               <Select {...f} value={p('countBy') || 'AUTO'} onChange={e => setParam('countBy', e.target.value)}>
-                <option value="AUTO" className="bg-[#12151a] text-on-surface">Automatic — offsets for a plain whole-topic count</option>
-                <option value="OFFSETS" className="bg-[#12151a] text-on-surface">The log's offsets (no records read)</option>
-                <option value="RECORDS" className="bg-[#12151a] text-on-surface">Records returned by the two queries</option>
+                <option value="AUTO" className="bg-surface-container text-on-surface">Automatic — offsets for a plain whole-topic count</option>
+                <option value="OFFSETS" className="bg-surface-container text-on-surface">The log's offsets (no records read)</option>
+                <option value="RECORDS" className="bg-surface-container text-on-surface">Records returned by the two queries</option>
               </Select>
             )}
           </Field>
@@ -228,8 +228,8 @@ export const TemplateParamsEditor: React.FC<{
           >
             {f => (
               <Select {...f} value={p('window') || 'TOTAL'} onChange={e => setParam('window', e.target.value)}>
-                <option value="TOTAL" className="bg-[#12151a] text-on-surface">The totals</option>
-                <option value="SINCE_LAST_REFRESH" className="bg-[#12151a] text-on-surface">What each side produced since the last refresh</option>
+                <option value="TOTAL" className="bg-surface-container text-on-surface">The totals</option>
+                <option value="SINCE_LAST_REFRESH" className="bg-surface-container text-on-surface">What each side produced since the last refresh</option>
               </Select>
             )}
           </Field>
@@ -259,7 +259,7 @@ export const TemplateParamsEditor: React.FC<{
           {f => (
             <Select {...f} value={executionMode || 'TEMPLATE_BOUNDED_SCAN'} onChange={e => setExecutionMode(e.target.value)}>
               {EXECUTION_MODES.filter(m => templateType !== 'KAFKA_CLUSTER_COUNT' || m.value === 'TEMPLATE_BOUNDED_SCAN').map(m => (
-                <option key={m.value} value={m.value} className="bg-[#12151a] text-on-surface">{m.label}</option>
+                <option key={m.value} value={m.value} className="bg-surface-container text-on-surface">{m.label}</option>
               ))}
             </Select>
           )}
