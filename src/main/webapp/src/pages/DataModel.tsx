@@ -955,7 +955,7 @@ const DataModel: React.FC = () => {
       {edgeTip && (
         <div
           style={{ position: 'fixed', left: edgeTip.x + 14, top: edgeTip.y - 70, zIndex: 100, pointerEvents: 'none' }}
-          className="bg-background-dark/95 border border-outline-variant rounded-lg px-3 py-2 shadow-2xl text-xs max-w-[280px]"
+          className="kse-glass-thick rounded-xl px-3 py-2 text-on-surface text-xs max-w-[280px]"
           role="tooltip"
         >
           <p className="font-mono text-on-surface break-all leading-snug">
@@ -976,7 +976,7 @@ const DataModel: React.FC = () => {
       {/* Fond du tiroir, sous le seuil seulement : cliquer à côté referme, comme le tiroir de
           navigation du shell. */}
       {!isDesktop && topicsDrawerOpen && (
-        <div className="absolute inset-0 bg-black/60 z-30" aria-hidden="true"
+        <div className="kse-drawer-backdrop absolute inset-0 z-30" aria-hidden="true"
           onClick={() => setTopicsDrawerOpen(false)} />
       )}
 
@@ -1294,7 +1294,7 @@ const DataModel: React.FC = () => {
                           /* Le nom accessible du groupe porte déjà le domaine et son compte ;
                              laisser lire l'en-tête en plus les dirait deux fois. */
                           <p aria-hidden="true"
-                            className="sticky top-0 z-[1] flex items-center gap-1.5 px-2 py-1 bg-surface-container-low/95 backdrop-blur-xs text-[11px] text-on-surface-variant">
+                            className="sticky top-0 z-[1] flex items-center gap-1.5 px-2 py-1 bg-surface-container-low text-[11px] text-on-surface-variant">
                             <span className="w-2 h-2 rounded-sm shrink-0 border"
                               style={{
                                 backgroundColor: tintOf(group.entities[0].topic).header,
@@ -1618,7 +1618,7 @@ const DataModel: React.FC = () => {
       )}
 
       {/* ── Canevas ── */}
-      <main className="flex-1 relative overflow-hidden graph-bg bg-background-dark">
+      <main className="kse-model-canvas flex-1 relative overflow-hidden graph-bg bg-background-dark">
 
         {/* Bandeau : couverture + avertissements */}
         <div ref={bannerRef} className="absolute top-4 left-4 right-4 z-10 flex flex-col items-start gap-2 pointer-events-none">
@@ -1660,7 +1660,7 @@ const DataModel: React.FC = () => {
 
         {/* Zoom */}
         {model && graphEntities.length > 0 && (
-          <div className="absolute bottom-6 left-4 z-10 flex flex-col bg-surface-container border border-outline-variant rounded-xl overflow-hidden shadow-xl">
+          <div className="kse-canvas-toolbar absolute bottom-4 left-3 md:bottom-6 md:left-4 z-10 flex flex-col bg-surface-container border border-outline-variant rounded-xl overflow-hidden shadow-xl">
             <button onClick={() => zoomFromCenter(1.25)} aria-label="Zoom in"
               className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
               <span aria-hidden="true" className="material-symbols-outlined text-lg">add</span>
@@ -1680,7 +1680,7 @@ const DataModel: React.FC = () => {
             Un clic y déplace la vue, ce qui est le seul geste qu'une vue d'ensemble doit offrir :
             elle situe, et permet d'aller là où l'on regarde. */}
         {minimap && (
-          <div className="absolute bottom-6 right-4 z-10 bg-surface-container/95 border border-outline-variant rounded-lg shadow-xl overflow-hidden">
+          <div className="absolute bottom-4 right-3 md:bottom-6 md:right-4 z-10 bg-surface-container/95 border border-outline-variant rounded-lg shadow-xl overflow-hidden">
             <svg
               width={MINIMAP_W} height={MINIMAP_H}
               role="button" tabIndex={0}
@@ -1740,7 +1740,7 @@ const DataModel: React.FC = () => {
             le cas le plus trompeur des deux, puisque rien ne bouge à l'écran.
             Indéterminé assumé : une seule requête, donc aucun pourcentage à afficher. */}
         {loading && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background-dark/70 backdrop-blur-[1px]">
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70">
             <div className="flex flex-col items-center gap-3 px-6 text-center" role="status">
               <Spinner />
               <p className="text-sm text-on-surface font-medium tabular-nums">
