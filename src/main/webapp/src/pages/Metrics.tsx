@@ -28,6 +28,8 @@ import type {
 } from '../api/types';
 import { hasRunningMetric } from './metricsHealth';
 import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop';
+
+const BACKDROP_KEY = 'kse:metrics-backdrop';
 import { ForecastSetupWizard } from '../components/metrics/ForecastSetupWizard';
 import { ForecastPanel } from '../components/metrics/ForecastPanel';
 import { AutoCreateRefused, createForecastFromMetric } from '../components/metrics/forecastAutoCreate';
@@ -963,6 +965,15 @@ const Metrics: React.FC = () => {
   // `counts.ok` juste au-dessus répond à une autre question (le verdict par seuil), et une
   // métrique peut être `critical` tout en tournant parfaitement.
   const anyMetricRunning = useMemo(() => hasRunningMetric(metrics), [metrics]);
+  // The animated background is an ornament, and lines drifting across the cards read as noise on a
+  // page kept open to be read: off unless the operator turns it on, and remembered on this browser.
+  const [backdropOn, setBackdropOn] = useState(() => {
+    try { return localStorage.getItem(BACKDROP_KEY) === '1'; } catch { return false; }
+  });
+  const toggleBackdrop = () => setBackdropOn(on => {
+    try { localStorage.setItem(BACKDROP_KEY, on ? '0' : '1'); } catch { /* the choice just is not remembered */ }
+    return !on;
+  });
 
   const SEVERITY_ORDER: Record<string, number> = { error: 0, critical: 1, warning: 2, ok: 3, pending: 4 };
   // Metric id → when its forecast first reaches one of its own thresholds (forecastReachFor: the
@@ -1141,7 +1152,7 @@ const Metrics: React.FC = () => {
     // DOM entre deux éléments positionnés `z-auto`, pas par un `-z-10` qui exigerait ce contexte.
     <div className="relative p-6 overflow-y-auto h-full">
 
-      <MetricsPulseBackdrop active={anyMetricRunning} />
+      <MetricsPulseBackdrop active={backdropOn && anyMetricRunning} />
 
       {/* `space-y-6` vit ici plutôt que sur la racine : sur la racine, il donnerait une marge
           haute au calque et décalerait son `inset-0`. */}
@@ -1154,6 +1165,8 @@ const Metrics: React.FC = () => {
         actions={
           <>
             <Button variant="ghost" size="sm" icon="refresh" onClick={fetchMetrics} aria-label="Refresh all">Refresh</Button>
+            <Button variant="ghost" size="sm" icon="blur_on" onClick={toggleBackdrop} aria-pressed={backdropOn}
+              aria-label="Animated background" title="Animated background (off by default)">{backdropOn ? 'Background on' : 'Background'}</Button>
             <Button variant="ghost" size="sm" icon="help" onClick={() => navigate('/metrics/help')} aria-label="Help">Help</Button>
             <Button variant="primary" icon="add" onClick={() => openEdit()}>Add metric</Button>
           </>
@@ -1291,7 +1304,7 @@ const Metrics: React.FC = () => {
           <div className="text-center py-12 text-on-surface-variant text-sm">No metrics match the current filters.</div>
         )
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-4">
           {filteredMetrics.length > 0 ? filteredMetrics.map(metric => (
             <MetricCard
               key={metric.id}
@@ -1806,7 +1819,7 @@ const Metrics: React.FC = () => {
                           setExecutionMode={setExecutionMode}
                         />
                       ) : (
-                      <Editor height="100%" defaultLanguage="sql" theme="vs-dark"
+                      <Editor height="100%" defaultLanguage="sql" theme="kse-dark"
                         value={editingMetric.sql ?? ''}
                         onChange={val => { setEditingMetric(m => ({ ...m, sql: val ?? '' })); clearPreview(); }}
                         options={{ minimap: { enabled: false }, fontSize: 13, fontFamily: 'JetBrains Mono, monospace',
@@ -1815,7 +1828,7 @@ const Metrics: React.FC = () => {
                       />
                       )
                     ) : (
-                      <Editor height="100%" defaultLanguage="sql" theme="vs-dark"
+                      <Editor height="100%" defaultLanguage="sql" theme="kse-dark"
                         value={editingMetric.createTableSql ?? ''}
                         onChange={val => setEditingMetric(m => ({ ...m, createTableSql: val ?? '' }))}
                         options={{ minimap: { enabled: false }, fontSize: 13, fontFamily: 'JetBrains Mono, monospace',
