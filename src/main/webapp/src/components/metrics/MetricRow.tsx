@@ -76,7 +76,7 @@ const MetricRowView: React.FC<{
       <span className="hidden sm:inline-flex text-primary"><Sparkline values={metric.history ?? []} forecast={forecastMedians(forecastSeries)} /></span>
       <span className="hidden md:flex items-center gap-1.5 shrink-0 w-56 min-w-0">
         {reach && forecastSeries
-          ? <span className={`truncate text-xs font-medium ${reach.level === 'critical' ? 'text-[#f58c8c]' : 'text-[#f5c264]'}`}
+          ? <span className={`truncate text-xs font-medium ${reach.level === 'critical' ? 'text-error' : 'text-warning'}`}
               aria-label="Forecast threshold">
               {reach.level === 'critical' ? 'Critical' : 'Warning'} {reach.likelihood} in {about(reach.steps, forecastSeries.stepMillis)}
             </span>
