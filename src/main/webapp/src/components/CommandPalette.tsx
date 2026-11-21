@@ -166,7 +166,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
         onKeyDown={onKeyDown}
       >
         {/* Champ de recherche */}
-        <div className="flex items-center gap-2.5 px-4 h-12 border-b border-outline-variant/60">
+        <div className="flex items-center gap-2.5 px-5 h-14 border-b border-outline-variant/40">
           <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[20px]">search</span>
           <input
             ref={inputRef}
@@ -174,7 +174,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
             onChange={e => { setQuery(e.target.value); setActive(0); }}
             placeholder="Search pages, topics, tables or actions…"
             aria-label="Search"
-            className="flex-1 bg-transparent border-none outline-hidden text-[14px] text-on-surface placeholder:text-outline"
+            className="flex-1 bg-transparent border-none outline-hidden text-[14px] text-on-surface placeholder:text-outline focus-visible:outline-2 focus-visible:outline-primary"
           />
           <kbd className="text-[11px] text-outline border border-outline-variant rounded px-1.5 py-0.5">Esc</kbd>
         </div>
@@ -204,7 +204,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
                         onMouseMove={() => setActive(idx)}
                         aria-selected={isActive}
                         className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-left transition-colors ${
-                          isActive ? 'bg-primary/10 text-on-surface' : 'text-on-surface-variant hover:text-on-surface'
+                          isActive ? 'bg-primary/10 text-on-surface shadow-[inset_0_1px_0_rgb(var(--kse-primary)/.10)]' : 'text-on-surface-variant hover:bg-surface-container-high/70 hover:text-on-surface'
                         }`}
                       >
                         <span aria-hidden="true" className={`material-symbols-outlined text-[19px] ${isActive ? 'text-primary' : 'text-on-surface-variant'}`}>{cmd.icon}</span>
