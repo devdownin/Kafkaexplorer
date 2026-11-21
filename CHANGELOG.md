@@ -30,6 +30,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are regenerated in both schemes (`docs/img/<screen>.png` and `<screen>-dark.png`), and the Pages site
   follows the visitor's system with the same tokens. Rationale, pass by pass, in
   `docs/notes/spatial-light-theme.md`.
+
+## [2.8.2] — 2026-11-21
+
+Released from `main` with no entry recorded here; see [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.8.2).
+
+## [2.8.1] — 2026-11-21
+
 - **Forecast demo: five live series instead of two.** `./demo.sh --forecast` now feeds five topic pairs
   (`demo.live.*`) and seeds nine hours of history for each: the unshipped orders (a ramp towards its
   thresholds) and the request backlog (an hourly cycle) as before, plus imports creeping up with noise, a
@@ -233,7 +240,6 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Dashboard at 3 undersized targets against a budget of 1 and failed the layout check of the
   screenshots job on every pull request. `min-h-6`, as `SortButton` and `Tooltip` do; the budgets
   are unchanged.
-Nothing yet.
 
 ## [2.7.0] — 2026-11-19
 
@@ -3031,7 +3037,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.8.1...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.8.2...HEAD
+[2.8.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.8.1...v2.8.2
 [2.8.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.7.0...v2.8.1
 [2.7.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.5.0...v2.7.0
 [2.5.0]: https://github.com/devdownin/Kafkaexplorer/compare/v0.3.0...v2.5.0
