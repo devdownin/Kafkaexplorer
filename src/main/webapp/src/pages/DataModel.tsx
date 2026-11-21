@@ -141,7 +141,7 @@ const EntityNode: React.FC<{
           <g key={column.name}>
             {lit && (
               <rect x={x + 4} y={rowY - sizing.rowH + rowBaseline} width={width - 8}
-                height={sizing.rowH} rx={3} fill="#f5c264" fillOpacity={0.18} />
+                height={sizing.rowH} rx={3} fill="var(--viz-warning)" fillOpacity={0.18} />
             )}
             <text x={x + 10} y={rowY} fontSize={sizing.rowSize} fontFamily="JetBrains Mono, monospace"
               fontWeight={lit ? 'bold' : 'normal'}
@@ -153,7 +153,7 @@ const EntityNode: React.FC<{
               {marker ? `${marker} ` : ''}{name}
             </text>
             <text x={x + width - 10} y={rowY} textAnchor="end" fontSize={sizing.typeSize}
-              fontFamily="JetBrains Mono, monospace" fill="#79839a">
+              fontFamily="JetBrains Mono, monospace" fill="var(--viz-node-muted)">
               {column.type}
             </text>
           </g>
@@ -161,7 +161,7 @@ const EntityNode: React.FC<{
       })}
       {hidden > 0 && (
         <text x={x + 10} y={y + sizing.headerH + (columns.length + 1) * sizing.rowH - rowBaseline}
-          fontSize={sizing.typeSize} fontFamily="Inter, sans-serif" fill="#79839a" fontStyle="italic">
+          fontSize={sizing.typeSize} fontFamily="Inter, sans-serif" fill="var(--viz-node-muted)" fontStyle="italic">
           +{hidden} more column{hidden > 1 ? 's' : ''}
         </text>
       )}
@@ -1184,7 +1184,7 @@ const DataModel: React.FC = () => {
                 )}
               </div>
               {columnMatchNote && (
-                <p className={`text-[11px] leading-snug ${columnMatches.size === 0 ? 'text-outline' : 'text-[#f5c264]'}`}
+                <p className={`text-[11px] leading-snug ${columnMatches.size === 0 ? 'text-outline' : 'text-warning'}`}
                   role="status">
                   {columnMatchNote}
                 </p>
@@ -1584,13 +1584,13 @@ const DataModel: React.FC = () => {
                       {!diffIsEmpty(diff) && (
                         <div className="space-y-0.5 text-[11px] leading-snug max-h-48 overflow-y-auto custom-scrollbar">
                           {diff.addedEntities.map(e => (
-                            <p key={`ae-${e.id}`} className="text-[#7ee2a8] font-mono truncate" title={e.topic}>+ {e.id}</p>
+                            <p key={`ae-${e.id}`} className="text-success font-mono truncate" title={e.topic}>+ {e.id}</p>
                           ))}
                           {diff.removedEntities.map(e => (
                             <p key={`re-${e.id}`} className="text-error font-mono truncate line-through" title={e.topic}>- {e.id}</p>
                           ))}
                           {diff.addedRelations.map((r, i) => (
-                            <p key={`ar-${i}`} className="text-[#7ee2a8] font-mono truncate">
+                            <p key={`ar-${i}`} className="text-success font-mono truncate">
                               + {r.from}.{r.fromColumn} → {r.to}
                             </p>
                           ))}
@@ -1600,7 +1600,7 @@ const DataModel: React.FC = () => {
                             </p>
                           ))}
                           {diff.changedRelations.map((c, i) => (
-                            <p key={`cr-${i}`} className="text-[#f5c264] font-mono truncate">
+                            <p key={`cr-${i}`} className="text-warning font-mono truncate">
                               ~ {c.relation.from}.{c.relation.fromColumn} → {c.relation.to}
                               {' '}({c.from.toLowerCase()} → {c.to.toLowerCase()})
                             </p>
@@ -1932,7 +1932,7 @@ const DataModel: React.FC = () => {
               <div className="space-y-0.5">
                 {entityById.get(selectedId)!.columns.map(column => (
                   <div key={column.name} className="flex items-baseline gap-2 text-[11px] font-mono">
-                    <span className={column.primaryKey ? 'text-[#7ee2a8]' : column.references ? 'text-[#f5c264]' : 'text-on-surface'}>
+                    <span className={column.primaryKey ? 'text-success' : column.references ? 'text-warning' : 'text-on-surface'}>
                       {column.primaryKey ? '🔑 ' : column.references ? '→ ' : ''}{column.name}
                     </span>
                     <span className="text-outline ml-auto shrink-0">{column.type}</span>
