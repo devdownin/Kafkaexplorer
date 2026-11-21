@@ -88,3 +88,59 @@ including theme switching with an open search panel, selected navigation and
 disabled controls. Verify actual composited contrast and measure scroll GPU
 cost in a browser performance profile before classifying the design as fully
 visually validated.
+
+## Fourth pass — Lots A and B
+
+### Lot A — Visual consistency and forecast legibility
+
+- All pages using the shared `PageHeader` now get a wrapping title/action
+  layout without forcing a fixed-width button group on phone screens.
+- `Card`, `Stat`, `Table`, and `EmptyState` share opaque reading
+  surfaces, a toned border and a consistent type scale. Data tables remain
+  scrollable horizontally and table-head cells stay opaque while scrolling.
+- Dashboard diagnostics use a distinct inset surface instead of making a
+  second layer of translucent panels.
+- Metrics summaries stack in two columns up to the desktop breakpoint,
+  avoiding four tiny 175px tiles on tablets.
+- The forecast chart is separated into a quiet opaque plot well; chart axes,
+  crosshair, legend and uncertainty band have distinct semantics. Observed
+  stays solid and predicted stays dashed; the transition is explicitly labeled.
+- Query Workbench uses an opaque editor/results plane. Data Model uses
+  theme-matched canvas and mobile controls without fixed dark overlays.
+
+### Lot B — Responsive UX, accessibility and rendering
+
+- At narrow widths page actions wrap below headings, while Data Model's
+  graph controls move away from the viewport corners.
+- Existing navigation and control motion is limited to brief hover states and
+  respects reduced-motion. The reading surfaces add no per-card blur.
+- Reduced-contrast/forced-colors fallbacks now include KPI tiles, data tables,
+  empty-state icons and forecast chart wells.
+- The Metrics ambient canvas resolves its `--kse-primary` color at start and
+  on theme change, without reading computed styles on every animation frame.
+  Its existing 30fps and DPR caps, visibility pause and reduced-motion handling
+  are retained. The decorative layer remains opt-in.
+- The shared data table header and SQL result header are opaque: there is
+  no recurring per-scroll backdrop filter over thousands of rows.
+
+### Validation contract
+
+The UI changes should satisfy:
+
+1. Light/dark at widths 375, 768, 1024, 1440 CSS px without unexpected
+   horizontal document scroll, clipping of primary actions or inaccessible
+   selection.
+2. Header/Sidebar/search popovers keep readable contrast over any page.
+3. Forecast shows observed, predicted, uncertainty and threshold with
+   distinct line styles and a keyboard-accessible data table.
+4. Data Model controls remain reachable and nodes readable; Query editor
+   retains usable width at the existing 1024px desktop threshold.
+5. Keyboard navigation, system contrast modes and reduced-motion work.
+6. Performance profiling confirms no repetitive expensive backdrop filters
+   on table rows or charts.
+
+The repository already provides the Playwright fixture utilities
+`docs/screenshots/capture.mjs` and `docs/screenshots/layout-probe.mjs`
+for visual/viewport validation; actual cross-theme screenshots and GPU
+measurements must be performed in a browser. Successful typecheck, lint
+and unit tests are necessary but are not a substitute for those checks.
