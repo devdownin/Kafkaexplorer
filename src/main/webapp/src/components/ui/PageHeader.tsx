@@ -19,7 +19,7 @@ export const PageHeader: FC<PageHeaderProps> = ({ kicker, title, description, ac
   <header className={cn('kse-page-header flex flex-wrap items-start justify-between gap-4 md:gap-5', className)}>
     <div className="min-w-0 flex-1 basis-60">
       {kicker && (
-        <p className="text-[11px] font-medium uppercase tracking-[0.05em] text-on-surface-variant mb-1">{kicker}</p>
+        <p className="text-[12px] font-medium text-on-surface-variant mb-1">{kicker}</p>
       )}
       <h1 className="text-[24px] leading-[1.15] sm:text-[28px] md:text-[30px] font-semibold tracking-[-0.02em] text-on-surface">{title}</h1>
       {description && <p className="text-[13px] text-on-surface-variant mt-1.5 max-w-2xl leading-relaxed">{description}</p>}

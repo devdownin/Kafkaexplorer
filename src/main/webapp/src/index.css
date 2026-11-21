@@ -1,5 +1,6 @@
 @import 'tailwindcss' source(none);
 @import './spatial-tokens.css';
+@import './accent-tokens.css';
 @config '../tailwind.config.js';
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -38,11 +39,14 @@
 
   ::selection { background: rgb(var(--kse-primary) / .18); }
 
-  /* Visible keyboard focus (WCAG 2.4.7). */
+  /* Visible keyboard focus (WCAG 2.4.7): a solid ring, then a gap tinted with the accent and a
+     soft halo — two rings, the way macOS draws it. The outline alone carries the 3:1 the
+     criterion needs; the halo is the softness. Forced colors replace both with `Highlight`. */
   :focus-visible {
     outline: 2px solid var(--focus-ring);
-    outline-offset: 3px;
+    outline-offset: 2px;
     border-radius: 6px;
+    box-shadow: 0 0 0 6px rgb(var(--kse-primary) / .16);
   }
 }
 
@@ -271,6 +275,15 @@ body { background: rgb(var(--kse-background)); }
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
+/* Small floating planes (tooltips, toasts): thick glass without `.kse-glass-*`'s `position:
+   relative` and reflection layer, which would fight the `absolute` a tooltip positions itself with. */
+.kse-float {
+  border: 1px solid var(--glass-edge);
+  background: var(--glass-thick-bg);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), var(--glass-rim), var(--depth-2);
+  -webkit-backdrop-filter: blur(var(--blur-regular)) saturate(160%);
+  backdrop-filter: blur(var(--blur-regular)) saturate(160%);
+}
 .kse-drawer-backdrop {
   background: var(--glass-drawer-bg);
   -webkit-backdrop-filter: blur(4px);
@@ -443,15 +456,23 @@ body { background: rgb(var(--kse-background)); }
   }
 }
 
+/* ═══ Density ═══
+   `data-density="compact"` (appearance.ts). Unlayered on purpose: it must beat the utility classes
+   the components carry (`py-2.5`, `h-9`). Every target stays at or above 24 px (WCAG 2.5.8). */
+:root[data-density="compact"] .kse-data-table :is(th, td) { padding-block: .3125rem; }
+:root[data-density="compact"] .kse-control.h-9,
+:root[data-density="compact"] .kse-input.h-9 { height: 2rem; }
+:root[data-density="compact"] .kse-sidebar nav a { padding-block: .3125rem; }
+
 /* ═══ Accessibility and capability fallbacks ═══ */
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .kse-sidebar, .kse-header, .kse-glass-thin, .kse-glass-regular, .kse-glass-thick {
+  .kse-sidebar, .kse-header, .kse-glass-thin, .kse-glass-regular, .kse-glass-thick, .kse-float {
     background: rgb(var(--kse-surface-container) / .98);
   }
 }
 @media (prefers-reduced-transparency: reduce) {
   .kse-sidebar, .kse-header, .kse-header-scrolled, .kse-glass-thin, .kse-glass-regular,
-  .kse-glass-thick, .glass-overlay, .confirm-overlay, .kse-drawer-backdrop {
+  .kse-glass-thick, .kse-float, .glass-overlay, .confirm-overlay, .kse-drawer-backdrop {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     background: rgb(var(--kse-surface-container) / .99);
@@ -465,7 +486,7 @@ body { background: rgb(var(--kse-background)); }
 }
 @media (forced-colors: active) {
   .kse-sidebar, .kse-header, .kse-surface,
-  .kse-glass-thin, .kse-glass-regular, .kse-glass-thick,
+  .kse-glass-thin, .kse-glass-regular, .kse-glass-thick, .kse-float,
   .kse-input, .kse-search-trigger, .nav-active, .kse-btn-prominent,
   .kse-data-table, .kse-chart-viewport, .kse-inset-panel,
   .kse-stat, .kse-empty-state-icon {
@@ -476,7 +497,7 @@ body { background: rgb(var(--kse-background)); }
   }
   .kse-glass-thin::before, .kse-glass-regular::before, .kse-glass-thick::before { display: none; }
   .kse-btn-prominent { background: ButtonFace; color: ButtonText; }
-  :focus-visible { outline: 2px solid Highlight; }
+  :focus-visible { outline: 2px solid Highlight; box-shadow: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *,

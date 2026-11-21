@@ -66,7 +66,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         {toasts.map(t => (
           <div
             key={t.id}
-            className="toast-in flex items-center gap-2.5 pl-3 pr-4 py-3 rounded-xl border border-outline-variant bg-surface-container-high shadow-2xl text-[13px] font-medium text-on-surface"
+            className="toast-in flex items-center gap-2.5 pl-3 pr-4 py-3 rounded-xl kse-float text-[13px] font-medium text-on-surface"
           >
             <span className={`material-symbols-outlined text-[18px] ${accents[t.type]}`}>{icons[t.type]}</span>
             {t.message}

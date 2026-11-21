@@ -116,7 +116,7 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
         {sections.map((section, i) => (
           <div key={section.group ?? `top-${i}`} className={i > 0 ? 'pt-3' : ''}>
             {section.group && !isCollapsed && (
-              <p className="px-3 pb-1.5 text-[11px] font-medium uppercase tracking-[0.05em] text-outline select-none">
+              <p className="px-3 pb-1.5 text-[12px] font-medium text-outline select-none">
                 {section.group}
               </p>
             )}

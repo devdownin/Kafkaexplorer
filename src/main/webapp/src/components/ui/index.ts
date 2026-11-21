@@ -35,6 +35,8 @@ export { Checkbox } from './Checkbox';
 export type { CheckboxProps } from './Checkbox';
 export { RadioCards } from './RadioCards';
 export type { RadioCardsProps, RadioCardOption } from './RadioCards';
+export { Segmented } from './Segmented';
+export type { SegmentedProps } from './Segmented';
 export { Switch } from './Switch';
 export type { SwitchProps } from './Switch';
 export { Combobox } from './Combobox';

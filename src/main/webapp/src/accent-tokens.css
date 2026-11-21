@@ -1,0 +1,123 @@
+/* Accent colours. Generated values, verified: light — primary vs white/page ≥ 4.5:1 and white-on-primary ≥ 4.5:1;
+   dark — primary vs card/page ≥ 4.5:1 and dark-on-primary ≥ 4.5:1; container text ≥ 4.5:1. Indigo is the default (spatial-tokens.css).
+   Selectors outrank the scheme blocks in spatial-tokens.css by one attribute. */
+:root[data-theme="light"][data-accent="blue"] {
+  --kse-primary: 0 102 204;
+  --kse-on-primary: 255 255 255;
+  --kse-primary-foreground: 255 255 255;
+  --kse-primary-container: 227 238 249;
+  --kse-on-primary-container: 0 66 133;
+  --kse-primary-dim: 0 87 173;
+  --kse-surface-tint: 0 102 204;
+  --focus-ring: #0066cc;
+  --viz-primary: #0066cc;
+  --viz-edge: #0066cc;
+}
+:root[data-accent="blue"]:not([data-theme="light"]), :root[data-theme="dark"][data-accent="blue"] {
+  --kse-primary: 110 176 255;
+  --kse-on-primary: 20 24 36;
+  --kse-primary-foreground: 20 24 36;
+  --kse-primary-container: 36 52 72;
+  --kse-on-primary-container: 175 212 255;
+  --kse-primary-dim: 96 153 222;
+  --kse-surface-tint: 110 176 255;
+  --focus-ring: #6eb0ff;
+  --viz-primary: #6eb0ff;
+  --viz-edge: #6eb0ff;
+}
+:root[data-theme="light"][data-accent="teal"] {
+  --kse-primary: 8 118 139;
+  --kse-on-primary: 255 255 255;
+  --kse-primary-foreground: 255 255 255;
+  --kse-primary-container: 228 240 242;
+  --kse-on-primary-container: 5 77 90;
+  --kse-primary-dim: 7 100 118;
+  --kse-surface-tint: 8 118 139;
+  --focus-ring: #08768b;
+  --viz-primary: #08768b;
+  --viz-edge: #08768b;
+}
+:root[data-accent="teal"]:not([data-theme="light"]), :root[data-theme="dark"][data-accent="teal"] {
+  --kse-primary: 86 200 232;
+  --kse-on-primary: 20 24 36;
+  --kse-primary-foreground: 20 24 36;
+  --kse-primary-container: 32 57 67;
+  --kse-on-primary-container: 162 225 242;
+  --kse-primary-dim: 75 174 202;
+  --kse-surface-tint: 86 200 232;
+  --focus-ring: #56c8e8;
+  --viz-primary: #56c8e8;
+  --viz-edge: #56c8e8;
+}
+:root[data-theme="light"][data-accent="pink"] {
+  --kse-primary: 176 34 95;
+  --kse-on-primary: 255 255 255;
+  --kse-primary-foreground: 255 255 255;
+  --kse-primary-container: 246 231 237;
+  --kse-on-primary-container: 114 22 62;
+  --kse-primary-dim: 150 29 81;
+  --kse-surface-tint: 176 34 95;
+  --focus-ring: #b0225f;
+  --viz-primary: #b0225f;
+  --viz-edge: #b0225f;
+}
+:root[data-accent="pink"]:not([data-theme="light"]), :root[data-theme="dark"][data-accent="pink"] {
+  --kse-primary: 255 140 184;
+  --kse-on-primary: 20 24 36;
+  --kse-primary-foreground: 20 24 36;
+  --kse-primary-container: 65 45 58;
+  --kse-on-primary-container: 255 192 216;
+  --kse-primary-dim: 222 122 160;
+  --kse-surface-tint: 255 140 184;
+  --focus-ring: #ff8cb8;
+  --viz-primary: #ff8cb8;
+  --viz-edge: #ff8cb8;
+}
+:root[data-theme="light"][data-accent="orange"] {
+  --kse-primary: 168 62 0;
+  --kse-on-primary: 255 255 255;
+  --kse-primary-foreground: 255 255 255;
+  --kse-primary-container: 245 234 227;
+  --kse-on-primary-container: 109 40 0;
+  --kse-primary-dim: 143 53 0;
+  --kse-surface-tint: 168 62 0;
+  --focus-ring: #a83e00;
+  --viz-primary: #a83e00;
+  --viz-edge: #a83e00;
+}
+:root[data-accent="orange"]:not([data-theme="light"]), :root[data-theme="dark"][data-accent="orange"] {
+  --kse-primary: 255 170 100;
+  --kse-on-primary: 20 24 36;
+  --kse-primary-foreground: 20 24 36;
+  --kse-primary-container: 65 51 41;
+  --kse-on-primary-container: 255 208 170;
+  --kse-primary-dim: 222 148 87;
+  --kse-surface-tint: 255 170 100;
+  --focus-ring: #ffaa64;
+  --viz-primary: #ffaa64;
+  --viz-edge: #ffaa64;
+}
+:root[data-theme="light"][data-accent="graphite"] {
+  --kse-primary: 60 72 88;
+  --kse-on-primary: 255 255 255;
+  --kse-primary-foreground: 255 255 255;
+  --kse-primary-container: 234 235 237;
+  --kse-on-primary-container: 39 47 57;
+  --kse-primary-dim: 51 61 75;
+  --kse-surface-tint: 60 72 88;
+  --focus-ring: #3c4858;
+  --viz-primary: #3c4858;
+  --viz-edge: #3c4858;
+}
+:root[data-accent="graphite"]:not([data-theme="light"]), :root[data-theme="dark"][data-accent="graphite"] {
+  --kse-primary: 200 208 220;
+  --kse-on-primary: 20 24 36;
+  --kse-primary-foreground: 20 24 36;
+  --kse-primary-container: 54 58 65;
+  --kse-on-primary-container: 225 229 236;
+  --kse-primary-dim: 174 181 191;
+  --kse-surface-tint: 200 208 220;
+  --focus-ring: #c8d0dc;
+  --viz-primary: #c8d0dc;
+  --viz-edge: #c8d0dc;
+}
