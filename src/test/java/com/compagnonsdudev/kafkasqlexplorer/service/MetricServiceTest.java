@@ -236,6 +236,31 @@ class MetricServiceTest {
         assertThrows(IllegalArgumentException.class, () -> service.save(topicless));
     }
 
+    /** A silent topic: the age of its newest record. An empty topic or a failed read is never an age of zero. */
+    @Test
+    void latestRecordAgeIsTheSilenceOfATopicAndNeverZeroForNothingRead() {
+        var silence = new MetricConfig("silence", "orders_silence", "GAUGE", null, "description",
+            null, null, null, null, null, List.of(), Map.of(), null, "KAFKA_CLUSTER_COUNT",
+            Map.of("measurement", "LATEST_RECORD_AGE", "topic", "orders"), "TEMPLATE_BOUNDED_SCAN", null, List.of());
+        long fiveMinutesAgo = System.currentTimeMillis() - 300_000L;
+        Mockito.when(kafkaAdminService.getLatestMessage("orders"))
+            .thenReturn(java.util.Optional.of(new com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage(
+                "orders", 0, 41L, fiveMinutesAgo, "k", "{}")));
+        var preview = service.previewMetric(silence);
+        assertNull(preview.error());
+        assertTrue(preview.value() >= 300_000.0 && preview.value() < 310_000.0, String.valueOf(preview.value()));
+
+        Mockito.when(kafkaAdminService.getLatestMessage("orders")).thenReturn(java.util.Optional.empty());
+        var empty = service.previewMetric(silence);
+        assertNull(empty.value());
+        assertTrue(empty.error().contains("no record"), empty.error());
+
+        Mockito.when(kafkaAdminService.getLatestMessage("orders")).thenThrow(new IllegalStateException("broker down"));
+        var failed = service.previewMetric(silence);
+        assertNull(failed.value());
+        assertTrue(failed.error().contains("broker down"), failed.error());
+    }
+
     @Test
     void kafkaDefaultsReportMetadataFailureInsteadOfZero() throws Exception {
         Mockito.when(flinkSqlService.listTables()).thenReturn(List.of());

@@ -74,6 +74,7 @@ public record MetricObservation(
             case "KAFKA_CLUSTER_COUNT" -> switch (String.valueOf(p.get("measurement"))) {
                 case "BROKER_COUNT" -> "brokers";
                 case "PRODUCED_OFFSETS" -> "messages";
+                case "LATEST_RECORD_AGE" -> "milliseconds";
                 default -> "topics";
             };
             case "TOPIC_COUNT_DELTA" -> switch (String.valueOf(p.getOrDefault("operation", "LEFT_MINUS_RIGHT"))

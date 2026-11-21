@@ -4,9 +4,10 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import type { FlowHit } from '../../pages/streamFlowLogic';
-import type { MetricConfig, MetricSuggestions, TopicConsumers } from '../../api/types';
+import type { MetricConfig, MetricLabelPreview, MetricSuggestions, TopicConsumers } from '../../api/types';
 import { chainFromHits } from '../../pages/flowChains';
-import { consumerLagDraft, flowMetricOptions, hopMetricOptions, metricName, neighboursOf, withStaticLabels,
+import { MAX_PAYLOAD_LABELS, consumerLagDraft, flowMetricOptions, hopMetricOptions, metricName, neighboursOf,
+  payloadLabelRisk, withPayloadLabels, withStaticLabels,
   type FlowMetricOption } from '../../pages/flowMetrics';
 import { extractApiErrorMessage } from '../../pages/queryError';
 import { Badge, Button, Checkbox, Select } from '../ui';
@@ -57,6 +58,22 @@ export const FlowMetricDrawer: React.FC<{
     return () => { live = false; };
   }, [topic, hop]);
 
+  // Payload labels are read from the latest record of one topic: the hop's source, or the topic itself.
+  const labelTopic = hop ? hop.from : topic;
+  const [preview, setPreview] = useState<MetricLabelPreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [payloadFields, setPayloadFields] = useState<string[]>([]);
+  useEffect(() => {
+    let live = true;
+    axios.get<MetricLabelPreview>(`/api/metrics/label-preview?topic=${encodeURIComponent(labelTopic)}`)
+      .then(res => { if (live) setPreview(res.data); })
+      .catch(e => { if (live) setPreviewError(extractApiErrorMessage(e)); });
+    return () => { live = false; };
+  }, [labelTopic]);
+  const fields = Object.entries(preview?.fields ?? {}).map(([field, value]) => ({ field, value, risk: payloadLabelRisk(field, value) }));
+  const togglePayload = (field: string) => setPayloadFields(p => p.includes(field) ? p.filter(f => f !== field)
+    : p.length >= MAX_PAYLOAD_LABELS ? p : [...p, field]);
+
   const chosenGroup = group ?? groups?.[0] ?? null;
   const options = useMemo(() => hop ? hopMetricOptions(hop.from, hop.to, chain ? suggestions : [], suggestionsError)
     : flowMetricOptions(neighbours, chain ? suggestions : [], suggestionsError, groups, groupsError)
@@ -74,7 +91,7 @@ export const FlowMetricDrawer: React.FC<{
     const done: typeof results = [];
     for (const o of chosen) {
       try {
-        const res = await axios.post<MetricConfig | ''>('/api/metrics', withStaticLabels(o.draft, labelsOf(o)));
+        const res = await axios.post<MetricConfig | ''>('/api/metrics', withPayloadLabels(withStaticLabels(o.draft, labelsOf(o)), labelTopic, payloadFields));
         const id = res.data ? res.data.id : null;
         if (id) void axios.post(`/api/metrics/${id}/refresh`).catch(() => undefined);
         done.push({ id: o.id, title: o.title, ok: true, text: `created as ${o.draft.name ?? metricName(o.title)}` });
@@ -146,6 +163,41 @@ export const FlowMetricDrawer: React.FC<{
           </li>
         ))}
       </ul>
+
+      <section className="px-4 py-2 border-t border-outline-variant/60 text-sm" aria-label="Labels from the payload">
+        <details>
+          <summary className="cursor-pointer text-xs font-medium">
+            Labels from the payload{payloadFields.length ? ` · ${payloadFields.length} chosen` : ''}
+          </summary>
+          <p className="text-[11px] text-outline mt-1">
+            The value each field has in the <em>latest</em> record of <span className="font-mono">{labelTopic}</span>, read at every
+            refresh and added to every metric created here. Pick stable categories (region, tenant, source system); at most {MAX_PAYLOAD_LABELS}.
+          </p>
+          {previewError ? <p className="text-[11px] text-[#f58c8c] mt-1">The latest record could not be read: {previewError}</p>
+            : !preview ? <p className="text-[11px] text-outline mt-1">Reading the latest record…</p>
+            : fields.length === 0 ? <p className="text-[11px] text-outline mt-1">No field to read in the latest record.</p>
+            : (
+              <ul className="mt-1 max-h-36 overflow-auto custom-scrollbar space-y-0.5">
+                {fields.map(f => {
+                  const on = payloadFields.includes(f.field);
+                  const full = !on && payloadFields.length >= MAX_PAYLOAD_LABELS;
+                  return (
+                    <li key={f.field}>
+                      <label className={`flex items-start gap-2 text-[11px] ${f.risk || full ? 'opacity-60' : ''}`}>
+                        <Checkbox checked={on} onChange={() => togglePayload(f.field)} disabled={!!f.risk || full}
+                          aria-label={`Label ${f.field}`} />
+                        <span className="min-w-0">
+                          <span className="font-mono">{f.field}</span>=<span className="font-mono text-outline break-all">{f.value}</span>
+                          {f.risk && <span className="block text-[#f5c264]">{f.risk}</span>}
+                        </span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+        </details>
+      </section>
 
       <footer className="px-4 py-3 border-t border-outline-variant/60 space-y-2">
         {results.length > 0 && (
