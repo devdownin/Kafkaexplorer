@@ -4,7 +4,8 @@
 import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
-import Editor, { useMonaco } from '@monaco-editor/react';
+import { useMonaco } from '@monaco-editor/react';
+import Editor from '../components/ThemedEditor';
 import '../monaco-setup';
 import { useToast } from '../components/Toast';
 import { useCatalog } from '../catalogStore';
