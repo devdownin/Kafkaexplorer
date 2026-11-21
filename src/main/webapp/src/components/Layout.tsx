@@ -59,6 +59,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   });
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.toggle('dark', theme === 'dark');
     try { localStorage.setItem('kse.theme', theme); } catch { /* Optional persistence. */ }
   }, [theme]);
 
