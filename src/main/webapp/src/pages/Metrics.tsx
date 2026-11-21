@@ -1386,13 +1386,13 @@ const Metrics: React.FC = () => {
                 <div key={ex.type} className={`flex flex-col border ${tm.border} ${tm.bg} rounded-xl p-4 gap-3`}>
                   <div className="flex items-center gap-2">
                     <span className={`material-symbols-outlined text-xl ${tm.color}`}>{tm.icon}</span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${tm.badge}`}>{ex.type}</span>
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase ${tm.badge}`}>{ex.type}</span>
                   </div>
                   <div>
                     <p className="font-bold text-on-surface text-sm">{ex.title}</p>
                     <p className="text-xs text-on-surface-variant mt-0.5 leading-relaxed">{ex.description}</p>
                   </div>
-                  <pre className="text-[10px] font-mono text-on-surface-variant bg-black/20 rounded-lg p-2 overflow-hidden line-clamp-4 whitespace-pre-wrap">
+                  <pre className="text-[11px] font-mono text-on-surface-variant bg-black/20 rounded-lg p-2 overflow-hidden line-clamp-4 whitespace-pre-wrap">
                     {ex.sql(firstTable)}
                   </pre>
                   <button
@@ -1479,7 +1479,7 @@ const Metrics: React.FC = () => {
                             setNameIsAuto(true);
                             setEditingMetric(m => ({ ...m, name: buildAutoName(m.type ?? 'GAUGE', selectedTopic) }));
                           }}
-                          className="flex items-center gap-0.5 min-h-6 px-1 text-[10px] text-outline hover:text-primary transition-colors uppercase tracking-wider"
+                          className="flex items-center gap-0.5 min-h-6 px-1 text-[11px] text-outline hover:text-primary transition-colors uppercase tracking-wider"
                         >
                           <span className="material-symbols-outlined text-[11px]">refresh</span>regenerate
                         </button>
@@ -1501,7 +1501,7 @@ const Metrics: React.FC = () => {
                         {nameValidation.map((m, i) => (
                           <p key={i}
                             role={m.level === 'error' ? 'alert' : undefined}
-                            className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
+                            className={`text-[11px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
                             <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
                             {m.text}
                           </p>
@@ -1587,7 +1587,7 @@ const Metrics: React.FC = () => {
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <span className="block text-[12px] font-medium text-on-surface-variant">Prometheus Labels</span>
-                        <p className="text-[10px] text-outline mt-1 leading-relaxed">
+                        <p className="text-[11px] text-outline mt-1 leading-relaxed">
                           Select fields from the latest message on this topic. Their current values will be exported as labels on each metric refresh.
                         </p>
                       </div>
@@ -1625,7 +1625,7 @@ const Metrics: React.FC = () => {
                       <p className="text-[11px] text-on-surface-variant">No recent message available on this topic.</p>
                     ) : (
                       <>
-                        <div className="flex items-center justify-between gap-2 text-[10px] text-outline">
+                        <div className="flex items-center justify-between gap-2 text-[11px] text-outline">
                           <span>Latest message at {formatPreviewTimestamp(labelPreview.timestamp)}</span>
                           <span>{selectedLabelFields.length} selected</span>
                         </div>
@@ -1648,7 +1648,7 @@ const Metrics: React.FC = () => {
                                   />
                                   <div className="min-w-0">
                                     <div className="font-mono text-[11px] text-on-surface break-all">{field}</div>
-                                    <div className="font-mono text-[10px] text-on-surface-variant break-all">{value || '""'}</div>
+                                    <div className="font-mono text-[11px] text-on-surface-variant break-all">{value || '""'}</div>
                                   </div>
                                 </label>
                               );
@@ -1661,8 +1661,8 @@ const Metrics: React.FC = () => {
                         )}
 
                         <div className="rounded-lg border border-outline-variant/60 bg-background-dark/40 p-2">
-                          <p className="text-[10px] uppercase font-bold tracking-wider text-on-surface-variant mb-2">Latest Message</p>
-                          <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all text-[10px] font-mono text-on-surface-variant">
+                          <p className="text-[11px] uppercase font-bold tracking-wider text-on-surface-variant mb-2">Latest Message</p>
+                          <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all text-[11px] font-mono text-on-surface-variant">
                             {labelPreview.message}
                           </pre>
                         </div>
@@ -1710,7 +1710,7 @@ const Metrics: React.FC = () => {
                       </Field>
                     </div>
                     {refreshCost && (
-                      <p className="text-[10px] text-on-surface-variant flex items-start gap-1 pt-0.5">
+                      <p className="text-[11px] text-on-surface-variant flex items-start gap-1 pt-0.5">
                         <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">bolt</span>
                         {refreshCost}
                       </p>
@@ -1720,7 +1720,7 @@ const Metrics: React.FC = () => {
                         {thresholdHints.map((m, i) => (
                           <p key={i}
                             role={m.level === 'error' ? 'alert' : undefined}
-                            className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
+                            className={`text-[11px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
                             <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
                             {m.text}
                           </p>
@@ -1732,11 +1732,11 @@ const Metrics: React.FC = () => {
                   {/* SQL templates (raw SQL mode only) */}
                   {!isTemplate && (
                   <div className="border-t border-outline-variant/60 pt-4">
-                    <p className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider mb-3">SQL Templates</p>
+                    <p className="text-[11px] uppercase font-bold text-on-surface-variant tracking-wider mb-3">SQL Templates</p>
                     <div className="space-y-3">
                       {sqlTemplates.map(group => (
                         <div key={group.group}>
-                          <p className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 ${group.color}`}>{group.group}</p>
+                          <p className={`text-[11px] font-bold uppercase tracking-wider mb-1.5 ${group.color}`}>{group.group}</p>
                           <div className="space-y-1">
                             {group.items.map(t => (
                               <button key={t.label} type="button"
@@ -1792,7 +1792,7 @@ const Metrics: React.FC = () => {
                     )}
 
                     {editorTab === 'ddl' && (
-                      <span className="ml-auto text-[10px] text-outline pr-1">
+                      <span className="ml-auto text-[11px] text-outline pr-1">
                         Executed before metric SQL — <code className="text-on-surface-variant">IF NOT EXISTS</code> is auto-added
                       </span>
                     )}
@@ -1891,7 +1891,7 @@ const Metrics: React.FC = () => {
                             <div className="flex flex-wrap gap-1.5 pt-0.5">
                               {previewChips.map(chip => (
                                 <span key={chip.label} title={chip.detail}
-                                  className={`px-2 py-0.5 rounded text-[10px] ${
+                                  className={`px-2 py-0.5 rounded text-[11px] ${
                                     chip.tone === 'warning' ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'
                                   }`}>
                                   {chip.label}

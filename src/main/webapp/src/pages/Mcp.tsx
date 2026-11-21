@@ -448,7 +448,7 @@ const ApprovalMint: FC<{ tool: string; clients: McpClientRow[] }> = ({ tool, cli
             ? "Pour n'importe quel appelant."
             : `Pour ${identityLabel(result.boundTo)} seulement.`}
         </p>
-        <code className="block break-all rounded bg-surface-container-high p-1 text-[10px]">
+        <code className="block break-all rounded bg-surface-container-high p-1 text-[11px]">
           {result.token}
         </code>
         <Button size="sm" variant="ghost" onClick={() => void copyText(result.token ?? '')}>

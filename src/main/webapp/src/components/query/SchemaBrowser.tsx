@@ -3,7 +3,7 @@
 
 // Composant de la page SQL Editor, sorti de `QueryWorkbench.tsx` — voir `ResultsGrid.tsx`.
 import React, { useMemo, useState } from 'react';
-import { Input, ScrollList, cn } from '../ui';
+import { Input, ListSkeleton, ScrollList, cn } from '../ui';
 import { toTableName } from '../../pages/sqlScope';
 import type { QueryInitResponse } from '../../api/types';
 
@@ -67,18 +67,18 @@ function Columns({ table, columns, registered, onDropTable }: {
   return (
     <div className="ml-6 pl-3 border-l border-primary/20 py-1 space-y-1">
       {entries.length === 0 ? (
-        <p className="text-[10px] text-outline py-0.5">
+        <p className="text-[11px] text-outline py-0.5">
           {registered ? 'No columns reported.' : 'Columns appear once the topic has been read — click its name.'}
         </p>
       ) : entries.map(([col, type]) => (
-        <div key={col} className="flex justify-between items-center text-[10px] py-0.5">
+        <div key={col} className="flex justify-between items-center text-[11px] py-0.5">
           <span className="text-on-surface-variant truncate pr-2 font-mono" title={col}>{col}</span>
           <span className="text-primary/60 font-mono uppercase shrink-0">{type}</span>
         </div>
       ))}
       {registered && (
         <button type="button" onClick={() => onDropTable(table)} aria-label={`Drop table ${table}`}
-          className="min-h-6 inline-flex items-center gap-1 text-[10px] text-outline hover:text-error rounded">
+          className="min-h-6 inline-flex items-center gap-1 text-[11px] text-outline hover:text-error rounded">
           <span aria-hidden="true" className="material-symbols-outlined text-[14px]">delete</span>Drop table
         </button>
       )}
@@ -229,7 +229,7 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
             <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
             <span className="material-symbols-outlined text-base text-on-surface-variant">bookmark</span>
             <span className="text-sm font-medium">Saved Queries</span>
-            <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{savedQueries.length}</span>
+            <span className="ml-auto text-[11px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{savedQueries.length}</span>
           </summary>
           <div className="pl-4 pt-2 space-y-1">
             {/* Save current query */}
@@ -274,7 +274,7 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
                     {/* `<span>` et non `<p>` : le contenu d'un bouton est du contenu de phrase,
                         et un paragraphe n'en est pas. */}
                     <span className="block text-xs text-on-surface truncate font-medium">{q.name}</span>
-                    <span className="block text-[10px] text-outline">{new Date(q.savedAt).toLocaleDateString()}</span>
+                    <span className="block text-[11px] text-outline">{new Date(q.savedAt).toLocaleDateString()}</span>
                   </button>
                   <button type="button" onClick={() => onDeleteSaved(q.id)}
                     className="opacity-0 group-hover/saved:opacity-100 text-outline hover:text-error transition-all shrink-0" title="Delete" aria-label="Delete this saved query">
@@ -295,20 +295,17 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
             <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
             <span className="material-symbols-outlined text-base text-on-surface-variant">topic</span>
             <span className="text-sm font-medium">Topics</span>
-            <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{shownTopics.length}</span>
+            <span className="ml-auto text-[11px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{shownTopics.length}</span>
           </summary>
           <div className="pl-4 pt-1 space-y-0.5">
             {schemaLoading ? (
-              <div className="flex items-center gap-2 py-3 px-2 text-on-surface-variant">
-                <span className="material-symbols-outlined text-sm animate-spin">refresh</span>
-                <span className="text-xs">Loading…</span>
-              </div>
+              <ListSkeleton label="Loading topics" rows={8} className="py-2 px-2" />
             ) : schema?.topics.length === 0 ? (
-              <p className="text-[10px] text-outline px-2 py-2">
+              <p className="text-[11px] text-outline px-2 py-2">
                 {schema.kafkaError ? 'Topics could not be listed — see above' : 'No topics with messages'}
               </p>
             ) : shownTopics.length === 0 ? (
-              <p className="text-[10px] text-outline px-2 py-2">No topic matches “{filter.trim()}”</p>
+              <p className="text-[11px] text-outline px-2 py-2">No topic matches “{filter.trim()}”</p>
             ) : (
               <ScrollList count={shownTopics.length} className="space-y-0.5">
                 {shownTopics.map(topic => {
@@ -340,7 +337,7 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
                 })}
               </ScrollList>
             )}
-            <p className="text-[10px] text-outline px-2 pt-1">Only topics with messages shown</p>
+            <p className="text-[11px] text-outline px-2 pt-1">Only topics with messages shown</p>
           </div>
         </details>
 
@@ -351,7 +348,7 @@ const SchemaBrowserView = React.forwardRef<HTMLElement, SchemaBrowserProps>(func
               <span className="material-symbols-outlined text-sm text-primary group-open:rotate-90 transition-transform">chevron_right</span>
               <span className="material-symbols-outlined text-base text-on-surface-variant">grid_view</span>
               <span className="text-sm font-medium">Other tables</span>
-              <span className="ml-auto text-[10px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{otherTables.length}</span>
+              <span className="ml-auto text-[11px] bg-surface-container-highest px-1.5 py-0.5 rounded-full text-on-surface-variant tabular-nums">{otherTables.length}</span>
             </summary>
             <ScrollList count={otherTables.length} className="pl-4 pt-1 space-y-0.5">
               {otherTables.map(table => (

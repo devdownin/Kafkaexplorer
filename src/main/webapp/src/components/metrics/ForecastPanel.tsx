@@ -390,7 +390,11 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   return <section ref={sectionRef} className="card p-5 space-y-4" aria-label="Metrics Forecast">
     <h2 className="text-lg font-semibold">Metrics Forecast</h2>
     {error && <p role="alert">{error}</p>}
-    {!status && !error && <p>Loading forecast status…</p>}
+    {/* The panel in its own shape — a status line, then the chart's height — rather than a sentence. */}
+    {!status && !error && <div role="status" aria-label="Loading forecast status" className="space-y-3">
+      <div aria-hidden="true" className="skeleton-shimmer h-4 w-2/5" />
+      <div aria-hidden="true" className="skeleton-shimmer h-[260px] w-full rounded-lg" />
+    </div>}
     {status && !status.enabled && <p>Forecast pilot disabled by configuration. Enable explorer.forecasting.pilot.enabled to use it.</p>}
     {(status?.enabled || !status && error) && !status?.series.length && <ForecastPreparation />}
     {status?.enabled && status.modelAvailable === false && <p role="note">No forecasting model is configured, so no forecast can be created. Enable explorer.forecasting.inference (TimesFM) to create one; Timestral only scores beside it.</p>}

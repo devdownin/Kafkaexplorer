@@ -66,12 +66,12 @@ const AnomalyFeed: React.FC<AnomalyFeedProps> = ({ anomalies }) => {
             {/* Content */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-0.5">
-                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${sc.bg} ${sc.text} border ${sc.border}`}>
+                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${sc.bg} ${sc.text} border ${sc.border}`}>
                   {sc.label}
                 </span>
                 <span className="text-xs font-mono text-on-surface-variant">{anomaly.topic}</span>
                 <span className="text-xs text-outline">{anomaly.type}</span>
-                <span className="ml-auto text-[10px] text-outline">
+                <span className="ml-auto text-[11px] text-outline">
                   {new Date(anomaly.detectedAt).toLocaleTimeString()}
                 </span>
               </div>

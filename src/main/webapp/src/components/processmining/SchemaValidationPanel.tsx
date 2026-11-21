@@ -79,7 +79,7 @@ const FIELD_LABELS: Record<FieldType, string> = {
 const confidenceBadge = (conf: number): React.ReactNode => {
   if (conf >= 0.9) {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-success/20 text-success">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-success/20 text-success">
         <span className="material-symbols-outlined text-xs">check_circle</span>
         {Math.round(conf * 100)}%
       </span>
@@ -87,14 +87,14 @@ const confidenceBadge = (conf: number): React.ReactNode => {
   }
   if (conf >= 0.7) {
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-warning/20 text-warning">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-warning/20 text-warning">
         <span className="material-symbols-outlined text-xs">warning</span>
         {Math.round(conf * 100)}%
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-error/20 text-error">
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-error/20 text-error">
       <span className="material-symbols-outlined text-xs">help</span>
       {Math.round(conf * 100)}%
     </span>
@@ -176,7 +176,7 @@ const SchemaValidationPanel: React.FC<SchemaValidationPanelProps> = ({
           {entry
             ? confidenceBadge(entry.confidence)
             : (
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-outline/10 text-on-surface-variant">
+              <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-outline/10 text-on-surface-variant">
                 NOT DETECTED
               </span>
             )}

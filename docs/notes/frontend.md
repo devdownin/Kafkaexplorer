@@ -892,3 +892,12 @@ actions are revealed by the card group's hover and focus-within variants behind 
 `[@media(hover:hover)]` guard, so they are always visible on touch, where nothing hovers; delete
 lives in `MoreActions` (closes on Escape, an outside click, or once chosen). The screenshot server
 answers `/api/compare/topics` now, so the docs capture of Compare shows pickers rather than an error.
+
+**Two sizes of secondary text, and loading in the shape of the content.** Secondary text is 11 or
+12 px; the 10 px step was removed (it sat one pixel under 11 for no distinction a reader could
+name), and 9 px is kept for the uppercase type badges only. The layout probe passed after the change:
+nothing scrolls sideways, no budget moved. A panel waiting for data renders `ListSkeleton` (or a block
+in its own final shape, as the forecast panel does with its 260 px chart) instead of a "Loading…"
+sentence: the sentence is replaced by content of another height, which pushes everything below it,
+and a skeleton of the right shape does not. The skeleton carries `role="status"` and a label; the
+shimmer itself is hidden from assistive technology.

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import axios from 'axios';
-import { Badge, Button, Checkbox, Field, Input, Select } from '../ui';
+import { Badge, Button, Checkbox, Field, Input, ListSkeleton, Select } from '../ui';
 import { CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 import type { ForecastApplied, ForecastCandidate, ForecastCandidates, ForecastDraft, ForecastDraftRequest, ForecastHistoryPreview } from '../../api/types';
 import { copyText } from '../../clipboard';
@@ -207,7 +207,7 @@ export function ForecastSetupWizard({ metricId: forMetric, initialError = '', so
   return <div className="card p-5 space-y-4" aria-label="Forecast configuration assistant">
     {done && <h4 className="font-semibold">{applied ? 'Forecast started' : 'Configuration ready'}</h4>}
     {error && <p role="alert" className="text-sm text-error">{error}</p>}
-    {!candidates && !error && <p className="text-sm text-on-surface-variant">Loading the metric…</p>}
+    {!candidates && !error && <ListSkeleton label="Loading the metric" rows={3} />}
     {candidates && !done && <>
       {selected && <p className="text-sm">Metric <span className="font-mono">{selected.name || selected.metricId}</span></p>}
       {selected && !selected.eligible && <div role="group" aria-label="What blocks this metric"

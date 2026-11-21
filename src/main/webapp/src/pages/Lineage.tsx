@@ -397,9 +397,9 @@ const Lineage: React.FC = () => {
           className="bg-background-dark/95 border border-primary/30 rounded-lg px-3 py-2 shadow-2xl text-xs max-w-[220px]"
         >
           <p className="font-mono font-bold text-on-surface break-all leading-snug">{tooltip.node.label}</p>
-          <p className="text-on-surface-variant uppercase text-[10px] mt-0.5">{tooltip.node.type}</p>
+          <p className="text-on-surface-variant uppercase text-[11px] mt-0.5">{tooltip.node.type}</p>
           {tooltip.node.type === 'topic' && tooltip.node.messageCount !== undefined && (
-            <p className="text-primary font-mono text-[10px] mt-0.5">
+            <p className="text-primary font-mono text-[11px] mt-0.5">
               {tooltip.node.messageCount.toLocaleString()} messages
             </p>
           )}
@@ -461,7 +461,7 @@ const Lineage: React.FC = () => {
                 <div key={type} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-surface-container-high">
                   <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: cfg.color, opacity: 0.8 }} />
                   <span className="text-on-surface text-xs">{TYPE_PLURAL[type]}</span>
-                  <span className="ml-auto text-[10px] bg-primary/10 px-1.5 py-0.5 rounded text-primary font-mono">{count}</span>
+                  <span className="ml-auto text-[11px] bg-primary/10 px-1.5 py-0.5 rounded text-primary font-mono">{count}</span>
                 </div>
               );
             })}
@@ -492,7 +492,7 @@ const Lineage: React.FC = () => {
 
         {/* Stats */}
         <div className="border-t border-outline-variant/60 pt-3 text-xs text-on-surface-variant space-y-1">
-          <p className="font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Stats</p>
+          <p className="font-bold text-on-surface-variant uppercase tracking-wider text-[11px]">Stats</p>
           <p>{data.nodes.length} nodes · {data.edges.length} edges</p>
           {selectedNode && (
             <p className="text-primary truncate">
@@ -502,7 +502,7 @@ const Lineage: React.FC = () => {
         </div>
 
         {/* Controls hint */}
-        <div className="mt-auto text-[10px] text-outline space-y-0.5 border-t border-outline-variant/60 pt-3">
+        <div className="mt-auto text-[11px] text-outline space-y-0.5 border-t border-outline-variant/60 pt-3">
           <p>Scroll to zoom</p>
           <p>Drag to pan</p>
           <p>Click node for details</p>
@@ -673,7 +673,7 @@ const Lineage: React.FC = () => {
           <div className="p-4 border-b border-outline-variant/60">
             <div className="flex items-center justify-between mb-2">
               <span
-                className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+                className="px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider"
                 style={{
                   backgroundColor: `${(nodeConfig[selectedNode.type] ?? nodeConfig.table).color}20`,
                   color: (nodeConfig[selectedNode.type] ?? nodeConfig.table).color,
@@ -692,7 +692,7 @@ const Lineage: React.FC = () => {
                 {selectedNode.messageCount.toLocaleString()} messages
               </p>
             )}
-            <p className="text-[10px] text-outline font-mono mt-0.5">ID: {selectedNode.id}</p>
+            <p className="text-[11px] text-outline font-mono mt-0.5">ID: {selectedNode.id}</p>
           </div>
 
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
@@ -700,7 +700,7 @@ const Lineage: React.FC = () => {
             {/* Writes to (outgoing) */}
             {outgoingEdges.length > 0 && (
               <section>
-                <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Writes to</h3>
+                <h3 className="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Writes to</h3>
                 <div className="space-y-1.5">
                   {outgoingEdges.map((e, i) => (
                     <button
@@ -725,7 +725,7 @@ const Lineage: React.FC = () => {
             {/* Reads from (incoming) */}
             {incomingEdges.length > 0 && (
               <section>
-                <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Reads from</h3>
+                <h3 className="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Reads from</h3>
                 <div className="space-y-1.5">
                   {incomingEdges.map((e, i) => (
                     <button

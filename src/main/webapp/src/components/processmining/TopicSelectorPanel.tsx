@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Checkbox, Combobox, Field, Input, NumberInput, Select } from '../ui';
+import { Checkbox, Combobox, Field, Input, ListSkeleton, NumberInput, Select } from '../ui';
 import { useToast } from '../Toast';
 import { addTopicEntries, describeTopicEntry } from '../../topicSelection';
 import { filterTopics } from '../../pages/dataModelGraph';
@@ -138,7 +138,7 @@ const TopicSelectorPanel: React.FC<TopicSelectorPanelProps> = ({ onStart, loadin
         </div>
         <div className="max-h-64 overflow-y-auto">
           {fetchingTopics ? (
-            <div className="p-4 text-on-surface-variant text-sm text-center">Loading topics...</div>
+            <ListSkeleton label="Loading topics" rows={6} className="p-4" />
           ) : filteredTopics.length === 0 ? (
             <div className="p-4 text-on-surface-variant text-sm text-center">No topics found</div>
           ) : (

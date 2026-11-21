@@ -176,7 +176,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
             aria-label="Search"
             className="flex-1 bg-transparent border-none outline-hidden text-[14px] text-on-surface placeholder:text-outline"
           />
-          <kbd className="text-[10px] text-outline border border-outline-variant rounded px-1.5 py-0.5">Esc</kbd>
+          <kbd className="text-[11px] text-outline border border-outline-variant rounded px-1.5 py-0.5">Esc</kbd>
         </div>
 
         {/* Résultats */}

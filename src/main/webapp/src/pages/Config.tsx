@@ -1381,7 +1381,7 @@ const Config: React.FC = () => {
               />
               <span>
                 <span className="block text-xs font-bold text-on-surface">Enrich audit with SpectraLLM RAG</span>
-                <span className="block text-[10px] text-on-surface-variant mt-0.5">
+                <span className="block text-[11px] text-on-surface-variant mt-0.5">
                   When enabled, the audit prompt is answered with hybrid retrieval over SpectraLLM's
                   ingested corpus. Leave off to ground the audit solely on the sampled Kafka messages.
                 </span>

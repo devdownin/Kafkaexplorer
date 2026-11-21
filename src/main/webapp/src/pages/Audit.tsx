@@ -619,7 +619,7 @@ const Audit: React.FC = () => {
                                 opened here — any mapping would be a guess.">
                                 <span
                                   tabIndex={0}
-                                  className="text-[10px] uppercase tracking-wider text-outline border border-outline-variant rounded px-1"
+                                  className="text-[11px] uppercase tracking-wider text-outline border border-outline-variant rounded px-1"
                                 >legacy</span>
                               </Tooltip>
                             )}

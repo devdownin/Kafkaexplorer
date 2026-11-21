@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Type scale and loading states.** Secondary text uses two sizes, 11 and 12 px: the 10 px step (184
+  uses in 26 files) is gone, read too small beside 11 px for no distinction anyone could name; 9 px is
+  left to the uppercase type badges. Panels that said "Loading…" in a sentence — the SQL editor's topic
+  list, the Process Mining topic picker, the forecast panel, its assistant, the metrics help — show a
+  skeleton in the shape of what is coming (`ListSkeleton`, announced once as a status).
 - **UI, third pass.** Lineage opens framed on its graph (at a readable scale, scrolling from its sources when
   wider) and names its node types in plain English ("Queries", not "Querys"). Compare's topic pickers are
   searchable fields with a border instead of borderless `<select>`s that read as a bare chevron, and a topic

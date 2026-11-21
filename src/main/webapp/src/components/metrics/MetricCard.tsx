@@ -289,12 +289,12 @@ const MetricCardView: React.FC<{
         <div className="flex items-center gap-3 mt-0.5 flex-wrap">
           {metric.description && <p title={metric.description} className="text-xs text-on-surface-variant truncate">{metric.description}</p>}
           {metric.warningThreshold !== null && (
-            <span className="flex items-center gap-0.5 text-[10px] text-warning font-mono shrink-0">
+            <span className="flex items-center gap-0.5 text-[11px] text-warning font-mono shrink-0">
               <span className="material-symbols-outlined text-[11px]">warning</span>{thresholdSign} {metric.warningThreshold.toLocaleString()}
             </span>
           )}
           {metric.criticalThreshold !== null && (
-            <span className="flex items-center gap-0.5 text-[10px] text-error font-mono shrink-0">
+            <span className="flex items-center gap-0.5 text-[11px] text-error font-mono shrink-0">
               <span className="material-symbols-outlined text-[11px]">emergency</span>{thresholdSign} {metric.criticalThreshold.toLocaleString()}
             </span>
           )}
@@ -304,7 +304,7 @@ const MetricCardView: React.FC<{
           // colonne ou quelle table pose problème, se lit dans l'infobulle — au survol comme au
           // focus, puisque c'est souvent la seule information exploitable.
           <InfoTooltip content={metric.errorMessage}>
-            <p tabIndex={0} className="text-[10px] text-error mt-1 line-clamp-2 rounded">
+            <p tabIndex={0} className="text-[11px] text-error mt-1 line-clamp-2 rounded">
               <span className="material-symbols-outlined text-[11px] align-middle">error</span>{' '}{describeQueryError(metric.errorMessage).title}
             </p>
           </InfoTooltip>
@@ -382,7 +382,7 @@ const MetricCardView: React.FC<{
                       if (!active || !point) return null;
                       const value = point.kind === 'forecast' ? point.predicted : point.v;
                       return typeof value === 'number' ? (
-                        <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[10px] font-mono"
+                        <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[11px] font-mono"
                           style={{ color: point.kind === 'forecast' ? FORECAST_COLORS.forecast : strokeColor }}>
                           <div>{point.kind === 'forecast' ? 'Forecast' : 'Observed'}: {value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
                           {point.at && <div className="text-on-surface-variant">{new Date(point.at).toLocaleString()}</div>}
@@ -396,7 +396,7 @@ const MetricCardView: React.FC<{
                 </ComposedChart>
               </ResponsiveContainer>
               {/* Beside the chart rather than over it: drawn in a corner they covered the forecast. */}
-              {offScale.length > 0 && <div className="flex flex-wrap gap-x-3 px-3 pt-1 text-[10px] font-mono" aria-label="Thresholds off the chart scale">
+              {offScale.length > 0 && <div className="flex flex-wrap gap-x-3 px-3 pt-1 text-[11px] font-mono" aria-label="Thresholds off the chart scale">
                 {offScale.map(t => <span key={t.label} style={{ color: t.color }}>{t.up ? '↑' : '↓'} {t.label} {t.value.toLocaleString()} <span className="text-outline">off scale</span></span>)}
               </div>}
               {reach && forecastSeries && <div role="status" aria-label="Forecast threshold"
@@ -421,7 +421,7 @@ const MetricCardView: React.FC<{
                   </TopicLink>)}
                 </span>
               </div>}
-              {forecastPoints.length > 0 && <div className="flex items-center gap-3 px-3 pt-1.5 text-[10px] font-mono whitespace-nowrap" aria-label="Metric chart legend">
+              {forecastPoints.length > 0 && <div className="flex items-center gap-3 px-3 pt-1.5 text-[11px] font-mono whitespace-nowrap" aria-label="Metric chart legend">
                 <span className="text-on-surface-variant flex items-center gap-1"><span className="w-3.5 h-0.5 rounded-full" style={{ background: strokeColor }} />Observed{timed && counterRate ? ' (/s)' : ''}</span>
                 <span className="flex items-center gap-1" style={{ color: FORECAST_COLORS.forecast }}>
                   <svg width="14" height="4" aria-hidden="true"><line x1="0" y1="2" x2="14" y2="2" stroke={FORECAST_COLORS.forecast} strokeWidth="2" strokeDasharray="4 2" /></svg>
@@ -437,7 +437,7 @@ const MetricCardView: React.FC<{
                   </button>
                 </InfoTooltip>
               </div>}
-              <div className="flex items-center justify-between px-3 py-1.5 border-t border-primary/5 text-[10px] font-mono">
+              <div className="flex items-center justify-between px-3 py-1.5 border-t border-primary/5 text-[11px] font-mono">
                 <span className="text-outline">min <span className="text-on-surface-variant">{minV.toLocaleString(undefined, { maximumFractionDigits: 1 })}</span></span>
                 <span className="text-outline">{timed && forecastSeries
                   ? `${about(observedCount, forecastSeries.stepMillis)} + ${about(forecastPoints.length, forecastSeries.stepMillis)} ahead`
@@ -455,7 +455,7 @@ const MetricCardView: React.FC<{
                 <div key={i} className="w-1 bg-primary rounded-sm" style={{ height: `${height}%` }} />
               ))}
             </div>
-            <span className="text-[10px] text-outline uppercase tracking-wider">Waiting for data…</span>
+            <span className="text-[11px] text-outline uppercase tracking-wider">Waiting for data…</span>
           </div>
         )}
       </div>
@@ -480,7 +480,7 @@ const MetricCardView: React.FC<{
                 <Tooltip cursor={{ stroke: '#8f93a3', strokeWidth: 1, strokeOpacity: 0.3 }}
                   content={({ active, payload }) =>
                     active && payload?.length ? (
-                      <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[10px] font-mono space-y-0.5">
+                      <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[11px] font-mono space-y-0.5">
                         {payload.map(entry => {
                           const s = series.find(x => x.key === entry.dataKey);
                           return s && typeof entry.value === 'number' ? (
@@ -493,7 +493,7 @@ const MetricCardView: React.FC<{
                 />
               </LineChart>
             </ResponsiveContainer>
-            <div className="flex items-center gap-3 px-3 py-1.5 border-t border-primary/5 text-[10px] font-mono">
+            <div className="flex items-center gap-3 px-3 py-1.5 border-t border-primary/5 text-[11px] font-mono">
               {series.map(s => (
                 <span key={s.key} className="flex items-center gap-1 text-outline">
                   <span aria-hidden="true" className="w-2 h-0.5 rounded-full" style={{ background: s.color }} />
@@ -519,7 +519,7 @@ const MetricCardView: React.FC<{
             <span
               key={chip.label}
               title={chip.detail}
-              className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+              className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${
                 chip.tone === 'warning'
                   ? 'text-warning border-warning/30 bg-warning/5'
                   : 'text-on-surface-variant border-outline-variant/60'
@@ -541,7 +541,7 @@ const MetricCardView: React.FC<{
         <span className="material-symbols-outlined text-primary/40 text-base shrink-0 mt-0.5">code</span>
         <pre
           title={sqlText ? sqlText.replace(/\s+/g, ' ') : describeTemplate(metric)}
-          className="flex-1 text-[10px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden"
+          className="flex-1 text-[11px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden"
         >
           {sqlText
             ? sqlText.replace(/\s+/g, ' ')
@@ -564,7 +564,7 @@ const MetricCardView: React.FC<{
       <div className="border-t border-outline-variant/60 px-4 py-2 flex items-center justify-between gap-2">
         {alert.unavailable ? (
           <InfoTooltip content={alert.unavailable}>
-            <span tabIndex={0} className="text-[10px] text-outline flex items-center gap-1 rounded min-w-0">
+            <span tabIndex={0} className="text-[11px] text-outline flex items-center gap-1 rounded min-w-0">
               <span className="material-symbols-outlined text-[11px] shrink-0">notifications_off</span>
               <span className="truncate">No alert rule from this card</span>
             </span>
@@ -572,7 +572,7 @@ const MetricCardView: React.FC<{
         ) : (
           <>
             <InfoTooltip content={alert.rules.map(r => `${r.title} — ${r.note}`).join('\n\n')}>
-              <span tabIndex={0} className="text-[10px] text-on-surface-variant flex items-center gap-1 rounded min-w-0">
+              <span tabIndex={0} className="text-[11px] text-on-surface-variant flex items-center gap-1 rounded min-w-0">
                 <span className="material-symbols-outlined text-[11px] shrink-0">notifications_active</span>
                 <span className="truncate font-mono">{alert.rules[0].promql.split('\n')[0]}</span>
               </span>
@@ -659,10 +659,10 @@ const MetricCardView: React.FC<{
             </InfoTooltip>
           );
         })()}
-        {forecastCreating && <p className="text-[10px] text-on-surface-variant mt-1" role="status">
+        {forecastCreating && <p className="text-[11px] text-on-surface-variant mt-1" role="status">
           Reading this metric’s history and starting its forecast…</p>}
         {forecastUnavailableReason && (
-          <p className="text-[10px] text-on-surface-variant mt-1" role="note">{forecastUnavailableReason}</p>
+          <p className="text-[11px] text-on-surface-variant mt-1" role="note">{forecastUnavailableReason}</p>
         )}
       </div>}
       {/* What the last refresh cost: said on the card when it slows the whole loop down, since the
@@ -670,17 +670,17 @@ const MetricCardView: React.FC<{
       {(() => {
         const note = refreshCostNote(refreshDurationMs, refreshTickMs);
         return note?.slow ? <p role="note" aria-label="Refresh cost"
-          className="px-4 py-1.5 text-[10px] text-warning border-t border-outline-variant/60 flex items-start gap-1">
+          className="px-4 py-1.5 text-[11px] text-warning border-t border-outline-variant/60 flex items-start gap-1">
           <span className="material-symbols-outlined text-[12px]" aria-hidden="true">hourglass_top</span>{note.text}</p> : null;
       })()}
       {/* Footer */}
       <div className="px-4 py-1.5 flex items-center justify-between border-t border-primary/5">
-        <span className="text-[10px] text-outline flex items-center gap-1"
+        <span className="text-[11px] text-outline flex items-center gap-1"
           title={refreshCostNote(refreshDurationMs, refreshTickMs)?.text}>
           <span className="material-symbols-outlined text-[11px]">schedule</span>
           <RelativeTime at={metric.lastUpdateTime} />
         </span>
-        <span className={`text-[10px] font-bold ${st.text}`}>{st.label}</span>
+        <span className={`text-[11px] font-bold ${st.text}`}>{st.label}</span>
       </div>
     </div>
   );

@@ -4,7 +4,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { Button, Badge } from '../components/ui';
+import { Button, Badge, ListSkeleton } from '../components/ui';
 import {
   summarizeMetrics, describeAge, describeHealth, healthTone, type MetricStatusInput,
 } from './metricsHealth';
@@ -95,7 +95,7 @@ const MetricsHelp: React.FC = () => {
           <div className="flex items-baseline justify-between gap-2 mb-1">
             <h3 className="text-xs font-bold text-primary/60 tracking-[0.2em] uppercase">Your metrics, right now</h3>
           </div>
-          <p className="text-[10px] text-on-surface-variant mb-6">
+          <p className="text-[11px] text-on-surface-variant mb-6">
             Read from <code className="font-mono">/api/metrics</code> when this page opened
             {refreshedAt && <> · last refresh {refreshedAt}</>}
           </p>
@@ -105,14 +105,12 @@ const MetricsHelp: React.FC = () => {
               Could not read the metric list. The numbers are unknown — which is why none are shown.
             </div>
           ) : metrics === null ? (
-            <div className="p-4 bg-surface-container border-l-2 border-outline-variant text-[11px] text-on-surface-variant">
-              Loading…
-            </div>
+            <ListSkeleton label="Loading the metric list" rows={4} className="p-4" />
           ) : (
             <div className="space-y-6 flex-1">
               <div className="p-4 bg-surface-container border-l-2 border-primary/50">
                 <div className="flex justify-between items-start mb-2">
-                  <span className="text-[10px] font-bold text-primary uppercase tracking-widest">Configured</span>
+                  <span className="text-[11px] font-bold text-primary uppercase tracking-widest">Configured</span>
                   <span className="material-symbols-outlined text-[18px] text-primary">functions</span>
                 </div>
                 <p className="text-[24px] font-bold text-on-surface leading-none mb-2 tabular-nums">{health.total}</p>
@@ -121,20 +119,20 @@ const MetricsHelp: React.FC = () => {
 
               <div className={`p-4 bg-surface-container border-l-2 ${health.reporting > 0 ? 'border-success/50' : 'border-outline-variant'}`}>
                 <div className="flex justify-between items-start mb-2">
-                  <span className="text-[10px] font-bold text-success uppercase tracking-widest">Reporting a value</span>
+                  <span className="text-[11px] font-bold text-success uppercase tracking-widest">Reporting a value</span>
                   <span className="material-symbols-outlined text-[18px] text-success">check_circle</span>
                 </div>
                 <p className="text-[24px] font-bold text-on-surface leading-none mb-1 tabular-nums">{health.reporting}</p>
-                <p className="text-[10px] text-on-surface-variant">Produced a value on their last run, with no error.</p>
+                <p className="text-[11px] text-on-surface-variant">Produced a value on their last run, with no error.</p>
               </div>
 
               <div className={`p-4 bg-surface-container border-l-2 ${health.failing > 0 ? 'border-error/50' : 'border-outline-variant'}`}>
                 <div className="flex justify-between items-start mb-2">
-                  <span className="text-[10px] font-bold text-error uppercase tracking-widest">Failing</span>
+                  <span className="text-[11px] font-bold text-error uppercase tracking-widest">Failing</span>
                   <span className="material-symbols-outlined text-[18px] text-error">error</span>
                 </div>
                 <p className="text-[24px] font-bold text-on-surface leading-none mb-1 tabular-nums">{health.failing}</p>
-                <p className="text-[10px] text-on-surface-variant">
+                <p className="text-[11px] text-on-surface-variant">
                   Their last run returned an error. A stale value may still be exposed — open Metrics to read the reason.
                 </p>
               </div>
@@ -142,11 +140,11 @@ const MetricsHelp: React.FC = () => {
               {health.pending > 0 && (
                 <div className="p-4 bg-surface-container border-l-2 border-warning/50">
                   <div className="flex justify-between items-start mb-2">
-                    <span className="text-[10px] font-bold text-warning uppercase tracking-widest">No value yet</span>
+                    <span className="text-[11px] font-bold text-warning uppercase tracking-widest">No value yet</span>
                     <span className="material-symbols-outlined text-[18px] text-warning">pending</span>
                   </div>
                   <p className="text-[24px] font-bold text-on-surface leading-none mb-1 tabular-nums">{health.pending}</p>
-                  <p className="text-[10px] text-on-surface-variant">
+                  <p className="text-[11px] text-on-surface-variant">
                     Configured but never evaluated successfully — most often a missing{' '}
                     <code className="font-mono">AS metric_value</code> alias.
                   </p>
@@ -168,7 +166,7 @@ const MetricsHelp: React.FC = () => {
             <h2 className="text-xl font-bold text-primary flex items-center gap-3">
               <span className="material-symbols-outlined">dashboard_customize</span> 03. Configuration Templates
             </h2>
-            <span className="text-[10px] font-mono bg-primary/20 text-primary px-3 py-1 rounded-full uppercase">3 templates</span>
+            <span className="text-[11px] font-mono bg-primary/20 text-primary px-3 py-1 rounded-full uppercase">3 templates</span>
           </div>
           <div className="grid md:grid-cols-2 gap-8">
             <div className="space-y-4">
@@ -192,17 +190,17 @@ const MetricsHelp: React.FC = () => {
             <div className="space-y-6">
               <div className="p-4 bg-surface-container rounded-xl border border-outline-variant">
                 <h4 className="text-[11px] font-bold text-primary tracking-widest uppercase mb-1">TOPIC_COUNT_DELTA</h4>
-                <p className="text-[10px] text-on-surface-variant">Compares throughput between two topics to detect message loss.</p>
+                <p className="text-[11px] text-on-surface-variant">Compares throughput between two topics to detect message loss.</p>
               </div>
               <div className="p-4 bg-surface-container rounded-xl border border-outline-variant">
                 <h4 className="text-[11px] font-bold text-primary tracking-widest uppercase mb-1">TOPIC_TRANSIT_LATENCY</h4>
-                <p className="text-[10px] text-on-surface-variant">Measures the delay (ms) between ingestion on Topic A and output on Topic B.</p>
+                <p className="text-[11px] text-on-surface-variant">Measures the delay (ms) between ingestion on Topic A and output on Topic B.</p>
               </div>
               {/* Le seul gabarit sans SQL : ni la position (dans __consumer_offsets) ni l'âge
                   (l'horodatage d'un record) ne sont dans un payload. */}
               <div className="p-4 bg-surface-container rounded-xl border border-outline-variant">
                 <h4 className="text-[11px] font-bold text-primary tracking-widest uppercase mb-1">CONSUMER_TIME_LAG</h4>
-                <p className="text-[10px] text-on-surface-variant">
+                <p className="text-[11px] text-on-surface-variant">
                   A consumer group&rsquo;s backlog in <strong>time</strong> (ms), not in records: the age of the oldest
                   message it has not read. Runs no SQL — committed offsets and record timestamps. A partition that
                   could not be read is reported as unknown, never as zero.
@@ -221,12 +219,12 @@ const MetricsHelp: React.FC = () => {
             <div className="bg-surface-container/50 p-6 rounded-xl border border-outline-variant hover:border-primary/40 transition-all">
               <h4 className="text-primary font-bold text-lg tracking-tight mb-2">GAUGE</h4>
               <p className="text-[11px] text-on-surface-variant leading-relaxed mb-4">Point-in-time value that can go up or down (stock levels, queues).</p>
-              <span className="px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded-xl">UP / DOWN</span>
+              <span className="px-2 py-0.5 bg-primary/10 text-primary text-[11px] font-bold rounded-xl">UP / DOWN</span>
             </div>
             <div className="bg-surface-container/50 p-6 rounded-xl border border-outline-variant hover:border-primary/40 transition-all">
               <h4 className="text-success font-bold text-lg tracking-tight mb-2">COUNTER</h4>
               <p className="text-[11px] text-on-surface-variant leading-relaxed mb-4">Monotonic cumulative value. Resets to zero on restart.</p>
-              <span className="px-2 py-0.5 bg-success/10 text-success text-[10px] font-bold rounded-xl">INCREMENT ONLY</span>
+              <span className="px-2 py-0.5 bg-success/10 text-success text-[11px] font-bold rounded-xl">INCREMENT ONLY</span>
             </div>
             {/* HISTOGRAM, pas TIMER : la page annonçait un quatrième type que le backend n'a jamais
                 eu, et taisait celui qu'il a. */}
@@ -235,14 +233,14 @@ const MetricsHelp: React.FC = () => {
               <p className="text-[11px] text-on-surface-variant leading-relaxed mb-4">
                 Distribution summary with Prometheus-side buckets — aggregate quantiles across instances in PromQL.
               </p>
-              <span className="px-2 py-0.5 bg-primary/10 text-primary text-[10px] font-bold rounded-xl">BUCKETS</span>
+              <span className="px-2 py-0.5 bg-primary/10 text-primary text-[11px] font-bold rounded-xl">BUCKETS</span>
             </div>
             <div className="bg-surface-container/50 p-6 rounded-xl border border-outline-variant hover:border-primary/40 transition-all">
               <h4 className="text-on-primary-container font-bold text-lg tracking-tight mb-2">SUMMARY</h4>
               <p className="text-[11px] text-on-surface-variant leading-relaxed mb-4">
                 Client-side quantiles (p50/p75/p90/p95/p99), computed in the app and exposed ready-made.
               </p>
-              <span className="px-2 py-0.5 bg-primary-container text-on-primary-container text-[10px] font-bold rounded-xl">QUANTILES</span>
+              <span className="px-2 py-0.5 bg-primary-container text-on-primary-container text-[11px] font-bold rounded-xl">QUANTILES</span>
             </div>
           </div>
         </section>
@@ -299,7 +297,7 @@ const MetricsHelp: React.FC = () => {
                 HTTP alongside the UI. Put it behind your own reverse proxy or network policy before exposing it —
                 nothing here does it for you.
               </p>
-              <p className="text-[10px] text-on-surface-variant font-mono leading-relaxed">
+              <p className="text-[11px] text-on-surface-variant font-mono leading-relaxed">
                 explorer_metric_gauge{'{'}metric_name=&quot;orders_failed&quot;{'}'}
               </p>
             </div>
@@ -348,7 +346,7 @@ const MetricsHelp: React.FC = () => {
         <section className="lg:col-span-12 p-8 bg-surface-container border border-primary/20 rounded-xl">
           <div className="text-center mb-12">
             <h2 className="text-2xl font-black text-on-surface mb-2">Deployment Guide</h2>
-            <p className="text-primary text-[10px] font-bold uppercase tracking-[0.3em]">Quick-Start Integration Guide</p>
+            <p className="text-primary text-[11px] font-bold uppercase tracking-[0.3em]">Quick-Start Integration Guide</p>
           </div>
           <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
             <div className="flex flex-col items-center text-center max-w-[200px] relative">
@@ -356,7 +354,7 @@ const MetricsHelp: React.FC = () => {
               {/* Le chemin annoncé — « Monitoring menu > Kafka Metrics » — n'existe nulle part : le
                   groupe de navigation est « Observe », l'écran « Metrics », le bouton « Add metric ». */}
               <h5 className="text-[12px] font-bold uppercase mb-1">Access & Add</h5>
-              <p className="text-[10px] text-on-surface-variant leading-tight">
+              <p className="text-[11px] text-on-surface-variant leading-tight">
                 Sidebar &gt; Observe &gt; Metrics, then &ldquo;Add metric&rdquo; — or start from a card under
                 &ldquo;Suggested for this cluster&rdquo;.
               </p>
@@ -365,19 +363,19 @@ const MetricsHelp: React.FC = () => {
             <div className="flex flex-col items-center text-center max-w-[200px] relative">
               <div className="w-12 h-12 rounded-full bg-surface-container-high border-2 border-primary flex items-center justify-center text-primary font-bold mb-4">2</div>
               <h5 className="text-[12px] font-bold uppercase mb-1">Template & SQL</h5>
-              <p className="text-[10px] text-on-surface-variant leading-tight">Choose RAW_SQL and write your aggregation query.</p>
+              <p className="text-[11px] text-on-surface-variant leading-tight">Choose RAW_SQL and write your aggregation query.</p>
               <div className="hidden lg:block absolute -right-full top-6 w-full border-t-2 border-dashed border-primary/20"></div>
             </div>
             <div className="flex flex-col items-center text-center max-w-[200px] relative">
               <div className="w-12 h-12 rounded-full bg-surface-container-high border-2 border-primary flex items-center justify-center text-primary font-bold mb-4">3</div>
               <h5 className="text-[12px] font-bold uppercase mb-1">Test & Alerts</h5>
-              <p className="text-[10px] text-on-surface-variant leading-tight">Check the instant results and set the SLA thresholds.</p>
+              <p className="text-[11px] text-on-surface-variant leading-tight">Check the instant results and set the SLA thresholds.</p>
               <div className="hidden lg:block absolute -right-full top-6 w-full border-t-2 border-dashed border-primary/20"></div>
             </div>
             <div className="flex flex-col items-center text-center max-w-[200px]">
               <div className="w-12 h-12 rounded-full bg-surface-container-high border-2 border-primary flex items-center justify-center text-primary font-bold mb-4">4</div>
               <h5 className="text-[12px] font-bold uppercase mb-1">Save</h5>
-              <p className="text-[10px] text-on-surface-variant leading-tight">Expose the metric on the global Prometheus endpoint.</p>
+              <p className="text-[11px] text-on-surface-variant leading-tight">Expose the metric on the global Prometheus endpoint.</p>
             </div>
           </div>
         </section>

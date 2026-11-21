@@ -88,7 +88,7 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
         >
           <span aria-hidden="true" className="material-symbols-outlined text-[17px]">search</span>
           <span className="hidden sm:inline text-[13px] w-24 md:w-40 text-left text-outline">Search…</span>
-          <kbd className="hidden sm:inline text-[10px] text-outline border border-outline-variant rounded px-1 py-0.5">⌘K</kbd>
+          <kbd className="hidden sm:inline text-[11px] text-outline border border-outline-variant rounded px-1 py-0.5">⌘K</kbd>
         </button>
 
         <button

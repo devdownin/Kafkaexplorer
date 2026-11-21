@@ -80,7 +80,7 @@ export function RadioCards<T extends string>({
               >
                 <span className="block text-xs font-bold">{option.label}</span>
                 {option.description && (
-                  <span className="block text-[10px] text-on-surface-variant mt-0.5">
+                  <span className="block text-[11px] text-on-surface-variant mt-0.5">
                     {option.description}
                   </span>
                 )}

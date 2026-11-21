@@ -87,3 +87,22 @@ export const CardSkeleton: FC<{ className?: string; lines?: number }> = ({ class
 );
 
 export default Skeleton;
+
+export interface ListSkeletonProps {
+  /** What is loading, for a screen reader: the shimmer itself is hidden from it. */
+  label: string;
+  rows?: number;
+  className?: string;
+}
+
+/**
+ * A list, a block of text or a panel in loading, in the shape it will take — in place of a
+ * "Loading…" sentence that the content then pushes down. Announced once as a status.
+ */
+export const ListSkeleton: FC<ListSkeletonProps> = ({ label, rows = 5, className }) => (
+  <div role="status" aria-label={label} className={cn('space-y-2', className)}>
+    {Array.from({ length: rows }).map((_, i) => (
+      <div key={i} aria-hidden="true" className={cn('skeleton-shimmer h-4', i % 3 === 2 ? 'w-3/5' : i % 3 === 1 ? 'w-4/5' : 'w-full')} />
+    ))}
+  </div>
+);

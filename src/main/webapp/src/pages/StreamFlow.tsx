@@ -640,7 +640,7 @@ const StreamFlow: React.FC = () => {
             <span aria-hidden="true" className="material-symbols-outlined text-[20px]">chevron_right</span>
           </button>
           <span
-            className="text-[10px] font-semibold uppercase tracking-widest text-outline whitespace-nowrap"
+            className="text-[11px] font-semibold uppercase tracking-widest text-outline whitespace-nowrap"
             style={{ writingMode: 'vertical-rl' }}
           >
             Criteria
@@ -700,7 +700,7 @@ const StreamFlow: React.FC = () => {
                   className="w-full text-left px-1.5 py-1 rounded hover:bg-surface-container-high"
                 >
                   <span className="block font-mono text-[11px] text-on-surface truncate">{entry.messageKey}</span>
-                  <span className="block text-[10px] text-outline">
+                  <span className="block text-[11px] text-outline">
                     {entry.searchPath ? `${entry.searchPath} · ` : ''}
                     {entry.topicsFound} topic{entry.topicsFound === 1 ? '' : 's'} · {formatRelativeTime(entry.ranAt)}
                   </span>
@@ -783,7 +783,7 @@ const StreamFlow: React.FC = () => {
                 ))}
               </ul>
             )}
-            <p className="text-[10px] text-on-surface-variant">
+            <p className="text-[11px] text-on-surface-variant">
               {selectedTopics.length === 0
                 ? 'None selected — the whole cluster is scanned, one consumer per topic. Naming the topics is much faster: paste a list, or use a pattern like orders.*'
                 : `${selectedTopics.length} topic(s) will be scanned.`}
@@ -804,7 +804,7 @@ const StreamFlow: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setSelectedTopics([])}
-                className="text-[10px] text-outline hover:text-error"
+                className="text-[11px] text-outline hover:text-error"
               >
                 Clear all
               </button>
@@ -1032,7 +1032,7 @@ const StreamFlow: React.FC = () => {
                               <span className="block font-mono text-[11px] text-on-surface truncate">
                                 {entry.messageKey}
                               </span>
-                              <span className="block text-[10px] text-outline">
+                              <span className="block text-[11px] text-outline">
                                 {entry.searchPath ? `${entry.searchPath} · ` : ''}
                                 {entry.topicsFound} topic{entry.topicsFound === 1 ? '' : 's'} · {formatRelativeTime(entry.ranAt)}
                               </span>
@@ -1088,7 +1088,7 @@ const StreamFlow: React.FC = () => {
 
           {/* Légende — l'ambre et le rouge tiraient l'œil sans jamais dire ce qu'ils marquaient. */}
           {hasResult && nodes.length > 0 && (graphLegend || missingInB.size > 0) && (
-            <div className="absolute bottom-6 left-20 z-10 flex flex-col gap-1 rounded-lg border border-outline-variant bg-surface-container/90 px-3 py-2 text-[10px] text-on-surface-variant">
+            <div className="absolute bottom-6 left-20 z-10 flex flex-col gap-1 rounded-lg border border-outline-variant bg-surface-container/90 px-3 py-2 text-[11px] text-on-surface-variant">
               {missingInB.size > 0 && (
                 <span className="flex items-center gap-1.5">
                   <span aria-hidden="true" className="inline-block h-3 w-5 rounded border border-dashed" style={{ borderColor: '#ffd479' }} />

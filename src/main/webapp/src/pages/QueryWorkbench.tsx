@@ -1920,7 +1920,7 @@ const QueryWorkbench: React.FC = () => {
                 aria-expanded={showHistory} aria-haspopup="dialog"
                 className="inline-flex items-center gap-1.5 h-9 px-3 text-on-surface-variant hover:text-on-surface border border-outline-variant rounded-md hover:bg-surface-container-high transition-colors" title="Query history">
                 <span className="material-symbols-outlined text-[18px]">history</span>
-                {history.length > 0 && <span className="text-[10px] bg-primary text-on-primary font-semibold px-1.5 rounded-full tabular-nums">{history.length}</span>}
+                {history.length > 0 && <span className="text-[11px] bg-primary text-on-primary font-semibold px-1.5 rounded-full tabular-nums">{history.length}</span>}
               </button>
               {showHistory && (
                 <div role="dialog" aria-label="Query history" className="absolute right-0 top-full mt-1.5 w-[32rem] max-h-96 overflow-y-auto bg-surface-container-high border border-outline-variant rounded-xl shadow-2xl z-30 animate-slide-up">
@@ -2199,7 +2199,7 @@ const QueryWorkbench: React.FC = () => {
                     {truncated && (
                       <Tooltip content={changelog?.truncated
                         ?? `The scan stopped at the ${resultLimit.toLocaleString()}-row limit, so this result is probably incomplete — raise "Rows" to fetch more.`}>
-                        <span tabIndex={0} className="ml-1.5 text-[10px] text-warning font-medium rounded">limit reached</span>
+                        <span tabIndex={0} className="ml-1.5 text-[11px] text-warning font-medium rounded">limit reached</span>
                       </Tooltip>
                     )}
                   </span>
@@ -2308,16 +2308,16 @@ const QueryWorkbench: React.FC = () => {
                               : run.status === 'running' ? 'text-primary animate-pulse' : 'text-outline',
                         )}>{STATEMENT_ICON[run.status]}</span>
                         <span className="text-[11px] font-medium text-on-surface tabular-nums">{run.index}</span>
-                        <span className="text-[10px] text-on-surface-variant uppercase tracking-wide">
+                        <span className="text-[11px] text-on-surface-variant uppercase tracking-wide">
                           {run.kind.replace('_', ' ')}
                         </span>
                       </span>
-                      <span className="block font-mono text-[10px] text-on-surface-variant truncate mt-0.5">
+                      <span className="block font-mono text-[11px] text-on-surface-variant truncate mt-0.5">
                         {previewStatement(run.sql, 40)}
                       </span>
                       {/* Rien d'inventé : une instruction jamais atteinte n'affiche pas « 0 ligne ». */}
                       {describeStatementRun(run) && (
-                        <span className="block text-[10px] text-outline mt-0.5">{describeStatementRun(run)}</span>
+                        <span className="block text-[11px] text-outline mt-0.5">{describeStatementRun(run)}</span>
                       )}
                     </button>
                   ))}
@@ -2426,7 +2426,7 @@ const QueryWorkbench: React.FC = () => {
                         </button>
                       </div>
                       {showErrorDetails && (
-                        <pre className="mt-2 text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{queryError.raw}</pre>
+                        <pre className="mt-2 text-[11px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{queryError.raw}</pre>
                       )}
                       {assistantReady && isFixableError(queryError.raw, ranSql ?? sql) && (
                         <FixSuggestion key={`${queryError.raw}\u0000${ranSql ?? sql}`}
