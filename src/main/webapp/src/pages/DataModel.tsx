@@ -119,7 +119,7 @@ const EntityNode: React.FC<{
         fontFamily="JetBrains Mono, monospace">
         {elide(entity.id, sizing.titleChars)}
       </text>
-      <text x={x + 10} y={y + subtitleY} fill="var(--viz-node-muted)" fontSize={sizing.subtitleSize}
+      <text x={x + 10} y={y + subtitleY} fill="#c4cbd8" fontSize={sizing.subtitleSize}
         fontFamily="Inter, sans-serif">
         {elide(entity.topic, sizing.subtitleChars)}
         {entity.format ? ` · ${entity.format}` : ''}
