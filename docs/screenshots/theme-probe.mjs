@@ -20,10 +20,10 @@ const viewports = [
   { name: 'wide', width: 1440, height: 900 },
 ];
 const pages = [
-  { name: 'dashboard', url: '/' },
-  { name: 'metrics', url: '/metrics' },
-  { name: 'query', url: '/query' },
-  { name: 'data-model', url: '/data-model' },
+  { name: 'dashboard', url: '/', anchor: 'h1' },
+  { name: 'metrics', url: '/metrics', anchor: 'h1' },
+  { name: 'query', url: '/query', anchor: '#kse-editor-pane' },
+  { name: 'data-model', url: '/data-model', anchor: '.kse-model-canvas' },
 ];
 const browser = await chromium.launch(process.env.CHROMIUM_PATH
   ? { executablePath: process.env.CHROMIUM_PATH }
@@ -43,6 +43,8 @@ for (const theme of ['light', 'dark']) {
         await page.addInitScript(value => localStorage.setItem('kse.theme', value), theme);
         await page.goto(baseUrl + route.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
         await page.locator('.kse-header').waitFor({ timeout: 15000 });
+        await page.locator(route.anchor).first().waitFor({ timeout: 15000 });
+        await page.waitForTimeout(200);
         const state = await page.evaluate(() => {
           const root = document.documentElement;
           const header = document.querySelector('.kse-header');
