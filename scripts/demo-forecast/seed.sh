@@ -6,8 +6,9 @@
 #
 # A forecast needs 128 recorded points and its context is 512, and a metric is recorded only as
 # fast as it is collected: left to itself, the demo's Metrics page shows curves for hours before
-# the first forecast can exist. This creates the two metrics that live.sh feeds (orders not yet
-# shipped, degrading towards its threshold; a request backlog on an hourly cycle), waits for the
+# the first forecast can exist. This creates the five metrics that live.sh feeds (orders not yet
+# shipped, degrading towards its threshold; a request backlog on an hourly cycle; imports creeping
+# up with noise; a stationary noisy series; a level that shifts), waits for the
 # Explorer to record each one for real once, and writes the nine hours before that first real
 # point — the same curves signals.awk gives live.sh, so the seeded past and the live future are
 # one signal.
@@ -19,19 +20,23 @@
 # seeded for a metric that has not been recorded for real. It exists for the demo and nowhere else.
 #
 # Then it starts the forecast of the unshipped-orders metric — the one with something to say — and
-# leaves the backlog's for the operator to start with the Forecast button on its card, which is the
-# feature the demo is for, with the history already there.
+# leaves the four others for the operator: the Forecast button on a card, or "Forecast all eligible"
+# on the Metrics page, which is the feature the demo is for, with the history already there.
 set -eu
 
 EXPLORER="${EXPLORER_URL:-http://explorer:8080}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SIGNALS="${SIGNALS:-$HERE/signals.awk}"
-# Nine hours: three degradation cycles and nine backlog cycles, inside the 512-step context.
+# Nine hours: three degradation cycles, nine backlog cycles, two imports climbs and six shifts of
+# level, inside the 512-step context.
 HISTORY_MINUTES="${DEMO_FORECAST_HISTORY_MINUTES:-540}"
 WAIT_SECONDS="${DEMO_FORECAST_WAIT:-600}"
 
 UNSHIPPED_ID=demo-live-unshipped
 BACKLOG_ID=demo-live-backlog
+CREEP_ID=demo-live-creep
+JITTER_ID=demo-live-jitter
+SHIFT_ID=demo-live-shift
 
 psql_() { psql -v ON_ERROR_STOP=1 -qAtX "$@"; }
 log() { printf 'demo-forecast: %s\n' "$*"; }
@@ -49,7 +54,7 @@ until psql_ -c 'SELECT 1' >/dev/null 2>&1; do
   sleep 3
 done
 
-# ── the two metrics ─────────────────────────────────────────────────────────
+# ── the five metrics ────────────────────────────────────────────────────────
 # An upsert by id: running this again changes nothing. Both are templates — a forecast is made
 # only of a metric whose sources the Explorer can name, which raw SQL never is.
 post_json "$EXPLORER/api/metrics" "$(cat <<'JSON'
@@ -78,6 +83,45 @@ post_json "$EXPLORER/api/metrics" "$(cat <<'JSON'
  "executionMode":"TEMPLATE_BOUNDED_SCAN","labelTopic":"demo.live.requests","labelFields":[]}
 JSON
 )" >/dev/null || { log "could not create the backlog metric (see: docker compose logs explorer)"; exit 1; }
+post_json "$EXPLORER/api/metrics" "$(cat <<'JSON'
+{"id":"demo-live-creep","name":"gauge_imports_demo_live_imports_minus_indexed","type":"GAUGE",
+ "description":"Imports not yet indexed (demo.live.imports minus demo.live.indexed). Live demo traffic: a slow, noisy climb over four hours, then a reindex drains it.",
+ "warningThreshold":180,"criticalThreshold":220,
+ "templateType":"TOPIC_COUNT_DELTA",
+ "templateParams":{
+  "leftSql":"SELECT COUNT(*) AS metric_value\nFROM demo_live_imports",
+  "rightSql":"SELECT COUNT(*) AS metric_value\nFROM demo_live_indexed",
+  "leftTopic":"demo.live.imports","rightTopic":"demo.live.indexed",
+  "operation":"LEFT_MINUS_RIGHT","countBy":"OFFSETS"},
+ "executionMode":"TEMPLATE_BOUNDED_SCAN","labelTopic":"demo.live.imports","labelFields":[]}
+JSON
+)" >/dev/null || { log "could not create the imports metric (see: docker compose logs explorer)"; exit 1; }
+post_json "$EXPLORER/api/metrics" "$(cat <<'JSON'
+{"id":"demo-live-jitter","name":"gauge_events_demo_live_events_minus_archived","type":"GAUGE",
+ "description":"Events not yet archived (demo.live.events minus demo.live.archived). Live demo traffic: noisy and stationary, around 80 — a forecast with nothing to announce and a wide band.",
+ "warningThreshold":150,"criticalThreshold":190,
+ "templateType":"TOPIC_COUNT_DELTA",
+ "templateParams":{
+  "leftSql":"SELECT COUNT(*) AS metric_value\nFROM demo_live_events",
+  "rightSql":"SELECT COUNT(*) AS metric_value\nFROM demo_live_archived",
+  "leftTopic":"demo.live.events","rightTopic":"demo.live.archived",
+  "operation":"LEFT_MINUS_RIGHT","countBy":"OFFSETS"},
+ "executionMode":"TEMPLATE_BOUNDED_SCAN","labelTopic":"demo.live.events","labelFields":[]}
+JSON
+)" >/dev/null || { log "could not create the events metric (see: docker compose logs explorer)"; exit 1; }
+post_json "$EXPLORER/api/metrics" "$(cat <<'JSON'
+{"id":"demo-live-shift","name":"gauge_tickets_demo_live_tickets_minus_resolved","type":"GAUGE",
+ "description":"Tickets open (demo.live.tickets minus demo.live.resolved). Live demo traffic: the level shifts between about 50 and 130 every ninety minutes — a change no forecast can see coming.",
+ "warningThreshold":100,"criticalThreshold":140,
+ "templateType":"TOPIC_COUNT_DELTA",
+ "templateParams":{
+  "leftSql":"SELECT COUNT(*) AS metric_value\nFROM demo_live_tickets",
+  "rightSql":"SELECT COUNT(*) AS metric_value\nFROM demo_live_resolved",
+  "leftTopic":"demo.live.tickets","rightTopic":"demo.live.resolved",
+  "operation":"LEFT_MINUS_RIGHT","countBy":"OFFSETS"},
+ "executionMode":"TEMPLATE_BOUNDED_SCAN","labelTopic":"demo.live.tickets","labelFields":[]}
+JSON
+)" >/dev/null || { log "could not create the tickets metric (see: docker compose logs explorer)"; exit 1; }
 log "metrics created"
 
 # ── the history before the first real observation ───────────────────────────
@@ -128,6 +172,9 @@ SQL
 
 backfill "$UNSHIPPED_ID" "unshipped(t)"
 backfill "$BACKLOG_ID" "backlog(t)"
+backfill "$CREEP_ID" "creep(t)"
+backfill "$JITTER_ID" "jitter(t)"
+backfill "$SHIFT_ID" "shift(t)"
 
 # ── the forecast of the unshipped-orders metric ──────────────────────────────────────
 # Built from the candidate catalogue, as the Forecast button on a card does it: the Explorer says
@@ -149,7 +196,7 @@ body=$(printf '{"metricId":"%s","definitionVersion":"%s","environment":"local","
   "$UNSHIPPED_ID" "$(field definitionVersion)" "$(field unit)" "$(top clusterId)" "$(top collectorId)" \
   "$(list topics)" "$(list groups)" "${step:-60000}" "$((1800000 / ${step:-60000}))")
 if post_json "$EXPLORER/api/forecasts/series" "$body" >/dev/null 2>&1; then
-  log "forecast of $UNSHIPPED_ID started; press Forecast on the backlog card to start the other"
+  log "forecast of $UNSHIPPED_ID started; press Forecast on a card, or Forecast all eligible, to start the others"
 else
   log "the forecast of $UNSHIPPED_ID was not started (already running, or runtime approval is off); press Forecast on its card"
 fi

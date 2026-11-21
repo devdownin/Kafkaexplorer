@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Forecast demo: five live series instead of two.** `./demo.sh --forecast` now feeds five topic pairs
+  (`demo.live.*`) and seeds nine hours of history for each: the unshipped orders (a ramp towards its
+  thresholds) and the request backlog (an hourly cycle) as before, plus imports creeping up with noise, a
+  stationary noisy series with nothing to announce, and a level that shifts every ninety minutes — a change
+  no forecast can see coming, which *Previous forecast vs actual* then shows. *Forecast all eligible* starts
+  the four that are not forecast on arrival. The two topics of a pair share their keys, so a key traced in
+  Stream Flow (`orders-1`) is found in both and the time between them is real. The noise is a function of the
+  minute, so the seeded past and the live future are one signal.
 - **Type scale and loading states.** Secondary text uses two sizes, 11 and 12 px: the 10 px step (184
   uses in 26 files) is gone, read too small beside 11 px for no distinction anyone could name; 9 px is
   left to the uppercase type badges. Panels that said "Loading…" in a sentence — the SQL editor's topic

@@ -673,21 +673,27 @@ still, so a metric over them has one value for ever, and a forecast needs 128 re
 at the minute the Explorer samples. A demo that cannot show its main feature for two hours does not show
 it. Two services, each in an image the stack already pulls:
 
-- **`demo-live`** (the Kafka image) keeps `demo.live.orders → shipped` and `requests → processed` moving.
+- **`demo-live`** (the Kafka image) keeps five topic pairs moving — `orders → shipped`, `requests → processed`,
+  `imports → indexed`, `events → archived`, `tickets → resolved` — one line each in a `PAIRS` table, the one
+  place to add a sixth. Three of the curves are there to show a forecast doing something different (a noisy
+  trend, a series with nothing to say, a level that shifts); the first two are the story.
   Each pair is held on its curve by reading the end offsets and producing the difference to whichever side
   is short — **stateless**, so a restart or a second copy resumes the curve. The producers are long-lived
-  and fed through pipes: one per record would spend its time in the JVM's start-up.
+  and fed through named pipes, a `sleep` holding each write end open (a numbered descriptor is one digit in
+  `sh`, and ten topics need more): one process per record would spend its time in the JVM's start-up. **The two
+  topics of a pair share their keys** (the k-th record of `shipped` is `orders-k`, written now): a key traced in
+  Stream Flow is found in both, and the time between them is how long it waited.
 - **`demo-forecast-seed`** (the PostgreSQL image: `psql`, `wget`, `sed` and `awk`, nothing to install)
-  creates the two metrics by `POST /api/metrics` (an upsert by id), waits for the Explorer to record each
+  creates the five metrics by `POST /api/metrics` (an upsert by id), waits for the Explorer to record each
   for real once, and **clones that first real observation (its `value` component: a metric is recorded as
   several, each its own series) nine hours back** with its own `collectorRunId`
   `demo-seed-<n>`. Cloning is the same technique `ci/forecast-stack.py` uses, and it is the only way to
   get the series id, unit, definition version and scope exactly right without re-deriving them in shell.
   A series that already holds seeded rows is left alone, and a metric not recorded for real is not seeded.
   The unshipped-orders forecast is then started from the candidate catalogue, as the card's button does
-  it; the backlog's is left to the button, which is the feature the demo is for.
+  it; the four others are left to the button or to *Forecast all eligible*, which is the feature the demo is for.
 
-**The two curves are one file.** `scripts/demo-forecast/signals.awk` is read by both services, and its
+**The five curves are one file.** `scripts/demo-forecast/signals.awk` is read by both services, and its
 functions depend on the epoch alone, never on when the demo started: otherwise the seeded past and the
 live traffic would be two signals with a jump at the join, which a forecast reads as a regime change. The
 seeded point is the value the live metric reads then, since the metric *is* the signal.
@@ -701,8 +707,13 @@ overlay beside the base alone would refuse an undefined service, and the script 
 Explorer whether they answer, which is the readiness that matters. Each script is copied through `sed`
 before it runs, as the seeders' entrypoints do, so a CRLF checkout does not break it.
 
+**The noise is a function of the minute.** `noise()` (the sine hash) takes the minute and nothing else, so the
+seeded past and the live future agree minute for minute, whichever awk computes them, and a restart resumes the
+same signal. The jitter series' noise is what the `check` reads its 80 % band claim from; a noisy reading may be
+twice its noise away from the curve at a minute's edge, which `ci/demo-forecast.py` allows for per metric.
+
 **What checks it.** `docs/check-demo-forecast.py` (curves against the thresholds read from `seed.sh`, the
-generator against stub CLIs, the twin scripts) and the `forecast-stack` job's `ci/demo-forecast.py`: the
+generator against stub CLIs — first topics pre-filled, so the keys given to the second can be compared — the twin scripts) and the `forecast-stack` job's `ci/demo-forecast.py`: the
 overlay on the real stack, the seeded rows beside the recorded ones, a TimesFM result from each metric.
 The seeder's SQL was also run against a real PostgreSQL and its rows read back through the real
 `MetricSeriesPreparer` (512 observed points, none missing) before it shipped.

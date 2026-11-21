@@ -231,10 +231,12 @@ Schema Registry ....... http://localhost:$($env:SCHEMA_REGISTRY_PORT)
 Kafka ................. localhost:$($env:KAFKA_PORT)
 LLM, agent, SpectraLLM  not started (-Forecast): nothing to configure
 
-The forecast demo: Metrics has two live metrics (demo.live.orders minus shipped, requests minus processed).
+The forecast demo: Metrics has five live metrics (demo.live.*: orders, requests, imports, events, tickets; each minus its second topic).
   Their history is seeded in the first minutes (.\demo.cmd -Forecast logs demo-forecast-seed), then:
   - the unshipped-orders one is already forecast, with its "Warning expected in ~N min" badge;
-  - press Forecast on the backlog one: its hourly cycle is found and its first forecast follows at the next cycle.
+  - press Forecast on another (or "Forecast all eligible"): the backlog's hourly cycle is found, the imports climb, the events
+    stay flat with a wide band, the tickets change level and no forecast sees it coming - the Previous forecast vs actual view shows it.
+  - Stream Flow: trace the key orders-1 (or any orders-N): it is found in demo.live.orders and in demo.live.shipped.
   .\demo.cmd -Forecast down | reset | ps | logs [service] | probe     (docs/metrics-demo-scenarios.md)
 "@
         return
@@ -265,8 +267,8 @@ LLM ................... OpenRouter $($env:OPENROUTER_MODEL) (Explorer, agent)
 SQL assistant ......... $($env:EXPLORER_ASSISTANT_ENABLED) (editor ask bar, Suggest a fix, Metrics: Describe the metric; table and column names go to OpenRouter)
 
 Demo topics (JSON + Avro) are seeded in the background: .\demo.cmd logs demo-setup
-Forecast: Metrics -> the two demo.live.* metrics have 9 h of seeded history (live traffic keeps them moving):
-  the unshipped-orders one is already forecast; press Forecast on the backlog one. .\demo.cmd logs demo-forecast-seed
+Forecast: Metrics -> the five demo.live.* metrics have 9 h of seeded history (live traffic keeps them moving):
+  the unshipped-orders one is already forecast; press Forecast on the others, or Forecast all eligible. .\demo.cmd logs demo-forecast-seed
 "@
 }
 
