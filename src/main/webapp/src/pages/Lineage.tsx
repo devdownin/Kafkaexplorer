@@ -32,10 +32,10 @@ interface LineageData {
 }
 
 const nodeConfig: Record<string, { shape: 'circle' | 'rect' | 'diamond' | 'hex'; color: string; bg: string }> = {
-  topic:  { shape: 'circle',  color: '#a3adff', bg: '#12151a' },
-  table:  { shape: 'rect',    color: '#a3adff', bg: '#14402a' },
-  view:   { shape: 'diamond', color: '#c9a9f7', bg: '#3b2762' },
-  query:  { shape: 'hex',     color: '#f5c264', bg: '#4a3a12' },
+  topic:  { shape: 'circle',  color: 'var(--viz-primary)', bg: 'var(--viz-node-bg)' },
+  table:  { shape: 'rect',    color: 'var(--viz-primary)', bg: 'var(--viz-node-bg)' },
+  view:   { shape: 'diamond', color: 'var(--viz-previous)', bg: 'var(--viz-node-bg)' },
+  query:  { shape: 'hex',     color: 'var(--viz-warning)', bg: 'var(--viz-node-bg)' },
 };
 
 /** Le cadrage de départ, et ce que le bouton « recentrer » et la touche `0` visent. */
@@ -144,7 +144,7 @@ const NodeShape: React.FC<{
   const cx = x + NODE_W / 2;
   const cy = y + NODE_H / 2;
   const label = node.label.length > 16 ? node.label.slice(0, 15) + '…' : node.label;
-  const stroke = selected ? '#ffffff' : cfg.color;
+  const stroke = selected ? 'var(--viz-node-text)' : cfg.color;
   const sw = selected ? 2.5 : 1.5;
 
   const renderShape = () => {
@@ -197,7 +197,7 @@ const NodeShape: React.FC<{
           fill={cfg.color} fillOpacity={0.1} stroke={cfg.color} strokeWidth={1} strokeOpacity={0.3} />
       )}
       {renderShape()}
-      <text x={cx} y={cy + 4} textAnchor="middle" fill="white" fontSize={11}
+      <text x={cx} y={cy + 4} textAnchor="middle" fill="var(--viz-node-text)" fontSize={11}
         fontFamily="JetBrains Mono, monospace" fontWeight={selected ? 'bold' : 'normal'}>
         {label}
       </text>
@@ -595,10 +595,10 @@ const Lineage: React.FC = () => {
           >
             <defs>
               <marker id="arrow-lin" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                <polygon points="0 0, 8 3, 0 6" fill="#a3adff" opacity="0.6" />
+                <polygon points="0 0, 8 3, 0 6" fill="var(--viz-edge)" opacity="0.6" />
               </marker>
               <marker id="arrow-lin-hi" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                <polygon points="0 0, 8 3, 0 6" fill="#ffffff" opacity="0.9" />
+                <polygon points="0 0, 8 3, 0 6" fill="var(--viz-node-text)" opacity="0.9" />
               </marker>
             </defs>
 
@@ -623,7 +623,7 @@ const Lineage: React.FC = () => {
                     <path
                       d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
                       fill="none"
-                      stroke={hi ? '#ffffff' : '#a3adff'}
+                      stroke={hi ? 'var(--viz-node-text)' : 'var(--viz-edge)'}
                       strokeWidth={hi ? 2 : 1.5}
                       opacity={dim ? 0.05 : (hi ? 0.9 : 0.3)}
                       // Remove marker on dimmed edges (markers ignore parent opacity)
@@ -631,7 +631,7 @@ const Lineage: React.FC = () => {
                     />
                     {edge.label && !dim && (
                       <text x={mx} y={Math.min(y1, y2) - 7} textAnchor="middle"
-                        fill="#79839a" fontSize={9}>{edge.label}</text>
+                        fill="var(--viz-axis)" fontSize={9}>{edge.label}</text>
                     )}
                   </g>
                 );
