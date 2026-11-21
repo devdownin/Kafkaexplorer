@@ -447,8 +447,8 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
                 beside the floor it read as an interval narrower than its lower edge. The tooltip takes
                 the page's surface: recharts' default is white, which put a near-white date on white. */}
             <Tooltip labelFormatter={v => new Date(Number(v)).toLocaleString()}
-              contentStyle={{ background: '#191d24', border: '1px solid #2a303b', borderRadius: 8, fontSize: 12 }}
-              labelStyle={{ color: '#9aa3b2', marginBottom: 4 }} itemStyle={{ padding: 0 }}
+              contentStyle={{ background: 'var(--viz-tooltip-bg)', border: '1px solid var(--viz-tooltip-border)', color: 'var(--viz-tooltip-text)', borderRadius: 8, fontSize: 12 }}
+              labelStyle={{ color: 'var(--viz-axis)', marginBottom: 4 }} itemStyle={{ padding: 0 }}
               cursor={{ stroke: FORECAST_COLORS.band, strokeOpacity: 0.4 }}
               formatter={(value, name, item) => name === '80 % interval' && item?.payload
                 ? [`${number(item.payload.q10)} – ${number(item.payload.q90)}`, name]
