@@ -31,8 +31,8 @@ events, without which a tablet cannot pan a graph at all, had to be made three t
 The split is **mechanics in the hook, policy in the pages**. The hook owns the transform state,
 the gestures, the wheel zoom and the viewport measurement, and exposes `panBy` / `zoomAround` /
 `zoomFromCenter` so a page's keyboard handler is a few lines. What stays in each page is what
-genuinely differs: what `0` recadres (a fit for Stream Flow and Data Model, a fixed origin for
-Lineage), what `Escape` deselects, and which node a table selection brings into view. Absorbing
+genuinely differs: what `0` recadres (a fit in all three, each by its own rule — Lineage's stops at a
+readable scale), what `Escape` deselects, and which node a table selection brings into view. Absorbing
 those through three more callbacks would have made the hook harder to read than the forty lines
 it replaces.
 
@@ -860,6 +860,15 @@ record makes a series that is never continued. One record cannot prove a field i
 measured number, long text) and says why, and at most `MAX_PAYLOAD_LABELS` (3) can be chosen. The
 labels are read from the hop's source, or from the topic itself.
 
+**Which screens carry a `PageHeader`, and which do not, on purpose.** Report screens — Dashboard,
+Metrics, Audit, Cluster, Dead Letter, Settings, Help, MCP, Process Mining, Topic hierarchy — open on a
+title and a sentence. **Workspaces** — SQL Editor, Stream Flow, Compare, Lineage, Data Model, Topic
+Explorer — are full-bleed tools with a toolbar of their own, and the header bar's breadcrumb already
+names them: a title there would cost the editor or the graph a line of height on every window, for a
+word the breadcrumb says. A new screen picks its kind; it does not get a header "for consistency".
+**A KPI tile's top accent says a state** (`Stat`'s `tone`): the health tile, a count past a threshold.
+A tile accented because it is "important" makes the row read as four different things.
+
 **Four finishing touches, and why each is where it is.** The sidebar's `nav` scrolls on a short window
 and used to cut its last entry flat; `Sidebar` now measures overflow (a `ResizeObserver` on the list *and
 its sections* — the content settles after the first paint, which a list-only observer misses) and applies
@@ -869,3 +878,26 @@ whether it does. Monaco's `kse-dark` theme is defined in `monaco-setup.ts` from 
 `tailwind.config.js`; a page asks for it by name, and a colour changed in the config is changed there
 too. The metric cards use `repeat(auto-fit, minmax(min(100%, 22rem), 1fr))`, so two metrics share the
 width where `xl:grid-cols-3` left a column empty.
+
+**Third pass, and the rule each item follows.** *Lineage* frames its graph on arrival and on `0` — but
+not below `READABLE_SCALE` (0.8): a graph wider than the canvas starts from its sources and scrolls, as
+Stream Flow does, because a framed graph whose labels cannot be read has been framed for nothing. Its
+legend names the types from `TYPE_PLURAL` (`${type}s` wrote "Querys"). *Compare* uses the shared
+`Combobox`, and a topic list that failed to load is said in both panes (`role="alert"`): a failure
+that leaves the page empty is not a toast. *The dashboard's* state column says "Healthy" in plain
+text and keeps badges for the exceptions, so the one dead-letter topic stands out; the diagnostic
+overview's first cell counts silent topics with `detectSilence`, **over the rows whose activity was
+measured** — the column is read per page, not per cluster, and the cell says so. *A metric card's*
+actions are revealed by the card group's hover and focus-within variants behind a
+`[@media(hover:hover)]` guard, so they are always visible on touch, where nothing hovers; delete
+lives in `MoreActions` (closes on Escape, an outside click, or once chosen). The screenshot server
+answers `/api/compare/topics` now, so the docs capture of Compare shows pickers rather than an error.
+
+**Two sizes of secondary text, and loading in the shape of the content.** Secondary text is 11 or
+12 px; the 10 px step was removed (it sat one pixel under 11 for no distinction a reader could
+name), and 9 px is kept for the uppercase type badges only. The layout probe passed after the change:
+nothing scrolls sideways, no budget moved. A panel waiting for data renders `ListSkeleton` (or a block
+in its own final shape, as the forecast panel does with its 260 px chart) instead of a "Loading…"
+sentence: the sentence is replaced by content of another height, which pushes everything below it,
+and a skeleton of the right shape does not. The skeleton carries `role="status"` and a label; the
+shimmer itself is hidden from assistive technology.

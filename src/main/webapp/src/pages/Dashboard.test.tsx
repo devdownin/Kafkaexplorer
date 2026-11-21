@@ -14,7 +14,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import axios from 'axios';
@@ -115,6 +115,31 @@ beforeEach(() => {
 function dashboardRequests() {
   return mockedAxios.get.mock.calls.filter(call => call[0] === '/api/dashboard');
 }
+
+/** Finishing: the filter is one row, the display options another, and an accent means a state. */
+describe('Dashboard layout', () => {
+  it('keeps the display options in a group of their own, with the toggles and the selects', async () => {
+    stubApi();
+    renderPage();
+    const group = await screen.findByRole('group', { name: 'Topic display options' });
+    for (const name of ['Hide empty', 'Hide dead letter', 'Hide internal', 'Mark retry'])
+      expect(within(group).getByRole('switch', { name })).toBeInTheDocument();
+    expect(within(group).getByLabelText('Rows per page')).toBeInTheDocument();
+    // What one types into is not in that group.
+    expect(within(group).queryByLabelText('Filter topics')).toBeNull();
+  });
+
+  it('accents a tile only for a state: the health tile, not the counts', async () => {
+    stubApi();
+    renderPage();
+    const tile = (label: string) => screen.getByText(label).closest('div.ring-1')?.parentElement?.closest('div.ring-1')
+      ?? screen.getByText(label).closest('div.ring-1');
+    await screen.findByText('Total Topics');
+    expect(tile('Cluster Health')?.className).toContain('border-t-success');
+    expect(tile('Total Topics')?.className).not.toContain('border-t-primary');
+    expect(tile('Message Count')?.className).not.toContain('border-t-primary');
+  });
+});
 
 /*
  * Le sondage tournait à 5 s en constante de module : ni réglable, ni extinguible, ni énoncé. Ce

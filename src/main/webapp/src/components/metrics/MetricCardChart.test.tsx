@@ -3,6 +3,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MetricCard } from './MetricCard';
 import { ToastProvider } from '../Toast';
 import { FORECAST_COLORS } from './forecastColors';
@@ -160,5 +161,19 @@ describe('MetricCard forecast chart', () => {
   it('names its chart for a screen reader: latest value and the predicted range', () => {
     card({});
     expect(screen.getByRole('img', { name: /latency: .*latest 459.*30 predicted points, median from 460 to 431/ })).toBeInTheDocument();
+  });
+
+  it('keeps delete behind the More actions menu, which Escape closes', async () => {
+    const onDelete = vi.fn();
+    render(<ToastProvider><MetricCard metric={metric} onEdit={() => {}} onDelete={onDelete}
+      onRefresh={() => {}} refreshing={false} /></ToastProvider>);
+    expect(screen.queryByRole('menuitem', { name: /Delete metric/ })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('menuitem')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: /Delete metric/ }));
+    expect(onDelete).toHaveBeenCalledWith('m-1');
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 });

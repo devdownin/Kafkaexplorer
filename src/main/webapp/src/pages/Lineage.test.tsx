@@ -200,4 +200,11 @@ describe('Lineage page', () => {
     expect(screen.queryByText('scope_all')).not.toBeInTheDocument();
     expect(screen.getAllByText('scope_connected').length).toBeGreaterThan(0);
   });
+
+  it('names the node types in plain English, queries included', async () => {
+    stubGraph(GRAPH);
+    await renderPage();
+    expect(await screen.findByText('Queries')).toBeInTheDocument();
+    expect(screen.queryByText(/Querys/)).toBeNull();
+  });
 });

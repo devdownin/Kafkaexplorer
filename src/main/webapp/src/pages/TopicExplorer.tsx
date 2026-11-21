@@ -385,7 +385,7 @@ const MessageCard: React.FC<{
   return (
     <div className="border-b border-outline-variant/40 last:border-b-0 group">
       {/* Record coordinates: without them a hit is a wall of text with no location */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pt-2.5 text-[10px] font-mono text-on-surface-variant">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pt-2.5 text-[11px] font-mono text-on-surface-variant">
         {/* Le rang du hit dans le scan, pas sa place dans la liste : il survit au tri et au filtre. */}
         <span className="text-outline">#{message.rank}</span>
         <span title="Partition">p{message.partition}</span>
@@ -432,7 +432,7 @@ const MessageCard: React.FC<{
             const targeted = highlightHeader !== null && highlightHeader !== undefined
               && name.toLowerCase() === highlightHeader.toLowerCase();
             return (
-              <div key={name} className="flex gap-2 font-mono text-[10px] leading-relaxed">
+              <div key={name} className="flex gap-2 font-mono text-[11px] leading-relaxed">
                 <dt className={`shrink-0 ${targeted ? 'text-warning font-semibold' : 'text-on-surface-variant'}`}>
                   {name}
                 </dt>
@@ -479,7 +479,7 @@ const MessageCard: React.FC<{
           {needsCollapse && (
             <button
               onClick={() => setExpanded(!expanded)}
-              className="mt-2 text-[10px] font-bold text-primary hover:underline"
+              className="mt-2 text-[11px] font-bold text-primary hover:underline"
             >
               {expanded ? 'Collapse' : `Show all ${lines.length} lines`}
             </button>
@@ -573,7 +573,7 @@ const MessageTable: React.FC<{
     >
       <table className="w-full text-[11px] font-mono border-collapse">
         <thead className="sticky top-0 z-10 bg-surface-container-high">
-          <tr className="text-[10px] uppercase tracking-widest text-on-surface-variant">
+          <tr className="text-[11px] uppercase tracking-widest text-on-surface-variant">
             {SORT_COLUMNS.map(column => (
               <th
                 key={column.key}
@@ -1289,7 +1289,7 @@ const TopicExplorer: React.FC = () => {
               </div>
               <button
                 onClick={() => setSelectedFields([])}
-                className="text-[10px] text-on-surface-variant hover:text-on-surface shrink-0"
+                className="text-[11px] text-on-surface-variant hover:text-on-surface shrink-0"
               >
                 Clear all
               </button>
@@ -1516,7 +1516,7 @@ const TopicExplorer: React.FC = () => {
       {activeTab === 'partitions' && (
         <Table rowCount={Object.keys(data.topic.maxOffsets).length} className="text-sm">
             <thead>
-              <tr className="bg-surface-container-high/60 border-b border-outline-variant/60 text-[10px] uppercase tracking-widest text-on-surface-variant">
+              <tr className="bg-surface-container-high/60 border-b border-outline-variant/60 text-[11px] uppercase tracking-widest text-on-surface-variant">
                 <th className="text-left px-5 py-3">Partition</th>
                 <th className="text-right px-5 py-3">Start Offset</th>
                 <th className="text-right px-5 py-3">End Offset</th>
@@ -1543,7 +1543,7 @@ const TopicExplorer: React.FC = () => {
             </tbody>
             <tfoot>
               <tr className="bg-surface-container-high/60 border-t border-outline-variant/60">
-                <td colSpan={3} className="px-5 py-2.5 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Total</td>
+                <td colSpan={3} className="px-5 py-2.5 text-[11px] font-bold text-on-surface-variant uppercase tracking-widest">Total</td>
                 <td className="px-5 py-2.5 text-right font-mono font-bold text-primary text-sm">
                   {data.topic.estimatedSize.toLocaleString()}
                 </td>
@@ -1580,8 +1580,8 @@ const TopicExplorer: React.FC = () => {
         <Table rowCount={Object.entries(data.schema).length} className="text-sm">
             <thead>
               <tr className="bg-surface-container-high/60 border-b border-outline-variant/60">
-                <th className="text-left px-5 py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Field</th>
-                <th className="text-right px-5 py-3 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Type</th>
+                <th className="text-left px-5 py-3 text-[11px] font-bold text-on-surface-variant uppercase tracking-widest">Field</th>
+                <th className="text-right px-5 py-3 text-[11px] font-bold text-on-surface-variant uppercase tracking-widest">Type</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/40">

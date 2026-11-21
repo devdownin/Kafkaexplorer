@@ -15,7 +15,7 @@ import Sparkline from '../components/dashboard/Sparkline';
 import type { TopicActivityResponse } from '../api/types';
 import { describeApiError } from './queryError';
 import {
-  ACTIVITY_WINDOWS, ACTIVITY_OFF, describeActivityScope, describeScale, readActivityChoice,
+  ACTIVITY_WINDOWS, ACTIVITY_OFF, describeActivityScope, describeScale, detectSilence, readActivityChoice,
   readActivityScale, windowById, writeActivityChoice, writeActivityScale,
   type ActivityChoice, type ActivityScale,
 } from './topicActivity';
@@ -445,6 +445,9 @@ const Dashboard: React.FC = () => {
   const measuredActivityCount = activity
     ? pagedTopics.filter(topic => activity.topics[topic]?.available).length
     : 0;
+  const silentCount = activity
+    ? pagedTopics.filter(topic => detectSilence(activity.topics[topic])).length
+    : 0;
 
   function formatCount(num: number) {
     if (num >= 1000000000) return (num / 1000000000).toFixed(1) + 'B';
@@ -461,7 +464,9 @@ const Dashboard: React.FC = () => {
   const stateBadge = (topic: string, state: string) =>
     state === 'empty' ? <Badge tone="neutral">Empty</Badge>
     : state === 'dlt' ? <Badge tone="warning" dot>{deadLetterLabel(topic) ?? 'DLT'}</Badge>
-    : <Badge tone="success" dot>Healthy</Badge>;
+    // The ordinary state is said quietly: a green badge on nearly every row is a column of noise
+    // in which the one dead-letter or empty topic no longer stands out.
+    : <span className="text-[12px] text-outline">Healthy</span>;
 
   const pagerBtn = 'inline-flex items-center justify-center w-8 h-8 rounded-md border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-30 disabled:cursor-not-allowed transition-colors';
 
@@ -512,12 +517,11 @@ const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat
           label="Total Topics" icon="format_list_bulleted"
-          tone={topicDiff !== 0 ? 'primary' : 'none'}
           value={data.topics.length.toLocaleString()}
           hint={<span className={topicDiff !== 0 ? 'text-primary' : ''}>{topicTrend}</span>}
         />
         <Stat
-          label="Message Count" icon="bolt" tone="primary"
+          label="Message Count" icon="bolt"
           value={formatCount(data.totalMessages)}
           hint={data.totalMessages > 0 ? 'Active ingest' : 'No activity'}
         />
@@ -553,10 +557,22 @@ const Dashboard: React.FC = () => {
           <span className="text-xs text-on-surface-variant">Based on the latest dashboard snapshot</span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+          {/* Silent producers, in place of a "Cluster connection" cell that repeated the health tile
+              just above. Counted over the rows whose activity was measured — the column is read for
+              the page shown, not for the cluster — and the cell says so. */}
           <div className="rounded-md bg-surface-container p-3">
-            <div className="text-xs text-on-surface-variant">Cluster connection</div>
-            <div className={`font-semibold mt-1 ${data.health ? 'text-success' : 'text-error'}`}>{data.health ? 'Reachable' : 'Unreachable'}</div>
-            {!data.health && <p className="text-xs mt-1 text-on-surface-variant">Check broker connectivity before investigating topic data.</p>}
+            <div className="text-xs text-on-surface-variant">Topics that went silent</div>
+            {!activity ? (
+              <>
+                <div className="font-semibold mt-1 text-outline">—</div>
+                <p className="text-xs mt-1 text-on-surface-variant">{activityWindow ? 'Reading activity…' : 'Activity is off: turn it on below to see them.'}</p>
+              </>
+            ) : (
+              <>
+                <div className={`font-semibold mt-1 tabular-nums ${silentCount ? 'text-warning' : ''}`}>{silentCount.toLocaleString()}</div>
+                <p className="text-xs mt-1 text-on-surface-variant">Among the {measuredActivityCount.toLocaleString()} topic{measuredActivityCount === 1 ? '' : 's'} measured on this page</p>
+              </>
+            )}
           </div>
           <div className="rounded-md bg-surface-container p-3">
             <div className="text-xs text-on-surface-variant">Empty topics</div>
@@ -603,7 +619,14 @@ const Dashboard: React.FC = () => {
               )}
             </div>
 
-            <div className="flex items-center gap-3 shrink-0">
+          </div>
+        </div>
+
+        {/* Display options, on a row of their own: the filter above is what one types into all day,
+            these are what one sets once. Same control height throughout. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-2 border-y border-outline-variant/40"
+          role="group" aria-label="Topic display options">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               {/*
                 * `filters` distingue les deux natures de bascule qui se ressemblent ici. « Hide … »
                 * change la liste, donc la pagination courante décrit un ensemble qui n'existe plus
@@ -630,6 +653,7 @@ const Dashboard: React.FC = () => {
               ))}
             </div>
 
+            <div className="flex flex-wrap items-center gap-3">
             {/*
               * La fenêtre pilote la colonne, et « Off » en fait partie : la mesure coûte des
               * allers-retours au broker pour chaque ligne affichée, donc elle doit pouvoir
@@ -692,7 +716,7 @@ const Dashboard: React.FC = () => {
                 {PAGE_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
               </Select>
             </div>
-          </div>
+            </div>
         </div>
 
         <Table>

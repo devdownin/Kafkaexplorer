@@ -4,7 +4,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
-import { Button, Switch } from '../components/ui';
+import { Button, Combobox, Switch } from '../components/ui';
+import { extractApiErrorMessage } from './queryError';
 import { usePersistentState } from '../draftStore';
 import {
   tryParse, diffFields, pairSamples, visiblePairs, countDiffs, countCompared,
@@ -36,7 +37,7 @@ const MessageCard: React.FC<{
   ) : null;
 
   const coords = (
-    <div className="flex items-center justify-between gap-2 mb-2 text-[10px] text-outline font-mono">
+    <div className="flex items-center justify-between gap-2 mb-2 text-[11px] text-outline font-mono">
       <span>{coordinates(sample)}</span>
       {sample.key && <span className="truncate max-w-[50%]" title={sample.key}>key {sample.key}</span>}
     </div>
@@ -133,26 +134,26 @@ const TopicPane: React.FC<{
   side: 'A' | 'B'; topic: string; setTopic: (t: string) => void; count: number;
   /** Les deux panneaux reçoivent **les mêmes** paires : c'est ce qui les garde alignés. */
   pairs: ComparePair[]; topics: string[]; hasResult: boolean;
+  /** Why the topic list could not be read, said in the pane rather than in a toast that leaves. */
+  topicsError?: string | null;
   scrollRef?: React.Ref<HTMLDivElement>;
-}> = ({ side, topic, setTopic, count, pairs, topics, hasResult, scrollRef }) => (
+}> = ({ side, topic, setTopic, count, pairs, topics, hasResult, topicsError, scrollRef }) => (
   <div className="flex-1 flex flex-col rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden">
     <div className="p-3 border-b border-outline-variant/60 flex items-center justify-between bg-surface-container-high/60">
-      <div className="flex flex-col gap-0.5 min-w-0">
+      {/* A searchable field with a visible border: the borderless `<select>` it replaces read as a
+          bare chevron whenever it was empty, and a cluster's topic list is too long to scroll. */}
+      <div className="flex flex-col gap-1 min-w-0 flex-1 max-w-md">
         <span className="text-[11px] font-medium text-primary uppercase tracking-[0.05em]">Topic {side} ({side === 'A' ? 'Source' : 'Target'})</span>
-        <select
-          value={topic}
-          onChange={e => setTopic(e.target.value)}
-          aria-label={`Topic ${side}`}
-          className="bg-transparent border-none text-on-surface font-medium p-0 focus:outline-hidden text-[13px] cursor-pointer max-w-full truncate"
-        >
-          {topics.map(t => <option key={t} value={t} className="bg-surface-container text-on-surface">{t}</option>)}
-        </select>
+        <Combobox value={topic} onChange={setTopic} options={topics} aria-label={`Topic ${side}`}
+          placeholder={topics.length ? 'Choose a topic' : 'No topic loaded'} className="font-mono text-[13px]" />
       </div>
       <span className="text-[12px] text-on-surface-variant tabular-nums shrink-0">{count} msgs</span>
     </div>
     <div ref={scrollRef} data-testid={`pane-${side}`} className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
       {!hasResult && (
-        <div className="p-8 text-center text-outline text-[12px]">Select topics and run compare</div>
+        <div className="p-8 text-center text-outline text-[12px]" role={topicsError ? 'alert' : undefined}>
+          {topicsError ? `The topics could not be loaded: ${topicsError}` : 'Select topics and run compare'}
+        </div>
       )}
       {hasResult && pairs.length === 0 && (
         <div className="p-8 text-center text-outline text-[12px]">No differing message</div>
@@ -172,6 +173,7 @@ const TopicPane: React.FC<{
 const Compare: React.FC = () => {
   const { toast } = useToast();
   const [topics, setTopics] = useState<string[]>([]);
+  const [topicsError, setTopicsError] = useState<string | null>(null);
   const [topicA, setTopicA] = usePersistentState('compare:topicA', '');
   const [topicB, setTopicB] = usePersistentState('compare:topicB', '');
   const [syncCursors, setSyncCursors] = usePersistentState('compare:sync', true);
@@ -196,7 +198,7 @@ const Compare: React.FC = () => {
         setTopicA(prev => keep(prev, res.data[0]));
         setTopicB(prev => keep(prev, res.data[1]));
       })
-      .catch(() => toast('Failed to load topics', 'error'));
+      .catch(e => setTopicsError(extractApiErrorMessage(e)));
   // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once on mount; toast is stable
   }, []);
 
@@ -258,8 +260,8 @@ const Compare: React.FC = () => {
 
       {/* Side-by-side */}
       <section className="flex-1 flex gap-4 overflow-hidden">
-        <TopicPane side="A" topic={topicA} setTopic={setTopicA} count={samplesA.length} pairs={shown} topics={topics} hasResult={hasResult} scrollRef={paneA} />
-        <TopicPane side="B" topic={topicB} setTopic={setTopicB} count={samplesB.length} pairs={shown} topics={topics} hasResult={hasResult} scrollRef={paneB} />
+        <TopicPane side="A" topic={topicA} setTopic={setTopicA} count={samplesA.length} pairs={shown} topics={topics} hasResult={hasResult} topicsError={topicsError} scrollRef={paneA} />
+        <TopicPane side="B" topic={topicB} setTopic={setTopicB} count={samplesB.length} pairs={shown} topics={topics} hasResult={hasResult} topicsError={topicsError} scrollRef={paneB} />
       </section>
 
       {/* Diff Summary Bar */}

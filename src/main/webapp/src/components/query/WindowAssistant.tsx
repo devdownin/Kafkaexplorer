@@ -70,7 +70,7 @@ export const WindowAssistant: React.FC<WindowAssistantProps> = ({
             <span aria-hidden="true" className="material-symbols-outlined text-[20px]">magic_button</span>
           </button>
         </Tooltip>
-        <span aria-hidden="true" className="mt-3 text-[10px] tracking-[0.08em] uppercase text-outline [writing-mode:vertical-rl]">Window</span>
+        <span aria-hidden="true" className="mt-3 text-[11px] tracking-[0.08em] uppercase text-outline [writing-mode:vertical-rl]">Window</span>
       </div>
     );
   }

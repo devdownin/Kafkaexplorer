@@ -963,7 +963,7 @@ const DataModel: React.FC = () => {
             {' → '}
             {edgeTip.relation.to}{edgeTip.relation.toColumn ? `.${edgeTip.relation.toColumn}` : ''}
           </p>
-          <p className="text-[10px] font-bold uppercase mt-1"
+          <p className="text-[11px] font-bold uppercase mt-1"
             style={{ color: CONFIDENCE_STYLE[edgeTip.relation.confidence].color }}>
             {edgeTip.relation.confidence} confidence
           </p>
@@ -995,7 +995,7 @@ const DataModel: React.FC = () => {
             <span aria-hidden="true" className="material-symbols-outlined text-[20px]">chevron_right</span>
           </button>
           <span
-            className="text-[10px] font-semibold uppercase tracking-widest text-outline whitespace-nowrap"
+            className="text-[11px] font-semibold uppercase tracking-widest text-outline whitespace-nowrap"
             style={{ writingMode: 'vertical-rl' }}
           >
             Topics ({selection.length})
@@ -1048,7 +1048,7 @@ const DataModel: React.FC = () => {
             />
           </div>
           {filterHint && (
-            <p className="text-[10px] text-warning leading-snug" role="status">
+            <p className="text-[11px] text-warning leading-snug" role="status">
               Nothing matches — patterns are anchored. Try <span className="font-mono">{filterHint}</span>.
             </p>
           )}
@@ -1071,7 +1071,7 @@ const DataModel: React.FC = () => {
               min={1}
               max={limits?.maxTopics ?? DEFAULT_MAX_TOPICS}
             />
-            <span className="text-[10px] text-outline leading-tight">
+            <span className="text-[11px] text-outline leading-tight">
               up to {limits?.maxTopics ?? DEFAULT_MAX_TOPICS} — each one is read and inferred
             </span>
           </div>
@@ -1118,7 +1118,7 @@ const DataModel: React.FC = () => {
             {loading ? 'Analyzing topics…' : 'Generate model'}
           </Button>
           {stale && !loading && (
-            <p className="text-[10px] text-warning leading-snug" role="status">
+            <p className="text-[11px] text-warning leading-snug" role="status">
               The selection changed since this model was built — regenerate to match it.
             </p>
           )}
@@ -1184,7 +1184,7 @@ const DataModel: React.FC = () => {
                 )}
               </div>
               {columnMatchNote && (
-                <p className={`text-[10px] leading-snug ${columnMatches.size === 0 ? 'text-outline' : 'text-[#f5c264]'}`}
+                <p className={`text-[11px] leading-snug ${columnMatches.size === 0 ? 'text-outline' : 'text-[#f5c264]'}`}
                   role="status">
                   {columnMatchNote}
                 </p>
@@ -1199,7 +1199,7 @@ const DataModel: React.FC = () => {
           {model && graphEntities.length > 0 && (
             <div className="space-y-1">
               <label htmlFor="dm-density"
-                className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider block">
+                className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider block">
                 Box size
               </label>
               <select
@@ -1214,12 +1214,12 @@ const DataModel: React.FC = () => {
                 <option value="compact">Compact — smallest, fewest columns</option>
               </select>
               {describeDensity(density, chosenSizing) && (
-                <p className="text-[10px] text-outline leading-snug">
+                <p className="text-[11px] text-outline leading-snug">
                   {describeDensity(density, chosenSizing)}
                 </p>
               )}
               {densityCost && (
-                <p className="text-[10px] text-warning leading-snug" role="status">{densityCost}</p>
+                <p className="text-[11px] text-warning leading-snug" role="status">{densityCost}</p>
               )}
             </div>
           )}
@@ -1235,7 +1235,7 @@ const DataModel: React.FC = () => {
                 onClick={() => setUnrelatedOpen(open => !open)}
                 aria-expanded={unrelatedOpen}
                 aria-controls="dm-unrelated-list"
-                className="w-full flex items-center gap-1.5 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider hover:text-on-surface transition-colors"
+                className="w-full flex items-center gap-1.5 text-[11px] font-bold text-on-surface-variant uppercase tracking-wider hover:text-on-surface transition-colors"
               >
                 <span aria-hidden="true" className="material-symbols-outlined text-[14px]">
                   {unrelatedOpen ? 'expand_more' : 'chevron_right'}
@@ -1246,7 +1246,7 @@ const DataModel: React.FC = () => {
                 <div className="space-y-1.5">
                   {/* La liste dit ce qu'elle contient *et* pourquoi : un compte seul se lit comme
                       une troncature, alors que c'est une réponse. */}
-                  <p className="text-[10px] text-outline leading-snug">
+                  <p className="text-[11px] text-outline leading-snug">
                     {describeSetAside(isolated.length, showUnrelated || connected.length === 0)}
                   </p>
                   {/* À cinquante entrées la liste défile, et cinquante entités sans relation est
@@ -1272,7 +1272,7 @@ const DataModel: React.FC = () => {
                     </div>
                   )}
                   {describeSetAsideFilter(visibleIsolated.length, isolated.length) && (
-                    <p className="text-[10px] text-outline leading-snug" role="status">
+                    <p className="text-[11px] text-outline leading-snug" role="status">
                       {describeSetAsideFilter(visibleIsolated.length, isolated.length)}
                     </p>
                   )}
@@ -1294,7 +1294,7 @@ const DataModel: React.FC = () => {
                           /* Le nom accessible du groupe porte déjà le domaine et son compte ;
                              laisser lire l'en-tête en plus les dirait deux fois. */
                           <p aria-hidden="true"
-                            className="sticky top-0 z-[1] flex items-center gap-1.5 px-2 py-1 bg-surface-container-low/95 backdrop-blur-xs text-[10px] text-on-surface-variant">
+                            className="sticky top-0 z-[1] flex items-center gap-1.5 px-2 py-1 bg-surface-container-low/95 backdrop-blur-xs text-[11px] text-on-surface-variant">
                             <span className="w-2 h-2 rounded-sm shrink-0 border"
                               style={{
                                 backgroundColor: tintOf(group.entities[0].topic).header,
@@ -1331,7 +1331,7 @@ const DataModel: React.FC = () => {
                       disparaît quand il n'y a rien d'autre à dessiner, où elle ne déciderait
                       plus de rien. */}
                   {connected.length > 0 && (
-                    <label className="flex items-center gap-2 text-[10px] text-on-surface-variant cursor-pointer">
+                    <label className="flex items-center gap-2 text-[11px] text-on-surface-variant cursor-pointer">
                       <Checkbox checked={showUnrelated}
                         onChange={() => {
                           // Le graphe change de taille : il faut le recadrer, sinon les nœuds
@@ -1353,14 +1353,14 @@ const DataModel: React.FC = () => {
               se contrediraient à la première divergence. */}
           {model && relations.length > 0 && (
             <div className="space-y-1">
-              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+              <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">
                 Relation confidence
               </p>
               {(Object.entries(CONFIDENCE_STYLE) as [keyof typeof CONFIDENCE_STYLE, typeof CONFIDENCE_STYLE.HIGH][]).map(([grade, style]) => {
                 const count = relations.filter(r => r.confidence === grade).length;
                 return (
                   <label key={grade}
-                    className={`flex items-center gap-2 text-[10px] cursor-pointer transition-colors ${
+                    className={`flex items-center gap-2 text-[11px] cursor-pointer transition-colors ${
                       shownConfidences.has(grade) ? 'text-on-surface-variant' : 'text-outline'
                     }`}>
                     <Checkbox
@@ -1383,11 +1383,11 @@ const DataModel: React.FC = () => {
               })}
               {/* Ce que le filtre retire, dit une fois — et seulement quand il retire. */}
               {filterNote && (
-                <p className="text-[10px] text-warning leading-snug pt-0.5" role="status">
+                <p className="text-[11px] text-warning leading-snug pt-0.5" role="status">
                   {filterNote}
                 </p>
               )}
-              <p className="text-[10px] text-outline leading-snug pt-0.5">
+              <p className="text-[11px] text-outline leading-snug pt-0.5">
                 Crow's foot marks the referencing (many) side, the bar the referenced (one) side.
               </p>
             </div>
@@ -1395,9 +1395,9 @@ const DataModel: React.FC = () => {
           {/* Légende des domaines : les en-têtes sont teintés par famille de topics. */}
           {model && domainLegend.length > 0 && (
             <div className="space-y-1">
-              <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Topic domains</p>
+              <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">Topic domains</p>
               {domainLegend.map(([domain, tint]) => (
-                <div key={domain} className="flex items-center gap-2 text-[10px] text-on-surface-variant">
+                <div key={domain} className="flex items-center gap-2 text-[11px] text-on-surface-variant">
                   <span aria-hidden="true" className="w-3 h-3 rounded-sm shrink-0 border"
                     style={{ backgroundColor: tint.header, borderColor: tint.accent }} />
                   <span className="font-mono truncate">{domain}</span>
@@ -1412,7 +1412,7 @@ const DataModel: React.FC = () => {
           {model && joinEntities.length > 0 && (
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
-                <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+                <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">
                   Join ({joinEntities.length})
                 </p>
                 <button onClick={() => setJoinSet([])} aria-label="Clear the join selection"
@@ -1423,7 +1423,7 @@ const DataModel: React.FC = () => {
               <div className="flex flex-wrap gap-1">
                 {joinEntities.map(id => (
                   <span key={id}
-                    className="inline-flex items-center gap-1 bg-surface-container-high rounded-full pl-2 pr-1 py-0.5 text-[10px] font-mono text-on-surface-variant max-w-full">
+                    className="inline-flex items-center gap-1 bg-surface-container-high rounded-full pl-2 pr-1 py-0.5 text-[11px] font-mono text-on-surface-variant max-w-full">
                     <span className="truncate" title={id}>{id}</span>
                     <button onClick={() => setJoinSet(set => set.filter(x => x !== id))}
                       aria-label={`Remove ${id} from the join`} className="hover:text-on-surface shrink-0">
@@ -1433,7 +1433,7 @@ const DataModel: React.FC = () => {
                 ))}
               </div>
               {multiJoin?.problem && (
-                <p className="text-[10px] text-warning leading-snug">{multiJoin.problem}</p>
+                <p className="text-[11px] text-warning leading-snug">{multiJoin.problem}</p>
               )}
               {multiJoin?.sql && (
                 <Link
@@ -1453,7 +1453,7 @@ const DataModel: React.FC = () => {
                 </Link>
               )}
               {joinEntities.length === 1 && (
-                <p className="text-[10px] text-outline leading-snug">
+                <p className="text-[11px] text-outline leading-snug">
                   Add a second entity — a join needs two tables.
                 </p>
               )}
@@ -1463,7 +1463,7 @@ const DataModel: React.FC = () => {
           {/* Sélections nommées : l'URL est partageable mais anonyme, et rien ne dit qu'elle
               décrit *le* modèle de commande. Local à ce navigateur, et la phrase le dit. */}
           <div className="space-y-1.5">
-            <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
+            <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">
               Saved selections
             </p>
             <form
@@ -1489,7 +1489,7 @@ const DataModel: React.FC = () => {
               </Button>
             </form>
             {savedModels.length === 0 ? (
-              <p className="text-[10px] text-outline leading-snug">
+              <p className="text-[11px] text-outline leading-snug">
                 None yet. A saved selection lives on this browser only — the URL is what you share.
               </p>
             ) : savedModels.map(saved => (
@@ -1528,7 +1528,7 @@ const DataModel: React.FC = () => {
               <button
                 onClick={() => setCompareOpen(open => !open)}
                 aria-expanded={compareOpen}
-                className="w-full flex items-center gap-1.5 text-[10px] font-bold text-on-surface-variant uppercase tracking-wider hover:text-on-surface transition-colors"
+                className="w-full flex items-center gap-1.5 text-[11px] font-bold text-on-surface-variant uppercase tracking-wider hover:text-on-surface transition-colors"
               >
                 <span aria-hidden="true" className="material-symbols-outlined text-[14px]">
                   {compareOpen ? 'expand_more' : 'chevron_right'}
@@ -1548,7 +1548,7 @@ const DataModel: React.FC = () => {
                     <div className="flex flex-wrap gap-1">
                       {compareSelection.map(t => (
                         <span key={t}
-                          className="inline-flex items-center gap-1 bg-surface-container-high rounded-full pl-2 pr-1 py-0.5 text-[10px] font-mono text-on-surface-variant max-w-full">
+                          className="inline-flex items-center gap-1 bg-surface-container-high rounded-full pl-2 pr-1 py-0.5 text-[11px] font-mono text-on-surface-variant max-w-full">
                           <span className="truncate" title={t}>{t}</span>
                           <button onClick={() => setCompareSelection(sel => sel.filter(x => x !== t))}
                             aria-label={`Remove ${t} from the comparison`} className="hover:text-on-surface shrink-0">
@@ -1563,7 +1563,7 @@ const DataModel: React.FC = () => {
                     {comparing ? 'Comparing…' : 'Compare'}
                   </Button>
                   {compareError && (
-                    <p className="text-[10px] text-error leading-snug">
+                    <p className="text-[11px] text-error leading-snug">
                       {compareError.title}{compareError.hint ? ` — ${compareError.hint}` : ''}
                     </p>
                   )}
@@ -1573,7 +1573,7 @@ const DataModel: React.FC = () => {
                   {diff && (
                     <div className="space-y-1.5 bg-surface-container-low rounded-lg p-2">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="text-[10px] text-on-surface font-semibold leading-snug">
+                        <p className="text-[11px] text-on-surface font-semibold leading-snug">
                           {describeDiff(diff)}
                         </p>
                         <button onClick={() => setCompareModel(null)} aria-label="Clear comparison"
@@ -1582,7 +1582,7 @@ const DataModel: React.FC = () => {
                         </button>
                       </div>
                       {!diffIsEmpty(diff) && (
-                        <div className="space-y-0.5 text-[10px] leading-snug max-h-48 overflow-y-auto custom-scrollbar">
+                        <div className="space-y-0.5 text-[11px] leading-snug max-h-48 overflow-y-auto custom-scrollbar">
                           {diff.addedEntities.map(e => (
                             <p key={`ae-${e.id}`} className="text-[#7ee2a8] font-mono truncate" title={e.topic}>+ {e.id}</p>
                           ))}
@@ -1926,7 +1926,7 @@ const DataModel: React.FC = () => {
 
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
             <section>
-              <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">
+              <h3 className="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">
                 Columns ({entityById.get(selectedId)!.columns.length})
               </h3>
               <div className="space-y-0.5">
@@ -1940,7 +1940,7 @@ const DataModel: React.FC = () => {
                 ))}
               </div>
               {entityById.get(selectedId)!.primaryKey === null && (
-                <p className="text-[10px] text-outline mt-2 leading-snug">
+                <p className="text-[11px] text-outline mt-2 leading-snug">
                   No key column was detected — none of the fields reads as an identifier.
                 </p>
               )}
@@ -1950,11 +1950,11 @@ const DataModel: React.FC = () => {
                   vérifiable est affirmée, à savoir si un topic sélectionné porte ce nom. */}
               {selectedOrphans.length > 0 && (
                 <div className="mt-3 space-y-1.5 border-t border-outline-variant/40 pt-2">
-                  <p className="text-[10px] font-bold text-[#f5c264] uppercase tracking-wider">
+                  <p className="text-[11px] font-bold text-[#f5c264] uppercase tracking-wider">
                     Key-like, no relation ({selectedOrphans.length})
                   </p>
                   {selectedOrphans.map(orphan => (
-                    <div key={orphan.column} className="text-[10px] leading-snug">
+                    <div key={orphan.column} className="text-[11px] leading-snug">
                       <span className="font-mono text-on-surface">{orphan.column}</span>
                       <span className="text-outline"> — {describeOrphanKey(orphan)}</span>
                     </div>
@@ -1964,7 +1964,7 @@ const DataModel: React.FC = () => {
             </section>
 
             <section>
-              <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">
+              <h3 className="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">
                 Relations ({selectedRelations.length})
               </h3>
               {selectedRelations.length === 0 && (
@@ -1991,7 +1991,7 @@ const DataModel: React.FC = () => {
                         le filtre retire du dessin — mais alors il le dit, sinon la relation
                         listée ici sans trait à l'écran ne s'explique pas. */}
                     {!shownConfidences.has(relation.confidence) && (
-                      <p className="text-[10px] text-warning leading-snug">
+                      <p className="text-[11px] text-warning leading-snug">
                         Hidden from the diagram by the confidence filter.
                       </p>
                     )}
@@ -2005,7 +2005,7 @@ const DataModel: React.FC = () => {
                       const join = buildJoinSql(relation, entities);
                       if (!join) {
                         return (
-                          <p className="text-outline text-[10px] leading-snug">
+                          <p className="text-outline text-[11px] leading-snug">
                             No join query: the relation names no column on {relation.to}, and no key
                             was detected there to fall back on.
                           </p>
