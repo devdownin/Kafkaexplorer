@@ -7,7 +7,7 @@ import { cn } from './cn';
 
 /* ── Styles partagés des contrôles de saisie ── */
 const CONTROL =
-  'w-full rounded-md bg-surface-container-low border text-[13px] text-on-surface ' +
+  'kse-input w-full bg-surface-container-low border text-[13px] text-on-surface ' +
   'placeholder:text-outline transition-colors focus:outline-hidden disabled:opacity-50 disabled:cursor-not-allowed';
 const CONTROL_STATE = (invalid?: boolean) =>
   invalid
