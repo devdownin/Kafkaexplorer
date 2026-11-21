@@ -9,7 +9,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCatalog } from '../catalogStore';
 import { useIsDesktop } from '../breakpoints';
 import { addTopicEntries, describeTopicEntry, suggestBroaderPattern } from '../topicSelection';
-import { Button, Checkbox, EmptyState, ErrorPanel, Badge, TopicInput, Combobox, NumberInput, Spinner } from '../components/ui';
+import { Button, Checkbox, EmptyState, ErrorPanel, Badge, TopicInput, Combobox, NumberInput, Spinner, GlassPopover } from '../components/ui';
 import { useToast } from '../components/Toast';
 import { describeApiError } from './queryError';
 import type { QueryErrorInfo } from './queryError';
@@ -953,9 +953,9 @@ const DataModel: React.FC = () => {
           Une relation est une affirmation ; sa justification ne doit pas n'être atteignable
           qu'en ouvrant l'inspecteur du nœud. */}
       {edgeTip && (
-        <div
+        <GlassPopover
           style={{ position: 'fixed', left: edgeTip.x + 14, top: edgeTip.y - 70, zIndex: 100, pointerEvents: 'none' }}
-          className="kse-glass-thick rounded-xl px-3 py-2 text-on-surface text-xs max-w-[280px]"
+          className="rounded-xl px-3 py-2 text-on-surface text-xs max-w-[280px]"
           role="tooltip"
         >
           <p className="font-mono text-on-surface break-all leading-snug">
@@ -970,7 +970,7 @@ const DataModel: React.FC = () => {
           <p className="text-on-surface-variant text-[11px] mt-1 leading-snug">
             {edgeTip.relation.reason}
           </p>
-        </div>
+        </GlassPopover>
       )}
 
       {/* Fond du tiroir, sous le seuil seulement : cliquer à côté referme, comme le tiroir de

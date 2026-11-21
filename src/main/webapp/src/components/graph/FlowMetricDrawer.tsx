@@ -173,7 +173,7 @@ export const FlowMetricDrawer: React.FC<{
             The value each field has in the <em>latest</em> record of <span className="font-mono">{labelTopic}</span>, read at every
             refresh and added to every metric created here. Pick stable categories (region, tenant, source system); at most {MAX_PAYLOAD_LABELS}.
           </p>
-          {previewError ? <p className="text-[11px] text-[#f58c8c] mt-1">The latest record could not be read: {previewError}</p>
+          {previewError ? <p className="text-[11px] text-error mt-1">The latest record could not be read: {previewError}</p>
             : !preview ? <p className="text-[11px] text-outline mt-1">Reading the latest record…</p>
             : fields.length === 0 ? <p className="text-[11px] text-outline mt-1">No field to read in the latest record.</p>
             : (
@@ -188,7 +188,7 @@ export const FlowMetricDrawer: React.FC<{
                           aria-label={`Label ${f.field}`} />
                         <span className="min-w-0">
                           <span className="font-mono">{f.field}</span>=<span className="font-mono text-outline break-all">{f.value}</span>
-                          {f.risk && <span className="block text-[#f5c264]">{f.risk}</span>}
+                          {f.risk && <span className="block text-warning">{f.risk}</span>}
                         </span>
                       </label>
                     </li>
@@ -203,7 +203,7 @@ export const FlowMetricDrawer: React.FC<{
         {results.length > 0 && (
           <ul aria-label="Created metrics" className="text-xs space-y-0.5">
             {results.map(r => (
-              <li key={r.id} className={r.ok ? 'text-[#8fd6a3]' : 'text-[#f58c8c]'} role={r.ok ? undefined : 'alert'}>
+              <li key={r.id} className={r.ok ? 'text-success' : 'text-error'} role={r.ok ? undefined : 'alert'}>
                 {r.ok ? '✓' : '✗'} {r.title}: {r.text}
               </li>
             ))}

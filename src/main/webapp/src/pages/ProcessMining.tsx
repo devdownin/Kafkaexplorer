@@ -922,7 +922,7 @@ const ProcessMining: React.FC = () => {
       )}
 
       {/* Step content */}
-      <div className="bg-white/3 dark:bg-surface-container/30 border border-outline-variant/60 rounded-2xl p-6">
+      <div className="bg-surface-container-low dark:bg-surface-container/30 border border-outline-variant/60 rounded-2xl p-6">
 
         {/* STEP 1: SELECT */}
         {step === 'SELECT' && (

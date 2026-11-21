@@ -1,13 +1,13 @@
 # Spatial light and dark themes
 
-Kafka Explorer uses two application-wide color schemes, selected from the floating header. The choice is persisted under `kse.theme` in browser storage; without a saved preference the initial scheme follows `prefers-color-scheme`. An inline head script applies the scheme before the first paint.
+Kafka Explorer uses two application-wide color schemes and three appearance preferences — **System**, Light, Dark — cycled from the floating header (`src/theme.ts`). Only an explicit choice is persisted under `kse.theme`; System removes the key and follows `prefers-color-scheme` live. An inline head script applies the scheme and the `theme-color` meta before the first paint.
 
 ## Architecture
 
 - `src/spatial-tokens.css`: 65 shared semantic RGB color tokens for each scheme, spatial materials, scene, depth, radii and blur values.
 - `tailwind.config.js`: existing color utility names now resolve to runtime CSS variables; opacity modifiers such as the Tailwind primary color at ten-percent opacity remain supported.
 - `src/index.css`: context-specific spatial surfaces (sidebar, header, cards, dialog, inputs), motion, fallbacks and mobile blur limits.
-- `src/components/ui/Spatial.tsx`: `GlassSurface`, `GlassCard`, `GlassPanel`, `GlassSidebar`, `GlassHeader`, `GlassPopover`, `GlassModal`, `FloatingToolbar`, `SpatialButton`, and `SpatialInput` with three material variants (thin, regular, thick) and three elevation variants (flat, raised, floating).
+- `src/components/ui/Spatial.tsx`: `GlassSurface`, `GlassPopover` and `GlassModal` — glass for layer 3 only (dialogs, command palette, the Data Model edge tooltip), three materials (thin, regular, thick) and three elevations (flat, raised, floating).
 - `src/components/Layout.tsx` + `Header.tsx`: accessible theme switch, detached navigation, search and header surfaces.
 - `src/components/ThemedEditor.tsx` + `monaco-setup.ts`: distinct light and dark Monaco palettes, including editors embedded in Metrics and Topic Explorer.
 
@@ -148,3 +148,37 @@ and unit tests are necessary but are not a substitute for those checks.
 ### Reproducible cross-theme probe
 
 Run `node docs/screenshots/theme-probe.mjs http://127.0.0.1:4173 /tmp/kse-theme-shots` after starting the stub-backed SPA via the documented screenshot harness. It tests 32 combinations (Dashboard, Metrics, Query, Data Model × light/dark × 375/768/1024/1440 px). It fails on missing theme/selector, horizontal document overflow or offscreen primary page actions, and writes screenshots when the output directory is supplied. This probe was added as an optional developer tool, not silently declared as executed in CI.
+
+## Fifth pass — audit fixes
+
+What the audit of the fourth pass found, and what closed it:
+
+- **A light-only override matched nothing.** `index.css` carried three passes overriding each
+  other, and the rule meant to give the pages' `ring-1 ring-white/[0.045]` cards a border in
+  light was escaped twice (a doubled backslash before each special character), so 24 cards on Cluster, Config, Topic Explorer, Compare,
+  Help, Dead Letter and the metric cards drew a white ring on white — 1.0:1, no outline. The file
+  is now **one pass, one definition per selector, and no `:root[data-theme]` rule**: a theme
+  differs by its tokens only (`--card-ring`, `--skeleton-*`, `--scene-glow`,
+  `--scroll-thumb-hover`), so an override cannot silently miss again.
+- **Dark-only literals.** `FlowMetricDrawer` wrote its error/risk/success lines in
+  `#f58c8c` / `#f5c264` / `#8fd6a3` (1.6–2.3:1 on white); they use `text-error` / `-warning` /
+  `-success`. The black and white alpha fills on Metrics and Process Mining went to surface tokens.
+- **System appearance froze on first visit.** The effect persisted the OS default on mount, so
+  a later OS change was never followed. Three states now; System is never written.
+- **Input borders at ≥ 3:1** (WCAG 1.4.11): `--glass-input-border` is 3.3:1 in both schemes.
+  The header search capsule keeps the lighter `--glass-control-border` — it is labelled by its
+  text and icon. Card borders were raised (1.16 → ~1.3:1) but deliberately not to 3:1: a card is
+  not a control, 1.4.11 does not apply, and a 3:1 frame on every card is the opposite of the
+  material this theme is after.
+- **Typography**: SF Pro first on Apple platforms (`-apple-system`), self-hosted Inter elsewhere;
+  `h1`/`h2` tracked at −0.015em.
+- **Primitives**: the unused `GlassCard`, `GlassPanel`, `GlassSidebar`, `GlassHeader`,
+  `FloatingToolbar`, `SpatialButton` and `SpatialInput` were removed — cards are opaque reading
+  planes (`Card`), and controls are `Button` and `Field`. `ConfirmDialog`, `CommandPalette` and
+  the Data Model tooltip now use `GlassModal` / `GlassPopover` instead of raw classes.
+- `.glass`, `.header-border` (unused) and `background-attachment: fixed` (the shell does not
+  scroll; `main` does) were dropped. Light `.nav-active` now takes the
+  `--glass-selected-*` tokens its own override used to shadow.
+
+`theme-probe.mjs` finds the switch by its `Appearance: …` label. It still checks layout, not
+contrast: the ratios above are computed from the tokens.

@@ -78,10 +78,13 @@
   --glass-control-bg: rgba(255, 255, 255, .055);
   --glass-control-hover: rgba(255, 255, 255, .10);
   --glass-input-bg: rgba(10, 13, 19, .22);
-  --glass-input-border: rgba(255, 255, 255, .14);
+  /* ≥ 3:1 against the field (WCAG 1.4.11): an input must be findable before it has focus. */
+  --glass-input-border: rgba(255, 255, 255, .36);
+  --glass-control-border: rgba(255, 255, 255, .14);
   --glass-selected-bg: rgba(255, 255, 255, .11);
   --glass-selected-edge: rgba(255, 255, 255, .12);
   --glass-card-border: rgba(255, 255, 255, .055);
+  --card-ring: rgba(255, 255, 255, .045);
   --glass-card-top: rgba(255, 255, 255, .03);
   --glass-drawer-bg: rgba(8, 11, 17, .56);
   --focus-ring: #a3adff;
@@ -91,7 +94,11 @@
   --scene: radial-gradient(circle at 20% 10%, rgba(70,100,180,.12), transparent 35%), linear-gradient(180deg,#0b0d10,#111722);
   --veil: rgba(9, 13, 20, .38);
   --scroll-thumb: #364254;
-  --graph-dot: #334052;
+  --scroll-thumb-hover: #3a4250;
+  --graph-dot: #2a303b;
+  --scene-glow: radial-gradient(ellipse 70% 40% at 50% -10%, rgba(163, 173, 255, .035) 0%, transparent 70%);
+  --skeleton-base: #191d24;
+  --skeleton-shine: rgba(255, 255, 255, .055);
   --viz-observed: #6ee7a0;
   --viz-warning: #f5c264;
   --viz-critical: #f58c8c;
@@ -189,10 +196,12 @@
   --glass-control-bg: rgba(255, 255, 255, .40);
   --glass-control-hover: rgba(255, 255, 255, .78);
   --glass-input-bg: rgba(246, 249, 253, .87);
-  --glass-input-border: rgba(126, 145, 169, .29);
+  --glass-input-border: rgba(88, 107, 128, .78);
+  --glass-control-border: rgba(126, 145, 169, .29);
   --glass-selected-bg: rgba(255, 255, 255, .85);
   --glass-selected-edge: rgba(115, 135, 166, .16);
-  --glass-card-border: rgba(115, 135, 166, .14);
+  --glass-card-border: rgba(88, 107, 128, .20);
+  --card-ring: rgba(88, 107, 128, .20);
   --glass-card-top: rgba(255, 255, 255, .56);
   --glass-drawer-bg: rgba(28, 41, 58, .24);
   --focus-ring: #4453b8;
@@ -202,7 +211,11 @@
   --scene: radial-gradient(circle at 20% 10%, rgba(160,190,255,.14), transparent 35%), radial-gradient(circle at 80% 20%, rgba(210,180,255,.10), transparent 40%), linear-gradient(180deg,#f7f9fc,#f1f4f8);
   --veil: rgba(20,25,35,.16);
   --scroll-thumb: #a8b6c7;
+  --scroll-thumb-hover: #8797ab;
   --graph-dot: #d8e1ec;
+  --scene-glow: none;
+  --skeleton-base: #e7edf5;
+  --skeleton-shine: rgba(255, 255, 255, .8);
   --viz-observed: #17693d;
   --viz-warning: #845400;
   --viz-critical: #b42332;

@@ -104,10 +104,12 @@ export default {
         "border-dark": "rgb(var(--kse-border-dark) / <alpha-value>)",
       },
       fontFamily: {
-        "display": ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
-        "headline": ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
-        "body": ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
-        "label": ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        /* Apple platforms get SF Pro (system font, nothing to ship); everywhere else the
+           self-hosted Inter, whose metrics are close enough that layouts do not move. */
+        "display": ["-apple-system", "BlinkMacSystemFont", "SF Pro Display", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        "headline": ["-apple-system", "BlinkMacSystemFont", "SF Pro Display", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        "body": ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        "label": ["-apple-system", "BlinkMacSystemFont", "SF Pro Text", "Inter", "ui-sans-serif", "system-ui", "sans-serif"],
         "mono": ["JetBrains Mono", "ui-monospace", "monospace"],
       },
       borderRadius: {

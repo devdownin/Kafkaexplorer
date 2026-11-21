@@ -21,10 +21,16 @@ describe('Header connection pill', () => {
     render(<RouterProvider router={createMemoryRouter([{
       path: '/', element: <Header theme="light" onThemeToggle={onThemeToggle} isHealthy={null} clusterName="" />,
     }], { initialEntries: ['/'] })} />);
-    const switchButton = screen.getByRole('button', { name: 'Switch to dark mode' });
-    expect(switchButton).toHaveAttribute('aria-pressed', 'true');
+    const switchButton = screen.getByRole('button', { name: 'Appearance: light. Switch to dark' });
     switchButton.click();
     expect(onThemeToggle).toHaveBeenCalledOnce();
+  });
+
+  it('names the resolved scheme while following the system', () => {
+    render(<RouterProvider router={createMemoryRouter([{
+      path: '/', element: <Header theme="dark" themePreference="system" onThemeToggle={() => {}} isHealthy={null} clusterName="" />,
+    }], { initialEntries: ['/'] })} />);
+    expect(screen.getByRole('button', { name: 'Appearance: system (dark). Switch to light' })).toBeInTheDocument();
   });
 
   it('shows the deployment name and the effective bootstrap address on hover', () => {

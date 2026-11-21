@@ -59,5 +59,5 @@ export { ScrollList } from './ScrollList';
 export type { ScrollListProps } from './ScrollList';
 export { cn } from './cn';
 
-export { GlassSurface, GlassCard, GlassPanel, GlassSidebar, GlassHeader, GlassPopover, GlassModal, FloatingToolbar, SpatialButton, SpatialInput } from './Spatial';
+export { GlassSurface, GlassPopover, GlassModal } from './Spatial';
 export type { GlassMaterial, SpatialElevation, GlassSurfaceProps } from './Spatial';
