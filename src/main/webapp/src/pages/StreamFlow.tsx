@@ -29,6 +29,7 @@ import {
   type TraceHistoryEntry, type TraceParams, type TraceProgress,
 } from './streamFlowLogic';
 import { recordTracedChain } from './flowChains';
+import { FlowMetricDrawer } from '../components/graph/FlowMetricDrawer';
 import { copyText } from '../clipboard';
 
 /** Filet de sécurité côté client : le backend borne déjà la trace (explorer.stream-flow-timeout-ms). */
@@ -99,6 +100,8 @@ const StreamFlow: React.FC = () => {
   const [flow, setFlow]                     = useState<ParsedFlow>(EMPTY_FLOW);
   const [hasResult, setHasResult]           = useState(false);
   const [selectedTopic, setSelectedTopic]   = useState<string | null>(null);
+  // The topic whose metrics drawer is open: created from the graph, on the hop the trace followed.
+  const [metricTopic, setMetricTopic]       = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen]       = useState(true);
   const [hitFilter, setHitFilter]           = useState('');
   /** Tri du tableau de preuves. `chain` — l'ordre des sauts — est le sens même de la trace. */
@@ -1238,6 +1241,19 @@ const StreamFlow: React.FC = () => {
                 })}
               </g>
             </svg>
+          )}
+
+          {/* A selected topic proposes its metrics: the hops into and out of it, its consumers. */}
+          {hasResult && !loading && selectedTopic && metricTopic !== selectedTopic && hitByTopic.has(selectedTopic) && (
+            <div className="absolute left-3 bottom-3 z-10">
+              <Button variant="primary" size="sm" icon="add_chart" onClick={() => setMetricTopic(selectedTopic)}>
+                Create metrics for {selectedTopic}
+              </Button>
+            </div>
+          )}
+          {hasResult && !loading && metricTopic && hitByTopic.has(metricTopic) && (
+            <FlowMetricDrawer topic={metricTopic} hits={hits} messageKey={messageKey} searchPath={searchPath}
+              onClose={() => setMetricTopic(null)} />
           )}
 
           {/* No result — dit ce qui a été lu, sinon « introuvable » se confond avec « hors fenêtre » */}

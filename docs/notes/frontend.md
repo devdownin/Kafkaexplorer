@@ -835,3 +835,13 @@ privacy sentence appears where one types, read off `localDeployment`, the Settin
 `ForecastPanel` carries a `Chart data as a table` disclosure built from the same `chart` array the
 plot reads (time, kind, value, 80 % band), plus a summary `aria-label` on the `role="img"`. The table
 mounts only once opened: sixty-odd rows per panel are not worth rendering for everyone.
+
+**Stream Flow creates metrics from the graph** (`components/graph/FlowMetricDrawer.tsx`, pure half in
+`pages/flowMetrics.ts`). A selected topic offers *Create metrics*; the drawer lists what the trace
+supports — latency and loss of the hop into and out of the topic, the consumer lag of a group, the
+records produced — each with fixed labels the operator can untick. The latency is the server's
+`flow:hop-latency:A>B` suggestion taken as it comes (one place derives the key and the thresholds);
+the per-hop loss mirrors the server's end-to-end completeness card on one hop — edit the two
+together. Creating is direct, on purpose and unlike the suggestion panel's *Review & add*: the
+operator asked for it from the graph they just read, and the result line names each metric created,
+or the server's refusal. What was created is unticked, so a second click does not duplicate it.

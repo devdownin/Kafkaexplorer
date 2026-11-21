@@ -509,6 +509,48 @@ class MetricServiceTest {
             .tag("metric_name", "after_rename").meters().isEmpty());
     }
 
+    /** Stream Flow names the hop a metric measures: fixed labels reach every series of it. */
+    @Test
+    void fixedLabelsAreOnTheSeriesAndSurviveAnEdit() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 5.0)), 10L, null));
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put(MetricService.STATIC_LABELS_PARAM, Map.of("source_topic", "orders", "target_topic", "shipped"));
+        service.save(new MetricConfig(
+            null, "hop_metric", "GAUGE", "SELECT 5 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, params, null, null, List.of()));
+        MetricConfig saved = service.getAllMetrics().stream()
+            .filter(m -> "hop_metric".equals(m.name())).findFirst().orElseThrow();
+        service.refreshMetrics();
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", saved.id())
+            .tag("source_topic", "orders").tag("target_topic", "shipped").meters().isEmpty());
+
+        // An edit that changes another field keeps them: the record is copied, its params with it.
+        service.save(new MetricConfig(
+            saved.id(), "hop_metric", "GAUGE", "SELECT 5 AS metric_value", "described", 10.0, null,
+            null, null, null, List.of(), Map.of(), null, null, saved.templateParams(), null, null, List.of()));
+        service.refreshMetrics();
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", saved.id())
+            .tag("source_topic", "orders").meters().isEmpty());
+    }
+
+    @Test
+    void aFixedLabelThatIsNotALabelOrOverwritesTheIdentityIsRefused() {
+        for (Map<String, Object> labels : List.<Map<String, Object>>of(
+                Map.of("Source Topic", "orders"), Map.of("metric_id", "x"), Map.of("source_topic", " "))) {
+            Map<String, Object> params = new LinkedHashMap<>();
+            params.put(MetricService.STATIC_LABELS_PARAM, labels);
+            var metric = new MetricConfig(
+                null, "bad_labels", "GAUGE", "SELECT 5 AS metric_value", null, null, null,
+                null, null, null, List.of(), Map.of(), null, null, params, null, null, List.of());
+            var error = assertThrows(IllegalArgumentException.class, () -> MetricService.staticLabels(metric.templateParams()));
+            assertTrue(error.getMessage().startsWith("Fixed label"), error.getMessage());
+        }
+        Map<String, Object> many = new LinkedHashMap<>();
+        for (int i = 0; i <= MetricService.MAX_STATIC_LABELS; i++) many.put("l" + i, "v");
+        assertThrows(IllegalArgumentException.class, () -> MetricService.staticLabels(Map.of(MetricService.STATIC_LABELS_PARAM, many)));
+    }
+
     /** METRICS-CREATION-AUDIT.md B2: a definition no topic received is not saved, and says so. */
     @Test
     void aSaveThatCannotBeWrittenFailsAndChangesNothing() {

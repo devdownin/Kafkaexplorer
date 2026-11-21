@@ -183,6 +183,19 @@ public class MetricService {
     private static final long MIN_REFRESH_INTERVAL_MS = 1_000L;
     private static final long MAX_REFRESH_INTERVAL_MS = 24L * 3_600_000L;
     private static final int MAX_TEMPLATE_MAX_ROWS = 1_000_000;
+    /**
+     * Fixed Prometheus labels, written once by whoever creates the metric — Stream Flow names the
+     * hop it measures ({@code source_topic}, {@code target_topic}). A template parameter for the
+     * same reason {@code refreshIntervalMs} is one: {@code templateParams} is this record's bag of
+     * per-metric knobs, every copy of the record carries it, and a component of its own would be a
+     * forty-odd-call-site change where one forgotten copy drops the labels without a word.
+     */
+    public static final String STATIC_LABELS_PARAM = "staticLabels";
+    static final int MAX_STATIC_LABELS = 8;
+    private static final int MAX_STATIC_LABEL_VALUE = 200;
+    private static final java.util.regex.Pattern LABEL_NAME = java.util.regex.Pattern.compile("[a-z_][a-z0-9_]*");
+    /** The identity every series of a metric already carries: a fixed label may not overwrite it. */
+    private static final Set<String> RESERVED_LABELS = Set.of("metric_id", "metric_name", "metric_type");
     private static final long MAX_TEMPLATE_TIMEOUT_MS = 600_000L;
 
     private static final List<MetricTemplateDescriptor> TEMPLATE_DESCRIPTORS = List.of(
@@ -965,6 +978,8 @@ public class MetricService {
                 + MIN_REFRESH_INTERVAL_MS + " and " + MAX_REFRESH_INTERVAL_MS
                 + ", or 0 to refresh on every cycle (was " + refreshIntervalMs + ")");
         }
+
+        staticLabels(params);
 
         switch (templateType) {
             case KAFKA_CLUSTER_COUNT -> {
@@ -2810,19 +2825,60 @@ public class MetricService {
         return sb.toString();
     }
 
+    /**
+     * The fixed labels of a metric, checked: a map of label name to value, at most
+     * {@value #MAX_STATIC_LABELS}, each name a Prometheus label name that is not the metric's own
+     * identity. Absent means none. Throws on anything else — a label silently dropped is a series
+     * an alert rule waits for and never sees.
+     */
+    static Map<String, String> staticLabels(Map<String, Object> params) {
+        Object raw = params == null ? null : params.get(STATIC_LABELS_PARAM);
+        if (raw == null) return Map.of();
+        if (!(raw instanceof Map<?, ?> map)) {
+            throw new IllegalArgumentException(STATIC_LABELS_PARAM + " must be an object of label name to value");
+        }
+        if (map.size() > MAX_STATIC_LABELS) {
+            throw new IllegalArgumentException("At most " + MAX_STATIC_LABELS + " fixed labels (" + map.size() + " given)");
+        }
+        Map<String, String> labels = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            String key = String.valueOf(e.getKey());
+            if (!LABEL_NAME.matcher(key).matches()) {
+                throw new IllegalArgumentException("Fixed label '" + key + "' is not a label name: lower case letters, digits and _, not starting with a digit");
+            }
+            if (RESERVED_LABELS.contains(key)) {
+                throw new IllegalArgumentException("Fixed label '" + key + "' is the metric's own identity and is set already");
+            }
+            if (!(e.getValue() instanceof String value) || value.isBlank()) {
+                throw new IllegalArgumentException("Fixed label '" + key + "' needs a non-empty text value");
+            }
+            if (value.length() > MAX_STATIC_LABEL_VALUE) {
+                throw new IllegalArgumentException("Fixed label '" + key + "' is longer than " + MAX_STATIC_LABEL_VALUE + " characters");
+            }
+            labels.put(key, value);
+        }
+        return labels;
+    }
+
     private Map<String, String> resolveConfiguredLabels(MetricConfig config) {
+        Map<String, String> fixed;
+        try {
+            fixed = staticLabels(config.templateParams());
+        } catch (IllegalArgumentException e) {
+            fixed = Map.of(); // refused on save; a metric stored before the rule keeps running
+        }
         if (config.labelTopic() == null || config.labelTopic().isBlank()
             || config.labelFields() == null || config.labelFields().isEmpty()) {
-            return Map.of();
+            return fixed;
         }
 
         try {
             Map<String, String> extractedFields = latestLeafFields(config.labelTopic());
             if (extractedFields.isEmpty()) {
-                return Map.of();
+                return fixed;
             }
 
-            Map<String, String> labels = new LinkedHashMap<>();
+            Map<String, String> labels = new LinkedHashMap<>(fixed);
             for (String fieldPath : config.labelFields()) {
                 String value = extractedFields.get(fieldPath);
                 if (value == null) continue;
@@ -2838,7 +2894,7 @@ public class MetricService {
             return labels;
         } catch (Exception e) {
             log.debug("Failed to resolve configured labels for metric '{}': {}", config.name(), e.getMessage());
-            return Map.of();
+            return fixed;
         }
     }
 
