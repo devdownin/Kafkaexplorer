@@ -207,6 +207,19 @@ export function flowMetricOptions(n: TopicNeighbours, suggestions: MetricSuggest
   return options;
 }
 
+/**
+ * The metrics one hop of the trace proposes — the link between two topics, clicked on the graph:
+ * its transit latency (ticked) and the records it loses. Where no latency can be proposed, the
+ * loss is ticked instead, once the proposals are read.
+ */
+export function hopMetricOptions(from: string, to: string, suggestions: MetricSuggestion[] | null,
+  suggestionsError: string | null): FlowMetricOption[] {
+  const latency = latencyOption(from, to, suggestions, suggestionsError, true);
+  const loss = lossOption(from, to);
+  if (suggestions !== null && !latency.defaultOn) loss.defaultOn = true;
+  return [latency, loss];
+}
+
 /** The draft with the ticked labels as fixed labels, ready for `POST /api/metrics`. */
 export function withStaticLabels(draft: Partial<MetricConfig>, labels: Record<string, string>): Partial<MetricConfig> {
   const params = { ...(draft.templateParams ?? {}) };

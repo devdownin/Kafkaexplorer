@@ -34,4 +34,16 @@ describe('FlowMetricDrawer', () => {
     expect(body.templateParams.staticLabels).toEqual({ source_topic: 'orders' });
     expect(screen.getByRole('button', { name: 'Create 0 metrics' })).toBeDisabled();
   });
+
+  it('proposes only the clicked hop, and reads no consumer group for it', async () => {
+    vi.mocked(axios.get).mockClear();
+    vi.mocked(axios.post).mockResolvedValue({ data: { suggestions: [] } });
+    render(<MemoryRouter><FlowMetricDrawer topic="payments" hop={{ from: 'orders', to: 'payments' }}
+      hits={['orders', 'payments', 'shipped'].map(hit)} messageKey="42" searchPath="" onClose={() => {}} /></MemoryRouter>);
+    expect(await screen.findByRole('dialog', { name: 'Create metrics for the hop orders to payments' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Create 1 metric' })).toBeEnabled();
+    expect(screen.getByText('Records lost orders → payments')).toBeInTheDocument();
+    expect(screen.queryByText(/payments → shipped/)).not.toBeInTheDocument();
+    expect(axios.get).not.toHaveBeenCalled();
+  });
 });

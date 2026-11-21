@@ -6,7 +6,7 @@ import axios from 'axios';
 import type { FlowHit } from '../../pages/streamFlowLogic';
 import type { MetricConfig, MetricSuggestions, TopicConsumers } from '../../api/types';
 import { chainFromHits } from '../../pages/flowChains';
-import { consumerLagDraft, flowMetricOptions, metricName, neighboursOf, withStaticLabels,
+import { consumerLagDraft, flowMetricOptions, hopMetricOptions, metricName, neighboursOf, withStaticLabels,
   type FlowMetricOption } from '../../pages/flowMetrics';
 import { extractApiErrorMessage } from '../../pages/queryError';
 import { Badge, Button, Checkbox, Select } from '../ui';
@@ -19,11 +19,13 @@ import { Badge, Button, Checkbox, Select } from '../ui';
  */
 export const FlowMetricDrawer: React.FC<{
   topic: string;
+  /** Set when a link between two topics was clicked: the drawer proposes that hop only. */
+  hop?: { from: string; to: string } | null;
   hits: FlowHit[];
   messageKey: string;
   searchPath: string;
   onClose: () => void;
-}> = ({ topic, hits, messageKey, searchPath, onClose }) => {
+}> = ({ topic, hop = null, hits, messageKey, searchPath, onClose }) => {
   const neighbours = useMemo(() => neighboursOf(hits, topic), [hits, topic]);
   const [suggestions, setSuggestions] = useState<MetricSuggestions['suggestions'] | null>(null);
   const [suggestionsError, setSuggestionsError] = useState<string | null>(null);
@@ -48,17 +50,19 @@ export const FlowMetricDrawer: React.FC<{
 
   useEffect(() => {
     let live = true;
+    if (hop) return; // a hop has no consumer of its own to read
     axios.get<TopicConsumers>(`/api/topic/${encodeURIComponent(topic)}/consumers`)
       .then(res => { if (live) setGroups((res.data?.groups ?? []).map(g => g.groupId)); })
       .catch(e => { if (live) { setGroups([]); setGroupsError(extractApiErrorMessage(e)); } });
     return () => { live = false; };
-  }, [topic]);
+  }, [topic, hop]);
 
   const chosenGroup = group ?? groups?.[0] ?? null;
-  const options = useMemo(() => flowMetricOptions(neighbours, chain ? suggestions : [], suggestionsError, groups, groupsError)
+  const options = useMemo(() => hop ? hopMetricOptions(hop.from, hop.to, chain ? suggestions : [], suggestionsError)
+    : flowMetricOptions(neighbours, chain ? suggestions : [], suggestionsError, groups, groupsError)
     .map(o => o.kind === 'consumer-lag' && chosenGroup
       ? { ...o, labels: { topic, consumer_group: chosenGroup }, draft: consumerLagDraft(topic, chosenGroup) } : o),
-  [neighbours, chain, suggestions, suggestionsError, groups, groupsError, chosenGroup, topic]);
+  [hop, neighbours, chain, suggestions, suggestionsError, groups, groupsError, chosenGroup, topic]);
 
   const isOn = (o: FlowMetricOption) => !o.unavailable && (ticked[o.id] ?? o.defaultOn);
   const labelsOf = (o: FlowMetricOption) => Object.fromEntries(
@@ -85,14 +89,15 @@ export const FlowMetricDrawer: React.FC<{
   }
 
   return (
-    <aside role="dialog" aria-label={`Create metrics for ${topic}`}
+    <aside role="dialog" aria-label={hop ? `Create metrics for the hop ${hop.from} to ${hop.to}` : `Create metrics for ${topic}`}
       className="absolute right-3 top-3 bottom-3 w-[min(26rem,calc(100%-1.5rem))] z-20 flex flex-col
         rounded-xl border border-outline-variant bg-surface-container-low shadow-xl">
       <header className="flex items-start justify-between gap-2 px-4 pt-3 pb-2 border-b border-outline-variant/60">
         <div className="min-w-0">
           <h2 className="text-sm font-bold">Create metrics</h2>
           <p className="text-xs text-outline font-mono truncate" title={topic}>
-            {neighbours.previous ? `${neighbours.previous} → ` : ''}<span className="text-on-surface">{topic}</span>{neighbours.next ? ` → ${neighbours.next}` : ''}
+            {hop ? <span className="text-on-surface">{hop.from} → {hop.to}</span>
+              : <>{neighbours.previous ? `${neighbours.previous} → ` : ''}<span className="text-on-surface">{topic}</span>{neighbours.next ? ` → ${neighbours.next}` : ''}</>}
           </p>
         </div>
         <button type="button" onClick={onClose} aria-label="Close" className="w-7 h-7 rounded text-outline hover:text-primary">

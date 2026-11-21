@@ -20,6 +20,9 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Stream Flow: create metrics from a link between two topics.** Each arrow of the graph is now a target
+  (mouse and keyboard): clicking it opens the metrics drawer for that hop only — its transit latency,
+  ticked, and the records it loses, labelled `source_topic` / `target_topic`.
 - **Stream Flow: create metrics from a topic of the graph.** Select a topic and press *Create metrics*:
   a drawer proposes the transit latency of the hop into and out of it (the server's own suggestion,
   thresholds derived from the measured hop), the records lost on each hop, the consumer lag of a group

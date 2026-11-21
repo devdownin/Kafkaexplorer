@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MetricSuggestion } from '../api/types';
 import type { FlowHit } from './streamFlowLogic';
-import { flowMetricOptions, hopLatencyId, metricName, neighboursOf, withStaticLabels } from './flowMetrics';
+import { flowMetricOptions, hopLatencyId, hopMetricOptions, metricName, neighboursOf, withStaticLabels } from './flowMetrics';
 
 const hit = (topic: string): FlowHit => ({ topic, occurrences: 1, firstTimestamp: 1, lastTimestamp: 1, firstPartition: 0,
   firstOffset: 0, firstKey: null, preview: null, latencyFromPreviousMs: 10 });
@@ -53,5 +53,14 @@ describe('flowMetricOptions without a latency proposal', () => {
     const n = neighboursOf(hits, 'payments');
     expect(flowMetricOptions(n, [], null, [], null).filter(o => o.defaultOn).map(o => o.id)).toEqual(['loss:orders>payments']);
     expect(flowMetricOptions(n, null, null, [], null).filter(o => o.defaultOn)).toEqual([]);
+  });
+});
+
+describe('hopMetricOptions', () => {
+  it('proposes the latency and the loss of one hop, latency ticked, loss ticked instead when no latency is proposed', () => {
+    const withLatency = hopMetricOptions('orders', 'payments', [latency('orders', 'payments')], null);
+    expect(withLatency.map(o => [o.id, o.defaultOn])).toEqual([['latency:orders>payments', true], ['loss:orders>payments', false]]);
+    expect(hopMetricOptions('orders', 'payments', [], null).map(o => o.defaultOn)).toEqual([false, true]);
+    expect(withLatency[1].labels).toEqual({ source_topic: 'orders', target_topic: 'payments' });
   });
 });
