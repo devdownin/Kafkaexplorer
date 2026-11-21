@@ -20,6 +20,8 @@ const DOT_TONES = {
 
 interface HeaderProps {
   theme: 'light' | 'dark';
+  /** Strengthen the optical separation when the content plane has scrolled. */
+  scrolled?: boolean;
   onThemeToggle: () => void;
   onMenuClick?: () => void;
   /** Ouvre la palette de commandes (⌘K). */
@@ -42,14 +44,14 @@ interface HeaderProps {
  * chaud par `POST /api/config`. Ce qui est vérifiable voyage à côté : l'adresse d'amorçage
  * effective, lue dans la configuration en cours d'exécution, en infobulle.
  */
-const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName, bootstrapServers, theme, onThemeToggle }) => {
+const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName, bootstrapServers, theme, onThemeToggle, scrolled = false }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const pageName = resolvePageName(location.pathname);
   const tone = connectionTone({ isHealthy });
 
   return (
-    <header className="kse-header flex justify-between items-center gap-3 px-4 md:px-6 h-14 shrink-0 sticky top-3 z-30 mx-3 md:mx-4 mt-3 mb-2">
+    <header className={`kse-header ${scrolled ? 'kse-header-scrolled' : ''} flex justify-between items-center gap-3 px-4 md:px-6 h-14 shrink-0 sticky top-3 z-30 mx-3 md:mx-4 mt-3 mb-2`}>
       <div className="flex items-center gap-2 min-w-0">
         <button
           type="button"
