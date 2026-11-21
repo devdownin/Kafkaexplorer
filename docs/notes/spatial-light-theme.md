@@ -182,3 +182,27 @@ What the audit of the fourth pass found, and what closed it:
 
 `theme-probe.mjs` finds the switch by its `Appearance: …` label. It still checks layout, not
 contrast: the ratios above are computed from the tokens.
+
+## Sixth pass — material and motion
+
+- **Switch**: iOS thumb (white, 16 px in a 20 px track, soft shadow, 200 ms overshoot spring); the
+  off track is `outline` at 70 %, about 3:1 against the card in both schemes — the former tonal
+  gray vanished into it.
+- **Select** (`kse-select`): no native chrome, a chevron (`--select-chevron`, one per scheme) on the
+  same recess as the text fields. The chevron rule sits after `.kse-input` because that class's
+  `background` shorthand resets it.
+- **Prominent button** (`kse-btn-prominent`, Button's primary variant and "New query"): a faint
+  vertical gradient, a 1 px light rim and a shadow tinted with the accent. Forced colors fall
+  back to `ButtonFace`.
+- **Icons**: `wght 300`, no explicit `opsz` (the browser's automatic optical sizing matches the
+  axis to the rendered size), and the current route's icon is filled (`--icon-fill`).
+- **Glass rim**: `--glass-rim`, a 0.5 px outer hairline, on the sidebar, header and the glass
+  materials — in light the translucent edge alone does not separate a pale panel from a pale scene.
+- **Data Model nodes**: `themedTint()` paints each domain through `--dm-header-N` /
+  `--dm-accent-N`. Dark keeps the original dark blocks; light uses pastel containers with dark
+  text and accents darkened for strokes. Exports (SVG, PNG, Mermaid) keep the hex palette: they
+  are standalone files that cannot know the page's theme.
+- **Dashboard bento**: Cluster Health is the large tile; Message Count is a full-width strip with a
+  `TrendLine` of `totalMessages` at each refresh *of this visit* (30 samples, in memory only). Fewer
+  than two samples draw nothing — the tile says the trend builds up, rather than drawing a dash
+  that pretends to be one. A constant series is a flat mid-line, not noise stretched over the range.

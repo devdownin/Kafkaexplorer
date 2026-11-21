@@ -21,7 +21,7 @@ import {
   drawnEntities, describeSetAside, readPanelOpen, writePanelOpen,
   crowFootPath, oneBarPath, graphBounds, fitTransform, centerOnEntity, topicDomains, domainColors,
   formatCount, describeRelation, matchingColumns, describeColumnMatches,
-  buildExportSvg, exportNotes, toMermaidEr, buildJoinSql,
+  buildExportSvg, exportNotes, themedTint, DEFAULT_TINT, toMermaidEr, buildJoinSql,
   diffModels, describeDiff, diffIsEmpty,
   filterRelations, describeRelationFilter, orphanKeyColumns, describeOrphanKey,
   COMFORTABLE_NODE_SIZING, resolveNodeSizing, describeDensity, describeDensityCost,
@@ -75,7 +75,8 @@ const EntityNode: React.FC<{
 }> = ({ entity, x, y, selected, dimmed, tint, highlighted, orphanKeys, sizing, onClick }) => {
   const { columns, hidden } = displayedColumns(entity, sizing);
   const height = entityHeight(entity, sizing);
-  const stroke = selected ? 'var(--viz-primary)' : tint.accent;
+  const paint = themedTint(tint);
+  const stroke = selected ? 'var(--viz-primary)' : paint.accent;
   const exactCount = entity.messageCount !== null
     ? `${entity.messageCount.toLocaleString()} messages`
     : 'message count unavailable';
@@ -108,25 +109,25 @@ const EntityNode: React.FC<{
       <title>{`${entity.topic} · ${exactCount}`}</title>
       {selected && (
         <rect x={x - 4} y={y - 4} width={width + 8} height={height + 8} rx={10}
-          fill={tint.accent} fillOpacity={0.08} stroke={tint.accent} strokeWidth={1} strokeOpacity={0.3} />
+          fill={paint.accent} fillOpacity={0.08} stroke={paint.accent} strokeWidth={1} strokeOpacity={0.3} />
       )}
       <rect x={x} y={y} width={width} height={height} rx={8}
         fill="var(--viz-node-bg)" stroke={stroke} strokeWidth={selected ? 2 : 1.2} strokeOpacity={selected ? 1 : 0.7} />
       {/* En-tête : nom de table + topic d'origine, teinté par domaine */}
-      <rect x={x} y={y} width={width} height={sizing.headerH} rx={8} fill={tint.header} />
-      <rect x={x} y={y + sizing.headerH - 8} width={width} height={8} fill={tint.header} />
-      <text x={x + 10} y={y + titleY} fill="white" fontSize={sizing.titleSize} fontWeight="bold"
+      <rect x={x} y={y} width={width} height={sizing.headerH} rx={8} fill={paint.header} />
+      <rect x={x} y={y + sizing.headerH - 8} width={width} height={8} fill={paint.header} />
+      <text x={x + 10} y={y + titleY} fill="var(--dm-header-text)" fontSize={sizing.titleSize} fontWeight="bold"
         fontFamily="JetBrains Mono, monospace">
         {elide(entity.id, sizing.titleChars)}
       </text>
-      <text x={x + 10} y={y + subtitleY} fill="#c4cbd8" fontSize={sizing.subtitleSize}
+      <text x={x + 10} y={y + subtitleY} fill="var(--dm-header-subtext)" fontSize={sizing.subtitleSize}
         fontFamily="Inter, sans-serif">
         {elide(entity.topic, sizing.subtitleChars)}
         {entity.format ? ` · ${entity.format}` : ''}
         {entity.messageCount !== null ? ` · ${formatCount(entity.messageCount)} msg` : ''}
       </text>
       <line x1={x} y1={y + sizing.headerH} x2={x + width} y2={y + sizing.headerH}
-        stroke={tint.accent} strokeOpacity={0.35} />
+        stroke={paint.accent} strokeOpacity={0.35} />
       {/* Colonnes */}
       {columns.map((column, i) => {
         const rowY = y + sizing.headerH + (i + 1) * sizing.rowH - rowBaseline;
@@ -612,7 +613,7 @@ const DataModel: React.FC = () => {
   const domains = useMemo(() => topicDomains(entities.map(e => e.topic)), [entities]);
   const tints = useMemo(() => domainColors(domains), [domains]);
   const tintOf = useCallback((topic: string) =>
-    tints.get(domains.get(topic) ?? '') ?? { header: '#1d2333', accent: '#a3adff' },
+    tints.get(domains.get(topic) ?? '') ?? DEFAULT_TINT,
     [tints, domains]);
   const domainLegend = useMemo(
     () => [...tints.entries()].filter(() => tints.size > 1),
@@ -1206,7 +1207,7 @@ const DataModel: React.FC = () => {
                 id="dm-density"
                 value={density}
                 onChange={e => setDensity(e.target.value as DensityChoice)}
-                className="w-full bg-surface-container-low border border-outline-variant rounded-md px-2 py-1.5 text-xs text-on-surface outline-hidden focus:border-primary/40"
+                className="kse-input kse-select w-full border rounded-md px-2 py-1.5 text-xs text-on-surface outline-hidden focus:border-primary/40"
               >
                 <option value="auto">Auto — fit for readability</option>
                 <option value="comfortable">Comfortable — widest, most columns</option>
@@ -1399,7 +1400,7 @@ const DataModel: React.FC = () => {
               {domainLegend.map(([domain, tint]) => (
                 <div key={domain} className="flex items-center gap-2 text-[11px] text-on-surface-variant">
                   <span aria-hidden="true" className="w-3 h-3 rounded-sm shrink-0 border"
-                    style={{ backgroundColor: tint.header, borderColor: tint.accent }} />
+                    style={{ backgroundColor: themedTint(tint).header, borderColor: themedTint(tint).accent }} />
                   <span className="font-mono truncate">{domain}</span>
                 </div>
               ))}

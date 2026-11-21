@@ -60,7 +60,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
     <select
       ref={ref}
       aria-invalid={invalid || undefined}
-      className={cn(CONTROL, CONTROL_STATE(invalid), 'h-9 px-2.5 cursor-pointer', className)}
+      className={cn(CONTROL, CONTROL_STATE(invalid), 'kse-select h-9 px-2.5 cursor-pointer', className)}
       {...props}
     >
       {children}

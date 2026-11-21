@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { DataModelEntity, DataModelRelation, DataModelResponse } from '../api/types';
 import {
-  DEFAULT_MAX_TOPICS, MAX_COLUMNS_SHOWN, NODE_W, HEADER_H, ROW_H, FOOTER_H, DOMAIN_PALETTE,
+  DEFAULT_MAX_TOPICS, MAX_COLUMNS_SHOWN, NODE_W, HEADER_H, ROW_H, FOOTER_H, DOMAIN_PALETTE, DEFAULT_TINT, themedTint,
   filterTopics, toggleTopic, selectAll, topicsFromQuery, buildQuery,
   displayedColumns, entityHeight, computeLayout, describeModel, splitByConnectivity,
   columnRowY, anchorSpread, computeEdgeGeometry, crowFootPath, oneBarPath,
@@ -1865,5 +1865,18 @@ describe('describeBuildProgress / describeStaleGraphDuringBuild', () => {
   it('says the graph on screen is the previous one — only when there is one', () => {
     expect(describeStaleGraphDuringBuild(true)).toContain('previous model');
     expect(describeStaleGraphDuringBuild(false)).toBeNull();
+  });
+});
+
+describe('themedTint', () => {
+  it('paints each palette entry through its own pair of theme variables', () => {
+    DOMAIN_PALETTE.forEach((tint, i) => {
+      expect(themedTint(tint)).toEqual({ header: `var(--dm-header-${i})`, accent: `var(--dm-accent-${i})` });
+    });
+  });
+
+  it('maps the default tint and leaves a foreign one as written', () => {
+    expect(themedTint(DEFAULT_TINT)).toEqual({ header: 'var(--dm-header-default)', accent: 'var(--dm-accent-default)' });
+    expect(themedTint({ header: '#123456', accent: '#654321' })).toEqual({ header: '#123456', accent: '#654321' });
   });
 });

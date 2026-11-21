@@ -87,6 +87,20 @@
   --card-ring: rgba(255, 255, 255, .045);
   --glass-card-top: rgba(255, 255, 255, .03);
   --glass-drawer-bg: rgba(8, 11, 17, .56);
+  --glass-rim: 0 0 0 .5px rgba(0, 0, 0, .55);
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%239aa3b2' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+  --switch-thumb-shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 0 0 .5px rgba(0, 0, 0, .2);
+  --dm-header-text: #ffffff;
+  --dm-header-subtext: #c4cbd8;
+  --dm-header-default: #1d2333; --dm-accent-default: #a3adff;
+  --dm-header-0: #252a4a; --dm-accent-0: #a3adff;
+  --dm-header-1: #1c3a2f; --dm-accent-1: #7ee2a8;
+  --dm-header-2: #3a2f1c; --dm-accent-2: #f5c264;
+  --dm-header-3: #3a1c2c; --dm-accent-3: #f597b0;
+  --dm-header-4: #1c303a; --dm-accent-4: #7ec9e2;
+  --dm-header-5: #2c1c3a; --dm-accent-5: #c9a9f7;
+  --dm-header-6: #33321c; --dm-accent-6: #d8d97e;
+  --dm-header-7: #3a221c; --dm-accent-7: #f59782;
   --focus-ring: #a3adff;
   --depth-1: 0 6px 20px rgba(0, 0, 0, .13);
   --depth-2: 0 12px 40px rgba(0, 0, 0, .21);
@@ -204,6 +218,23 @@
   --card-ring: rgba(88, 107, 128, .20);
   --glass-card-top: rgba(255, 255, 255, .56);
   --glass-drawer-bg: rgba(28, 41, 58, .24);
+  --glass-rim: 0 0 0 .5px rgba(20, 30, 50, .11);
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%234a5b70' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+  --switch-thumb-shadow: 0 1px 3px rgba(20, 30, 50, .38), 0 0 0 .5px rgba(20, 30, 50, .12);
+  /* Pastel "container" headers with dark text, the way primary-container works: the node
+     keeps its domain hue without a dark block in the middle of a light canvas. Accents are
+     darkened to ≥ 3:1 on white (strokes, WCAG 1.4.11). */
+  --dm-header-text: #1c293a;
+  --dm-header-subtext: #4a5b70;
+  --dm-header-default: #e9eef6; --dm-accent-default: #4453b8;
+  --dm-header-0: #e3e8ff; --dm-accent-0: #4453b8;
+  --dm-header-1: #dbf7e5; --dm-accent-1: #17693d;
+  --dm-header-2: #fff1ca; --dm-accent-2: #845400;
+  --dm-header-3: #ffe4ec; --dm-accent-3: #a8274f;
+  --dm-header-4: #dcf3f8; --dm-accent-4: #08768b;
+  --dm-header-5: #efe4ff; --dm-accent-5: #69419e;
+  --dm-header-6: #f0f1c9; --dm-accent-6: #5f6112;
+  --dm-header-7: #ffe5dd; --dm-accent-7: #a3391f;
   --focus-ring: #4453b8;
   --depth-1: 0 6px 20px rgba(20, 30, 50, .05);
   --depth-2: 0 12px 40px rgba(20, 30, 50, .08);
