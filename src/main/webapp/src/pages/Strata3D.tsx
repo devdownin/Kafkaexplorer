@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { ConsumerGroupLag, DashboardResponse, PartitionActivityResponse, TopicActivity, TopicActivityResponse } from '../api/types';
 import StrataConsumerPanel from './StrataConsumerPanel';
 import StrataTracePanel from './StrataTracePanel';
@@ -10,7 +10,7 @@ import StrataDiagnosticPanel, { type DiagnosticMode } from './StrataDiagnosticPa
 import { createForecastCanopy, createPartitionRibbons } from './strataImmersive';
 import type { StrataProjection } from './strataForecast';
 import { consumerHealth } from './StrataConsumerPanel';
-import { bucketInterval, bucketReading, detectActivityAnomaly } from './strataTime';
+import { bucketReading, detectActivityAnomaly } from './strataTime';
 import type { ParsedFlow } from './streamFlowLogic';
 import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strataLineage';
 import { Link } from 'react-router-dom';
@@ -892,13 +892,8 @@ export default function Strata3D() {
   const activeCompareWith = diagnosticMode === 'compare' && compareWith !== selected &&
     topics.some(t => t.name === compareWith) ? compareWith : null;
   const measured = topics.filter(t => t.activity?.available).length;
-  const incomplete = topics.filter(t => t.activity?.available && (
-    t.activity.partitionsMeasured < t.activity.partitionsTotal || t.activity.coveredFromMs !== null
-  )).length;
-  const interval = activity ? bucketInterval({
-    startMs: activity.windowStartMs, endMs: activity.windowEndMs,
-    bucketMs: activity.bucketMs, count: activity.buckets,
-  }, selectedBucket) : null;
+  const incomplete = topics.filter(t => topicEvidence(t.activity, selectedBucket,
+    activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null).status === 'partial').length;
   const anomalies = topics.flatMap(topic => {
     const candidate = detectActivityAnomaly(topic.activity, selectedBucket);
     return candidate ? [{ name: topic.name, ...candidate }] : [];
@@ -934,7 +929,7 @@ export default function Strata3D() {
         </div>
       </header>
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-outline-variant bg-surface px-3 py-2">
-        <div role="group" aria-label="Spatial view presets" className="flex flex-wrap items-center gap-2">
+        <section aria-label="Spatial view presets" className="flex flex-wrap items-center gap-2">
           <span className="mr-1 text-xs font-semibold text-on-surface-variant">Workspace</span>
           <button type="button" aria-pressed={diagnosticMode === 'investigate' && !activeFocus}
             onClick={() => { setFocused(null); setCompareWith(null); setDiagnosticMode('investigate'); }}
@@ -949,7 +944,7 @@ export default function Strata3D() {
           <button type="button" aria-pressed={diagnosticMode === 'compare'}
             onClick={() => { setFocused(null); setDiagnosticMode('compare'); }}
             className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">Compare</button>
-        </div>
+        </section>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" aria-expanded={navigatorOpen}
             className="rounded-lg border border-outline-variant px-2.5 py-1.5 text-xs text-on-surface"
@@ -984,7 +979,7 @@ export default function Strata3D() {
       </p>}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[var(--strata-nav)_minmax(0,1fr)_var(--strata-inspector)]"
         style={{ '--strata-nav': navigatorOpen ? navigatorWidth + 'px' : '0px',
-          '--strata-inspector': inspectorOpen ? inspectorWidth + 'px' : '0px' } as React.CSSProperties}>
+          '--strata-inspector': inspectorOpen ? inspectorWidth + 'px' : '0px' } as CSSProperties}>
         {navigatorOpen && <aside className="relative order-2 lg:order-1 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-low p-3 space-y-4 lg:max-h-[min(75vh,760px)] lg:overflow-y-auto">
           <StrataResizeHandle side="left" value={navigatorWidth} onChange={setNavigatorWidth} />
           <div className="flex items-center justify-between">
