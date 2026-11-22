@@ -411,7 +411,9 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       const isNeighbor = diagnosticMode === 'investigate' && links.some(link =>
         (link.from === selected && link.to === topic.name) ||
         (link.to === selected && link.from === topic.name));
-      if (focused && topic.name !== focused && topic.name !== compareWith && !isNeighbor) {
+      const dimmed = Boolean(focused && topic.name !== focused && topic.name !== compareWith && !isNeighbor);
+      column.userData.dimFactor = dimmed ? 0.22 : 1;
+      if (dimmed) {
         // The focus context stays in sight but must not compete with the inspected topic.
         column.traverse(object => {
           if (!(object instanceof THREE.Mesh || object instanceof THREE.Sprite)) return;
@@ -530,13 +532,14 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
         if (!(object instanceof THREE.Mesh) || object.userData.bucketIndex === undefined) continue;
         const material = object.material as THREE.MeshBasicMaterial;
         const active = object.userData.bucketIndex === selectedBucket;
-        material.setValues({ opacity: Math.min(1, (object.userData.baseOpacity as number) * (active ? 1.4 : 0.42)) });
+        material.setValues({ opacity: Math.min(1,
+          (object.userData.baseOpacity as number) * (active ? 1.4 : 0.42) * (group.userData.dimFactor as number ?? 1)) });
         material.color.copy(object.userData.baseColor as THREE.Color);
         if (active && anomaly) material.color.setHex(0xe7a044);
       }
     }
     current.renderer.render(current.scene, current.camera);
-  }, [selectedBucket, topics, links, trace, selectedGroup, selected, themeRevision, lensAvailable]);
+  }, [selectedBucket, topics, links, trace, selectedGroup, selected, compareWith, diagnosticMode, focused, themeRevision, lensAvailable]);
 
   return (
     <div ref={host} role="img"
