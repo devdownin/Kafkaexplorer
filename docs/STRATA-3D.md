@@ -99,6 +99,39 @@ when topic B has a zero rate. Consumer-group lag is never presented as a
 topic-wide health score; missing commits or unknown group discovery are not
 represented by zero.
 
+## UI/UX Lot C — finitions, clavier et accessibilité
+
+- **Navigation au clavier :** `/` ouvre et focalise la recherche de topics, `?` affiche l'aide ;
+  `F` focalise le topic sélectionné, `O` restaure la vue globale, `C` ouvre
+  la comparaison, espace démarre ou met en pause le replay, et Échap ferme
+  l'aide ou revient de la focalisation. Les raccourcis locaux ne se déclenchent
+  pas quand un champ, bouton, lien, menu ou dialogue possède le focus.
+  **`Ctrl/⌘+K` reste réservé à la palette de commandes globale.**
+- **Mini-carte et listes :** cibles de mini-carte agrandies, état de sélection
+  accessible via `aria-pressed`, focus visible et `Shift+Entrée` pour focaliser
+  depuis la liste ou la carte. Une interaction souris n'est pas requise.
+- **Panneaux :** les trois colonnes simultanées sont réservées aux écrans
+  suffisamment larges (`2xl`). Sur tablettes et mobiles, la scène précède
+  verticalement le navigateur de topics et l'inspecteur. Les commandes restent
+  utilisables indépendamment de WebGL. Les séparateurs des panneaux sont
+  également redimensionnables avec les flèches gauche et droite.
+- **Surfaces :** seuls les outils flottants ont un fond légèrement translucide.
+  Les panneaux de lecture demeurent opaques. Les préférences de transparence
+  réduite, de contraste renforcé et de couleurs forcées désactivent les
+  effets décoratifs incompatibles.
+- **Contrats vérifiés :** les fenêtres d'offsets abrégées ou incohérentes
+  sont inconnues, même si elles contiennent quelques comptes positifs.
+  Les rubans par partition ne s'affichent que si leur fenêtre temporelle
+  correspond exactement à celle du curseur de cluster. Le budget
+  serveur de lecture inclut `earliest`, `latest` et les frontières.
+- **Partage :** les URLs de vue excluent tous les paramètres sans rapport,
+  les clés de trace, le contenu des enregistrements **et le fragment URL**.
+  Le lien distinct `Full Stream Flow` peut inclure volontairement une clé
+  Kafka dans l'URL : ne pas partager ce lien pour une clé sensible.
+
+La revue technique, l'inventaire des corrections et les risques résiduels
+figurent dans l'[audit complet du module](notes/strata-3d-audit.md).
+
 ## Immersive exploration — P1
 
 - **Focus:** double-click a topic column or a topic in the list, or activate **Focus partitions and forecast** in the inspector. The camera smoothly approaches that topic and reveals its partition ribbons. Use **Return to overview** to restore the whole cluster. Camera easing follows the motion preference; with motion disabled, the transition snaps directly into place.
