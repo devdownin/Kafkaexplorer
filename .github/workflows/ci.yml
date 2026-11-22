@@ -94,7 +94,7 @@ jobs:
           npm-${{ runner.os }}-
     # KafkaClusterIntegrationTest pulls apache/kafka-native and testcontainers/ryuk from
     # Docker Hub, anonymously, from a shared runner IP — and anonymous pulls are rate-limited
-    # per IP over a time window. `Container startup failed for image apache/kafka-native:4.3.1`
+    # per IP over a time window. `Container startup failed for image apache/kafka-native:4.4.0`
     # failed this job three times in thirteen hours, twice on a pull request and once on a push
     # to main, and the third time it failed with `withStartupAttempts(2)` already in place: an
     # immediate retry inside the same window is exactly what a rate limit does not forgive,
@@ -143,7 +143,7 @@ jobs:
       # pulls for itself if this did not, and a build must not fail on a step whose only job is to
       # make a later one faster.
       continue-on-error: true
-      run: docker pull apache/kafka-native:4.3.1
+      run: docker pull apache/kafka-native:4.4.0
 
     - name: Build & Test with Maven
       # verify runs the full lifecycle including tests — no separate `mvn test`
@@ -494,17 +494,35 @@ jobs:
             up -d --no-build --wait --wait-timeout 900 kafka forecast-postgres timesfm explorer
       - name: Collect, infer and read the persisted result
         run: python3 ci/forecast-stack.py
+      # The demo's overlay on the same stack: live traffic, the seeded history, and a forecast of each
+      # of its two metrics from it. What docs/metrics-demo-scenarios.md promises, against the real
+      # preparer, PostgreSQL and TimesFM — the one place the seeder's SQL meets all three.
+      - name: The demo's live traffic and seeded history produce forecasts
+        run: python3 ci/demo-forecast.py
+      # And the page, in a real browser: the Metrics list's forecast filter and sort, the count it
+      # announces against the cards it keeps, the forecast panel's thresholds. Relations only, never
+      # whether the "breach expected" badge is on screen — that depends on where the demo's curve is
+      # in its three-hour cycle, and a check on it would pass at some hours and fail at others.
+      - name: The Metrics page agrees with the forecasts the server holds
+        run: |
+          set -euo pipefail
+          npm install -g playwright@1
+          playwright install --with-deps chromium
+          NODE_PATH="$(npm root -g)" node ci/demo-forecast-ui.mjs http://127.0.0.1:8080 \
+            --expect demo-live-unshipped,demo-live-backlog
       - name: Capture service logs
         if: failure()
         run: |
           docker compose -p forecast-ci --env-file .forecast-stack/.env \
             -f docker-compose.yml -f compose/forecasts.yml -f compose/image.yml -f compose/ci.yml \
-            logs --tail 200 explorer timesfm forecast-model-prefetch forecast-postgres
+            -f compose/demo-forecast.yml \
+            logs --tail 200 explorer timesfm forecast-model-prefetch forecast-postgres demo-live demo-forecast-seed
       - name: Stop disposable stack
         if: always()
         run: |
           docker compose -p forecast-ci --env-file .forecast-stack/.env \
             -f docker-compose.yml -f compose/forecasts.yml -f compose/image.yml -f compose/ci.yml \
+            -f compose/demo-forecast.yml \
             down -v --remove-orphans
 
   # The local LLM image carries a 5 GB model, so it is built and booted only when something it
@@ -893,7 +911,7 @@ jobs:
           # NAMED here, so an omission is structural rather than a string search over a list
           # of command lines.
           declare -A OVERLAYS=(
-            [docker-compose.yml]="compose/schema-registry.yml compose/llama-cpp.yml compose/mcp.yml compose/image.yml compose/limits.yml compose/ci.yml compose/timesfm.yml compose/forecasts.yml compose/demo.yml compose/demo-no-spectra.yml compose/demo-llm.yml"
+            [docker-compose.yml]="compose/schema-registry.yml compose/llama-cpp.yml compose/mcp.yml compose/image.yml compose/limits.yml compose/ci.yml compose/timesfm.yml compose/forecasts.yml compose/demo.yml compose/demo-no-spectra.yml compose/demo-llm.yml compose/demo-forecast.yml"
             [compose/dev.yml]=""
             [compose/build.yml]=""
             [compose/spectra-hub.yml]="compose/spectra-hub.ingest.yml compose/spectra-hub.gpu.yml compose/spectra-hub.limits.yml compose/spectra-hub.agent-eval.yml compose/spectra-hub.mcp.yml compose/ecosystem.yml"
@@ -1542,6 +1560,7 @@ jobs:
           # capture.mjs exits non-zero if any screen fails — seven of eight would mean the
           # eighth silently disappears from the documentation.
           NODE_PATH="$(npm root -g)" node docs/screenshots/capture.mjs http://127.0.0.1:4173 fresh
+          NODE_PATH="$(npm root -g)" node docs/screenshots/capture.mjs http://127.0.0.1:4173 fresh dark
 
       # W6 from MOBILE-LAYOUT-SCOPE.md. Every figure in that document was a reading from
       # whenever someone last remembered to take one; this makes a regression fail a build
@@ -1589,7 +1608,8 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: build
-    timeout-minutes: 10
+    # Allow one bounded retry of the Pages publication without rerunning the build.
+    timeout-minutes: 25
     permissions:
       contents: read
       pages: write
@@ -1599,7 +1619,7 @@ jobs:
       cancel-in-progress: false
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.deployment_retry.outputs.page_url || steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -1612,4 +1632,11 @@ jobs:
           path: './docs'
       - name: Deploy to GitHub Pages
         id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
+      # Retry only the publication step, not checkout, upload or the application build.
+      # A second failure is fatal; the first failed outcome remains visible in the log.
+      - name: Retry GitHub Pages deployment once
+        id: deployment_retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5

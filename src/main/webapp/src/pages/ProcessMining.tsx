@@ -922,7 +922,7 @@ const ProcessMining: React.FC = () => {
       )}
 
       {/* Step content */}
-      <div className="bg-white/3 dark:bg-surface-container/30 border border-outline-variant/60 rounded-2xl p-6">
+      <div className="bg-surface-container-low dark:bg-surface-container/30 border border-outline-variant/60 rounded-2xl p-6">
 
         {/* STEP 1: SELECT */}
         {step === 'SELECT' && (
@@ -1070,7 +1070,7 @@ const ProcessMining: React.FC = () => {
                               {t.category.replace('_', ' ')}
                             </span>
                             {disabled && (
-                              <span className="block mt-1 text-[10px] text-warning/80">
+                              <span className="block mt-1 text-[11px] text-warning/80">
                                 needs {missing.map(r => ROLE_LABELS[r] ?? r).join(', ')}
                               </span>
                             )}
@@ -1319,7 +1319,7 @@ const ProcessMining: React.FC = () => {
                             {s.sourceFile ?? 'unknown source'}
                           </span>
                           {s.score != null && (
-                            <span className="text-[10px] text-on-surface-variant shrink-0">
+                            <span className="text-[11px] text-on-surface-variant shrink-0">
                               score {s.score.toFixed(3)}
                             </span>
                           )}

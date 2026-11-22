@@ -196,6 +196,8 @@ TOPICS=(
   # Time series with spread event times — the only dataset here on which a
   # TUMBLE/HOP window produces more than one bucket.
   "demo.iot.sensors:3"
+  # Deterministic KPI scenarios for Metrics and forecast visualization.
+  "demo.metrics.requests:3"
   # Retry queue and dead-letter topics. Nothing here used to carry either, so the
   # Dashboard's retry marker and its dead-letter badge had no row to run against on
   # the very cluster the README recommends. Two spellings on purpose: only Spring
@@ -609,6 +611,44 @@ for i in $(seq 0 143); do
     "correlation-id:$SENSOR,source-system:IOT-GW-v2.0,event-type:sensor.reading,produced-at:${EVENT_TIME}000" \
     "$SENSOR" \
     "{\"sensor_id\":\"$SENSOR\",\"site\":\"$SITE\",\"event_time\":$EVENT_TIME,\"temperature\":$TEMP,\"humidity\":$HUMIDITY,\"status\":\"$STATUS\"}"
+done
+
+# ---------------------------------------------------------------------------
+# --- Metrics scenario: request volume, latency and error rate ----------------
+# ---------------------------------------------------------------------------
+# 180 one-minute samples over three hours. All scenarios are deterministic:
+# baseline -> rising load -> saturation -> recovery, with a brief error burst.
+# event_time is in epoch seconds, like the IoT fixture. Each sample represents
+# a minute of aggregated requests; do not confuse it with one request event.
+echo "Generating Metrics KPI series (demo.metrics.requests)..."
+for i in $(seq 0 179); do
+  EVENT_TIME=$(( TS - (179 - i) * 60 ))
+  REQUESTS=$(( 90 + (i % 9) * 3 ))
+  LATENCY_MS=$(( 65 + (i % 7) * 4 ))
+  ERRORS=0
+  PHASE="baseline"
+  if [ "$i" -ge 45 ] && [ "$i" -lt 105 ]; then
+    REQUESTS=$(( REQUESTS + (i - 45) * 4 ))
+    LATENCY_MS=$(( LATENCY_MS + (i - 45) * 3 ))
+    PHASE="ramp"
+  elif [ "$i" -ge 105 ] && [ "$i" -lt 140 ]; then
+    REQUESTS=$(( 340 + (i % 9) * 5 ))
+    LATENCY_MS=$(( 300 + (i % 11) * 13 ))
+    ERRORS=$(( 3 + (i % 5) ))
+    PHASE="saturation"
+  elif [ "$i" -ge 140 ]; then
+    REQUESTS=$(( 120 + (i % 9) * 3 ))
+    LATENCY_MS=$(( 95 + (i % 7) * 5 ))
+    PHASE="recovery"
+  fi
+  if [ "$i" -ge 115 ] && [ "$i" -lt 125 ]; then
+    ERRORS=$(( REQUESTS / 5 ))
+    PHASE="error_burst"
+  fi
+  buffer "demo.metrics.requests" \
+    "source-system:DEMO-METRICS,event-type:minute.aggregate,produced-at:${EVENT_TIME}000" \
+    "minute-$i" \
+    "{\"event_time\":$EVENT_TIME,\"service\":\"checkout\",\"phase\":\"$PHASE\",\"requests\":$REQUESTS,\"errors\":$ERRORS,\"latency_ms\":$LATENCY_MS}"
 done
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import axios from 'axios';
@@ -116,6 +116,30 @@ function dashboardRequests() {
   return mockedAxios.get.mock.calls.filter(call => call[0] === '/api/dashboard');
 }
 
+/** Finishing: the filter is one row, the display options another, and an accent means a state. */
+describe('Dashboard layout', () => {
+  it('keeps the display options in a group of their own, with the toggles and the selects', async () => {
+    stubApi();
+    renderPage();
+    const group = await screen.findByRole('group', { name: 'Topic display options' });
+    for (const name of ['Hide empty', 'Hide dead letter', 'Hide internal', 'Mark retry'])
+      expect(within(group).getByRole('switch', { name })).toBeInTheDocument();
+    expect(within(group).getByLabelText('Rows per page')).toBeInTheDocument();
+    // What one types into is not in that group.
+    expect(within(group).queryByLabelText('Filter topics')).toBeNull();
+  });
+
+  it('accents a tile only for a state: the health tile, not the counts', async () => {
+    stubApi();
+    renderPage();
+    const tile = (label: string) => screen.getByText(label).closest('.kse-stat');
+    await screen.findByText('Total Topics');
+    expect(tile('Cluster Health')?.className).toContain('border-t-success');
+    expect(tile('Total Topics')?.className).not.toContain('border-t-primary');
+    expect(tile('Message Count')?.className).not.toContain('border-t-primary');
+  });
+});
+
 /*
  * Le sondage tournait à 5 s en constante de module : ni réglable, ni extinguible, ni énoncé. Ce
  * qui n'a de sens qu'ici, c'est que le réglage pilote vraiment la minuterie, que « off » ne laisse
@@ -138,7 +162,7 @@ describe('Dashboard auto-refresh', () => {
       renderPage();
       await waitFor(() => expect(dashboardRequests()).toHaveLength(1));
 
-      await user.selectOptions(screen.getByLabelText('Auto-refresh'), '1m');
+      await user.selectOptions(await screen.findByLabelText('Auto-refresh'), '1m');
       expect(localStorage.getItem('kse:dashboard-refresh')).toBe('1m');
       // L'ancienne minuterie a pu tirer une fois entre le clic et le réarmement de l'effet :
       // le compte de référence est celui d'après le réarmement, pas celui d'avant le clic.
@@ -170,7 +194,7 @@ describe('Dashboard auto-refresh', () => {
     await waitFor(() => expect(activityRequests().length).toBeGreaterThanOrEqual(1));
     const activityBefore = activityRequests().length;
 
-    await user.selectOptions(screen.getByLabelText('Auto-refresh'), '30s');
+    await user.selectOptions(await screen.findByLabelText('Auto-refresh'), '30s');
 
     expect(dashboardRequests()).toHaveLength(1);
     expect(activityRequests()).toHaveLength(activityBefore);
@@ -191,7 +215,7 @@ describe('Dashboard auto-refresh', () => {
       const dashboardSoFar = dashboardRequests().length;
       const activitySoFar = activityRequests().length;
 
-      await user.selectOptions(screen.getByLabelText('Auto-refresh'), 'off');
+      await user.selectOptions(await screen.findByLabelText('Auto-refresh'), 'off');
       await vi.advanceTimersByTimeAsync(10 * 60_000);
 
       expect(dashboardRequests()).toHaveLength(dashboardSoFar);
@@ -212,7 +236,7 @@ describe('Dashboard auto-refresh', () => {
     renderPage();
     await waitFor(() => expect(dashboardRequests()).toHaveLength(1));
 
-    await user.selectOptions(screen.getByLabelText('Auto-refresh'), 'off');
+    await user.selectOptions(await screen.findByLabelText('Auto-refresh'), 'off');
     const before = dashboardRequests().length;
 
     document.dispatchEvent(new Event('visibilitychange'));

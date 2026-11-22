@@ -1394,6 +1394,25 @@ export const DOMAIN_PALETTE: { header: string; accent: string }[] = [
   { header: '#3a221c', accent: '#f59782' },
 ];
 
+/** Teinte des nœuds sans domaine connu. */
+export const DEFAULT_TINT: { header: string; accent: string } = { header: '#1d2333', accent: '#a3adff' };
+
+/**
+ * La teinte telle que l'écran la peint : des variables CSS (`--dm-header-N`, `--dm-accent-N`),
+ * une valeur par thème. En sombre, l'en-tête est le bloc sombre d'origine ; en clair, un
+ * conteneur pastel à texte foncé — un bloc sombre au milieu d'un canevas clair rompait la
+ * matière du thème. Les exports (SVG, PNG, Mermaid) restent sur les hex de `DOMAIN_PALETTE` :
+ * ce sont des fichiers autonomes, qui ne connaissent pas le thème de la page. Une teinte hors
+ * palette est rendue telle quelle.
+ */
+export function themedTint(tint: { header: string; accent: string }): { header: string; accent: string } {
+  if (tint.header === DEFAULT_TINT.header && tint.accent === DEFAULT_TINT.accent) {
+    return { header: 'var(--dm-header-default)', accent: 'var(--dm-accent-default)' };
+  }
+  const i = DOMAIN_PALETTE.findIndex(p => p.header === tint.header && p.accent === tint.accent);
+  return i < 0 ? tint : { header: `var(--dm-header-${i})`, accent: `var(--dm-accent-${i})` };
+}
+
 /** Domaine → teinte, assignation stable (domaines triés) pour que deux runs se ressemblent. */
 export function domainColors(domains: Map<string, string>): Map<string, { header: string; accent: string }> {
   const unique = [...new Set(domains.values())].sort();

@@ -144,6 +144,25 @@ class ForecastPilotServiceTest {
     when(client.forecast(anyList(), eq(2))).thenReturn(List.of(forecast(context, 1)));
   }
 
+  /**
+   * The forecast set beside what happened is one whose history ended a whole horizon before the
+   * latest one's: every point it predicted is then inside the latest context, measured.
+   */
+  @Test
+  void thePreviousForecastIsOneWhoseWholeHorizonHasBeenMeasured() throws Exception {
+    var latest = record(context, 1, "READY");
+    when(store.latest(connection, spec.seriesId())).thenReturn(latest);
+    var older = record(context(context.toExclusive() - spec.horizon() * spec.profile().stepMillis()), 2, "READY");
+    long bound = context.toExclusive() - spec.horizon() * spec.profile().stepMillis();
+    when(store.matured(connection, spec.seriesId(), bound, 0)).thenReturn(older);
+    assertEquals(older.forecast(), pilot.previous(spec.seriesId()));
+
+    when(store.matured(connection, spec.seriesId(), bound, 0)).thenReturn(null);
+    assertNull(pilot.previous(spec.seriesId()));
+    when(store.latest(connection, spec.seriesId())).thenReturn(null);
+    assertNull(pilot.previous(spec.seriesId()));
+  }
+
   @Test
   void contentionNeverStartsPreparationOrInference() throws Exception {
     when(store.acquire(eq(connection), anyString())).thenReturn(false);
@@ -277,6 +296,22 @@ class ForecastPilotServiceTest {
     pilot.activate(spec.seriesId(), true);
     verify(store).activate(connection, spec.seriesId(), true);
     verify(connection).commit();
+  }
+
+  /**
+   * The latest record is read once per series between writes: a page polling every 30 s, in every
+   * open tab, no longer reads and decodes each series' whole record on every poll. A local write
+   * drops the cached read at once.
+   */
+  @Test
+  void aSecondReadBetweenWritesDoesNotGoBackToTheStore() throws Exception {
+    when(store.latest(connection, spec.seriesId())).thenReturn(record(context, 1, "READY"));
+    assertNotNull(pilot.get(spec.seriesId()));
+    assertNotNull(pilot.get(spec.seriesId()));
+    verify(store, times(1)).latest(connection, spec.seriesId());
+    pilot.invalidateReads(spec.seriesId());
+    assertNotNull(pilot.get(spec.seriesId()));
+    verify(store, times(2)).latest(connection, spec.seriesId());
   }
 
   @Test

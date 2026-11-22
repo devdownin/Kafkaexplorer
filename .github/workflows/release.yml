@@ -169,7 +169,7 @@ jobs:
           subject-path: 'target/*.jar'
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           files: |
             target/*.jar
@@ -538,20 +538,15 @@ jobs:
           end = next((i for i in range(head + 1, len(lines))
                       if lines[i].startswith("## [")), len(lines))
 
-          if any(l.startswith("- ") for l in lines[head + 1:end]):
-              # Rename the section to the version, and open an empty one above it.
-              lines[head] = f"## [{version}] — {date}"
-              lines[head:head] = ["## [Unreleased]", "", "Nothing yet.", ""]
-              print(f"closed [Unreleased] as [{version}]")
-          else:
-              # A release that recorded nothing still gets a heading: an absent version reads
-              # as a lost one. Same wording the reconstructed sections use.
-              notes = (f"https://github.com/{os.environ['GITHUB_REPOSITORY']}"
-                       f"/releases/tag/{tag}")
-              lines[end:end] = [f"## [{version}] — {date}", "",
-                                "Released from `main` with no entry recorded here; see "
-                                f"[the release notes]({notes}).", ""]
-              print(f"[Unreleased] was empty — filed [{version}] as a release with no entry")
+          # Only insert at the boundary after the existing Unreleased entries.
+          # Never rename their heading or replace a placeholder: concurrent PRs may
+          # have appended notes since the release was tagged. Keeping those lines
+          # untouched avoids the recurring merge conflict on release follow-up PRs.
+          notes = (f"https://github.com/{os.environ['GITHUB_REPOSITORY']}"
+                   f"/releases/tag/{tag}")
+          lines[end:end] = [f"## [{version}] — {date}", "",
+                            "See [the release notes](" + notes + ").", ""]
+          print(f"filed [{version}] below [Unreleased], preserving its existing entries")
 
           text = "\n".join(lines)
 
@@ -627,7 +622,7 @@ jobs:
       # not a property); the digest is the only immutable reference, and docs/DOCKERHUB.md
       # points at these notes for it.
       - name: Append the image digest to the Release notes
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
           append_body: true
           body: |

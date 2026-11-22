@@ -183,6 +183,19 @@ public class MetricService {
     private static final long MIN_REFRESH_INTERVAL_MS = 1_000L;
     private static final long MAX_REFRESH_INTERVAL_MS = 24L * 3_600_000L;
     private static final int MAX_TEMPLATE_MAX_ROWS = 1_000_000;
+    /**
+     * Fixed Prometheus labels, written once by whoever creates the metric — Stream Flow names the
+     * hop it measures ({@code source_topic}, {@code target_topic}). A template parameter for the
+     * same reason {@code refreshIntervalMs} is one: {@code templateParams} is this record's bag of
+     * per-metric knobs, every copy of the record carries it, and a component of its own would be a
+     * forty-odd-call-site change where one forgotten copy drops the labels without a word.
+     */
+    public static final String STATIC_LABELS_PARAM = "staticLabels";
+    static final int MAX_STATIC_LABELS = 8;
+    private static final int MAX_STATIC_LABEL_VALUE = 200;
+    private static final java.util.regex.Pattern LABEL_NAME = java.util.regex.Pattern.compile("[a-z_][a-z0-9_]*");
+    /** The identity every series of a metric already carries: a fixed label may not overwrite it. */
+    private static final Set<String> RESERVED_LABELS = Set.of("metric_id", "metric_name", "metric_type");
     private static final long MAX_TEMPLATE_TIMEOUT_MS = 600_000L;
 
     private static final List<MetricTemplateDescriptor> TEMPLATE_DESCRIPTORS = List.of(
@@ -351,6 +364,13 @@ public class MetricService {
 
     /** metricId → when its last refresh started, for the metrics that ask for a slower cadence. */
     private final Map<String, Long> lastRefreshStartedAt = new ConcurrentHashMap<>();
+    /**
+     * What each metric's last refresh cost, in milliseconds. The loop is single threaded by design
+     * (see {@link #recordCycleDuration}), so the cycle's total said that the loop was slow but not
+     * which metric made it so — and the remedy, a {@code refreshIntervalMs} of its own, is per
+     * metric. The page shows this beside each card.
+     */
+    private final Map<String, Long> lastRefreshDurationMs = new ConcurrentHashMap<>();
 
     /** Holder for {@link #REFRESH_DURATION_SERIES}, registered on the first cycle that completes. */
     private final AtomicReference<Double> refreshDurationHolder = new AtomicReference<>(0.0);
@@ -685,6 +705,9 @@ public class MetricService {
         componentHistoryMap.remove(id);
         purgeMeters(id);
         persistTombstone(id);
+        // Its history enrolment slot: without it the hundredth distinct id ever seen ended recording.
+        MetricObservationJournal journal = observationJournal;
+        if (journal != null) journal.forget(id);
     }
 
     /**
@@ -707,6 +730,7 @@ public class MetricService {
         // "count went backwards" refusal catches it, but as a lost refresh rather than as nothing.
         countDeltaBaselines.remove(id);
         lastRefreshStartedAt.remove(id);
+        lastRefreshDurationMs.remove(id);
         meterRegistry.find("explorer_metric_gauge").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_counter").tag("metric_id", id).meters().forEach(meterRegistry::remove);
         meterRegistry.find("explorer_metric_histogram").tag("metric_id", id).meters().forEach(meterRegistry::remove);
@@ -955,13 +979,15 @@ public class MetricService {
                 + ", or 0 to refresh on every cycle (was " + refreshIntervalMs + ")");
         }
 
+        staticLabels(params);
+
         switch (templateType) {
             case KAFKA_CLUSTER_COUNT -> {
                 String measurement = requireParam(params, "measurement");
-                if (!Set.of("TOPIC_COUNT", "BROKER_COUNT", "PRODUCED_OFFSETS").contains(measurement)) {
-                    throw new IllegalArgumentException("measurement must be TOPIC_COUNT, BROKER_COUNT or PRODUCED_OFFSETS");
+                if (!Set.of("TOPIC_COUNT", "BROKER_COUNT", "PRODUCED_OFFSETS", "LATEST_RECORD_AGE").contains(measurement)) {
+                    throw new IllegalArgumentException("measurement must be TOPIC_COUNT, BROKER_COUNT, PRODUCED_OFFSETS or LATEST_RECORD_AGE");
                 }
-                if ("PRODUCED_OFFSETS".equals(measurement)) requireParam(params, "topic");
+                if ("PRODUCED_OFFSETS".equals(measurement) || "LATEST_RECORD_AGE".equals(measurement)) requireParam(params, "topic");
                 if (!"GAUGE".equals(metric.type())) {
                     throw new IllegalArgumentException("KAFKA_CLUSTER_COUNT supports GAUGE metrics only");
                 }
@@ -1199,6 +1225,28 @@ public class MetricService {
 
     private MetricComputationResult computeClusterCount(MetricConfig config) {
         String measurement = requireParam(config.templateParams(), "measurement");
+        if ("LATEST_RECORD_AGE".equals(measurement)) {
+            // How long the topic has been silent: the age of its newest record, in milliseconds.
+            // One record read (the broker names the partition that holds it). An empty topic has no
+            // age, and a failed read is not a silence — both are said, never reported as zero.
+            String topic = requireParam(config.templateParams(), "topic");
+            Optional<KafkaMessage> latest;
+            try {
+                latest = kafkaAdminService.getLatestMessage(topic);
+            } catch (RuntimeException e) {
+                return MetricComputationResult.error("The newest record of " + topic + " could not be read: " + e.getMessage());
+            }
+            if (latest.isEmpty())
+                return MetricComputationResult.error(topic + " holds no record, so it has no age yet");
+            long timestamp = latest.get().timestamp();
+            double value = Math.max(0L, System.currentTimeMillis() - timestamp);
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("measurement", measurement);
+            summary.put("topic", topic);
+            summary.put("latestRecordTimestamp", timestamp);
+            summary.put("source", "Timestamp of the newest record");
+            return new MetricComputationResult(List.of(Map.of("metric_value", value)), value, null, summary);
+        }
         if ("PRODUCED_OFFSETS".equals(measurement)) {
             String topic = requireParam(config.templateParams(), "topic");
             Long produced = kafkaAdminService.getProducedOffsets(topic);
@@ -2216,8 +2264,10 @@ public class MetricService {
             try {
                 // Deliberately not subject to refreshIntervalMs: this is somebody pressing
                 // Refresh, and an explicit gesture is never a cadence to be rationed.
-                lastRefreshStartedAt.put(id, System.currentTimeMillis());
+                long started = System.currentTimeMillis();
+                lastRefreshStartedAt.put(id, started);
                 refreshSingleMetric(id, config);
+                lastRefreshDurationMs.put(id, System.currentTimeMillis() - started);
             } finally {
                 endRefreshCycle();
             }
@@ -2236,8 +2286,10 @@ public class MetricService {
                 skipped++;
                 continue;
             }
-            lastRefreshStartedAt.put(entry.getKey(), System.currentTimeMillis());
+            long started = System.currentTimeMillis();
+            lastRefreshStartedAt.put(entry.getKey(), started);
             refreshSingleMetric(entry.getKey(), entry.getValue());
+            lastRefreshDurationMs.put(entry.getKey(), System.currentTimeMillis() - started);
             refreshed++;
         }
         recordCycleDuration(System.currentTimeMillis() - cycleStart, refreshed, skipped);
@@ -2267,6 +2319,19 @@ public class MetricService {
         // without it a 5-minute interval polled every 30 s fires at 5 min 30 s, every time.
         long tolerance = Math.max(1_000L, interval / 10);
         return now - last >= interval - tolerance;
+    }
+
+    /** The loop's tick and each metric's last refresh cost; a metric not refreshed yet is absent. */
+    public com.compagnonsdudev.kafkasqlexplorer.domain.MetricRefreshCosts refreshCosts() {
+        Map<String, com.compagnonsdudev.kafkasqlexplorer.domain.MetricRefreshCosts.Cost> costs = new java.util.HashMap<>();
+        metrics.forEach((id, config) -> {
+            Long duration = lastRefreshDurationMs.get(id);
+            if (duration != null) {
+                costs.put(id, new com.compagnonsdudev.kafkasqlexplorer.domain.MetricRefreshCosts.Cost(
+                    duration, collectionIntervalMs(config)));
+            }
+        });
+        return new com.compagnonsdudev.kafkasqlexplorer.domain.MetricRefreshCosts(metricsRefreshRateMs, costs);
     }
 
     /** How often this metric is actually collected: its own interval, never faster than the loop. */
@@ -2782,19 +2847,60 @@ public class MetricService {
         return sb.toString();
     }
 
+    /**
+     * The fixed labels of a metric, checked: a map of label name to value, at most
+     * {@value #MAX_STATIC_LABELS}, each name a Prometheus label name that is not the metric's own
+     * identity. Absent means none. Throws on anything else — a label silently dropped is a series
+     * an alert rule waits for and never sees.
+     */
+    static Map<String, String> staticLabels(Map<String, Object> params) {
+        Object raw = params == null ? null : params.get(STATIC_LABELS_PARAM);
+        if (raw == null) return Map.of();
+        if (!(raw instanceof Map<?, ?> map)) {
+            throw new IllegalArgumentException(STATIC_LABELS_PARAM + " must be an object of label name to value");
+        }
+        if (map.size() > MAX_STATIC_LABELS) {
+            throw new IllegalArgumentException("At most " + MAX_STATIC_LABELS + " fixed labels (" + map.size() + " given)");
+        }
+        Map<String, String> labels = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            String key = String.valueOf(e.getKey());
+            if (!LABEL_NAME.matcher(key).matches()) {
+                throw new IllegalArgumentException("Fixed label '" + key + "' is not a label name: lower case letters, digits and _, not starting with a digit");
+            }
+            if (RESERVED_LABELS.contains(key)) {
+                throw new IllegalArgumentException("Fixed label '" + key + "' is the metric's own identity and is set already");
+            }
+            if (!(e.getValue() instanceof String value) || value.isBlank()) {
+                throw new IllegalArgumentException("Fixed label '" + key + "' needs a non-empty text value");
+            }
+            if (value.length() > MAX_STATIC_LABEL_VALUE) {
+                throw new IllegalArgumentException("Fixed label '" + key + "' is longer than " + MAX_STATIC_LABEL_VALUE + " characters");
+            }
+            labels.put(key, value);
+        }
+        return labels;
+    }
+
     private Map<String, String> resolveConfiguredLabels(MetricConfig config) {
+        Map<String, String> fixed;
+        try {
+            fixed = staticLabels(config.templateParams());
+        } catch (IllegalArgumentException e) {
+            fixed = Map.of(); // refused on save; a metric stored before the rule keeps running
+        }
         if (config.labelTopic() == null || config.labelTopic().isBlank()
             || config.labelFields() == null || config.labelFields().isEmpty()) {
-            return Map.of();
+            return fixed;
         }
 
         try {
             Map<String, String> extractedFields = latestLeafFields(config.labelTopic());
             if (extractedFields.isEmpty()) {
-                return Map.of();
+                return fixed;
             }
 
-            Map<String, String> labels = new LinkedHashMap<>();
+            Map<String, String> labels = new LinkedHashMap<>(fixed);
             for (String fieldPath : config.labelFields()) {
                 String value = extractedFields.get(fieldPath);
                 if (value == null) continue;
@@ -2810,7 +2916,7 @@ public class MetricService {
             return labels;
         } catch (Exception e) {
             log.debug("Failed to resolve configured labels for metric '{}': {}", config.name(), e.getMessage());
-            return Map.of();
+            return fixed;
         }
     }
 

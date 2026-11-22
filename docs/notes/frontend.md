@@ -31,8 +31,8 @@ events, without which a tablet cannot pan a graph at all, had to be made three t
 The split is **mechanics in the hook, policy in the pages**. The hook owns the transform state,
 the gestures, the wheel zoom and the viewport measurement, and exposes `panBy` / `zoomAround` /
 `zoomFromCenter` so a page's keyboard handler is a few lines. What stays in each page is what
-genuinely differs: what `0` recadres (a fit for Stream Flow and Data Model, a fixed origin for
-Lineage), what `Escape` deselects, and which node a table selection brings into view. Absorbing
+genuinely differs: what `0` recadres (a fit in all three, each by its own rule — Lineage's stops at a
+readable scale), what `Escape` deselects, and which node a table selection brings into view. Absorbing
 those through three more callbacks would have made the hook harder to read than the forty lines
 it replaces.
 
@@ -631,13 +631,27 @@ state and error; the panel now reads both in one pass and hands `ForecastProgres
 the latter is presentational. A raw persisted record is a copy button (through `copyText`, the
 secure-context-safe wrapper the lint rule requires), not a `<pre>` of JSON. The page says
 **Observing** / **Approved** and "80 % interval" rather than SHADOW / ACTIVE and Q10–Q90; the
-pilot's terms stay in the badge tooltip, the API and MCP. **There is one configuration assistant,
-on the Metrics page**: `ForecastPreparation` used to mount a second one, so a card's
-"Prepare a forecast" and the panel's "Configure a forecast" could hold two half-filled forms at
-once. The assistant names its sampling intervals, states the horizon as a duration, folds the
-prefilled history identities under **Advanced** (opened by `flushSync` before focusing one that is
-invalid — a field inside a closed `<details>` cannot take focus), and takes the attestation
-checkbox as the confirmation instead of asking again in a dialog. Sources are chips (`NameListField`) rather than a
+pilot's terms stay in the badge tooltip, the API and MCP. **Every forecast starts from an existing
+metric, so a card's Forecast button is the only way in, and it needs no form**
+(`forecastAutoCreate.ts`): the definition and sources come from the candidate catalogue, the
+interval from the server's suggestion, the cycle from the recorded history, and a toast says when
+the first forecast follows. The form (`ForecastSetupWizard`) is for one metric and opens only when
+that stops, on the reason it stopped. What went with that: the panel's **Configure a forecast** and
+the form's metric selector (with its "already forecast" options, its "first 100 of N" and its
+"Configure another metric"), and a section opened on success to say "Forecast started" before
+being closed by hand. The form no longer asks what the metric already says — its unit, the
+environment and the two history identities keep the values the one-click path sends — and asks to
+confirm the sources only for free SQL, where they are inferred: a template declares them, and the
+one-click path already sent them confirmed, so the form demanded an attestation the faster path did
+not. It names its sampling intervals, states the horizon as a duration, and folds the interval,
+horizon, cycle and threshold under **Advanced** (opened by `flushSync` before focusing an invalid
+threshold — a field inside a closed `<details>` cannot take focus). **The card is also where a series
+is chosen**: its **Details** points the Metrics Forecast panel at that series (`focus`) and scrolls to
+it, and the panel names the metric it shows (by name, from `metricNames`) instead of offering a
+*Series* selector, which repeated the cards in metric ids. **The panel has two folds,
+where it had five**: *Quality* (the realised scores, the baselines, the shadow comparison) and
+*Configuration* (the effective settings, the history and sources, and the dependency checks, read
+only once it is opened). Sources are chips (`NameListField`) rather than a
 comma-separated string prefilled from the catalogue, where a stray comma or a typo became a
 declared source nobody reads; and the export ends with numbered next steps and a copy button
 beside the download, since the file is usually pasted into a deployment's configuration.
@@ -672,13 +686,15 @@ preview is the series that would start. It draws the recorded points under the s
 how many of the first forecast's points exist, or the preparation's own reason when there is
 nothing to draw. Two proposals come out of the same read: the repeating cycle (`detectCycle`:
 autocorrelation at the daily and hourly lags, longest first, only when the history covers one and
-a half cycles and the correlation clears 0.5 — scaled by n / (n − lag), since an unscaled sum read
+a half cycles, the correlation clears 0.5 **and stands 0.5 above the one at half the lag** — a cycle
+is a peak, while a drifting series is correlated at every lag: without that test 94.5 % of random
+walks were given one (`METRICS-FORECAST-AUDIT-2.md` B1); scaled by n / (n − lag), since an unscaled sum read
 a perfect 288-lag cycle over 512 points as 0.44 and never found a daily pattern) and a threshold
 (1.5× the latest recorded value, a button, never written for the operator). **A cycle the operator
 chose is never replaced.** The horizon is a duration (`Looks ahead`: 15 minutes to 12 hours, only
 those the interval carries in 1 to 60 points); the environment sits under **Advanced**. The
 panel's chart draws from `forecastColors.ts` — the app's own tokens, where it used Tailwind's stock
-green, amber and indigo — and shows 60, 180 or all 512 context points. **`/progress` is read only
+green, amber and indigo — and shows 60, 180 or all 512 context points — only those the context can fill. **`/progress` is read only
 where its answer is on screen**: the threshold line on the chart (`SeriesView.thresholdConfigured`)
 or the open "Summary" fold, which removes the third request of the 30-second cycle for a series
 with neither (METRICS-FORECAST-UX-AUDIT.md P2).
@@ -687,10 +703,97 @@ with neither (METRICS-FORECAST-UX-AUDIT.md P2).
 panel's status into one line — collecting history against the points a first forecast needs,
 observing against the quality block, ready to approve, approved, degraded, or the reason it is
 blocked — with an estimate from the sampling interval worded as one. The card shows that line in
-place of **Prepare a forecast**. The page takes the status from the panel's own poll through
+place of **Forecast**. The page takes the status from the panel's own poll through
 `onStatus` rather than polling again, and bumps `refresh` after an approval so the panel and the
 card do not wait for the next tick.
-**No model, no way to create one.** `GET /api/forecasts` carries `modelAvailable` — whether the forecasting client exists (`ForecastPilotService.modelAvailable()`, i.e. `explorer.forecasting.inference.enabled`), read from configuration and not probed, so a service that is briefly down does not make the page withdraw the assistant and offer it again a minute later. The page derives `canCreateForecast` from it and from `enabled`: false, and the card's **Prepare a forecast**, the assistant and the panel's **Configure a forecast** are all absent, while the panel stays and says why, keeping its preparation diagnostic since that is what tells an operator what to enable. Known only once the status has been read: a way to create a forecast that appears and then goes is worse than one absent for the first second. Timestral does not count on its own — it is a shadow built under the same switch as TimesFM and never served. A series that already exists stays visible and operable whatever this says.
+
+**One click, and the card shows the forecast as a continuation of its own curve.** The card's
+**Forecast** button creates the series with the server's suggested interval, a 30-minute horizon and
+the cycle the history preview detects (it forced "None" before); disabled with the reason beneath it
+when the pilot cannot create one, and absent once a series exists, the status line standing in for
+it. The chart then draws the series the model read — the latest 60 points of its prepared context,
+which `GET /api/forecasts` keeps for this (`ForecastController.LIST_HISTORY_POINTS`) — on one time
+axis with the prediction, a dotted **now** at the boundary and the future tinted. Four defects this
+replaced, each found by rendering the card rather than by a test: the card was an `AreaChart`,
+which draws only `<Area>` children, so the median `<Line>` was **never drawn** and the band alone
+stood under a "Forecast" legend; the forecast colour was the primary token, the stroke of every
+healthy card; the history was the metric's untimed sparkline (a handful of values, and for a counter
+a cumulative count beside a forecast rate), squeezed into a fifth of the width; and without
+`allowDataOverflow` recharts widened the domain to the band's stacked floor at zero, pressing
+everything against the top edge. The panel's chart had its own three: a one-step gap between the
+measured curve and the median, a value axis from zero that flattened both under a high threshold,
+and recharts' default white tooltip with a near-white date. `forecastColors.ts` gives the forecast a
+cyan that is none of the status colours.
+
+**A past forecast can be set beside what happened** (`forecastVsActual.ts`, pure and tested). The
+quality the panel reports is an aggregate over blocks of forecasts — true, and impossible to
+picture — so "Previous forecast vs actual" draws one forecast over the measured curve: the latest
+whose whole horizon has been measured (`GET /api/forecasts/{seriesId}/previous`, `store.matured` with
+the bound one horizon before the latest history end, so every point it predicted is inside the
+latest context). It is scored point by point on the shared grid — inside the band or not, mean
+error, and a direction only when the bias is at least half the mean error — and an imputed point is
+left out rather than scored. It is read only once asked for, once per latest result. The card's
+"Last checked" line is the same question answered without a request: the latest scored cohort of
+the quality window the list already carries, else the last closed block.
+
+**The Metrics page polls on one clock and renders a card only when it changed.** One
+`startVisiblePolling` at the server's own tick (`GET /api/metrics/refresh-costs` reports it; 30 s
+until it has) reads the list and the refresh costs, and hands the forecast panel a `clock` it reads on
+instead of running its own timer. `keepUnchanged` (`pages/metricsPolling.ts`) keeps every metric and
+every forecast series that did not move as the same object, `MetricCard` is `React.memo`, and its
+handlers are one `useCallback` per action taking the metric's id — written inline they were new
+functions on every render, and every keystroke in the editor redrew every chart. The handlers read the
+page's state through a ref assigned in a layout effect, so a memoised card never calls a stale closure.
+The relative "updated … ago" is its own self-refreshing component, since a memoised card would freeze it;
+the forecast's "Made at / next cycle" is an instant for the same reason.
+
+**The compact layout is a list, not smaller cards** (`MetricRow`): a line draws its history as a plain
+SVG polyline where a card draws two Recharts graphs, which is what makes forty of them cheaper than four
+cards. It reads the predicted threshold through the same `forecastReachFor` as the card's badge, and the
+choice is a per-viewer convenience in `localStorage` (a storage that throws just means cards). The
+predicted-threshold badge carries its own next steps: `forecastBreachRule` (`pages/metricLinks.ts`) writes
+the Alertmanager rule on `explorer_forecast_threshold_eta_seconds`, paired with
+`explorer_metric_last_success_timestamp_seconds` because the ETA floors at zero and a forecast that stopped
+being refreshed would otherwise fire for ever; `metricTopics` names the topics a template reads. The
+reliability badge has a trend beside it (`reliabilityTrend`): the open cohorts' coverage, oldest first,
+called a direction only past five points so two noisy cohorts are not read as one.
+
+**The compact line carries its forecast** (`MetricRow`'s `Sparkline`): the predicted medians continue the
+history, dashed, from the last measured point and on the same step, capped at half the measured points so
+a short history is not squeezed into a corner; none for a `COUNTER_RATE` forecast, a rate beside a counter.
+**The forecasts are read when they can have changed.** A forecast changes only at the pilot's cycle, and
+`/api/forecasts` says when the next one starts (`nextCycleAt`, null while one runs): the page hands the
+panel a new `clock` only when `forecastReadDue` says a read can bring something new — first, while a cycle
+runs, once it is due, and at least every two minutes, since a series still collecting history moves with
+each metric refresh. The timestamps live in a ref the panel's status callback writes and the timer reads,
+never during render. The panel's per-series reads (detail, progress, shadow) also wait while an
+`IntersectionObserver` says it is off screen; without one it counts as on screen. **What changed between two
+forecasts is remembered by the page** (`nextReachMemory`): the shift of a predicted threshold, shown on the
+card only when a new forecast (another result key) predicts the same level — comparing the instants of two
+different thresholds says nothing — and the reaches that are *news* (a new one, or warning → critical,
+never on the first look), which is all a browser notification is raised for, when the operator opted in
+(`metrics.notify` in `localStorage`). *Forecast all eligible* is the card's one-click creation run for every
+metric whose reason is empty, sequentially, behind a confirmation, with each refusal named. The panel's
+*Try a threshold* reads a tried value with `whatIfReach`, the same rule as the metrics' own thresholds, and
+saves nothing.
+
+**One reading of the forecast, three surfaces.** `forecastReachFor` (the reach, in milliseconds, or `null` for a rate forecast) feeds the card's badge and the page's *Breach predicted* filter and *next predicted breach* sort, so the list and the card cannot disagree; `placeThresholds` (`thresholdPlacement.ts`) decides which of a metric's thresholds a chart draws and which it names at the edge, for the card and the Forecast panel alike. `forecastReliability` turns the quality window's 80 % coverage into a word (Reliable from 70 %, Fair from 50 %, Watch below, Early under ten points) — a badge for the glance, the numbers in its tooltip.
+
+**The card reads the forecast against the metric's thresholds** (`forecastBreach.ts`, pure and
+tested): the first predicted point whose median is at or past the critical, then the warning,
+threshold is "expected"; failing that, the cautious edge of the 80 % band (q90 upwards, q10
+downwards) makes it "possible" — a baseline forecast, having no band, can only be "expected". The
+direction is `thresholdDirection`'s, so a ratio that breaks by falling is read downwards. It is a
+reading, never an alert, and the card says so. Two rules sit beside it. **A threshold is never lost
+to the fitted scale**: within one span of the plotted range it widens the scale and is drawn, beyond
+it it is named under the chart as off scale — drawn in a corner it covered the forecast. **A
+counter's thresholds stay off its forecast**: the forecast is a rate per second and the thresholds
+were set on the counter's reading, so comparing them would be a unit error worded as a prediction.
+The stage line carries `progress` (history before the first forecast, then the quality block,
+none after a failed block), drawn as a bar; and the assistant's confirmation counts the points
+already recorded, from the history preview it reads anyway, since the journal records a metric from
+the moment it runs and "~2 h" was usually wrong.
+**No model, no way to create one.** `GET /api/forecasts` carries `modelAvailable` — whether the forecasting client exists (`ForecastPilotService.modelAvailable()`, i.e. `explorer.forecasting.inference.enabled`), read from configuration and not probed, so a service that is briefly down does not make the page withdraw the assistant and offer it again a minute later. The page derives `canCreateForecast` from it and from `enabled`: false, and the card's **Forecast** and the form are absent, while the panel stays and says why, keeping its preparation diagnostic since that is what tells an operator what to enable. Known only once the status has been read: a way to create a forecast that appears and then goes is worse than one absent for the first second. Timestral does not count on its own — it is a shadow built under the same switch as TimesFM and never served. A series that already exists stays visible and operable whatever this says.
 
 **The panel reads as one timeline: history → forecast → quality → approval.** It used to say the
 same things in three places that did not read together — history against 512 in the progress
@@ -727,3 +830,74 @@ lines say what was asked and whether the planner accepted it (as SQL comments, s
 check), or a filled form whose thresholds are left alone and whose preview still decides. The
 privacy sentence appears where one types, read off `localDeployment`, the Settings banner's rule.
 
+
+**The forecast chart has a table alternative.** Chart numbers were reachable only by hovering, so
+`ForecastPanel` carries a `Chart data as a table` disclosure built from the same `chart` array the
+plot reads (time, kind, value, 80 % band), plus a summary `aria-label` on the `role="img"`. The table
+mounts only once opened: sixty-odd rows per panel are not worth rendering for everyone.
+
+**Stream Flow creates metrics from the graph** (`components/graph/FlowMetricDrawer.tsx`, pure half in
+`pages/flowMetrics.ts`). A selected topic offers *Create metrics*; the drawer lists what the trace
+supports — latency and loss of the hop into and out of the topic, the consumer lag of a group, the
+records produced — each with fixed labels the operator can untick. The latency is the server's
+`flow:hop-latency:A>B` suggestion taken as it comes (one place derives the key and the thresholds);
+the per-hop loss mirrors the server's end-to-end completeness card on one hop — edit the two
+together. Creating is direct, on purpose and unlike the suggestion panel's *Review & add*: the
+operator asked for it from the graph they just read, and the result line names each metric created,
+or the server's refusal. What was created is unticked, so a second click does not duplicate it.
+
+**A link between two topics is a target too.** Each edge of the Stream Flow graph carries a 14 px
+transparent stroke (`role="button"`, Enter / Space) over the drawn line, which stays
+`pointerEvents="none"`; a click opens `FlowMetricDrawer` with `hop` set, which proposes that hop only
+(`hopMetricOptions`: latency ticked, loss ticked instead when the server proposes no latency) and reads
+no consumer group. The open hop's line is drawn thicker. A horizontal edge has a zero-height bounding
+box, which Playwright reports as "not visible": a browser test clicks it with the mouse at its middle.
+
+**Payload labels in the Stream Flow drawer are chosen, not guessed.** A label from the payload is the
+field's value in the *latest* record, read at every refresh — so a field that changes with every
+record makes a series that is never continued. One record cannot prove a field is stable;
+`payloadLabelRisk` only rules out what visibly is not (an id-like name, a UUID, an instant, a
+measured number, long text) and says why, and at most `MAX_PAYLOAD_LABELS` (3) can be chosen. The
+labels are read from the hop's source, or from the topic itself.
+
+**Which screens carry a `PageHeader`, and which do not, on purpose.** Report screens — Dashboard,
+Metrics, Audit, Cluster, Dead Letter, Settings, Help, MCP, Process Mining, Topic hierarchy — open on a
+title and a sentence. **Workspaces** — SQL Editor, Stream Flow, Compare, Lineage, Data Model, Topic
+Explorer — are full-bleed tools with a toolbar of their own, and the header bar's breadcrumb already
+names them: a title there would cost the editor or the graph a line of height on every window, for a
+word the breadcrumb says. A new screen picks its kind; it does not get a header "for consistency".
+**A KPI tile's top accent says a state** (`Stat`'s `tone`): the health tile, a count past a threshold.
+A tile accented because it is "important" makes the row read as four different things.
+
+**Four finishing touches, and why each is where it is.** The sidebar's `nav` scrolls on a short window
+and used to cut its last entry flat; `Sidebar` now measures overflow (a `ResizeObserver` on the list *and
+its sections* — the content settles after the first paint, which a list-only observer misses) and applies
+`.kse-fade-bottom` only while more is below. The Metrics backdrop is a choice (`kse:metrics-backdrop`,
+default off): the condition `hasRunningMetric` still decides whether it *may* show, the toggle decides
+whether it does. Monaco's `kse-dark` theme is defined in `monaco-setup.ts` from the surface tokens of
+`tailwind.config.js`; a page asks for it by name, and a colour changed in the config is changed there
+too. The metric cards use `repeat(auto-fit, minmax(min(100%, 22rem), 1fr))`, so two metrics share the
+width where `xl:grid-cols-3` left a column empty.
+
+**Third pass, and the rule each item follows.** *Lineage* frames its graph on arrival and on `0` — but
+not below `READABLE_SCALE` (0.8): a graph wider than the canvas starts from its sources and scrolls, as
+Stream Flow does, because a framed graph whose labels cannot be read has been framed for nothing. Its
+legend names the types from `TYPE_PLURAL` (`${type}s` wrote "Querys"). *Compare* uses the shared
+`Combobox`, and a topic list that failed to load is said in both panes (`role="alert"`): a failure
+that leaves the page empty is not a toast. *The dashboard's* state column says "Healthy" in plain
+text and keeps badges for the exceptions, so the one dead-letter topic stands out; the diagnostic
+overview's first cell counts silent topics with `detectSilence`, **over the rows whose activity was
+measured** — the column is read per page, not per cluster, and the cell says so. *A metric card's*
+actions are revealed by the card group's hover and focus-within variants behind a
+`[@media(hover:hover)]` guard, so they are always visible on touch, where nothing hovers; delete
+lives in `MoreActions` (closes on Escape, an outside click, or once chosen). The screenshot server
+answers `/api/compare/topics` now, so the docs capture of Compare shows pickers rather than an error.
+
+**Two sizes of secondary text, and loading in the shape of the content.** Secondary text is 11 or
+12 px; the 10 px step was removed (it sat one pixel under 11 for no distinction a reader could
+name), and 9 px is kept for the uppercase type badges only. The layout probe passed after the change:
+nothing scrolls sideways, no budget moved. A panel waiting for data renders `ListSkeleton` (or a block
+in its own final shape, as the forecast panel does with its 260 px chart) instead of a "Loading…"
+sentence: the sentence is replaced by content of another height, which pushes everything below it,
+and a skeleton of the right shape does not. The skeleton carries `role="status"` and a label; the
+shimmer itself is hidden from assistive technology.

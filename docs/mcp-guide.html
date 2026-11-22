@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="Guide visuel des Skills, Tools, Resources et Prompts MCP avec le graphe d'appel documenté de Kex-anHarness vers KafkaExplorer.">
+  <title>Skills & Services MCP · KafkaExplorer</title>
+  <style>
+    :root {
+      color-scheme: light dark; --bg:#f3f6fb; --ink:#1c293a; --muted:#4a5b70; --line:#c9d4e1;
+      --card:#fff; --panel:#f9fbff; --brand:#4453b8; --soft:#ecedfb;
+      --glass:rgba(255,255,255,.84); --shadow:0 14px 48px rgba(27,42,65,.08);
+      font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,system-ui,sans-serif;
+    }
+    @media(prefers-color-scheme:dark) {
+      :root { --bg:#0b0d10; --ink:#e8eaf0; --muted:#a3adbc; --line:#303742;
+        --card:#171b22; --panel:#10151c; --brand:#a3adff; --soft:#23263e;
+        --glass:rgba(22,26,33,.86); --shadow:0 14px 48px rgba(0,0,0,.3); }
+    }
+    *,*::before,*::after {box-sizing:border-box}
+    html {scroll-behavior:smooth}
+    body {margin:0;background:radial-gradient(ellipse at 70% -12%,color-mix(in srgb,var(--brand) 12%,transparent),transparent 45%),var(--bg);color:var(--ink)}
+    a {color:var(--brand)} button {font:inherit} a:focus-visible,button:focus-visible,summary:focus-visible {outline:3px solid var(--brand);outline-offset:4px}
+    .wrap {width:min(1220px,calc(100% - 40px));margin:auto}
+    .header {position:sticky;top:0;z-index:20;background:var(--glass);backdrop-filter:blur(22px) saturate(160%);border-bottom:1px solid var(--line)}
+    .header-inner {height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+    .brand {font-size:15px;font-weight:760;letter-spacing:-.02em;color:var(--ink);text-decoration:none;display:flex;align-items:center;gap:10px}
+    .brand-mark {display:grid;place-items:center;border-radius:11px;width:33px;height:33px;background:var(--soft);color:var(--brand)}
+    .header-links {display:flex;gap:18px;font-size:12px;font-weight:650}
+    .header-links a {text-decoration:none} .header-links a:hover {text-decoration:underline}
+    .hero {padding:86px 0 74px}
+    .hero-wrap {display:grid;grid-template-columns:1.6fr .8fr;gap:35px;align-items:end}
+    .eyebrow {font-size:11px;font-weight:750;letter-spacing:.15em;text-transform:uppercase;color:var(--brand)}
+    h1 {font-size:clamp(36px,6vw,62px);max-width:820px;font-weight:750;line-height:1.07;letter-spacing:-.06em;margin:17px 0 20px}
+    .lead {max-width:675px;font-size:17px;line-height:1.65;color:var(--muted)}
+    .actions {display:flex;flex-wrap:wrap;gap:12px;margin-top:28px}
+    .pill {border:1px solid var(--line);background:var(--card);color:var(--ink);padding:11px 16px;border-radius:10px;text-decoration:none;font-weight:650;font-size:13px;display:inline-flex;align-items:center}
+    .pill.primary {background:var(--brand);color:var(--bg);border-color:var(--brand)}
+    .hero-proof {padding:24px;background:var(--glass);border-radius:24px;border:1px solid var(--line);box-shadow:var(--shadow);display:grid;grid-template-columns:1fr 1fr;gap:15px}
+    .stat strong {display:block;font-size:35px;font-variant-numeric:tabular-nums;letter-spacing:-.05em}
+    .stat span {font-size:12px;line-height:1.5;color:var(--muted)}
+    .toc {position:sticky;top:64px;z-index:19;background:var(--glass);backdrop-filter:blur(18px);border-top:1px solid var(--line);border-bottom:1px solid var(--line);overflow-x:auto}
+    .toc .wrap {display:flex;gap:8px;white-space:nowrap}
+    .toc a {font-size:12px;color:var(--muted);text-decoration:none;padding:13px 12px;font-weight:650}
+    .toc a:hover {color:var(--brand)}
+    section {padding:62px 0 12px;scroll-margin-top:132px}
+    h2 {font-size:clamp(24px,3.6vw,34px);line-height:1.2;letter-spacing:-.035em;margin:11px 0 10px}
+    .subhead {color:var(--muted);font-size:14px;line-height:1.7;max-width:790px;margin:0 0 24px}
+    .grid4 {display:grid;grid-template-columns:repeat(4,1fr);gap:15px}
+    .box {background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 1px 2px rgba(0,0,0,.02)}
+    .box .symbol {width:43px;height:43px;display:grid;place-items:center;border-radius:13px;background:var(--soft);color:var(--brand);font-size:20px}
+    .box h3 {font-size:20px;margin:16px 0 3px;letter-spacing:-.025em}
+    .box small {color:var(--brand);font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase}
+    .box p {font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:15px}
+    code {font-size:.87em;overflow-wrap:anywhere;background:var(--soft);color:var(--brand);padding:3px 5px;border-radius:5px}
+    .compare {width:100%;border-collapse:collapse;font-size:13px;background:var(--card);border-radius:14px;overflow:hidden}
+    .table-wrap {overflow:auto;border:1px solid var(--line);border-radius:15px;margin-top:20px}
+    th,td {padding:15px;text-align:left;border-bottom:1px solid var(--line)}
+    th {color:var(--muted);font-size:12px;background:var(--panel)}
+    td {min-width:120px} tr:last-child td {border:0}
+    .panel {background:var(--card);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);overflow:hidden}
+    .panel-head {padding:24px;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:14px;border-bottom:1px solid var(--line)}
+    .panel-head strong {font-size:15px}.panel-head span {color:var(--muted);font-size:12px}
+    .chooser {display:flex;flex-wrap:wrap;gap:8px;padding:16px 24px;border-bottom:1px solid var(--line)}
+    .chooser button {border:1px solid var(--line);border-radius:22px;padding:9px 15px;background:var(--card);color:var(--muted);cursor:pointer;font-size:12px;font-weight:700}
+    .chooser button[aria-pressed="true"] {background:var(--soft);border-color:var(--brand);color:var(--brand)}
+    .graph-scroll {overflow-x:auto;padding:22px;background:var(--panel)}
+    .graph {position:relative;width:1380px;height:478px;border:1px solid var(--line);border-radius:16px;background:radial-gradient(ellipse at 50% 0%,color-mix(in srgb,var(--brand) 13%,transparent),transparent 55%)}
+    .graph:before {content:"";position:absolute;inset:0;opacity:.12;background-image:radial-gradient(var(--muted) 0.7px,transparent 0.7px);background-size:19px 19px;pointer-events:none}
+    .lane {position:absolute;top:26px;font-size:10px;text-transform:uppercase;letter-spacing:.16em;color:var(--muted);font-weight:750}
+    .edges {position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+    .edge {stroke:var(--muted);opacity:.38;stroke-width:2;fill:none}
+    .edge.return {stroke-dasharray:6 7}
+    .node {position:absolute;width:190px;height:108px;padding:14px;background:var(--card);color:var(--ink);text-align:left;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);cursor:pointer;transition:transform .2s,border-color .2s,background .2s}
+    .node:hover,.node[aria-pressed="true"] {transform:translateY(-4px);border-color:var(--brand);background:var(--soft)}
+    .node .num {display:block;font-size:10px;color:var(--brand);font-weight:800;letter-spacing:.09em}
+    .node strong {display:block;margin:10px 0 5px;font-size:13px;line-height:1.2}
+    .node small {display:block;color:var(--muted);font-size:11px;line-height:1.2}
+    .graph-legend {position:absolute;bottom:17px;right:26px;font-size:10px;color:var(--muted)}
+    .inspect {padding:24px;display:grid;grid-template-columns:1.3fr .8fr;gap:20px;background:var(--panel);border-top:1px solid var(--line)}
+    .inspect h3 {margin:5px 0 12px;font-size:21px}.inspect p {font-size:13px;line-height:1.7;color:var(--muted)}
+    .step-label {color:var(--brand);font-size:11px;letter-spacing:.13em;font-weight:700;text-transform:uppercase}
+    .guard {background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+    .guard strong {font-size:13px}
+    .notice {font-size:12px;line-height:1.65;color:var(--muted);padding:16px 24px;border-top:1px solid var(--line)}
+    .notice strong {color:var(--ink)}
+    .workshops {display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+    .workshops ol {font-size:13px;color:var(--muted);line-height:1.85;padding-left:20px}
+    .checks {display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .checks li {font-size:13px;line-height:1.7;color:var(--muted);margin-bottom:9px}
+    .checks ul {margin:10px 0;padding-left:20px}
+    details {background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px;padding:15px 20px}
+    summary {font-size:13px;cursor:pointer;font-weight:700}
+    details p {font-size:13px;color:var(--muted);line-height:1.7}
+    footer {border-top:1px solid var(--line);margin-top:65px;padding:28px 0 50px;font-size:12px;color:var(--muted)}
+    footer a {margin-right:18px;line-height:2.4}
+    @media(max-width:990px) {.grid4 {grid-template-columns:repeat(2,1fr)}.hero-wrap,.inspect,.checks {grid-template-columns:1fr}.hero-proof {max-width:420px}.workshops {grid-template-columns:1fr}}
+    @media(max-width:560px) {.wrap {width:calc(100% - 28px)}.grid4 {grid-template-columns:1fr}.hero {padding:56px 0 40px}.header-links {gap:8px}.header-links a {font-size:11px}.inspect {padding:17px}.box {padding:18px}}
+    @media(prefers-reduced-motion:reduce) {html {scroll-behavior:auto}.node {transition:none}}
+    @media(prefers-reduced-transparency:reduce) {.header,.toc {backdrop-filter:none;background:var(--card)}}
+  </style>
+</head>
+<body>
+  <header class="header"><div class="wrap header-inner">
+    <a href="index.html" class="brand"><span class="brand-mark" aria-hidden="true">◇</span> KafkaExplorer <span style="color:var(--muted);font-weight:500">/ Guides</span></a>
+    <nav class="header-links" aria-label="Navigation"><a href="index.html">Accueil</a><a href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/mcp-skills-services-guide.md">Texte complet</a></nav>
+  </div></header>
+
+  <main>
+    <div class="wrap hero"><div class="hero-wrap">
+      <div>
+        <div class="eyebrow">Architecture agentique · Guide pédagogique</div>
+        <h1>Skills &amp; Services <span style="color:var(--brand)">via MCP</span></h1>
+        <p class="lead">Choisir la bonne primitive, comprendre comment l’agent orchestre ses appels,
+          et visualiser le trajet d’une preuve entre <strong>Kex-anHarness</strong> et <strong>KafkaExplorer</strong>.</p>
+        <div class="actions"><a class="pill primary" href="#graphe">Explorer le graphe</a><a class="pill" href="#pratiques">Bonnes pratiques</a></div>
+      </div>
+      <div class="hero-proof" aria-label="Contenu du guide">
+        <div class="stat"><strong>4</strong><span>primitives distinguées</span></div>
+        <div class="stat"><strong>3</strong><span>parcours expliqués</span></div>
+        <div class="stat"><strong>9</strong><span>nœuds inspectables</span></div>
+        <div class="stat"><strong>0</strong><span>appel Kafka exécuté</span></div>
+      </div>
+    </div></div>
+
+    <nav class="toc" aria-label="Sommaire"><div class="wrap">
+      <a href="#notions">Fondations</a><a href="#graphe">Graphe d’appel</a><a href="#exemples">Exemples</a>
+      <a href="#pratiques">Bonnes pratiques</a><a href="#faq">FAQ</a>
+    </div></nav>
+
+    <section id="notions" class="wrap">
+      <div class="eyebrow">01 · Comprendre</div>
+      <h2>Quatre concepts, quatre responsabilités</h2>
+      <p class="subhead">Le Skill guide une démarche. Le Tool effectue une mesure ou une action.
+        La Resource fournit un contexte. Le Prompt cadre la question.
+        Aucun n’élargit les droits de l’agent.</p>
+      <div class="grid4">
+        <article class="box"><span class="symbol" aria-hidden="true">◎</span><h3>Skill</h3><small>La méthode</small><p>Procédure réutilisable avec objectifs, étapes, limites et critères de réussite.</p><code>kafka-incident-triage</code></article>
+        <article class="box"><span class="symbol" aria-hidden="true">⚙</span><h3>Tool</h3><small>La capacité</small><p>Appel ciblé à une mesure ou à un service réel, sous contrôle de permissions.</p><code>kex_trace_key</code></article>
+        <article class="box"><span class="symbol" aria-hidden="true">▤</span><h3>Resource</h3><small>Le contexte</small><p>Document ou instantané consultable via une URI, sans geste métier caché.</p><code>kex://skills</code></article>
+        <article class="box"><span class="symbol" aria-hidden="true">✦</span><h3>Prompt</h3><small>Le cadrage</small><p>Instructions paramétrées pour lancer une analyse et présenter des preuves.</p><code>kex_incident_triage</code></article>
+      </div>
+      <div class="table-wrap"><table class="compare">
+        <caption style="position:absolute;left:-9999px">Quand utiliser chaque primitive</caption>
+        <thead><tr><th>Besoin</th><th>Choix</th><th>Raison</th></tr></thead>
+        <tbody>
+          <tr><td>Mener une investigation complète</td><td>Skill</td><td>Procédure et critères d’acceptation</td></tr>
+          <tr><td>Mesurer le lag actuel</td><td>Tool</td><td>Résultat réel, borné, avec couverture</td></tr>
+          <tr><td>Lire le contrat de mesure</td><td>Resource</td><td>Contexte adressable et réutilisable</td></tr>
+          <tr><td>Démarrer un triage structuré</td><td>Prompt</td><td>Cadre paramétrable sans exécution</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="graphe" class="wrap">
+      <div class="eyebrow">02 · Visualiser</div>
+      <h2>Le graphe d’appel, de la question à la preuve</h2>
+      <p class="subhead">Les filtres mettent en avant un rôle sans supprimer les nœuds intermédiaires.
+        Le zoom et les touches fléchées facilitent l’exploration sur grand écran ; sur mobile, les étapes deviennent une liste verticale.
+        Copiez le lien pour partager exactement un scénario, une étape et un focus.</p>
+      <p class="subhead">Architecture reconstituée depuis le
+        <a href="https://github.com/devdownin/Kex-anHarness/blob/main/docs/ARCHITECTURE.md">parcours de Kex-anHarness</a>
+        et les <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/notes/mcp-server.md">services KafkaExplorer</a>.
+        Cliquez sur les nœuds ou parcourez-les au clavier : les garanties de chaque étape apparaissent sous le graphe.</p>
+      <div class="panel">
+        <div class="panel-head"><strong>Explorateur d’architecture</strong><span>Vue de référence · pas une trace d’exécution</span></div>
+        <div class="chooser" aria-label="Scénario">
+          <button type="button" data-scenario="incident" aria-pressed="true">Diagnostic d’incident</button>
+          <button type="button" data-scenario="forecast" aria-pressed="false">Analyse forecast</button>
+          <button type="button" data-scenario="skill" aria-pressed="false">Découverte Skill</button>
+        </div>
+        <div class="graph-scroll" aria-label="Diagramme horizontal, défilable sur mobile">
+          <div class="graph">
+            <span class="lane" style="left:28px">Demande</span>
+            <span class="lane" style="left:260px">Kex-anHarness · agent et gouvernance</span>
+            <span class="lane" style="left:925px">Client MCP</span>
+            <span class="lane" style="left:1145px">KafkaExplorer</span>
+            <svg class="edges" viewBox="0 0 1380 478" aria-hidden="true">
+              <defs><marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6 Z" fill="currentColor"/></marker></defs>
+              <path class="edge" d="M218 163 H251 M441 163 H474 M664 163 H697 M887 163 H920 M1110 163 H1143 M1238 218 V317" marker-end="url(#arrow)"/>
+              <path class="edge return" d="M1143 372 H887 M697 372 H664 M474 372 H125 Q102 372 102 346 V218" marker-end="url(#arrow)"/>
+            </svg>
+            <button class="node" data-node="request" style="left:28px;top:108px" aria-pressed="false"></button>
+            <button class="node" data-node="entry" style="left:251px;top:108px" aria-pressed="false"></button>
+            <button class="node" data-node="agent" style="left:474px;top:108px" aria-pressed="false"></button>
+            <button class="node" data-node="policy" style="left:697px;top:108px" aria-pressed="false"></button>
+            <button class="node" data-node="client" style="left:920px;top:108px" aria-pressed="false"></button>
+            <button class="node" data-node="server" style="left:1143px;top:108px" aria-pressed="true"></button>
+            <button class="node" data-node="backend" style="left:1143px;top:317px" aria-pressed="false"></button>
+            <button class="node" data-node="evidence" style="left:697px;top:317px" aria-pressed="false"></button>
+            <button class="node" data-node="answer" style="left:474px;top:317px" aria-pressed="false"></button>
+            <span class="graph-legend">→ Appel · - - Retour des preuves</span>
+          </div>
+        </div>
+        <div class="inspect" aria-live="polite" aria-atomic="true">
+          <div><span class="step-label" id="selected-step">Étape 6 / 9</span><h3 id="selected-title">Serveur MCP KafkaExplorer</h3>
+            <p id="selected-desc">Les outils exposés appliquent leur contrôle de périmètre et leurs plafonds.</p>
+            <a id="selected-source" target="_blank" rel="noopener noreferrer" href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/notes/mcp-server.md">Consulter la source ↗</a>
+          </div>
+          <div class="guard"><strong>Contrat et garde-fou</strong><p id="selected-guard">Un scan partiel ne prouve pas l’absence.</p>
+            <div class="actions" style="margin-top:10px">
+              <button type="button" class="pill" id="prev-node">← Précédent</button>
+              <button type="button" class="pill" id="next-node">Suivant →</button>
+            </div>
+          </div>
+        </div>
+        <div class="notice"><strong>Transparence :</strong> ce graphe décrit des responsabilités documentées,
+          pas une capture d’appels réels. Il n’invente ni traces, ni latences, ni verdict Kafka.
+          Les skills <code>read_skill</code> propres à Kex et les resources <code>skill://</code> de KafkaExplorer
+          sont distincts et ne s’installent pas automatiquement l’un dans l’autre.</div>
+      </div>
+    </section>
+
+    <section id="exemples" class="wrap">
+      <div class="eyebrow">03 · Agir avec méthode</div>
+      <h2>Trois parcours reproductibles</h2><p class="subhead">Les actions suivantes sont des procédures conseillées, pas des appels lancés par cette page.</p>
+      <div class="workshops">
+        <article class="box"><small>Incident</small><h3>Suivre une clé Kafka</h3><code>kafka-incident-triage</code>
+          <ol><li>Fixer clé, fenêtre et scope.</li><li>Tracer la clé, puis lire lag et DLQ selon les indices.</li><li>Restituer Coverage, erreurs et inconnus.</li></ol></article>
+        <article class="box"><small>Forecast</small><h3>Évaluer un risque</h3><code>kafka-forecast-analyst</code>
+          <ol><li>Vérifier la série autorisée.</li><li>Lire historique, forecast et qualité.</li><li>Séparer projeté et observé.</li></ol></article>
+        <article class="box"><small>Skills</small><h3>Charger la bonne méthode</h3><code>kex://skills</code>
+          <ol><li>Lire le manifeste et l’URI.</li><li>Comparer le SHA-256 avec le fichier reçu.</li><li>Demander la revue avant toute activation.</li></ol></article>
+      </div>
+    </section>
+
+    <section id="pratiques" class="wrap">
+      <div class="eyebrow">04 · Concevoir de façon fiable</div><h2>Bonnes pratiques &amp; anti-patterns</h2>
+      <div class="checks">
+        <article class="box"><h3>✓ À privilégier</h3><ul>
+          <li>Skill : objectif, préconditions, budget et preuve d’achèvement.</li>
+          <li>Tool : capacité unitaire, mesures typées, scope explicite.</li>
+          <li>Resource : contexte versionné, URI contrôlée, aucune action cachée.</li>
+          <li>Prompt : cadrage et restitution, sans politique critique invisible.</li>
+          <li>Autorisations à deux niveaux : Kex puis KafkaExplorer.</li>
+        </ul></article>
+        <article class="box"><h3>× À éviter</h3><ul>
+          <li>Un Skill présenté comme une super-permission.</li>
+          <li>Un Prompt faisant fonction de service métier.</li>
+          <li>Une Resource utilisée pour exécuter une mutation.</li>
+          <li>Un résultat non mesuré transformé en zéro.</li>
+          <li>Un graphe conceptuel affiché comme une trace temps réel.</li>
+        </ul></article>
+      </div>
+    </section>
+
+    <section id="faq" class="wrap">
+      <div class="eyebrow">05 · Questions fréquentes</div><h2>Décider en connaissance de cause</h2>
+      <details><summary>Un Skill peut-il déclencher un outil interdit ?</summary>
+        <p>Non. Les politiques de Kex-anHarness et de KafkaExplorer s’appliquent indépendamment à chaque invocation.</p></details>
+      <details><summary>Quelle différence entre lire et activer un Skill ?</summary>
+        <p>Une Resource MCP rend un SKILL.md lisible. Son import, sa revue et son activation dépendent du client.
+        Kex-anHarness dispose de son propre mécanisme de revue et de <code>read_skill</code>.</p></details>
+      <details><summary>Le graphe montre-t-il des appels réellement exécutés ?</summary>
+        <p>Non. Il synthétise les composants documentés. Pour une exécution réelle, consulter les traces et identifiants de corrélation.</p></details>
+      <details><summary>Une valeur de lag inconnue vaut-elle zéro ?</summary>
+        <p>Non. Les contrats <code>Measured</code> et <code>Coverage</code> différencient une mesure connue d’un échec ou d’une lecture partielle.</p></details>
+    </section>
+  </main>
+
+  <footer><div class="wrap">
+    <p>Sources de référence — Kex-anHarness et KafkaExplorer. Documentation indépendante de toute connexion MCP active.</p>
+    <a href="https://github.com/devdownin/Kex-anHarness/blob/main/docs/ARCHITECTURE.md">Kex · Architecture</a>
+    <a href="https://github.com/devdownin/Kex-anHarness/blob/main/docs/TOOL-CONTROLS.md">Kex · Tool controls</a>
+    <a href="https://github.com/devdownin/Kex-anHarness/blob/main/docs/GOVERNED-GENERAL-AGENT.md">Kex · Skills revus</a>
+    <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/mcp-skills.md">KafkaExplorer · Skills MCP</a>
+  </div></footer>
+  <script>
+    (() => {
+      "use strict";
+      // This is a read-only architectural illustration. No fetch, token, Kafka request or fake trace.
+      const kex = "https://github.com/devdownin/Kex-anHarness/blob/main/docs/ARCHITECTURE.md";
+      const policy = "https://github.com/devdownin/Kex-anHarness/blob/main/docs/TOOL-CONTROLS.md";
+      const reviewed = "https://github.com/devdownin/Kex-anHarness/blob/main/docs/GOVERNED-GENERAL-AGENT.md";
+      const explorer = "https://github.com/devdownin/Kafkaexplorer/blob/main/docs/notes/mcp-server.md";
+      const skillDoc = "https://github.com/devdownin/Kafkaexplorer/blob/main/docs/mcp-skills.md";
+      const ids = ["request","entry","agent","policy","client","server","backend","evidence","answer"];
+      // title, subtitle, explanation, invariant, documented source
+      const shared = [
+        ["Demande","Utilisateur","Une requête précise lance la conversation de Kex.","La question ne donne pas de nouveau droit.",kex],
+        ["AgentController","API Kex","Kex authentifie l’appel avant de conduire la conversation.","Le bearer ne doit pas entrer dans le prompt.",kex],
+        ["AgentService","ChatClient","Kex choisit les outils disponibles et organise les étapes.","Un modèle ne peut pas inventer un outil autorisé.",kex],
+        ["Tool controls","Callbacks Kex","Sélection, arguments et policy filtrent l’invocation.","Une permission côté agent ne remplace pas celle du serveur.",policy],
+        ["McpSyncClient","Transport MCP","Kex transporte les appels via le client MCP Java.","La connexion et son bearer sont limités à leur cible.",kex],
+        ["kex_trace_key","KafkaExplorer MCP","Le serveur applique scope, budgets et lecture seule.","Aucun contournement d’un refus serveur.",explorer],
+        ["Services Kafka","StreamFlowService","Les adaptateurs MCP relisent les services métier de KafkaExplorer.","Les scans restent bornés.",explorer],
+        ["Preuves","Coverage · Measured","Le résultat nomme ce qui est mesuré, partiel ou inconnu.","Une absence partielle ne prouve pas le néant.",explorer],
+        ["Synthèse","Réponse Kex","La réponse distingue faits, hypothèses et inconnues.","Un incident n’est pas résolu sans nouvelle mesure comparable.",kex],
+      ];
+      const variant = {
+        incident:{},
+        forecast:{
+          server:["kex_forecast_*","Outils forecast","KafkaExplorer expose les séries approuvées, l’historique et la qualité calculée.","Pas d’inférence implicite.",explorer],
+          backend:["ForecastPilot","Historique & prédictions","Le service retourne des valeurs mesurées et prévues.","Le modèle et l’horizon doivent être identifiés.",explorer],
+          evidence:["Qualité & bandes","Observation ≠ projection","Les points réels, les quantiles et la qualité sont séparés.","Une bande nominale n’est pas une garantie.",explorer],
+          answer:["Verdict de risque","Synthèse Kex","Kex explique risques prévus et limites du modèle.","Une prévision ne masque pas un incident observé.",kex],
+        },
+        skill:{
+          agent:["Skills Kex","Index · read_skill","Kex possède ses propres compétences revues et indexées.","Un skill PENDING n’est pas activé.",reviewed],
+          policy:["Revue & droits","Gouvernance Kex","Le client ne confond pas contenu lu et permission d’exécuter.","Une procédure n’accorde pas un nouveau privilège.",reviewed],
+          client:["McpSyncClient","Lecture Resources","Le client peut consulter kex://skills et une URI skill://.","Pas d’import automatique dans Kex.",kex],
+          server:["kex://skills","Manifest KafkaExplorer","Le serveur publie des URI, descriptions et SHA-256.","skills/list/get natifs non annoncés.",skillDoc],
+          backend:["SKILL.md","Ressource versionnée","Le serveur lit les fichiers approuvés depuis le classpath.","Aucune lecture arbitraire de disque.",skillDoc],
+          evidence:["Manifeste","SHA-256","Le client peut comparer la somme des octets au digest publié.","L’intégrité ne garantit pas la sûreté.",skillDoc],
+          answer:["Choix explicite","Validation côté hôte","L’utilisateur ou l’hôte décide si la compétence doit être utilisée.","Lu ne veut pas dire approuvé ni activé.",reviewed],
+        },
+      };
+      let selectedScenario="incident", selectedId="server";
+      const buttons=[...document.querySelectorAll("[data-node]")];
+      function render() {
+        const entries=ids.map((id,i)=>variant[selectedScenario][id]||shared[i]);
+        for(const btn of buttons) {
+          const id=btn.dataset.node, i=ids.indexOf(id), row=entries[i];
+          btn.replaceChildren();
+          const num=document.createElement("span");num.className="num";num.textContent=String(i+1).padStart(2,"0");
+          const title=document.createElement("strong");title.textContent=row[0];
+          const subtitle=document.createElement("small");subtitle.textContent=row[1];
+          btn.append(num,title,subtitle);
+          btn.setAttribute("aria-label",`Étape ${i+1} : ${row[0]} — ${row[1]}`);
+          btn.setAttribute("aria-pressed",String(id===selectedId));
+        }
+        const i=ids.indexOf(selectedId), row=entries[i];
+        document.getElementById("selected-step").textContent=`Étape ${i+1} / ${ids.length}`;
+        document.getElementById("selected-title").textContent=row[0];
+        document.getElementById("selected-desc").textContent=row[2];
+        document.getElementById("selected-guard").textContent=row[3];
+        document.getElementById("selected-source").href=row[4];
+        for (const btn of document.querySelectorAll("[data-scenario]")) {
+          btn.setAttribute("aria-pressed",String(btn.dataset.scenario===selectedScenario));
+        }
+      }
+      for(const btn of buttons) btn.addEventListener("click",()=>{selectedId=btn.dataset.node;render()});
+      for(const btn of document.querySelectorAll("[data-scenario]")) btn.addEventListener("click",()=>{selectedScenario=btn.dataset.scenario;selectedId="server";render()});
+      document.getElementById("prev-node").addEventListener("click",()=>{selectedId=ids[(ids.indexOf(selectedId)+ids.length-1)%ids.length];render()});
+      document.getElementById("next-node").addEventListener("click",()=>{selectedId=ids[(ids.indexOf(selectedId)+1)%ids.length];render()});
+      render();
+    })();
+  </script>
+</body>
+</html>

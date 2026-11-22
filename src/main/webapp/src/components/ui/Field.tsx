@@ -7,8 +7,8 @@ import { cn } from './cn';
 
 /* ── Styles partagés des contrôles de saisie ── */
 const CONTROL =
-  'w-full rounded-md bg-surface-container-low border text-[13px] text-on-surface ' +
-  'placeholder:text-outline transition-colors focus:outline-hidden disabled:opacity-50 disabled:cursor-not-allowed';
+  'kse-input w-full bg-surface-container-low border text-[13px] text-on-surface ' +
+  'placeholder:text-outline focus:outline-hidden disabled:cursor-not-allowed';
 const CONTROL_STATE = (invalid?: boolean) =>
   invalid
     ? 'border-error/60 focus:border-error'
@@ -60,7 +60,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
     <select
       ref={ref}
       aria-invalid={invalid || undefined}
-      className={cn(CONTROL, CONTROL_STATE(invalid), 'h-9 px-2.5 cursor-pointer', className)}
+      className={cn(CONTROL, CONTROL_STATE(invalid), 'kse-select h-9 px-2.5 cursor-pointer', className)}
       {...props}
     >
       {children}

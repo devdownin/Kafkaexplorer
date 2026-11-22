@@ -128,6 +128,25 @@ function mockApi(
     if (url.startsWith('/api/mcp/calls')) return Promise.resolve({ data: CALLS });
     if (url.startsWith('/api/mcp/clients')) return Promise.resolve({ data: over.clients ?? [] });
     if (url.startsWith('/api/mcp/overrides')) return Promise.resolve({ data: over.overrides ?? [] });
+    if (url === '/api/mcp/skills') return Promise.resolve({ data: [{
+      name: 'kafka-incident-triage', description: 'Diagnose Kafka incidents.',
+      uri: 'skill://kafka-incident-triage/SKILL.md', digest: 'sha256:abc123',
+      size: 300, audience: 'KAFKA',
+    }] });
+    if (url === '/api/mcp/skills/kafka-incident-triage') return Promise.resolve({ data: {
+      skill: { name: 'kafka-incident-triage', description: 'Diagnose Kafka incidents.',
+        uri: 'skill://kafka-incident-triage/SKILL.md', digest: 'sha256:abc123',
+        size: 300, audience: 'KAFKA' },
+      content: '---\nname: kafka-incident-triage\n---\n# Triage',
+    } });
+    if (url.startsWith('/api/mcp/surfaces')) return Promise.resolve({ data: [
+      { kind: 'RESOURCE', name: 'KafkaExplorer measurement contract',
+        uri: 'kex://contract', description: 'Measured values and Coverage.' },
+      { kind: 'RESOURCE_TEMPLATE', name: 'Kafka topic details',
+        uri: 'kafka://topics/{topic}', description: 'One scoped topic.' },
+      { kind: 'PROMPT', name: 'kex_incident_triage', uri: null,
+        description: 'Kafka incident triage.' },
+    ] });
     return Promise.reject(new Error(`unexpected ${url}`));
   });
 }
@@ -146,6 +165,23 @@ beforeEach(() => {
 });
 
 describe("l'onglet Catalogue", () => {
+  it('présente un skill, son URI et son contenu sans activation automatique', async () => {
+    const user = userEvent.setup();
+    renderAt();
+    expect(await screen.findByText('kafka-incident-triage')).toBeInTheDocument();
+    expect(screen.getByText('skill://kafka-incident-triage/SKILL.md')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Voir le SKILL.md' }));
+    expect(await screen.findByText(/# Triage/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copier le contenu' })).toBeInTheDocument();
+  });
+
+  it('affiche les Resources et Prompts réellement déclarés par le serveur', async () => {
+    renderAt();
+    expect(await screen.findByText('kex://contract')).toBeInTheDocument();
+    expect(screen.getByText('kafka://topics/{topic}')).toBeInTheDocument();
+    expect(screen.getByText('kex_incident_triage')).toBeInTheDocument();
+  });
+
   it('affiche un outil masqué avec son motif, jamais absent de la table', async () => {
     // Sans la ligne, un opérateur qui cherche pourquoi son agent ne voit pas l'outil n'a aucune
     // piste et va lire le YAML.

@@ -21,7 +21,7 @@ services:
     ports:
       - "127.0.0.1:${LLAMA_CPP_PORT:-8083}:8080"
     volumes:
-      - ../scripts/llama-cpp/serve.sh:/opt/llama-cpp/serve.sh:ro
+      - ./scripts/llama-cpp/serve.sh:/opt/llama-cpp/serve.sh:ro
       # Read-only: this container serves weights, `llama-cpp-model` is what writes them.
       - llama_cpp_models:/models:ro
     environment:
@@ -66,7 +66,7 @@ services:
     # one), it runs as root so it can write the volume, and it is one pin instead of two.
     image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-b9828}
     volumes:
-      - ../scripts/llama-cpp/fetch-model.sh:/opt/llama-cpp/fetch-model.sh:ro
+      - ./scripts/llama-cpp/fetch-model.sh:/opt/llama-cpp/fetch-model.sh:ro
       - llama_cpp_models:/models
     # One model for both consumers, Process Mining and the assistant: EMBEDDED-LLM-SCOPE.md §7.1-7.2
     # measured Gemma 4 E4B best on the assistant's 50 cases and at least as good as the previous

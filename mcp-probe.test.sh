@@ -76,6 +76,41 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif method == "tools/list":
             names = [] if MODE == "no-tools" else TOOLS
             result = {"tools": [{"name": n, "inputSchema": {}} for n in names]}
+        elif method == "resources/list":
+            resources = [] if MODE == "no-resources" else [
+                {"uri": "kex://contract"}, {"uri": "kafka://topics"}] 
+            if MODE != "no-skills":
+                resources.append({"uri": "kex://skills"})
+            result = {"resources": resources}
+        elif method == "resources/templates/list":
+            templates = [] if MODE == "no-templates" else [
+                {"uriTemplate": "kafka://topics/{topic}"}]
+            if MODE != "no-skill-template":
+                templates.append({"uriTemplate": "skill://{name}/SKILL.md"})
+            result = {"resourceTemplates": templates}
+        elif method == "resources/read":
+            uri = request.get("params", {}).get("uri")
+            if uri == "kex://contract":
+                contents = [] if MODE == "no-contract" else [
+                    {"uri": uri, "text": "missing measurement is not zero"}]
+            elif uri == "kex://skills":
+                contents = [] if MODE == "no-manifest" else [{
+                    "uri": uri, "text": json.dumps([{
+                        "uri": "skill://kafka-incident-triage/SKILL.md",
+                        "resources": [{"digest": "sha256:0123456789abcdef"}]
+                    }])}]
+            else:
+                contents = [] if MODE == "no-skill-content" else [{
+                    "uri": uri, "text": "---\\nname: kafka-incident-triage\\n---\\n"}]
+            result = {"contents": contents}
+        elif method == "prompts/list":
+            names = [] if MODE == "no-prompts" else [
+                "kex_incident_triage", "kex_dlq_postmortem", "kex_onboard_domain",
+                "kex_schema_drift_check", "kex_flow_health", "kex_forecast_analysis"]
+            result = {"prompts": [{"name": n} for n in names]}
+        elif method == "prompts/get":
+            msg = "missing key" if MODE == "no-prompt-content" else "probe-correlation"
+            result = {"messages": [{"role": "user", "content": {"type": "text", "text": msg}}]}
         elif MODE == "tool-error":
             result = {"content": [{"type": "text", "text": "refused"}], "isError": True}
         elif MODE == "no-coverage":      # an answer that cannot say what it did not read
@@ -168,6 +203,15 @@ expect "MCP off is named as such"                 not-bound  1 "EXPLORER_MCP_ENA
 expect "an empty tool list names the deny-list"   no-tools   1 "EXPLORER_MCP_TOOLS_DENIED"
 expect "a tool that answered an error fails"      tool-error 1 "answered an error"
 expect "an answer with no coverage fails"         no-coverage 1 "no coverage envelope"
+expect "a missing resource fails"                  no-resources 1 "resources/list is missing"
+expect "a missing template fails"                  no-templates 1 "resources/templates/list is missing"
+expect "a missing contract fails"                  no-contract 1 "measurement contract"
+expect "a missing prompt fails"                    no-prompts 1 "prompts/list is missing"
+expect "a broken prompt fails"                     no-prompt-content 1 "prompts/get did not interpolate"
+expect "a missing Skills catalogue fails"           no-skills 1 "resources/list is missing kex://skills"
+expect "a missing Skill template fails"             no-skill-template 1 "missing the Agent Skill template"
+expect "a missing Skill manifest fails"             no-manifest 1 "skills catalogue does not list"
+expect "a missing Skill.md fails"                    no-skill-content 1 "skill resource did not return"
 
 # Nothing listening at all: the wait is bounded and says what it waited for.
 set +e

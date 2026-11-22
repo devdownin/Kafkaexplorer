@@ -10,7 +10,7 @@ Three checks, all offline, all on facts already in the repository.
 
 1. **Nothing floats.** An image with no tag, or tagged `latest`, serves whatever was published
    the day of the pull. The tree pins everything else — base images by digest in the
-   Dockerfiles, `apache/kafka:4.3.1`, `chromadb/chroma` — and the comment on
+   Dockerfiles, `apache/kafka:4.4.0`, `chromadb/chroma` — and the comment on
    one of those pins once claimed it was "the only floating tag left in the tree" while
    `curlimages/curl:latest` sat two services below it. A claim about pinning is exactly the
    kind that decays unread.
@@ -67,6 +67,10 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 IMAGE_LINE = re.compile(r"^\s*image:\s*(\S+)\s*$", re.M)
+# `x-kafka-image: &kafka-image ${KAFKA_IMAGE:-apache/kafka:4.4.0}` — an image written once and
+# reached from several services as `image: *kafka-image`. An alias that does not resolve is left
+# as written, so the "carries no tag" rule fails on it loudly rather than the reference vanishing.
+ANCHOR = re.compile(r"&([A-Za-z0-9_-]+)\s+(\S+)")
 # ${VAR:-default} / ${VAR-default} / ${VAR}
 INTERPOLATION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^}]*))?\}")
 
@@ -92,7 +96,11 @@ def image_refs() -> list[tuple[pathlib.Path, str, str]]:
     files = [ROOT / "docker-compose.yml", *sorted((ROOT / "compose").glob("*.yml"))]
     found = []
     for path in files:
-        for raw in IMAGE_LINE.findall(path.read_text(encoding="utf-8")):
+        text = path.read_text(encoding="utf-8")
+        anchors = dict(ANCHOR.findall(text))
+        for raw in IMAGE_LINE.findall(text):
+            if raw.startswith("*"):
+                raw = anchors.get(raw[1:], raw)
             found.append((path, raw, expand(raw)))
     return found
 

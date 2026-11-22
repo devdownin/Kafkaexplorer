@@ -6,6 +6,10 @@ import type { FC } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { NAV_ITEMS, CONFIG_ITEM, HELP_ITEM } from '../navigation';
 import { buildTraceLinkForKey } from '../pages/streamFlowLogic';
+import { GlassModal } from './ui/Spatial';
+
+const RECENT_TOPICS_KEY = 'commandPalette.recentTopics';
+const MAX_RECENT_TOPICS = 6;
 
 interface CommandPaletteProps {
   onClose: () => void;
@@ -18,7 +22,7 @@ interface Command {
   label: string;
   hint?: string;
   icon: string;
-  group: 'Actions' | 'Pages' | 'Topics' | 'Tables';
+  group: 'Actions' | 'Pages' | 'Recent topics' | 'Topics' | 'Tables';
   keywords?: string;
   run: () => void;
 }
@@ -32,6 +36,19 @@ interface Command {
 const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) => {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
+  const [recentTopics, setRecentTopics] = useState<string[]>(() => {
+    try {
+      const stored: unknown = JSON.parse(localStorage.getItem(RECENT_TOPICS_KEY) ?? '[]');
+      return Array.isArray(stored) ? stored.filter((value): value is string => typeof value === 'string').slice(0, MAX_RECENT_TOPICS) : [];
+    } catch { return []; }
+  });
+  const openTopic = (topic: string) => {
+    const updated = [topic, ...recentTopics.filter(t => t !== topic)].slice(0, MAX_RECENT_TOPICS);
+    setRecentTopics(updated);
+    localStorage.setItem(RECENT_TOPICS_KEY, JSON.stringify(updated));
+    navigate(`/topic/${encodeURIComponent(topic)}`);
+    onClose();
+  };
   const [rawActive, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -87,7 +104,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
     const topicCmds: Command[] = q
       ? topics.filter(t => t.toLowerCase().includes(q)).slice(0, 8).map(t => ({
           id: `topic-${t}`, label: t, hint: 'Kafka topic', icon: 'topic', group: 'Topics',
-          run: () => go(`/topic/${t}`),
+          run: () => openTopic(t),
         }))
       : [];
     const tableCmds: Command[] = q
@@ -96,13 +113,17 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
           run: () => go(`/query?sql=${encodeURIComponent(`SELECT * FROM ${t} LIMIT 50`)}`),
         }))
       : [];
-    return [...actions, ...pages, ...topicCmds, ...tableCmds];
+    const recentCmds: Command[] = !q ? recentTopics.filter(t => topics.includes(t)).map(t => ({
+      id: `recent-${t}`, label: t, hint: 'Recently opened topic', icon: 'history', group: 'Recent topics',
+      run: () => openTopic(t),
+    })) : [];
+    return [...actions, ...pages, ...recentCmds, ...topicCmds, ...tableCmds];
     // eslint-disable-next-line react-hooks/exhaustive-deps -- go/navigate are stable
-  }, [query, topics, tables]);
+  }, [query, topics, tables, recentTopics]);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
-    if (!q) return commands.filter(c => c.group === 'Actions' || c.group === 'Pages');
+    if (!q) return commands.filter(c => c.group === 'Actions' || c.group === 'Pages' || c.group === 'Recent topics');
     return commands.filter(c =>
       c.label.toLowerCase().includes(q) || c.keywords?.toLowerCase().includes(q) || c.group === 'Topics' || c.group === 'Tables',
     );
@@ -127,7 +148,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
 
   // Sépare les groupes pour l'affichage tout en gardant l'index global continu.
   let runningIndex = -1;
-  const groups: Command['group'][] = ['Actions', 'Pages', 'Topics', 'Tables'];
+  const groups: Command['group'][] = ['Actions', 'Pages', 'Recent topics', 'Topics', 'Tables'];
 
   return (
     <div
@@ -137,8 +158,8 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
       {/* Le dialogue est la carte, pas le voile : `role` sur le conteneur `fixed inset-0`
           annonçait un dialogue de la taille du viewport, et rangeait le clic-pour-fermer
           *dans* le dialogue au lieu de l'extérieur. Le voile ne garde que ce clic. */}
-      <div
-        className="w-full max-w-xl bg-surface-container border border-outline-variant rounded-xl shadow-2xl overflow-hidden animate-slide-up"
+      <GlassModal
+        className="w-full max-w-xl overflow-hidden animate-slide-up"
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
@@ -146,7 +167,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
         onKeyDown={onKeyDown}
       >
         {/* Champ de recherche */}
-        <div className="flex items-center gap-2.5 px-4 h-12 border-b border-outline-variant/60">
+        <div className="flex items-center gap-2.5 px-5 h-14 border-b border-outline-variant/40">
           <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[20px]">search</span>
           <input
             ref={inputRef}
@@ -154,9 +175,9 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
             onChange={e => { setQuery(e.target.value); setActive(0); }}
             placeholder="Search pages, topics, tables or actions…"
             aria-label="Search"
-            className="flex-1 bg-transparent border-none outline-hidden text-[14px] text-on-surface placeholder:text-outline"
+            className="flex-1 bg-transparent border-none outline-hidden text-[14px] text-on-surface placeholder:text-outline focus-visible:outline-2 focus-visible:outline-primary"
           />
-          <kbd className="text-[10px] text-outline border border-outline-variant rounded px-1.5 py-0.5">Esc</kbd>
+          <kbd className="text-[11px] text-outline border border-outline-variant rounded px-1.5 py-0.5">Esc</kbd>
         </div>
 
         {/* Résultats */}
@@ -184,7 +205,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
                         onMouseMove={() => setActive(idx)}
                         aria-selected={isActive}
                         className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-left transition-colors ${
-                          isActive ? 'bg-primary/10 text-on-surface' : 'text-on-surface-variant hover:text-on-surface'
+                          isActive ? 'bg-primary/10 text-on-surface shadow-[inset_0_1px_0_rgb(var(--kse-primary)/.10)]' : 'text-on-surface-variant hover:bg-surface-container-high/70 hover:text-on-surface'
                         }`}
                       >
                         <span aria-hidden="true" className={`material-symbols-outlined text-[19px] ${isActive ? 'text-primary' : 'text-on-surface-variant'}`}>{cmd.icon}</span>
@@ -205,7 +226,7 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
           <span className="flex items-center gap-1"><kbd className="border border-outline-variant rounded px-1">↑</kbd><kbd className="border border-outline-variant rounded px-1">↓</kbd> navigate</span>
           <span className="flex items-center gap-1"><kbd className="border border-outline-variant rounded px-1">↵</kbd> open</span>
         </div>
-      </div>
+      </GlassModal>
     </div>
   );
 };

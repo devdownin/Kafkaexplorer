@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import type { FC, ReactNode } from 'react';
 import axios from 'axios';
 import Sidebar from './Sidebar';
@@ -11,6 +12,7 @@ import { setCatalog } from '../catalogStore';
 import { DESKTOP_QUERY } from '../breakpoints';
 import type { Health } from './connectionStatus';
 import type { DashboardResponse } from '../api/types';
+import { useThemePreference } from '../theme';
 
 /*
  * Le rail de navigation en flux — donc l'écran considéré comme « desktop » — commence à `lg`,
@@ -50,9 +52,16 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   const [searchTopics, setSearchTopics] = useState<string[]>([]);
   const [searchTables, setSearchTables] = useState<string[]>([]);
 
+  const { theme, toggle: toggleTheme } = useThemePreference();
+
+  // The entrance replays when the *section* changes, not on every path change: keying on the whole
+  // pathname would remount a page (and drop its state) when only a route parameter moves.
+  const section = useLocation().pathname.split('/')[1] ?? '';
+
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [contentScrolled, setContentScrolled] = useState(false);
   const [isDesktop, setIsDesktop] = useState(
     () => typeof window !== 'undefined' && window.matchMedia(DESKTOP_QUERY).matches,
   );
@@ -105,7 +114,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   const effectiveCollapsed = isDesktop ? isCollapsed : false;
 
   return (
-    <div className="h-screen overflow-hidden bg-background bg-scene">
+    <div className="kse-app-shell h-screen overflow-hidden bg-background">
       <Sidebar
         isCollapsed={effectiveCollapsed}
         onToggle={() => setIsCollapsed((c) => !c)}
@@ -115,7 +124,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
 
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 lg:hidden animate-fade-in"
+          className="kse-drawer-backdrop fixed inset-0 z-40 lg:hidden animate-fade-in"
           onClick={() => setMobileOpen(false)}
           aria-hidden="true"
         />
@@ -123,18 +132,21 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
 
       <div
         className={`h-screen flex flex-col min-w-0 transition-all duration-300 ml-0 ${
-          effectiveCollapsed ? 'lg:ml-[68px]' : 'lg:ml-64'
+          effectiveCollapsed ? 'lg:ml-[92px]' : 'lg:ml-[276px]'
         }`}
       >
         <Header
+          theme={theme}
+          scrolled={contentScrolled}
+          onThemeToggle={toggleTheme}
           onMenuClick={() => setMobileOpen(true)}
           onSearchClick={() => setPaletteOpen(true)}
           isHealthy={isHealthy}
           clusterName={clusterName}
           bootstrapServers={bootstrapServers}
         />
-        <main className="flex-1 overflow-y-auto custom-scrollbar relative">
-          {children}
+        <main className="flex-1 overflow-y-auto custom-scrollbar relative" onScroll={event => setContentScrolled(event.currentTarget.scrollTop > 8)}>
+          <div key={section} className="kse-page-enter h-full">{children}</div>
         </main>
       </div>
 

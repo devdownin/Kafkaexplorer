@@ -894,8 +894,9 @@ La phase 2 est placée **avant** les outils différenciants délibérément : la
 
 The pilot requires `explorer.forecasting.pilot.enabled=true`, durable history and inference;
 its tools are registered only once at least one series is approved.
-Its five read-only tools are `kex_list_forecastable_metrics`, `kex_metric_history`,
-`kex_forecast_metric`, `kex_get_forecast_quality` and `kex_list_predicted_threshold_breaches`.
+Its six read-only tools are `kex_list_forecastable_metrics`, `kex_metric_history`,
+`kex_forecast_metric`, `kex_get_forecast_quality`, `kex_list_predicted_threshold_breaches` and
+`kex_list_forecast_threshold_reaches` (the metrics' own thresholds, as the Metrics page reads them).
 They replace the former snapshot catalogue/get/latest/metadata/limits tools. Existing clients
 must use the new names. Registration still passes through catalogue allow/deny, DLP, rate
 limits and audit interceptors. Environment approval is exact via

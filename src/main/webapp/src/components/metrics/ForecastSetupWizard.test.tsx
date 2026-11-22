@@ -12,67 +12,59 @@ const metric = { metricId: 'lag', name: 'Lag', definitionVersion: 'version', uni
 describe('ForecastSetupWizard', () => {
   beforeEach(() => { vi.clearAllMocks(); vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1, truncated: false, clusterId: 'existing', collectorId: 'collector', applyUnavailable: EXPORT_ONLY, minimumContextPoints: 128 } }); });
   afterEach(cleanup);
-  async function sources() {
-    const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);
-    // Choosing the metric is what reveals the form: there is no second step to continue to.
-    await user.selectOptions(await screen.findByLabelText('Metric'), 'lag'); return user;
+  /*
+   * The form opens for one metric — the card whose one-click creation stopped — so the form is there
+   * as soon as the catalogue answers: there is no metric to choose.
+   */
+  async function sources(props: { sourcesInferred?: boolean } = {}) {
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard metricId="lag" {...props} /></ConfirmProvider>);
+    await screen.findByLabelText('All source topics'); return user;
   }
-  it('creates a forecast directly when opened from an eligible metric card', async () => {
-    vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1, truncated: false,
-      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 } });
-    vi.mocked(axios.post).mockResolvedValue({ data: { seriesId: 'forecast-lag' } });
-    const onApplied = vi.fn();
-    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" onApplied={onApplied} /></ConfirmProvider>);
-    expect(await screen.findByText('Forecast started for Lag.')).toBeTruthy();
-    expect(axios.post).toHaveBeenCalledTimes(1);
-    expect(axios.post).toHaveBeenCalledWith('/api/forecasts/series', expect.objectContaining({
-      metricId: 'lag', definitionVersion: 'version', unit: 'milliseconds',
-      clusterId: 'existing', collectorId: 'collector', topics: ['orders'], groups: ['worker'],
-      stepMillis: 60000, horizon: 30, seasonality: 'NONE', confirmed: true,
-    }), expect.objectContaining({ timeout: 10000 }));
-    expect(onApplied).toHaveBeenCalledWith('forecast-lag');
-  });
-  it('keeps the editable assistant if automatic creation is refused', async () => {
+  it('opens on the reason the one-click creation stopped, with the form to retry', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1,
       clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 } });
-    vi.mocked(axios.post).mockRejectedValue({ response: { data: { reason: 'History not available' } } });
-    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+    render(<ConfirmProvider><ForecastSetupWizard metricId="lag" initialError="Automatic creation stopped: History not available." /></ConfirmProvider>);
     expect(await screen.findByRole('alert')).toHaveTextContent('History not available');
-    expect(screen.getByRole('button', { name: 'Start forecasting' })).toBeTruthy();
-  });
-  it('does not automatically create a series already present', async () => {
-    vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1,
-      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null } });
-    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" forecastMetricIds={['lag']} /></ConfirmProvider>);
-    expect(await screen.findByRole('option', { name: /already forecast/ })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'Start forecasting' })).toBeTruthy();
+    // It names the metric it is for; there is none to choose.
+    expect(screen.getByText('Lag')).toBeTruthy();
+    expect(screen.queryByLabelText('Metric')).toBeNull();
     expect(axios.post).not.toHaveBeenCalled();
   });
   it('shows metadata blockers in place of the form', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [{ ...metric, eligible: false, blockers: ['Set a known unit'] }], total: 1 } });
-    const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);
-    await user.selectOptions(await screen.findByLabelText('Metric'), 'lag');
-    expect(screen.getByText('Set a known unit')).toBeTruthy();
-    // The option names the blocker itself, not a generic "metadata missing" whatever the cause.
-    expect(screen.getByRole('option', { name: 'Lag · Set a known unit' })).toBeTruthy();
+    render(<ConfirmProvider><ForecastSetupWizard metricId="lag" /></ConfirmProvider>);
+    expect(await screen.findByText('Set a known unit')).toBeTruthy();
     expect(screen.getByRole('group', { name: 'What blocks this metric' })).toHaveTextContent('cannot be forecast yet');
     expect(screen.queryByRole('checkbox')).toBeNull(); expect(screen.queryByLabelText('Environment')).toBeNull();
   });
-  it('names a configurable metric alone, and says only what stands in the way of another', async () => {
-    render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);
-    expect(await screen.findByRole('option', { name: 'Lag' })).toBeTruthy();
-  });
-  it('validates all fields before review and uses existing collector identities', async () => {
+  it('validates the sources before review', async () => {
     const user = await sources();
-    expect(screen.getByLabelText('History cluster ID')).toHaveValue('existing');
-    await user.clear(screen.getByLabelText('Environment'));
     await user.click(screen.getByRole('button', { name: 'Remove orders' }));
     await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: 'Validate and export' }));
     expect(screen.getByText('Add every source topic.')).toBeTruthy();
-    expect(screen.getByLabelText('Environment')).toHaveAttribute('aria-invalid', 'true');
-    // Environment is folded away; a bad one opens the fold and takes focus all the same.
-    expect(screen.getByLabelText('Environment').closest('details')).toHaveAttribute('open');
     expect(axios.post).not.toHaveBeenCalled();
+  });
+  // What the metric and the running collector already say is not asked again.
+  it('asks nothing the metric already says, and sends the collector identities and unit it gives', async () => {
+    vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: [] } });
+    const user = await sources();
+    for (const label of ['Environment', 'Captured unit', 'History cluster ID', 'History collector ID'])
+      expect(screen.queryByLabelText(label)).toBeNull();
+    await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
+    await screen.findByRole('button', { name: 'Copy configuration' });
+    expect(axios.post).toHaveBeenCalledWith('/api/forecasts/configuration', expect.objectContaining({
+      environment: 'local', unit: 'milliseconds', clusterId: 'existing', collectorId: 'collector' }), expect.anything());
+  });
+  // A template declares its sources: only free SQL, whose sources are inferred, asks for the attestation.
+  it('asks to confirm the sources only when they were inferred from free SQL', async () => {
+    vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: [] } });
+    const user = await sources({ sourcesInferred: false });
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Validate and export' }));
+    await screen.findByRole('button', { name: 'Copy configuration' });
+    expect(axios.post).toHaveBeenCalledWith('/api/forecasts/configuration', expect.objectContaining({ confirmed: true }), expect.anything());
   });
   it('requires the source attestation, and only it, before validating a configuration', async () => {
     vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: ['Restart with the file'] } });
@@ -94,7 +86,7 @@ describe('ForecastSetupWizard', () => {
     expect(screen.queryByRole('button', { name: 'Download forecasts.yml' })).toBeNull();
   });
   it('prefills the requested metric and known sources without approving an export', async () => {
-    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+    render(<ConfirmProvider><ForecastSetupWizard metricId="lag" /></ConfirmProvider>);
     // Opened for one eligible metric, its sources are there at once (METRICS-FORECAST-UX-AUDIT.md U4).
     expect(await screen.findByRole('list', { name: 'All source topics: selected' })).toHaveTextContent('orders');
     expect(screen.getByRole('list', { name: 'All consumer groups (optional): selected' })).toHaveTextContent('worker');
@@ -104,19 +96,19 @@ describe('ForecastSetupWizard', () => {
   });
   it('keeps eligibility blockers for the requested metric', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [{ ...metric, eligible: false, blockers: ['Set a known unit'] }], total: 1 } });
-    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="lag" /></ConfirmProvider>);
+    render(<ConfirmProvider><ForecastSetupWizard metricId="lag" /></ConfirmProvider>);
     expect(await screen.findByText('Set a known unit')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Validate and export' })).toBeNull();
     expect(axios.post).not.toHaveBeenCalled();
   });
-  it('does not select another metric when the requested one is absent', async () => {
-    render(<ConfirmProvider><ForecastSetupWizard initialMetricId="missing" /></ConfirmProvider>);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Selected metric is absent');
-    expect(screen.getByLabelText('Metric')).toHaveValue('');
+  it('does not fall back on another metric when the requested one is absent', async () => {
+    render(<ConfirmProvider><ForecastSetupWizard metricId="missing" /></ConfirmProvider>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('absent from the candidate catalogue');
+    expect(screen.queryByRole('button', { name: 'Validate and export' })).toBeNull();
     expect(axios.post).not.toHaveBeenCalled();
   });
   it('aborts catalogue reads on close', () => {
-    vi.mocked(axios.get).mockReturnValue(new Promise(() => {})); const view = render(<ForecastSetupWizard />);
+    vi.mocked(axios.get).mockReturnValue(new Promise(() => {})); const view = render(<ForecastSetupWizard metricId="lag" />);
     const options = vi.mocked(axios.get).mock.calls[0][1]; view.unmount(); expect(options?.signal?.aborted).toBe(true);
   });
   it('asks how far ahead in time, and offers only the durations the interval can carry', async () => {
@@ -135,15 +127,17 @@ describe('ForecastSetupWizard', () => {
     await user.selectOptions(screen.getByLabelText('Sampling interval'), '30000');
     expect(ahead).toHaveValue('1800000');
   });
-  it('keeps the history identities folded away, and opens them when one is invalid', async () => {
+  it('opens the folded settings when a threshold there is invalid', async () => {
     const user = await sources();
-    const details = screen.getByText('Advanced: interval, horizon, threshold, environment and history identities').closest('details');
+    const details = screen.getByText('Advanced: interval, horizon, cycle and threshold').closest('details');
     expect(details).not.toHaveAttribute('open');
-    await user.clear(screen.getByLabelText('History collector ID'));
+    await user.click(details!.querySelector('summary')!);
+    await user.type(screen.getByLabelText('Threshold (optional)'), 'abc');
+    await user.click(details!.querySelector('summary')!);
     await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: 'Validate and export' }));
     expect(details).toHaveAttribute('open');
-    expect(screen.getByLabelText('History collector ID')).toHaveFocus();
+    expect(screen.getByLabelText('Threshold (optional)')).toHaveFocus();
   });
   it('edits sources as chips: add with Enter, ignore duplicates, remove one', async () => {
     vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: [] } });
@@ -172,22 +166,13 @@ describe('ForecastSetupWizard', () => {
   it('says why starting directly is unavailable, and names no mode before the catalogue answers', async () => {
     let answer: (value: unknown) => void = () => {};
     vi.mocked(axios.get).mockReturnValue(new Promise(resolve => { answer = resolve; }));
-    render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);
+    render(<ConfirmProvider><ForecastSetupWizard metricId="lag" /></ConfirmProvider>);
     expect(screen.queryByText(/Exports the selected series/)).toBeNull();
     expect(screen.queryByText(/Starts the forecast directly/)).toBeNull();
     answer({ data: { metrics: [metric], total: 1, truncated: false, applyUnavailable: EXPORT_ONLY } });
-    // Said beside the button it explains, once a metric gives the form a button.
-    await userEvent.setup().selectOptions(await screen.findByLabelText('Metric'), 'lag');
+    // Said beside the button it explains.
+    await screen.findByLabelText('All source topics');
     expect(screen.getByText(/Exports the selected series/)).toHaveTextContent(EXPORT_ONLY);
-  });
-  it('lets the operator configure another metric once one is exported', async () => {
-    vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: [] } });
-    const user = await sources();
-    await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Validate and export' }));
-    expect(await screen.findByRole('heading', { name: 'Configuration ready' })).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Configure another metric' }));
-    expect(screen.queryByRole('heading', { name: 'Configuration ready' })).toBeNull();
-    expect(screen.getByLabelText('Metric')).toHaveValue('');
   });
   it('numbers the steps after export and offers a copy beside the download', async () => {
     vi.mocked(axios.post).mockResolvedValue({ data: { configuration: 'explorer: {}', seriesId: 'id', instructions: ['Merge the file', 'Restart'] } });
@@ -221,8 +206,8 @@ describe('ForecastSetupWizard', () => {
       clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 } });
     vi.mocked(axios.post).mockResolvedValue({ data: { seriesId: 'id' } });
     const onApplied = vi.fn();
-    const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard onApplied={onApplied} /></ConfirmProvider>);
-    await user.selectOptions(await screen.findByLabelText('Metric'), 'lag');
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard metricId="lag" onApplied={onApplied} /></ConfirmProvider>);
+    await screen.findByLabelText('All source topics');
     expect(screen.getByLabelText('Sampling interval')).toHaveValue('300000');
     expect(screen.getByRole('button', { name: 'Start forecasting' })).toBeDisabled();
     await user.click(screen.getByRole('checkbox')); await user.click(screen.getByRole('button', { name: 'Start forecasting' }));
@@ -244,11 +229,10 @@ describe('ForecastSetupWizard', () => {
   });
   it('keeps everything with a sound default folded away', async () => {
     await sources();
-    const details = screen.getByText('Advanced: interval, horizon, threshold, environment and history identities').closest('details')!;
-    for (const label of ['Sampling interval', 'Repeating cycle', 'Looks ahead', 'Threshold (optional)', 'History cluster ID', 'Environment'])
+    const details = screen.getByText('Advanced: interval, horizon, cycle and threshold').closest('details')!;
+    for (const label of ['Sampling interval', 'Repeating cycle', 'Looks ahead', 'Threshold (optional)'])
       expect(details.contains(screen.getByLabelText(label))).toBe(true);
-    // What stays outside it is the metric and the sources: the two things with no sound default.
-    expect(details.contains(screen.getByLabelText('Metric'))).toBe(false);
+    // What stays outside it is the sources: the one thing with no sound default.
     expect(details.contains(screen.getByLabelText('All source topics'))).toBe(false);
   });
 
@@ -305,8 +289,8 @@ describe('ForecastSetupWizard', () => {
     expect(screen.getByLabelText('Forecast summary')).toHaveTextContent('Daily cycle, found in the history');
     cleanup(); vi.clearAllMocks();
     withHistory(HISTORY);
-    const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard /></ConfirmProvider>);
-    await user.selectOptions(await screen.findByLabelText('Metric'), 'lag');
+    const user = userEvent.setup(); render(<ConfirmProvider><ForecastSetupWizard metricId="lag" /></ConfirmProvider>);
+    await screen.findByLabelText('All source topics');
     await user.selectOptions(screen.getByLabelText('Repeating cycle'), 'NONE');
     await user.selectOptions(screen.getByLabelText('Sampling interval'), '900000');
     await vi.waitFor(() => expect(vi.mocked(axios.get)).toHaveBeenCalledWith(expect.stringContaining('/history'), expect.objectContaining({ params: { stepMillis: 900000 } })));
@@ -321,11 +305,31 @@ describe('ForecastSetupWizard', () => {
     expect(screen.queryByRole('button', { name: /1.5× latest/ })).toBeNull();
   });
 
-  // METRICS-FORECAST-UX-AUDIT.md B6: a metric that already has a series is named, and cannot be chosen.
-  it('marks a metric that is already forecast instead of refusing it after the submit', async () => {
-    render(<ConfirmProvider><ForecastSetupWizard forecastMetricIds={['lag']} /></ConfirmProvider>);
-    const option = await screen.findByRole('option', { name: /Lag · already forecast/ });
-    expect(option).toBeDisabled();
+  // METRICS-FORECAST-AUDIT-2.md B4: a BELOW threshold is suggested below the latest value.
+  it('suggests a threshold on the side of its direction', async () => {
+    withHistory({ ...HISTORY, suggestedSeasonality: null }); const user = await sources();
+    expect(await screen.findByRole('button', { name: 'Use 209 (1.5× latest)' })).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText('Threshold direction'), 'BELOW');
+    // Latest 139: 1.5× would be a threshold already crossed.
+    expect(screen.getByRole('button', { name: 'Use 69.5 (0.5× latest)' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /1.5× latest/ })).toBeNull();
+  });
+  // METRICS-FORECAST-AUDIT-2.md B5: no history is drawn under an interval it was not read at.
+  it('drops the previous interval\'s history while the new one is read', async () => {
+    let answer: (value: unknown) => void = () => {};
+    let reads = 0;
+    vi.mocked(axios.get).mockImplementation(url => {
+      if (!String(url).endsWith('/history')) return Promise.resolve({ data: { metrics: [{ ...metric, suggestedStepMillis: 300000 }],
+        total: 1, truncated: false, clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 } });
+      reads++;
+      return reads === 1 ? Promise.resolve({ data: HISTORY }) : new Promise(resolve => { answer = resolve; });
+    });
+    const user = await sources();
+    expect(await screen.findByRole('figure', { name: 'Recorded history' })).toHaveTextContent('at 5 minutes');
+    await user.selectOptions(screen.getByLabelText('Sampling interval'), '900000');
+    expect(screen.queryByRole('figure', { name: 'Recorded history' })).toBeNull();
+    answer({ data: HISTORY });
+    expect(await screen.findByRole('figure', { name: 'Recorded history' })).toHaveTextContent('at 15 minutes');
   });
 
   // METRICS-FORECAST-UX-AUDIT.md B7: the label sits above the chips it titles.

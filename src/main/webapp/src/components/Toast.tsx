@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 
 type ToastType = 'success' | 'error' | 'info';
 
@@ -35,11 +35,28 @@ const accents: Record<ToastType, string> = {
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const timers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    const pendingTimers = timers.current;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      for (const timer of pendingTimers) clearTimeout(timer);
+      pendingTimers.clear();
+    };
+  }, []);
 
   const toast = useCallback((message: string, type: ToastType = 'info') => {
     const id = ++nextId;
+    if (!mounted.current) return;
     setToasts(prev => [...prev, { id, message, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+    const timer = setTimeout(() => {
+      timers.current.delete(timer);
+      if (mounted.current) setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3500);
+    timers.current.add(timer);
   }, []);
 
   return (
@@ -49,7 +66,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         {toasts.map(t => (
           <div
             key={t.id}
-            className="toast-in flex items-center gap-2.5 pl-3 pr-4 py-3 rounded-xl border border-outline-variant bg-surface-container-high shadow-2xl text-[13px] font-medium text-on-surface"
+            className="toast-in flex items-center gap-2.5 pl-3 pr-4 py-3 rounded-xl kse-float text-[13px] font-medium text-on-surface"
           >
             <span className={`material-symbols-outlined text-[18px] ${accents[t.type]}`}>{icons[t.type]}</span>
             {t.message}

@@ -41,12 +41,18 @@ public class ForecastController {
    * one rather than leading an operator through a preparation that cannot end in a forecast.
    */
   public record Status(boolean enabled, String state, List<SeriesView> series, boolean shadowEnabled,
-                       boolean modelAvailable) {}
+                       boolean modelAvailable,
+                       /**
+                        * When the next forecast cycle starts; null while one is running, or with no
+                        * pilot. The cards say when their forecast was made and when the next one is
+                        * due, so a forecast that stopped moving is not mistaken for a stable one.
+                        */
+                       Long nextCycleAt) {}
 
   @GetMapping
   public ResponseEntity<Status> status() {
     var p = services.getIfAvailable();
-    if (p == null) return ResponseEntity.ok(new Status(false, "DISABLED", List.of(), false, false));
+    if (p == null) return ResponseEntity.ok(new Status(false, "DISABLED", List.of(), false, false, null));
     try {
       var rows = new java.util.ArrayList<SeriesView>();
       // One series per row, each read on its own (METRICS-FORECAST-UX-AUDIT.md B2): a single record
@@ -55,9 +61,9 @@ public class ForecastController {
       // The list carries no history points (P1): up to 512 per series were sent every 30 s to a
       // page that draws one series, whose detail is GET /{seriesId}.
       for (var s : p.series()) rows.add(view(p, s, false));
-      return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows), p.shadowEnabled(), p.modelAvailable()));
+      return ResponseEntity.ok(new Status(true, "AVAILABLE", List.copyOf(rows), p.shadowEnabled(), p.modelAvailable(), p.nextScheduledAt()));
     } catch (Exception e) {
-      return ResponseEntity.status(503).body(new Status(true, "UNAVAILABLE", List.of(), p.shadowEnabled(), p.modelAvailable()));
+      return ResponseEntity.status(503).body(new Status(true, "UNAVAILABLE", List.of(), p.shadowEnabled(), p.modelAvailable(), p.nextScheduledAt()));
     }
   }
 
@@ -98,14 +104,50 @@ public class ForecastController {
     }
   }
 
-  /** The record without its history points: the counts and the status stay, the 512 points go. */
+  /**
+   * How many of the latest history points the list keeps: what a metric card draws before its
+   * forecast. The card had only the metric's own sparkline, a handful of untimed values, so 30
+   * predicted points squeezed the measured curve into a fifth of its width — and for a counter it
+   * was another quantity (a cumulative count) than the rate being forecast. Sixty points of the
+   * prepared series are the forecast's own unit and grid, ~3 KB per series against 44 KB for all.
+   */
+  static final int LIST_HISTORY_POINTS = 60;
+
+  /**
+   * What the latest fully measured forecast predicted: the panel sets it beside the measured curve,
+   * already in the series' own record. 204 while no forecast has matured.
+   */
+  @GetMapping("/{seriesId}/previous")
+  public ResponseEntity<MetricForecast> previous(@PathVariable String seriesId) {
+    var p = services.getIfAvailable();
+    if (p == null) return ResponseEntity.notFound().build();
+    String id;
+    try {
+      // The configured series' own id from here on: the path value is only a key to look it up,
+      // and is never written to the log (it is whatever the caller sent).
+      id = p.resolve(seriesId).seriesId();
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.notFound().build();
+    }
+    try {
+      var forecast = p.previous(id);
+      return forecast == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(forecast);
+    } catch (Exception e) {
+      org.slf4j.LoggerFactory.getLogger(ForecastController.class)
+          .warn("Previous forecast of {} could not be read: {}", id, e.toString());
+      return ResponseEntity.status(503).build();
+    }
+  }
+
+  /** The record with only its latest history points: the counts and the status stay, the rest goes. */
   static ForecastRecord withoutHistory(ForecastRecord r) {
     if (r == null || r.context() == null) return r;
     var c = r.context();
+    var points = c.points();
     var light = new PreparedMetricSeries(c.status(), c.reason(), c.seriesId(), c.definitionVersion(),
         c.sourceUnit(), c.outputUnit(), c.fromInclusive(), c.toExclusive(), c.profile(),
         c.profileFingerprint(), c.inputFingerprint(), c.observedPoints(), c.missingPoints(),
-        c.imputedPoints(), List.of());
+        c.imputedPoints(), points.subList(Math.max(0, points.size() - LIST_HISTORY_POINTS), points.size()));
     return new ForecastRecord(r.key(), r.generatedAt(), r.state(), r.strategy(), r.visibility(), light,
         r.forecast(), r.quality(), r.evaluatedPoints(), r.evaluatedThrough(), r.baselineMae(), r.reason(),
         r.qualityWindow());

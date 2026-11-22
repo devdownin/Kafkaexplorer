@@ -29,6 +29,7 @@ import {
   type TraceHistoryEntry, type TraceParams, type TraceProgress,
 } from './streamFlowLogic';
 import { recordTracedChain } from './flowChains';
+import { FlowMetricDrawer } from '../components/graph/FlowMetricDrawer';
 import { copyText } from '../clipboard';
 
 /** Filet de sécurité côté client : le backend borne déjà la trace (explorer.stream-flow-timeout-ms). */
@@ -99,6 +100,11 @@ const StreamFlow: React.FC = () => {
   const [flow, setFlow]                     = useState<ParsedFlow>(EMPTY_FLOW);
   const [hasResult, setHasResult]           = useState(false);
   const [selectedTopic, setSelectedTopic]   = useState<string | null>(null);
+  // The topic whose metrics drawer is open: created from the graph, on the hop the trace followed.
+  const [metricTopic, setMetricTopic]       = useState<string | null>(null);
+  // Or the link between two topics whose metrics drawer is open (the hop, clicked on the graph).
+  const [metricHop, setMetricHop]           = useState<{ from: string; to: string } | null>(null);
+  const openHopMetrics = useCallback((from: string, to: string) => { setMetricTopic(null); setMetricHop({ from, to }); }, []);
   const [detailsOpen, setDetailsOpen]       = useState(true);
   const [hitFilter, setHitFilter]           = useState('');
   /** Tri du tableau de preuves. `chain` — l'ordre des sauts — est le sens même de la trace. */
@@ -634,7 +640,7 @@ const StreamFlow: React.FC = () => {
             <span aria-hidden="true" className="material-symbols-outlined text-[20px]">chevron_right</span>
           </button>
           <span
-            className="text-[10px] font-semibold uppercase tracking-widest text-outline whitespace-nowrap"
+            className="text-[11px] font-semibold uppercase tracking-widest text-outline whitespace-nowrap"
             style={{ writingMode: 'vertical-rl' }}
           >
             Criteria
@@ -694,7 +700,7 @@ const StreamFlow: React.FC = () => {
                   className="w-full text-left px-1.5 py-1 rounded hover:bg-surface-container-high"
                 >
                   <span className="block font-mono text-[11px] text-on-surface truncate">{entry.messageKey}</span>
-                  <span className="block text-[10px] text-outline">
+                  <span className="block text-[11px] text-outline">
                     {entry.searchPath ? `${entry.searchPath} · ` : ''}
                     {entry.topicsFound} topic{entry.topicsFound === 1 ? '' : 's'} · {formatRelativeTime(entry.ranAt)}
                   </span>
@@ -777,7 +783,7 @@ const StreamFlow: React.FC = () => {
                 ))}
               </ul>
             )}
-            <p className="text-[10px] text-on-surface-variant">
+            <p className="text-[11px] text-on-surface-variant">
               {selectedTopics.length === 0
                 ? 'None selected — the whole cluster is scanned, one consumer per topic. Naming the topics is much faster: paste a list, or use a pattern like orders.*'
                 : `${selectedTopics.length} topic(s) will be scanned.`}
@@ -798,7 +804,7 @@ const StreamFlow: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setSelectedTopics([])}
-                className="text-[10px] text-outline hover:text-error"
+                className="text-[11px] text-outline hover:text-error"
               >
                 Clear all
               </button>
@@ -1026,7 +1032,7 @@ const StreamFlow: React.FC = () => {
                               <span className="block font-mono text-[11px] text-on-surface truncate">
                                 {entry.messageKey}
                               </span>
-                              <span className="block text-[10px] text-outline">
+                              <span className="block text-[11px] text-outline">
                                 {entry.searchPath ? `${entry.searchPath} · ` : ''}
                                 {entry.topicsFound} topic{entry.topicsFound === 1 ? '' : 's'} · {formatRelativeTime(entry.ranAt)}
                               </span>
@@ -1082,22 +1088,22 @@ const StreamFlow: React.FC = () => {
 
           {/* Légende — l'ambre et le rouge tiraient l'œil sans jamais dire ce qu'ils marquaient. */}
           {hasResult && nodes.length > 0 && (graphLegend || missingInB.size > 0) && (
-            <div className="absolute bottom-6 left-20 z-10 flex flex-col gap-1 rounded-lg border border-outline-variant bg-surface-container/90 px-3 py-2 text-[10px] text-on-surface-variant">
+            <div className="absolute bottom-6 left-20 z-10 flex flex-col gap-1 rounded-lg border border-outline-variant bg-surface-container/90 px-3 py-2 text-[11px] text-on-surface-variant">
               {missingInB.size > 0 && (
                 <span className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className="inline-block h-3 w-5 rounded border border-dashed" style={{ borderColor: '#ffd479' }} />
+                  <span aria-hidden="true" className="inline-block h-3 w-5 rounded border border-dashed" style={{ borderColor: 'var(--viz-graph-warning)' }} />
                   not seen by {comparison?.params.messageKey}
                 </span>
               )}
               {insight.slowestHopTopic && (
                 <span className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className="inline-block h-[3px] w-5 rounded" style={{ background: '#ffd479' }} />
+                  <span aria-hidden="true" className="inline-block h-[3px] w-5 rounded" style={{ background: 'var(--viz-graph-warning)' }} />
                   slowest hop
                 </span>
               )}
               {insight.clockSkewTopics.length > 0 && (
                 <span className="flex items-center gap-1.5">
-                  <span aria-hidden="true" className="inline-block w-5 border-t-[3px] border-dashed" style={{ borderColor: '#f2b8b5' }} />
+                  <span aria-hidden="true" className="inline-block w-5 border-t-[3px] border-dashed" style={{ borderColor: 'var(--viz-graph-critical)' }} />
                   hop goes backwards (clock skew)
                 </span>
               )}
@@ -1145,7 +1151,7 @@ const StreamFlow: React.FC = () => {
             >
               <defs>
                 <marker id="sf-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                  <polygon points="0 0, 10 3.5, 0 7" fill="#a3adff" opacity="0.6" />
+                  <polygon points="0 0, 10 3.5, 0 7" fill="var(--viz-edge)" opacity="0.6" />
                 </marker>
               </defs>
 
@@ -1164,19 +1170,36 @@ const StreamFlow: React.FC = () => {
                   // pas seulement dans le tableau : c'est là que l'œil se pose en premier.
                   const slowest = insight.slowestHopTopic === edge.target;
                   const skewed = insight.clockSkewTopics.includes(edge.target);
-                  const stroke = skewed ? '#f2b8b5' : slowest ? '#ffd479' : '#a3adff';
+                  const stroke = skewed ? 'var(--viz-graph-critical)' : slowest ? 'var(--viz-graph-warning)' : 'var(--viz-edge)';
+                  const d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+                  const hopLabel = `Hop ${edge.source} to ${edge.target}: create metrics`;
+                  const chosen = metricHop?.from === edge.source && metricHop?.to === edge.target;
                   return (
                     <g key={`${edge.source}->${edge.target}-${i}`}>
-                      <path
-                        d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
-                        fill="none" stroke={stroke} strokeWidth={slowest || skewed ? 3 : 2}
+                      {/* The link is a target of its own: a hop is what latency and loss are about.
+                          A wide invisible stroke makes a 2 px line clickable. */}
+                      <path d={d} fill="none" stroke="transparent" strokeWidth={14} style={{ cursor: 'pointer' }}
+                        className="focus:outline-hidden focus-visible:outline-2 focus-visible:outline-primary"
+                        tabIndex={0} role="button" aria-label={hopLabel} aria-pressed={chosen}
+                        onClick={() => { if (!dragged.current) openHopMetrics(edge.source, edge.target); }}
+                        onKeyDown={e => {
+                          if (e.key !== 'Enter' && e.key !== ' ') return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openHopMetrics(edge.source, edge.target);
+                        }}>
+                        <title>{`${edge.source} → ${edge.target}: create metrics`}</title>
+                      </path>
+                      <path pointerEvents="none"
+                        d={d}
+                        fill="none" stroke={stroke} strokeWidth={chosen ? 4 : slowest || skewed ? 3 : 2}
                         strokeDasharray={skewed ? '6 4' : undefined}
                         opacity={slowest || skewed ? 0.9 : 0.5}
                         markerEnd="url(#sf-arrow)"
                       />
                       {edge.label && (
                         <text x={mx} y={Math.min(y1, y2) - 8} textAnchor="middle"
-                          fill={slowest || skewed ? stroke : '#9aa3b2'} fontSize="10"
+                          fill={slowest || skewed ? stroke : 'var(--viz-node-muted)'} fontSize="10"
                           fontWeight={slowest || skewed ? 'bold' : undefined}>
                           {edge.label}{skewed ? ' ⚠' : ''}
                         </text>
@@ -1218,18 +1241,18 @@ const StreamFlow: React.FC = () => {
                       {/* En comparaison, un topic que l'autre clé n'a pas traversé est la
                           divergence elle-même : il se voit sur le graphe, pas seulement en table. */}
                       <rect width={nodeW} height={nodeH} rx="8"
-                        fill={selected ? '#1b2030' : '#12151a'}
-                        stroke={missingInB.has(node.id) ? '#ffd479' : '#a3adff'}
+                        fill={selected ? 'var(--viz-node-selected)' : 'var(--viz-node-bg)'}
+                        stroke={missingInB.has(node.id) ? 'var(--viz-graph-warning)' : 'var(--viz-edge)'}
                         strokeDasharray={missingInB.has(node.id) ? '5 3' : undefined}
                         strokeWidth={selected ? 2.5 : 1.5} strokeOpacity={selected ? 1 : 0.6} />
                       <text x={cx} y={ts ? nodeH / 2 - 8 : nodeH / 2 + 4}
-                        textAnchor="middle" fill="white" fontSize="11"
+                        textAnchor="middle" fill="var(--viz-node-text)" fontSize="11"
                         fontFamily="JetBrains Mono, monospace" fontWeight="bold">
                         {node.label.length > 20 ? node.label.slice(0, 19) + '…' : node.label}
                       </text>
                       {ts && (
                         <text x={cx} y={nodeH / 2 + 10} textAnchor="middle"
-                          fill="#a3adff" fontSize="9" fontFamily="Inter, sans-serif" opacity="0.7">
+                          fill="var(--viz-edge)" fontSize="9" fontFamily="Inter, sans-serif">
                           {ts}{node.hits ? ` · ${node.hits}${capped ? '+' : ''} match${node.hits > 1 || capped ? 'es' : ''}` : ''}
                         </text>
                       )}
@@ -1238,6 +1261,23 @@ const StreamFlow: React.FC = () => {
                 })}
               </g>
             </svg>
+          )}
+
+          {/* A selected topic proposes its metrics: the hops into and out of it, its consumers. */}
+          {hasResult && !loading && selectedTopic && metricTopic !== selectedTopic && hitByTopic.has(selectedTopic) && (
+            <div className="absolute left-3 bottom-3 z-10">
+              <Button variant="primary" size="sm" icon="add_chart" onClick={() => { setMetricHop(null); setMetricTopic(selectedTopic); }}>
+                Create metrics for {selectedTopic}
+              </Button>
+            </div>
+          )}
+          {hasResult && !loading && metricTopic && hitByTopic.has(metricTopic) && (
+            <FlowMetricDrawer topic={metricTopic} hits={hits} messageKey={messageKey} searchPath={searchPath}
+              onClose={() => setMetricTopic(null)} />
+          )}
+          {hasResult && !loading && metricHop && hitByTopic.has(metricHop.from) && hitByTopic.has(metricHop.to) && (
+            <FlowMetricDrawer key={`${metricHop.from}>${metricHop.to}`} topic={metricHop.to} hop={metricHop} hits={hits}
+              messageKey={messageKey} searchPath={searchPath} onClose={() => setMetricHop(null)} />
           )}
 
           {/* No result — dit ce qui a été lu, sinon « introuvable » se confond avec « hors fenêtre » */}

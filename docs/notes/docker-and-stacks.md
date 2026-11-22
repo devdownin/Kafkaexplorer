@@ -34,13 +34,13 @@ root, while the real one is at `src/main/webapp/node_modules`.
 
 ## The bundled stacks
 
-All bundled compose stacks run **Kafka 4.3 in KRaft mode** (`apache/kafka:4.3.1`, single combined broker+controller node — no Zookeeper anywhere, `compose/image.yml` included). CI runs no broker of its own: `KafkaClusterIntegrationTest` starts one through Testcontainers (`apache/kafka-native:4.3.1`), which is also why it works on a developer machine. Prefer that over a workflow-level `services:` block if a new test needs a broker.
+All bundled compose stacks run **Kafka 4.4 in KRaft mode** (`apache/kafka:4.4.0`, single combined broker+controller node — no Zookeeper anywhere, `compose/image.yml` included). CI runs no broker of its own: `KafkaClusterIntegrationTest` starts one through Testcontainers (`apache/kafka-native:4.4.0`), which is also why it works on a developer machine. Prefer that over a workflow-level `services:` block if a new test needs a broker.
 
 ```bash
-# Kafka 4.3 (KRaft) + Schema Registry + app + demo topics (recommended)
+# Kafka 4.4 (KRaft) + Schema Registry + app + demo topics (recommended)
 docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d
 
-# Kafka 4.3 (KRaft) + app + demo topics, without Schema Registry
+# Kafka 4.4 (KRaft) + app + demo topics, without Schema Registry
 docker compose up -d
 
 # Demo data setup (creates 79 topics)
@@ -54,6 +54,30 @@ docker compose up -d
 # so the 79 topics every document counts stay 79
 ./setup-demo-peage.sh localhost:9092
 ```
+
+### One broker definition, one image
+
+The broker (`kafka`), its volume-ownership fix (`kafka-data-init`) and the demo seeder
+(`demo-setup`) are defined **once**, in `docker-compose.yml`. `compose/dev.yml` and
+`compose/spectra-hub.yml` `extends` them rather than copying them: the hub stack carried its own
+broker, 32 lines of which had already drifted from the base's (a healthcheck comment here, a
+`start_interval` there), which is how a copy ends. Paths inherited through `extends` resolve
+against the *extended* file's directory, so nothing in the extending file needs a `../`; the hub
+adds only what is its own (`start_interval: 3s`, merged into the base's healthcheck) and the dev
+stack replaces `volumes` with `!override`.
+
+The image is `x-kafka-image: &kafka-image ${KAFKA_IMAGE:-apache/kafka:4.4.0}` at the top of the
+base file, reached as `image: *kafka-image`; `compose/demo-forecast.yml`, the one overlay that runs
+the broker image for its CLI tools, reads the same variable. `docs/check-image-pins.py` resolves
+the alias, so the "nothing floats" rule still reads the real reference (an untagged anchor fails it).
+Bumping Kafka is therefore two lines (`docker-compose.yml`, `compose/demo-forecast.yml`) plus
+`.env.example`, where it used to be twelve. The standalone snippet in `docs/DOCKERHUB.md` and the
+native broker image the Testcontainers test and CI use are separate on purpose: the first
+is copied out of the repository, the second is the native build.
+
+The resolved configuration (`docker compose config`) was compared before and after for the base,
+dev, hub (with every overlay), schema-registry, forecast, demo and limits combinations: identical
+but for the `x-kafka-image` key Compose echoes back.
 
 ### The prompt has to fit the model's window
 
@@ -322,7 +346,7 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
 
   | File | Kind | What it is |
   |---|---|---|
-  | `docker-compose.yml` | base | Kafka 4.3 KRaft + explorer + demo seeder. The one everything layers onto. |
+  | `docker-compose.yml` | base | Kafka 4.4 KRaft + explorer + demo seeder. The one everything layers onto. |
   | `compose/schema-registry.yml` | overlay | Schema Registry + the Avro seeder. Was `docker-compose-kafka4.yml`. |
   | `compose/llama-cpp.yml` | overlay | One local llama.cpp model (a GGUF: `LLAMA_CPP_MODEL_FILE` / `_NAME` / `_URL`, Gemma 4 E4B by default) for Process Mining **and** the SQL & metric assistant. Was `compose/ollama.yml`, and `docker-compose-llm.yml` before that. |
   | `compose/mcp.yml` | overlay | The MCP server on, its guards as variables, and a smoke probe. |
@@ -371,7 +395,7 @@ KRaft single-node notes: the `apache/kafka` image takes the cluster id via the `
   JSON, the server chooses, and reading only one of them is a probe that works until the transport
   is reconfigured.
 
-  **The `kafka4` name was a lie worth removing.** Every stack here runs Kafka 4.3 in KRaft —
+  **The `kafka4` name was a lie worth removing.** Every stack here runs Kafka 4.4 in KRaft —
   `docker-compose.yml` included — so a file named for that advertised a choice that had stopped
   existing, on the stack the README recommends, which is the first thing a newcomer reads. What
   it adds is a Schema Registry, and it is named for that now.
@@ -633,6 +657,66 @@ Hugging Face’s auxiliary cache (Xet metadata and logs) also needs writable sto
 `HF_HOME=/models` keeps it on the named model volume alongside the checkpoint. Passing
 `cache_dir=/models` to `hf_hub_download` alone does not relocate Xet: its default under
 `/app/.cache` fails when the TimesFM container root filesystem is read-only.
+
+### The forecast demo's overlay: `compose/demo-forecast.yml`
+
+`./demo.sh` layers it after `forecasts.yml` (`demo.ps1` too — the twins name the same files, which
+`docs/check-demo-forecast.py` compares). **`./demo.sh --forecast` (`-Forecast`, `DEMO_MODE=forecast`) starts
+that and nothing else**: the base, Schema Registry, MCP, the forecast stack and this overlay, with
+`demo.yml`, `ecosystem.yml`, `demo-llm.yml` and the SpectraLLM files left out — the agent and the hosted
+model are what want a key, and nothing the demo shows uses them. So the whole command is `./demo.sh
+--forecast`: every variable has a default there, the SQL assistant (which needs that model) defaults to off,
+and the credentials are generated on the first run as ever. The mode is resolved **after** the `.env`
+files, as `DEMO_SPECTRA` is, so a `DEMO_MODE` set there is honoured; the flag outranks it. It leaves the
+default mode, the whole suite, exactly as it was. **Why it exists:** the demo's topics are seeded once and stand
+still, so a metric over them has one value for ever, and a forecast needs 128 recorded points — two hours
+at the minute the Explorer samples. A demo that cannot show its main feature for two hours does not show
+it. Two services, each in an image the stack already pulls:
+
+- **`demo-live`** (the Kafka image) keeps five topic pairs moving — `orders → shipped`, `requests → processed`,
+  `imports → indexed`, `events → archived`, `tickets → resolved` — one line each in a `PAIRS` table, the one
+  place to add a sixth. Three of the curves are there to show a forecast doing something different (a noisy
+  trend, a series with nothing to say, a level that shifts); the first two are the story.
+  Each pair is held on its curve by reading the end offsets and producing the difference to whichever side
+  is short — **stateless**, so a restart or a second copy resumes the curve. The producers are long-lived
+  and fed through named pipes, a `sleep` holding each write end open (a numbered descriptor is one digit in
+  `sh`, and ten topics need more): one process per record would spend its time in the JVM's start-up. **The two
+  topics of a pair share their keys** (the k-th record of `shipped` is `orders-k`, written now): a key traced in
+  Stream Flow is found in both, and the time between them is how long it waited.
+- **`demo-forecast-seed`** (the PostgreSQL image: `psql`, `wget`, `sed` and `awk`, nothing to install)
+  creates the five metrics by `POST /api/metrics` (an upsert by id), waits for the Explorer to record each
+  for real once, and **clones that first real observation (its `value` component: a metric is recorded as
+  several, each its own series) nine hours back** with its own `collectorRunId`
+  `demo-seed-<n>`. Cloning is the same technique `ci/forecast-stack.py` uses, and it is the only way to
+  get the series id, unit, definition version and scope exactly right without re-deriving them in shell.
+  A series that already holds seeded rows is left alone, and a metric not recorded for real is not seeded.
+  The unshipped-orders forecast is then started from the candidate catalogue, as the card's button does
+  it; the four others are left to the button or to *Forecast all eligible*, which is the feature the demo is for.
+
+**The five curves are one file.** `scripts/demo-forecast/signals.awk` is read by both services, and its
+functions depend on the epoch alone, never on when the demo started: otherwise the seeded past and the
+live traffic would be two signals with a jump at the join, which a forecast reads as a regime change. The
+seeded point is the value the live metric reads then, since the metric *is* the signal.
+
+**Choices that look arbitrary.** The two metrics are *offset-counted deltas*, and that is not a taste: the
+Explorer records a measurement as forecastable only when it is complete (`MetricObservationJournal`), and
+a transit latency, a consumer delay or a raw-SQL metric never is — a first version of this demo built on a
+transit latency and would have shown a forecast button that could never produce one. The difference of two
+end offsets is complete, exact, and holdable on any curve with no timestamp to back-date. The overlay has **no `depends_on: forecast-postgres`**: the CI that resolves every
+overlay beside the base alone would refuse an undefined service, and the script asks PostgreSQL and the
+Explorer whether they answer, which is the readiness that matters. Each script is copied through `sed`
+before it runs, as the seeders' entrypoints do, so a CRLF checkout does not break it.
+
+**The noise is a function of the minute.** `noise()` (the sine hash) takes the minute and nothing else, so the
+seeded past and the live future agree minute for minute, whichever awk computes them, and a restart resumes the
+same signal. The jitter series' noise is what the `check` reads its 80 % band claim from; a noisy reading may be
+twice its noise away from the curve at a minute's edge, which `ci/demo-forecast.py` allows for per metric.
+
+**What checks it.** `docs/check-demo-forecast.py` (curves against the thresholds read from `seed.sh`, the
+generator against stub CLIs — first topics pre-filled, so the keys given to the second can be compared — the twin scripts) and the `forecast-stack` job's `ci/demo-forecast.py`: the
+overlay on the real stack, the seeded rows beside the recorded ones, a TimesFM result from each metric.
+The seeder's SQL was also run against a real PostgreSQL and its rows read back through the real
+`MetricSeriesPreparer` (512 observed points, none missing) before it shipped.
 
 ## The forecast stack with no download at start
 

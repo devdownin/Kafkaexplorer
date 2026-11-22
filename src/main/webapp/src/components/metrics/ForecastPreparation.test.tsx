@@ -16,7 +16,7 @@ describe('ForecastPreparation', () => {
   afterEach(cleanup);
   it('says once that the stack is missing instead of listing every consequence', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: readiness('CONFIG_REQUIRED', 'CONFIG_REQUIRED') });
-    render(<ForecastPreparation onConfigure={() => {}} />);
+    render(<ForecastPreparation />);
     expect(await screen.findByText('The forecast stack is not running.')).toBeTruthy();
     expect(screen.getByText('bin/forecast-stack.sh')).toBeTruthy();
     const details = screen.getByText('All 7 checks').closest('details')!;
@@ -24,7 +24,7 @@ describe('ForecastPreparation', () => {
     expect(details).toHaveTextContent('CONFIG REQUIRED Forecast tools — tools detail');
     expect(screen.queryByLabelText('Next steps')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Test PostgreSQL and TimesFM' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Configure a forecast' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Configure a forecast' })).toBeNull();
   });
   it('summarises the checks and lists only what remains to configure, once one dependency is configured', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: readiness('NOT_CHECKED', 'CONFIG_REQUIRED') });

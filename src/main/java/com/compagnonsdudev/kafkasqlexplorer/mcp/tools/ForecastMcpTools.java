@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package com.compagnonsdudev.kafkasqlexplorer.mcp.tools;
 
+import com.compagnonsdudev.kafkasqlexplorer.domain.MetricConfig;
 import com.compagnonsdudev.kafkasqlexplorer.forecast.*;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.contract.*;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.*;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.ToolCategory;
+import com.compagnonsdudev.kafkasqlexplorer.service.MetricService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -23,10 +25,17 @@ import org.springframework.ai.mcp.annotation.McpToolParam;
 public final class ForecastMcpTools implements ReadOnlyMcpTools {
   private final ForecastPilotService pilot;
   private final ToolGuard guard;
+  /** The metrics' own thresholds, for {@code kex_list_forecast_threshold_reaches}; null without the service. */
+  private final MetricService metrics;
 
   public ForecastMcpTools(ForecastPilotService pilot, ToolGuard guard) {
+    this(pilot, guard, null);
+  }
+
+  public ForecastMcpTools(ForecastPilotService pilot, ToolGuard guard, MetricService metrics) {
     this.pilot = pilot;
     this.guard = guard;
+    this.metrics = metrics;
   }
 
   @Override
@@ -248,6 +257,86 @@ public final class ForecastMcpTools implements ReadOnlyMcpTools {
               notReached.size()
                   + " series with a threshold policy could not be evaluated; their breach status"
                   + " is unknown, not negative"));
+    }
+    return ToolResult.of(List.copyOf(rows), coverage, List.copyOf(warnings));
+  }
+
+  /** Why a series has no reach: said, never folded into "nothing predicted". */
+  public enum ReachOutcome { REACH, NO_REACH, NO_THRESHOLDS, NOT_COMPARABLE, NOT_EVALUATED }
+
+  /**
+   * One authorized series read against its metric's own warning and critical thresholds. {@code at}
+   * is the first predicted point at or past the threshold, {@code inSeconds} the time from now to it
+   * (never below zero); both null unless {@code outcome} is {@code REACH}.
+   */
+  public record ThresholdReach(String seriesId, String metricId, ReachOutcome outcome, String level,
+                               String likelihood, Double threshold, Long at, Long inSeconds, String reason) {}
+
+  @McpTool(
+      name = "kex_list_forecast_threshold_reaches",
+      description =
+          "For every authorized series, when its forecast reaches the metric's OWN warning or"
+              + " critical threshold — the reading the Metrics page card shows and"
+              + " explorer_forecast_threshold_eta_seconds publishes. Not the series' threshold policy"
+              + " (that is kex_list_predicted_threshold_breaches). One row per series: REACH (level,"
+              + " likelihood expected on the median or possible on the 80% band edge, the instant and"
+              + " the seconds until it), NO_REACH, NO_THRESHOLDS, NOT_COMPARABLE (a counter's rate"
+              + " forecast against thresholds set on the counter) or NOT_EVALUATED (no forecast yet)."
+              + " An empty REACH set is only complete when coverage is EXHAUSTED. No alert or"
+              + " inference is triggered.",
+      annotations =
+          @McpTool.McpAnnotations(
+              readOnlyHint = true,
+              destructiveHint = false,
+              openWorldHint = false))
+  public ToolResult<List<ThresholdReach>> thresholdReaches() {
+    if (metrics == null) {
+      throw new McpToolException(McpErrorCode.DEPENDENCY_UNAVAILABLE, "Metric thresholds unavailable");
+    }
+    var byId = new java.util.HashMap<String, MetricConfig>();
+    for (var m : metrics.getAllMetrics()) byId.putIfAbsent(m.id(), m);
+    long now = System.currentTimeMillis();
+    var rows = new ArrayList<ThresholdReach>();
+    for (var s : allowed()) {
+      String metricId = scrub(s.metricId());
+      MetricConfig metric = byId.get(s.metricId());
+      if (metric == null || (metric.warningThreshold() == null && metric.criticalThreshold() == null)) {
+        rows.add(new ThresholdReach(s.seriesId(), metricId, ReachOutcome.NO_THRESHOLDS, null, null, null, null, null,
+            metric == null ? "The metric is not defined in this Explorer" : "The metric has no warning or critical threshold"));
+        continue;
+      }
+      var record = read(s.seriesId());
+      if (record == null || record.forecast() == null) {
+        rows.add(new ThresholdReach(s.seriesId(), metricId, ReachOutcome.NOT_EVALUATED, null, null, null, null, null,
+            record == null ? scrub(absence(s.seriesId())) : record.reason() == null ? "No forecast in the latest result" : "No forecast in the latest result: " + scrub(record.reason())));
+        continue;
+      }
+      if (record.context() != null && record.context().profile() != null
+          && record.context().profile().transformation() == SeriesPreparationProfile.Transformation.COUNTER_RATE) {
+        rows.add(new ThresholdReach(s.seriesId(), metricId, ReachOutcome.NOT_COMPARABLE, null, null, null, null, null,
+            "A counter's forecast is a rate per second; its thresholds are on the counter's own reading"));
+        continue;
+      }
+      var reach = ForecastThresholdReach.reachFor(record, metric.warningThreshold(), metric.criticalThreshold());
+      rows.add(reach == null
+          ? new ThresholdReach(s.seriesId(), metricId, ReachOutcome.NO_REACH, null, null, null, null, null,
+              "No threshold is reached within the forecast horizon")
+          : new ThresholdReach(s.seriesId(), metricId, ReachOutcome.REACH,
+              reach.level().name().toLowerCase(java.util.Locale.ROOT),
+              reach.likelihood().name().toLowerCase(java.util.Locale.ROOT), reach.threshold(), reach.at(),
+              Math.max(0, (reach.at() - now) / 1000), null));
+    }
+    var notReached = rows.stream().filter(r -> r.outcome() == ReachOutcome.NOT_EVALUATED)
+        .map(ThresholdReach::seriesId).toList();
+    var warnings = new ArrayList<>(List.of(LIMITS));
+    Coverage coverage;
+    if (notReached.isEmpty()) {
+      coverage = Coverage.exhausted(rows.size(), 0, 0);
+    } else {
+      coverage = Coverage.partial(rows.size(), rows.size() - notReached.size(), notReached, 0, 0,
+          StopReason.PARTIAL_FAILURE, null);
+      warnings.add(Warning.warn("FORECAST_NOT_EVALUATED", notReached.size()
+          + " series have no forecast to read against their thresholds; their reach is unknown, not negative"));
     }
     return ToolResult.of(List.copyOf(rows), coverage, List.copyOf(warnings));
   }

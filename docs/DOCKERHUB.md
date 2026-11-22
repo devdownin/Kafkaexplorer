@@ -15,12 +15,13 @@
 something you can *see and query*: browse topics, click on a message field, and get a
 runnable Flink SQL query — no DDL to write, no schema to guess, no CLI gymnastics.
 
-One container, one URL, **zero cluster-side installation**: it connects as an ordinary
-Kafka client, so there is nothing to deploy on your brokers.
+One container, one URL, no broker-side installation. The interface starts in light mode, with a persistent dark-mode switch and six accent colours and a compact density for dense screens.
 
 ![The dashboard: every topic, its message count, its state and when it last received something](https://devdownin.github.io/Kafkaexplorer/img/dashboard.png)
 
 ---
+
+**UI/UX roadmap:** [PRs #604–#606](https://github.com/devdownin/Kafkaexplorer/pulls) are not yet released.
 
 ## 🚀 Try it in one command
 
@@ -37,13 +38,13 @@ Open **http://localhost:8080**.
 The port is published on the loopback interface deliberately — this image ships no
 authentication. See **Before you expose it** below.
 
-No broker at hand? The snippet below starts Kafka 4.3 (KRaft, no Zookeeper) next to it:
+No broker at hand? The snippet below starts Kafka 4.4 (KRaft, no Zookeeper) next to it:
 
 ```yaml
 # docker-compose.yml — throwaway sandbox, broker data is not persisted.
 services:
   kafka:
-    image: apache/kafka:4.3.1
+    image: apache/kafka:4.4.0
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -173,7 +174,7 @@ Docker Desktop pour seul prérequis ; même réglage de `memory=` sur 16 Go.)*
 - 📉 **Consumer lag that grades itself** — who reads a topic and how far behind, with `stalled` (nothing assigned), `partial` (never committed on some partitions) and `ahead` called out rather than folded into one number.
 - ⏱️ **Backlog in time, not just in records** — the same 4 000 messages are four seconds of traffic on one topic and four days on another. Ask any group how long its oldest unread message has been waiting, from the topic page or as a scheduled metric; a partition that could not be read says so instead of reporting zero.
 - 💡 **KPIs proposed from what your cluster was observed doing** — the Metrics page derives them from your audit, your traces, your running Flink jobs and your Process Mining mapping. Every card names the measurement it rests on and where its thresholds come from; nothing is created until you preview and save it.
-- 🔮 **TimesFM forecasting, safely staged** — the optional CPU service prepares bounded metric contexts and runs forecasts in `SHADOW` by default. The pilot and its five read-only MCP tools are on with an empty approved-series catalogue, which performs no database or model call; configuring PostgreSQL history, inference and approved series enables scheduled forecasts, the Metrics Forecast UI and measured activation gates. `EXPLORER_FORECASTING_PILOT_ENABLED=false` disables it. No MCP call starts inference, and thresholds remain operator policy, not model guesses.
+- 🔮 **TimesFM forecasting, safely staged** — the optional CPU service prepares bounded metric contexts and runs forecasts in `SHADOW` by default. The pilot and its six read-only MCP tools are on with an empty approved-series catalogue, which performs no database or model call; configuring PostgreSQL history, inference and approved series enables scheduled forecasts, the Metrics Forecast UI and measured activation gates. `EXPLORER_FORECASTING_PILOT_ENABLED=false` disables it. No MCP call starts inference, and thresholds remain operator policy, not model guesses.
 - 🤖 **AI process mining** — reconstruct business flows as flowcharts and hunt anomalies with OpenRouter (the default: one key, most hosted vendors), Claude, any local LLM (llama.cpp, vLLM, LM Studio…), or a fully private [SpectraLLM](https://github.com/devdownin/SpectraLLM). Point it at a local provider and nothing leaves your network; the default is hosted, and both pages that call a model say which of the two you are on — read off the address, not the provider's name.
 - 💰 **What the AI cost, and a cap if you want one** — every analysis shows the tokens and the **price the provider reported**, per call and per run, never an estimate; nothing is shown where a provider prices nothing, rather than a misleading zero. `CLAUDE_SESSION_COST_LIMIT_USD` stops a live session once it has spent that much, which is what bounds a tab left open overnight.
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, in the UI and on `/actuator/prometheus`.
@@ -286,38 +287,8 @@ measured facts from configured expectations:
 | `kex_topic_policy_review(topic, environment)` | Compares observed replication, in-sync replicas, retention and cleanup policy with your rule for that environment. Missing rules return `NOT_CONFIGURED`. |
 | `kex_dlq_review(queueTopic)` | Checks DLQ/source/retry metadata and a bounded header sample. Connector, monitoring and replay references are declarations; no replay happens. |
 
-For scheduled checks or multiple Explorer instances, set
-`EXPLORER_MCP_LAG_HISTORY_DIRECTORY=/shared/lag` and mount **the same writable directory**
-on every instance. The backing filesystem must support interprocess file locks. The
-shared baseline lasts 48 hours by default (`EXPLORER_MCP_LAG_HISTORY_TTL_MS=172800000`);
-without the mount the baseline lasts 30 minutes in one process and is lost on restart.
-
-Configure expectations on Explorer, for example:
-
-```yaml
-explorer:
-  mcp:
-    topic-policies:
-      - environment: prod
-        min-replicas: 3
-        min-in-sync-replicas: 2
-        min-retention-ms: 86400000
-        max-retention-ms: 604800000
-        cleanup-policy: delete
-    dlq-routes:
-      - queue-topic: orders.dlq
-        source-topic: orders
-        retry-topics: [orders.retry]
-        connector-name: orders-sink
-        monitoring-reference: dashboards/orders-dlq
-        replay-runbook: runbooks/orders-dlq.md
-```
-
-These are examples, not suggested universal thresholds. Forecast thresholds are likewise
-operator-owned and include direction, horizon, confidence, history quality and series/version
-provenance. Scope agent access to the
-appropriate topic and group prefixes. The [complete deployment reference](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/DOCKERHUB-OPERATIONS.md#operational-mcp-reviews)
-explains the properties and limitations.
+The lag-history mount for scheduled checks, the environment rules and the declared DLQ links are
+in the [deployment reference](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/DOCKERHUB-OPERATIONS.md#operational-mcp-reviews).
 
 ## ⚙️ Essential settings
 
@@ -367,6 +338,20 @@ docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
 
 Ports, one plan for the three: **8080** Kafka SQL Explorer · **8081** Kex-anHarness · **8088** / **8089** SpectraLLM UI / API · **9092** Kafka. SpectraLLM's own stack keeps 80 / 8080 when it runs alone; `SPECTRA_UI_PORT=8088 SPECTRA_API_PORT=8089` puts it beside the other two.
 <!-- ecosystem:end -->
+
+## 🔮 Metric forecasts
+
+Press **Forecast** on a metric card: the forecast is created from the metric's recorded history and drawn
+as the continuation of its curve. The card then says when a threshold is predicted ("Warning expected in
+~12 min"), how reliable the forecast has been against what happened, and when the next one is due.
+Nothing is sent, but the same reading is a Prometheus series you can alert on:
+
+```promql
+explorer_forecast_threshold_eta_seconds{level="critical", likelihood="expected"} < 1800
+```
+
+`./demo.sh --forecast` runs the whole thing with live traffic and seeded history, nothing to configure.
+[Guide](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md).
 
 ## 📚 More
 

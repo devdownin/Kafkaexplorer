@@ -77,7 +77,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies }) => {
               <div className="px-4 pb-4 pt-3 space-y-3 bg-surface-container-low/30">
                 {anomaly.fields && anomaly.fields.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
+                    <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
                       Affected Fields
                     </p>
                     <div className="flex flex-wrap gap-1.5">
@@ -92,7 +92,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies }) => {
 
                 {anomaly.probableCause && (
                   <div>
-                    <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
+                    <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
                       Probable Cause
                     </p>
                     <p className="text-xs text-on-surface">{anomaly.probableCause}</p>
@@ -101,7 +101,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies }) => {
 
                 {anomaly.sqlSuggestion && (
                   <div>
-                    <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
+                    <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-1">
                       Flink SQL suggestion
                     </p>
                     <pre className="text-xs font-mono text-success bg-surface-container-low/60 rounded-lg p-3 overflow-auto whitespace-pre-wrap">
@@ -110,7 +110,7 @@ const AnomalyTable: React.FC<AnomalyTableProps> = ({ anomalies }) => {
                   </div>
                 )}
 
-                <div className="flex items-center gap-1 text-[10px] text-outline">
+                <div className="flex items-center gap-1 text-[11px] text-outline">
                   <span>ID:</span>
                   <span className="font-mono">{anomaly.id}</span>
                 </div>

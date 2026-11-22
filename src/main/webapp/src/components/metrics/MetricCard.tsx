@@ -15,36 +15,127 @@
  * modèle de données.
  */
 
-import React from 'react';
-import { AreaChart, Area, Line, LineChart, ResponsiveContainer, ReferenceLine, Tooltip, YAxis } from 'recharts';
+import React, { useEffect, useRef, useState } from 'react';
+import { Area, ComposedChart, Line, LineChart, ResponsiveContainer, ReferenceLine, ReferenceArea, Tooltip, XAxis, YAxis } from 'recharts';
 // Recharts exporte lui aussi un `Tooltip` : le nôtre est aliasé, comme dans la page.
 import { Badge, Button, Tooltip as InfoTooltip } from '../ui';
 import { useToast } from '../Toast';
 import { copyText } from '../../clipboard';
 import { describeQueryError } from '../../pages/queryError';
 import type { ForecastSeriesView, MetricConfig } from '../../api/types';
-import type { ForecastStageSummary } from './forecastStage';
-import { FORECAST_COLORS } from './forecastColors';
+import { about, type ForecastStageSummary } from './forecastStage';
+import { FORECAST_COLORS, THRESHOLD_COLORS } from './forecastColors';
+import { forecastReachFor, predictedPoints } from './forecastBreach';
+import { forecastReliability, lastCheck, reliabilityTrend } from './forecastVsActual';
+import { forecastBreachRule, metricTopics } from '../../pages/metricLinks';
+import { Link, useInRouterContext } from 'react-router-dom';
+import { placeThresholds } from './thresholdPlacement';
+import { clockTime, reachShiftText, refreshCostNote } from '../../pages/metricsPolling';
 import { buildAlertRule, thresholdDirection } from '../../pages/metricAlert';
 import { componentSeries, describeMeasurement, describeMetricScope, scopeNoteOf } from '../../pages/metricScope';
 import {
   RAW_SQL, PLACEHOLDER_BARS, STATUS_STYLES, TYPE_META, describeTemplate, getStatus, relativeTime,
 } from '../../pages/metricsEditor';
 
-export const MetricCard: React.FC<{
+/**
+ * "12 s ago", kept current on its own. The card is memoised and renders only when its own data
+ * moves, so a relative time computed in the card would freeze at its last render — on a metric with
+ * a five-minute interval, "just now" for five minutes. Only this label ticks.
+ */
+const RelativeTime: React.FC<{ at: number | null }> = ({ at }) => {
+  const [, setNow] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(n => n + 1), 15000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return <>{relativeTime(at)}</>;
+};
+
+/** A topic's page: an in-app link inside the router, a plain one where the card is rendered alone. */
+const TopicLink: React.FC<{ topic: string; className?: string; children: React.ReactNode }> = ({ topic, className, children }) => {
+  const inRouter = useInRouterContext();
+  const to = `/topic/${encodeURIComponent(topic)}`;
+  return inRouter
+    ? <Link to={to} className={className} aria-label={`Open topic ${topic}`}>{children}</Link>
+    : <a href={to} className={className} aria-label={`Open topic ${topic}`}>{children}</a>;
+};
+
+/**
+ * The coverage of each open cohort, oldest first, as a few dots on a line: where the forecast is
+ * going, beside the badge that says where it is. Nominal 80 % is the dashed rule.
+ */
+const CoverageTrend: React.FC<{ coverages: number[]; direction: string }> = ({ coverages, direction }) => {
+  const w = 44, h = 14;
+  const x = (i: number) => coverages.length === 1 ? w / 2 : 2 + i * (w - 4) / (coverages.length - 1);
+  const y = (c: number) => h - 2 - Math.max(0, Math.min(1, c)) * (h - 4);
+  return <svg width={w} height={h} role="img" className="shrink-0"
+    aria-label={`Coverage ${direction}: ${coverages.map(c => `${Math.round(c * 100)}%`).join(' → ')}`}>
+    <line x1={0} x2={w} y1={y(0.8)} y2={y(0.8)} stroke="currentColor" strokeOpacity={0.35} strokeDasharray="2 2" />
+    <polyline fill="none" stroke={FORECAST_COLORS.forecast} strokeWidth={1.5}
+      points={coverages.map((c, i) => `${x(i)},${y(c)}`).join(' ')} />
+    {coverages.map((c, i) => <circle key={i} cx={x(i)} cy={y(c)} r={1.6} fill={FORECAST_COLORS.forecast} />)}
+  </svg>;
+};
+
+/**
+ * The card's secondary actions, behind "⋯": deleting a metric sat as an icon beside Refresh and
+ * Edit, one slip from them on every card. Closes on Escape, on a click outside, and once chosen.
+ */
+const MoreActions: React.FC<{ onDelete: () => void }> = ({ onDelete }) => {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, [open]);
+  return (
+    <div ref={root} className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-haspopup="menu" aria-expanded={open}
+        title="More actions" aria-label="More actions" className="p-1 text-on-surface-variant hover:text-primary transition-colors">
+        <span aria-hidden="true" className="material-symbols-outlined text-base">more_horiz</span>
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full mt-1 z-20 min-w-40 rounded-lg border border-outline-variant bg-surface-container-high shadow-xl py-1">
+          <button type="button" role="menuitem" onClick={() => { setOpen(false); onDelete(); }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[13px] text-error hover:bg-error/10">
+            <span aria-hidden="true" className="material-symbols-outlined text-base">delete</span>Delete metric
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const MetricCardView: React.FC<{
   metric: MetricConfig;
-  onEdit: () => void;
-  onDelete: () => void;
-  onRefresh: () => void;
-  onPrepareForecast?: () => void;
+  /** The actions receive the metric's id, so the page can hand every card the same stable functions. */
+  onEdit: (id: string) => void;
+  onDelete: (id: string) => void;
+  onRefresh: (id: string) => void;
+  onPrepareForecast?: (id: string) => void;
   /** Reason returned by candidate validation, or why it cannot be checked yet. */
   forecastUnavailableReason?: string;
   /** Where this metric's forecast stands; absent when it has none, and the card offers to prepare one. */
   forecast?: ForecastStageSummary;
   /** Forecast points come from the already-polled /api/forecasts status; no per-card API calls. */
   forecastSeries?: ForecastSeriesView;
+  /** The one-click creation is running for this card. */
+  forecastCreating?: boolean;
+  /** Shows this metric's forecast in the Metrics Forecast panel: the card is where a series is chosen. */
+  onShowForecast?: (id: string) => void;
   refreshing: boolean;
-}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries }) => {
+  /** When the next forecast cycle starts; null while one runs, or with no forecast. */
+  nextForecastAt?: number | null;
+  /** What this metric's last refresh cost, and the loop's tick it is measured against. */
+  refreshDurationMs?: number;
+  refreshTickMs?: number;
+  /** How far the latest forecast moved the predicted threshold from the previous one (ms, negative = sooner). */
+  reachShiftMs?: number;
+}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, forecastCreating = false, onShowForecast, nextForecastAt = null, refreshDurationMs, refreshTickMs, reachShiftMs }) => {
   const { toast } = useToast();
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
@@ -82,26 +173,54 @@ export const MetricCard: React.FC<{
   // context. Reuse the metric's observed sparkline without extra requests per visible card.
   const prediction = forecastSeries?.result?.forecast;
   const forecastProfile = forecastSeries?.result?.context.profile;
-  const rateForecast = forecastProfile?.transformation === 'COUNTER_RATE';
+  const counterRate = forecastProfile?.transformation === 'COUNTER_RATE';
   // Rates are not the same quantity as raw counter values: use a separate, hidden axis instead
   // of making a per-second forecast appear comparable to a cumulative observation.
-  const forecastPoints = (prediction?.points ?? []).filter(p =>
-    Number.isFinite(p.q50) && Number.isFinite(p.at) && p.at > prediction!.historyEndAt)
-    .sort((a, b) => a.at - b.at);
-  const chartData: { i: number; v: number | null; predicted: number | null; at?: number; kind: 'observed' | 'forecast' }[] =
-    observed.map((v, i) => ({ i, v: Number.isFinite(v) ? v : null, predicted: null, kind: 'observed' }));
-  if (chartData.length && forecastPoints.length && !rateForecast) {
-    // Join the two strokes at the observed boundary; no point is counted as a prediction here.
-    chartData[chartData.length - 1].predicted = chartData[chartData.length - 1].v;
+  const forecastPoints = predictedPoints(prediction);
+  /*
+   * With a forecast, the card draws the series the model read — the latest points of its prepared
+   * context, which `/api/forecasts` keeps — on a time axis shared with the prediction. The metric's
+   * own sparkline is a handful of untimed values: 30 predicted points squeezed it into a fifth of the
+   * width, and for a counter it was a cumulative count beside a forecast rate. An imputed point is a
+   * filled gap, not a measurement, so it stays a hole here.
+   */
+  const contextHistory = prediction && forecastPoints.length
+    ? (forecastSeries?.result?.context.points ?? []).filter(p => p.endAt <= prediction.historyEndAt) : [];
+  const timed = contextHistory.filter(p => !p.imputed && Number.isFinite(p.value)).length >= 2;
+  // Without the context (an older server), a rate is not the sparkline's quantity: separate scale.
+  const rateForecast = counterRate && !timed;
+  const hasInterval = !rateForecast && forecastSeries?.result?.strategy === 'TIMESFM' &&
+    forecastPoints.some(p => Number.isFinite(p.q10) && Number.isFinite(p.q90) && p.q90 >= p.q10);
+  const chartData: { i: number; v: number | null; predicted: number | null; lower: number | null; band: number | null; at?: number; kind: 'observed' | 'forecast' }[] =
+    timed
+      ? contextHistory.map((p, i) => ({ i, v: !p.imputed && Number.isFinite(p.value) ? p.value as number : null,
+        predicted: null, lower: null, band: null, at: p.endAt, kind: 'observed' as const }))
+      : observed.map((v, i) => ({ i, v: Number.isFinite(v) ? v : null, predicted: null, lower: null, band: null, kind: 'observed' }));
+  const lastMeasured = [...chartData].reverse().find(p => p.v !== null);
+  if (lastMeasured && forecastPoints.length && !rateForecast) {
+    // Join the two strokes at the last measured point; no point is counted as a prediction here.
+    lastMeasured.predicted = lastMeasured.v;
   }
+  const boundary = timed ? lastMeasured?.at ?? prediction!.historyEndAt : chartData.length - 1;
+  /*
+   * The metric's thresholds are set on its own value. A counter's forecast is a rate per second —
+   * another quantity — so on that chart they are neither drawn nor compared with the forecast.
+   */
+  const thresholdsApply = !(timed && counterRate);
+  // The page's filter and sort read the same function, so the badge and the list cannot disagree.
+  const reach = forecastReachFor(metric, forecastSeries);
+  const observedCount = chartData.length;
   forecastPoints.forEach((p, i) => chartData.push({
-    i: observed.length + i, v: null, predicted: p.q50, at: p.at, kind: 'forecast',
+    i: observedCount + i, v: null, predicted: p.q50,
+    lower: hasInterval && Number.isFinite(p.q10) && Number.isFinite(p.q90) && p.q90 >= p.q10 ? p.q10 : null,
+    band: hasInterval && Number.isFinite(p.q10) && Number.isFinite(p.q90) && p.q90 >= p.q10 ? p.q90 - p.q10 : null,
+    at: p.at, kind: 'forecast',
   }));
 
-  const strokeColor = status === 'critical' ? '#f58c8c' : status === 'warning' ? '#f5c264' : '#a3adff';
+  const strokeColor = status === 'critical' ? 'var(--viz-critical)' : status === 'warning' ? 'var(--viz-warning)' : 'var(--viz-primary)';
 
   return (
-    <div className="flex flex-col rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden card-hover">
+    <div className="group/card flex flex-col rounded-xl bg-surface-container ring-1 ring-white/[0.045] overflow-hidden card-hover">
       {/* Header */}
       <div className="flex items-center justify-between px-4 pt-4 pb-2 gap-2">
         <div className="flex items-center gap-2 min-w-0">
@@ -131,19 +250,18 @@ export const MetricCard: React.FC<{
             </InfoTooltip>
           )}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <button onClick={onRefresh} disabled={refreshing} title="Refresh now" aria-label="Refresh this metric now"
+        {/* Shown on hover and on keyboard focus where a pointer can hover; always shown on touch,
+            where nothing hovers. The menu open keeps them shown. */}
+        <div className="flex items-center gap-1 shrink-0 transition-opacity [@media(hover:hover)]:opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100">
+          <button onClick={() => onRefresh(metric.id)} disabled={refreshing} title="Refresh now" aria-label="Refresh this metric now"
             className="p-1 text-on-surface-variant hover:text-primary transition-colors disabled:opacity-40">
             <span className={`material-symbols-outlined text-base ${refreshing ? 'animate-spin' : ''}`}>refresh</span>
           </button>
-          <button onClick={onEdit} title="Edit" aria-label="Edit this metric"
+          <button onClick={() => onEdit(metric.id)} title="Edit" aria-label="Edit this metric"
             className="p-1 text-on-surface-variant hover:text-primary transition-colors">
             <span className="material-symbols-outlined text-base">edit</span>
           </button>
-          <button onClick={onDelete} title="Delete" aria-label="Delete this metric"
-            className="p-1 text-on-surface-variant hover:text-error transition-colors">
-            <span className="material-symbols-outlined text-base">delete</span>
-          </button>
+          <MoreActions onDelete={() => onDelete(metric.id)} />
         </div>
       </div>
 
@@ -171,12 +289,12 @@ export const MetricCard: React.FC<{
         <div className="flex items-center gap-3 mt-0.5 flex-wrap">
           {metric.description && <p title={metric.description} className="text-xs text-on-surface-variant truncate">{metric.description}</p>}
           {metric.warningThreshold !== null && (
-            <span className="flex items-center gap-0.5 text-[10px] text-warning font-mono shrink-0">
+            <span className="flex items-center gap-0.5 text-[11px] text-warning font-mono shrink-0">
               <span className="material-symbols-outlined text-[11px]">warning</span>{thresholdSign} {metric.warningThreshold.toLocaleString()}
             </span>
           )}
           {metric.criticalThreshold !== null && (
-            <span className="flex items-center gap-0.5 text-[10px] text-error font-mono shrink-0">
+            <span className="flex items-center gap-0.5 text-[11px] text-error font-mono shrink-0">
               <span className="material-symbols-outlined text-[11px]">emergency</span>{thresholdSign} {metric.criticalThreshold.toLocaleString()}
             </span>
           )}
@@ -186,7 +304,7 @@ export const MetricCard: React.FC<{
           // colonne ou quelle table pose problème, se lit dans l'infobulle — au survol comme au
           // focus, puisque c'est souvent la seule information exploitable.
           <InfoTooltip content={metric.errorMessage}>
-            <p tabIndex={0} className="text-[10px] text-error mt-1 line-clamp-2 rounded">
+            <p tabIndex={0} className="text-[11px] text-error mt-1 line-clamp-2 rounded">
               <span className="material-symbols-outlined text-[11px] align-middle">error</span>{' '}{describeQueryError(metric.errorMessage).title}
             </p>
           </InfoTooltip>
@@ -196,37 +314,64 @@ export const MetricCard: React.FC<{
       {/* Sparkline */}
       <div className="px-3 pb-2">
         {chartData.length > 0 ? (() => {
-          const vals = observed.filter(Number.isFinite);
+          const vals = timed ? chartData.flatMap(p => p.kind === 'observed' && p.v !== null ? [p.v] : [])
+            : observed.filter(Number.isFinite);
           const minV = Math.min(...(vals.length ? vals : forecastPoints.map(p => p.q50)));
           const maxV = Math.max(...(vals.length ? vals : forecastPoints.map(p => p.q50)));
-          const plotted = rateForecast && vals.length ? vals : [...vals, ...forecastPoints.map(p => p.q50)];
-          const plotMin = Math.min(...plotted);
-          const plotMax = Math.max(...plotted);
-          const pad = (maxV - minV) * 0.15 || 1;
+          const plotted = rateForecast && vals.length ? vals : [...vals, ...forecastPoints.flatMap(p => hasInterval && Number.isFinite(p.q10) && Number.isFinite(p.q90) ? [p.q10, p.q90] : [p.q50])];
+          /*
+           * A threshold close to the curve widens the scale to stay on it; one far away would flatten
+           * the curve to a line, so it is named at the edge it lies beyond instead of vanishing
+           * (thresholdPlacement.ts, shared with the forecast panel).
+           */
+          const placed = placeThresholds(Math.min(...plotted), Math.max(...plotted), thresholdsApply ? [
+            { label: 'warn', value: metric.warningThreshold, color: THRESHOLD_COLORS.warn },
+            { label: 'crit', value: metric.criticalThreshold, color: THRESHOLD_COLORS.crit },
+          ] : []);
+          const { min: plotMin, max: plotMax, lines: thresholdLines, offScale } = placed;
           return (
-            <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60">
-              <ResponsiveContainer width="100%" height={80}>
-                <AreaChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+            <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60" role="img"
+              aria-label={[`${metric.name || metric.id}: ${observed.filter(Number.isFinite).length || vals.length} measured points`,
+                metric.lastValue !== null ? `latest ${metric.lastValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : null,
+                forecastPoints.length ? `${forecastPoints.length} predicted points, median from ${forecastPoints[0].q50.toLocaleString(undefined, { maximumFractionDigits: 2 })} to ${forecastPoints[forecastPoints.length - 1].q50.toLocaleString(undefined, { maximumFractionDigits: 2 })}; every point is in the forecast panel's table` : null,
+              ].filter(Boolean).join(', ')}>
+              <ResponsiveContainer width="100%" height={120}>
+                {/* A ComposedChart, not an AreaChart: recharts' AreaChart draws only its <Area>
+                    children, so the forecast's median <Line> was silently never drawn — the card
+                    showed the band and called it "Forecast". */}
+                <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
                   <defs>
                     <linearGradient id={`grad-${metric.id}`} x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%"   stopColor={strokeColor} stopOpacity={0.35} />
                       <stop offset="100%" stopColor={strokeColor} stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
-                  <YAxis yAxisId="observed" domain={rateForecast ? [minV - pad, maxV + pad]
-                    : [plotMin - Math.max((plotMax - plotMin) * 0.15, 1), plotMax + Math.max((plotMax - plotMin) * 0.15, 1)]} hide />
+                  <YAxis yAxisId="observed"
+                    domain={[plotMin - Math.max((plotMax - plotMin) * 0.15, 1), plotMax + Math.max((plotMax - plotMin) * 0.15, 1)]}
+                    hide allowDataOverflow />
+                  {/* `allowDataOverflow` is what makes the domain above the domain: without it recharts
+                      widened it to the interval's stacked floor, which starts at zero, so the curve and
+                      its forecast were pressed against the top edge and the median hid inside the band. */}
                   {rateForecast && <YAxis yAxisId="forecast" orientation="right" hide domain={['auto', 'auto']} />}
-                  {metric.warningThreshold !== null && (
-                    <ReferenceLine yAxisId="observed" y={metric.warningThreshold} stroke="#f5c264" strokeDasharray="4 3" strokeWidth={1}
-                      label={{ value: 'warn', position: 'insideTopRight', fontSize: 8, fill: '#f5c264', dy: -2 }} />
-                  )}
-                  {metric.criticalThreshold !== null && (
-                    <ReferenceLine yAxisId="observed" y={metric.criticalThreshold} stroke="#f58c8c" strokeDasharray="4 3" strokeWidth={1}
-                      label={{ value: 'crit', position: 'insideTopRight', fontSize: 8, fill: '#f58c8c', dy: -2 }} />
-                  )}
+                  <XAxis dataKey={timed ? 'at' : 'i'} type="number" domain={['dataMin', 'dataMax']} hide />
+                  {forecastPoints.length > 0 && <ReferenceArea yAxisId="observed" x1={boundary}
+                    x2={timed ? forecastPoints[forecastPoints.length - 1].at : chartData.length - 1}
+                    fill={FORECAST_COLORS.forecast} fillOpacity={0.06} strokeOpacity={0} ifOverflow="hidden" />}
+                  {forecastPoints.length > 0 && <ReferenceLine yAxisId="observed" x={boundary} stroke={FORECAST_COLORS.band}
+                    strokeOpacity={0.6} strokeDasharray="2 2"
+                    label={{ value: 'now', position: 'insideTopLeft', fontSize: 8, fill: FORECAST_COLORS.band, dy: -2 }} />}
+                  {thresholdLines.map(t => (
+                    <ReferenceLine key={t.label} yAxisId="observed" y={t.value} stroke={t.color} strokeDasharray="4 3" strokeWidth={1}
+                      label={{ value: t.label, position: 'insideTopRight', fontSize: 8, fill: t.color, dy: -2 }} />
+                  ))}
                   <Area yAxisId="observed" type="monotone" dataKey="v" stroke={strokeColor} strokeWidth={2}
                     fill={`url(#grad-${metric.id})`} dot={false}
                     activeDot={{ r: 3, fill: strokeColor, strokeWidth: 0 }} isAnimationActive={false} />
+                  {hasInterval && <Area yAxisId="observed" type="monotone" dataKey="lower"
+                    stroke="none" fill="transparent" stackId="forecast-band" isAnimationActive={false} />}
+                  {hasInterval && <Area yAxisId="observed" type="monotone" dataKey="band"
+                    stroke="none" fill={FORECAST_COLORS.forecast} fillOpacity={0.2}
+                    stackId="forecast-band" isAnimationActive={false} />}
                   {forecastPoints.length > 0 && <Line yAxisId={rateForecast ? 'forecast' : 'observed'}
                     type="monotone" dataKey="predicted" stroke={FORECAST_COLORS.forecast}
                     strokeWidth={2} strokeDasharray="5 3" dot={false} connectNulls={false}
@@ -237,23 +382,66 @@ export const MetricCard: React.FC<{
                       if (!active || !point) return null;
                       const value = point.kind === 'forecast' ? point.predicted : point.v;
                       return typeof value === 'number' ? (
-                        <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[10px] font-mono"
+                        <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[11px] font-mono"
                           style={{ color: point.kind === 'forecast' ? FORECAST_COLORS.forecast : strokeColor }}>
                           <div>{point.kind === 'forecast' ? 'Forecast' : 'Observed'}: {value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-                          {point.kind === 'forecast' && point.at && <div>{new Date(point.at).toLocaleString()}</div>}
+                          {point.at && <div className="text-on-surface-variant">{new Date(point.at).toLocaleString()}</div>}
+                          {point.kind === 'forecast' && point.lower !== null && point.band !== null && (
+                            <div>80% interval: {point.lower.toLocaleString(undefined, { maximumFractionDigits: 2 })} – {(point.lower + point.band).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                          )}
                         </div>
                       ) : null;
                     }}
                   />
-                </AreaChart>
+                </ComposedChart>
               </ResponsiveContainer>
-              {forecastPoints.length > 0 && <div className="flex flex-wrap gap-3 px-3 pt-1.5 text-[10px] font-mono" aria-label="Metric chart legend">
-                <span className="text-on-surface-variant flex items-center gap-1"><span className="w-3 h-0.5" style={{ background: strokeColor }} />Observed</span>
-                <span className="flex items-center gap-1" style={{ color: FORECAST_COLORS.forecast }}><span className="w-3 border-t-2 border-dashed" style={{ borderColor: FORECAST_COLORS.forecast }} />Forecast{rateForecast ? ' (per second)' : ''}</span>
+              {/* Beside the chart rather than over it: drawn in a corner they covered the forecast. */}
+              {offScale.length > 0 && <div className="flex flex-wrap gap-x-3 px-3 pt-1 text-[11px] font-mono" aria-label="Thresholds off the chart scale">
+                {offScale.map(t => <span key={t.label} style={{ color: t.color }}>{t.up ? '↑' : '↓'} {t.label} {t.value.toLocaleString()} <span className="text-outline">off scale</span></span>)}
               </div>}
-              <div className="flex items-center justify-between px-3 py-1.5 border-t border-primary/5 text-[10px] font-mono">
+              {reach && forecastSeries && <div role="status" aria-label="Forecast threshold"
+                className={`mx-3 mt-1.5 flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium ${reach.level === 'critical'
+                  ? 'bg-error-container/40 text-error' : 'bg-warning-container/40 text-warning'}`}>
+                <span aria-hidden="true" className="material-symbols-outlined text-[14px]">{reach.level === 'critical' ? 'error' : 'warning'}</span>
+                <span>{reach.level === 'critical' ? 'Critical' : 'Warning'} {reach.likelihood} in {about(reach.steps, forecastSeries.stepMillis)}
+                  <span className="font-mono font-normal opacity-80"> ({thresholdDirection(metric.warningThreshold, metric.criticalThreshold) === 'below' ? '≤' : '≥'} {reach.threshold.toLocaleString()}{reach.likelihood === 'possible' ? ', 80% band' : ', median'})</span>
+                  {reachShiftText(reachShiftMs) && <span className="font-normal opacity-90">{reachShiftText(reachShiftMs)}</span>}</span>
+                {/* What to do about it, from where it is said: the alert to raise elsewhere, the topic to look at. */}
+                <span className="ml-auto flex items-center gap-0.5 shrink-0">
+                  <button type="button" title="Copy an alert rule for this predicted threshold"
+                    aria-label="Copy an alert rule for this predicted threshold"
+                    className="inline-flex items-center justify-center w-6 h-6 rounded hover:bg-surface-container-high transition-colors"
+                    onClick={() => void copyText(forecastBreachRule(metric, reach.level, reach.likelihood))
+                      .then(ok => toast(ok ? 'Forecast alert rule copied' : 'Could not copy to the clipboard', ok ? 'success' : 'error'))}>
+                    <span aria-hidden="true" className="material-symbols-outlined text-[14px]">notification_add</span>
+                  </button>
+                  {metricTopics(metric).slice(0, 2).map(topic => <TopicLink key={topic} topic={topic}
+                    className="inline-flex items-center justify-center w-6 h-6 rounded hover:bg-surface-container-high transition-colors">
+                    <span aria-hidden="true" className="material-symbols-outlined text-[14px]">open_in_new</span>
+                  </TopicLink>)}
+                </span>
+              </div>}
+              {forecastPoints.length > 0 && <div className="flex items-center gap-3 px-3 pt-1.5 text-[11px] font-mono whitespace-nowrap" aria-label="Metric chart legend">
+                <span className="text-on-surface-variant flex items-center gap-1"><span className="w-3.5 h-0.5 rounded-full" style={{ background: strokeColor }} />Observed{timed && counterRate ? ' (/s)' : ''}</span>
+                <span className="flex items-center gap-1" style={{ color: FORECAST_COLORS.forecast }}>
+                  <svg width="14" height="4" aria-hidden="true"><line x1="0" y1="2" x2="14" y2="2" stroke={FORECAST_COLORS.forecast} strokeWidth="2" strokeDasharray="4 2" /></svg>
+                  Forecast{rateForecast ? ' (/s, own scale)' : ''}</span>
+                {hasInterval && <span className="text-on-surface-variant flex items-center gap-1"><span className="w-3 h-2 rounded-sm" style={{ background: FORECAST_COLORS.forecast, opacity: 0.3 }} />80% band</span>}
+                {/* What used to be a paragraph on every card: dashed is predicted, the band is nominal, a
+                    predicted threshold is not an alert. Said once, one hover away. */}
+                <InfoTooltip placement="bottom" content={
+                  `Dashed values are predictions, not observations.${hasInterval ? ' The shaded band is the model’s nominal 80% interval, not a guarantee.' : ''}${timed && counterRate ? ' The chart and its forecast are a rate per second; the value above is the counter’s own reading, so its thresholds are not drawn here.' : ''}${reach ? ' A predicted threshold is a reading of the forecast, not an alert: nothing is sent.' : ''}`}>
+                  <button type="button" aria-label="About this forecast chart"
+                    className="ml-auto inline-flex items-center justify-center w-5 h-5 text-outline hover:text-primary rounded transition-colors">
+                    <span className="material-symbols-outlined text-[14px]">info</span>
+                  </button>
+                </InfoTooltip>
+              </div>}
+              <div className="flex items-center justify-between px-3 py-1.5 border-t border-primary/5 text-[11px] font-mono">
                 <span className="text-outline">min <span className="text-on-surface-variant">{minV.toLocaleString(undefined, { maximumFractionDigits: 1 })}</span></span>
-                <span className="text-outline">{chartData.length} pts</span>
+                <span className="text-outline">{timed && forecastSeries
+                  ? `${about(observedCount, forecastSeries.stepMillis)} + ${about(forecastPoints.length, forecastSeries.stepMillis)} ahead`
+                  : `${chartData.length} pts`}</span>
                 <span className="text-outline">max <span className="text-on-surface-variant">{maxV.toLocaleString(undefined, { maximumFractionDigits: 1 })}</span></span>
               </div>
             </div>
@@ -267,7 +455,7 @@ export const MetricCard: React.FC<{
                 <div key={i} className="w-1 bg-primary rounded-sm" style={{ height: `${height}%` }} />
               ))}
             </div>
-            <span className="text-[10px] text-outline uppercase tracking-wider">Waiting for data…</span>
+            <span className="text-[11px] text-outline uppercase tracking-wider">Waiting for data…</span>
           </div>
         )}
       </div>
@@ -280,7 +468,8 @@ export const MetricCard: React.FC<{
           rien mesuré ne doit pas être relié comme s'il avait mesuré. */}
       {series.length > 0 && (
         <div className="px-3 pb-2">
-          <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60">
+          <div className="rounded-lg overflow-hidden border border-outline-variant/60 bg-background-dark/60" role="img"
+            aria-label={`Components over time: ${series.map(x => x.label).join(', ')}`}>
             <ResponsiveContainer width="100%" height={56}>
               <LineChart data={seriesData} margin={{ top: 6, right: 8, left: 0, bottom: 2 }}>
                 <YAxis hide domain={['dataMin', 'dataMax']} />
@@ -288,10 +477,10 @@ export const MetricCard: React.FC<{
                   <Line key={s.key} type="monotone" dataKey={s.key} stroke={s.color} strokeWidth={1.5}
                     dot={false} connectNulls={false} isAnimationActive={false} />
                 ))}
-                <Tooltip cursor={{ stroke: '#8f93a3', strokeWidth: 1, strokeOpacity: 0.3 }}
+                <Tooltip cursor={{ stroke: 'var(--viz-axis)', strokeWidth: 1, strokeOpacity: 0.3 }}
                   content={({ active, payload }) =>
                     active && payload?.length ? (
-                      <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[10px] font-mono space-y-0.5">
+                      <div className="bg-surface-container-low border border-outline-variant px-2 py-1 rounded-lg text-[11px] font-mono space-y-0.5">
                         {payload.map(entry => {
                           const s = series.find(x => x.key === entry.dataKey);
                           return s && typeof entry.value === 'number' ? (
@@ -304,7 +493,7 @@ export const MetricCard: React.FC<{
                 />
               </LineChart>
             </ResponsiveContainer>
-            <div className="flex items-center gap-3 px-3 py-1.5 border-t border-primary/5 text-[10px] font-mono">
+            <div className="flex items-center gap-3 px-3 py-1.5 border-t border-primary/5 text-[11px] font-mono">
               {series.map(s => (
                 <span key={s.key} className="flex items-center gap-1 text-outline">
                   <span aria-hidden="true" className="w-2 h-0.5 rounded-full" style={{ background: s.color }} />
@@ -330,7 +519,7 @@ export const MetricCard: React.FC<{
             <span
               key={chip.label}
               title={chip.detail}
-              className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+              className={`text-[11px] font-mono px-1.5 py-0.5 rounded border ${
                 chip.tone === 'warning'
                   ? 'text-warning border-warning/30 bg-warning/5'
                   : 'text-on-surface-variant border-outline-variant/60'
@@ -352,7 +541,7 @@ export const MetricCard: React.FC<{
         <span className="material-symbols-outlined text-primary/40 text-base shrink-0 mt-0.5">code</span>
         <pre
           title={sqlText ? sqlText.replace(/\s+/g, ' ') : describeTemplate(metric)}
-          className="flex-1 text-[10px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden"
+          className="flex-1 text-[11px] font-mono text-on-surface-variant truncate leading-relaxed whitespace-nowrap overflow-hidden"
         >
           {sqlText
             ? sqlText.replace(/\s+/g, ' ')
@@ -375,7 +564,7 @@ export const MetricCard: React.FC<{
       <div className="border-t border-outline-variant/60 px-4 py-2 flex items-center justify-between gap-2">
         {alert.unavailable ? (
           <InfoTooltip content={alert.unavailable}>
-            <span tabIndex={0} className="text-[10px] text-outline flex items-center gap-1 rounded min-w-0">
+            <span tabIndex={0} className="text-[11px] text-outline flex items-center gap-1 rounded min-w-0">
               <span className="material-symbols-outlined text-[11px] shrink-0">notifications_off</span>
               <span className="truncate">No alert rule from this card</span>
             </span>
@@ -383,7 +572,7 @@ export const MetricCard: React.FC<{
         ) : (
           <>
             <InfoTooltip content={alert.rules.map(r => `${r.title} — ${r.note}`).join('\n\n')}>
-              <span tabIndex={0} className="text-[10px] text-on-surface-variant flex items-center gap-1 rounded min-w-0">
+              <span tabIndex={0} className="text-[11px] text-on-surface-variant flex items-center gap-1 rounded min-w-0">
                 <span className="material-symbols-outlined text-[11px] shrink-0">notifications_active</span>
                 <span className="truncate font-mono">{alert.rules[0].promql.split('\n')[0]}</span>
               </span>
@@ -406,26 +595,100 @@ export const MetricCard: React.FC<{
 
       {forecast ? <div role="group" className="px-4 py-2 border-t border-outline-variant/60 text-xs flex flex-wrap items-center gap-2" aria-label={`Forecast status of ${metric.name || metric.id}`}>
         <span className="font-semibold">Forecast</span><Badge tone={forecast.tone}>{forecast.label}</Badge><span>{forecast.detail}</span>
+        {onShowForecast && <Button variant="ghost" size="sm" className="ml-auto" icon="open_in_full" onClick={() => onShowForecast(metric.id)}
+          aria-label={`Show the forecast of ${metric.name || metric.id}`}>Details</Button>}
+        {/* When it was made and when the next one is due: an instant, not an age, so it never goes stale
+            on screen — and a forecast that stopped moving reads as stopped, not as stable. */}
+        {(() => {
+          const made = clockTime(forecastSeries?.result?.generatedAt);
+          const next = clockTime(nextForecastAt);
+          if (!made && !next) return null;
+          return <span className="basis-full text-on-surface-variant" aria-label="Forecast freshness">
+            {made ? `Made at ${made}` : 'Not made yet'}{next ? ` · next cycle ~${next}` : ''}
+          </span>;
+        })()}
+        {/* How the forecast has done against what happened, from the quality window the list carries. */}
+        {(() => {
+          const check = lastCheck(forecastSeries?.result?.qualityWindow);
+          if (!check) return null;
+          const reliability = forecastReliability(check);
+          const unit = forecastSeries?.result?.context.outputUnit ?? '';
+          const percent = Math.round(check.coverage * 100);
+          // A word for the glance; the figures and what they mean, one hover away.
+          return <span className="basis-full flex items-center gap-2 text-on-surface-variant" aria-label="Forecast against actual">
+            <span>Reliability</span>
+            <InfoTooltip content={`Over its last ${check.points} scored points, ${percent}% fell inside the 80% band — a forecast that holds its band holds about 80%. Mean error ${check.meanError.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${unit}.${reliability.level === 'early' ? ' Too few points to judge yet.' : ''}`}>
+              <span tabIndex={0} className="rounded"><Badge tone={reliability.tone}>{reliability.label}</Badge></span>
+            </InfoTooltip>
+            <span>{percent}% of {check.points} points in the band</span>
+            {(() => {
+              const trend = reliabilityTrend(forecastSeries?.result?.qualityWindow);
+              return trend && <span className="flex items-center gap-1" aria-label="Reliability trend">
+                <CoverageTrend coverages={trend.coverages} direction={trend.direction} />
+                <span className={trend.direction === 'degrading' ? 'text-warning' : ''}>{trend.direction}</span>
+              </span>;
+            })()}
+          </span>;
+        })()}
+        {/* The wait as a bar as well as a count: the sentence says how much, the bar how far. */}
+        {forecast.progress !== undefined && <div role="progressbar" aria-label={`${forecast.label} progress`}
+          aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(forecast.progress * 100)}
+          className="basis-full h-1 rounded-full bg-surface-container-highest overflow-hidden">
+          <div className="h-full rounded-full" style={{ width: `${Math.round(forecast.progress * 100)}%`, background: FORECAST_COLORS.forecast }} />
+        </div>}
       </div> : null}
-      {(forecast || onPrepareForecast) && <div className="px-4 pb-2">
-        <span title={forecast ? 'A forecast already exists for this metric' : forecastUnavailableReason}
-          className="inline-flex" aria-label={forecastUnavailableReason || undefined}>
-          <Button variant="ghost" disabled={Boolean(forecast || forecastUnavailableReason)} onClick={onPrepareForecast}>
-            Prepare a forecast
-          </Button>
-        </span>
-        {!forecast && forecastUnavailableReason && (
-          <p className="text-[10px] text-on-surface-variant mt-1" role="note">{forecastUnavailableReason}</p>
+      {/* One click creates the forecast with the defaults the server suggests; nothing to fill in.
+          Once it exists the status row above stands in for it, rather than a greyed-out duplicate. */}
+      {!forecast && onPrepareForecast && <div className="px-4 py-2">
+        {/* One sentence on hover and on focus: a disabled button takes no focus of its own, so its
+            wrapper does, and the reason it is disabled reaches the keyboard too. */}
+        {(() => {
+          const button = (
+            <span className="inline-flex rounded" aria-label={forecastUnavailableReason || undefined}>
+              <Button variant="outline" size="sm" icon="insights" loading={forecastCreating} aria-busy={forecastCreating || undefined}
+                disabled={Boolean(forecastUnavailableReason || refreshing || forecastCreating)} onClick={() => onPrepareForecast(metric.id)}>
+                {forecastCreating ? 'Creating forecast…' : 'Forecast'}
+              </Button>
+            </span>
+          );
+          // The reason it is disabled is already written under the button; the help text is for the
+          // button that works.
+          return forecastUnavailableReason ? button : (
+            <InfoTooltip content="Creates this metric’s forecast in one click, from its recorded history, with the suggested interval and the cycle that history shows. Nothing to fill in.">
+              {button}
+            </InfoTooltip>
+          );
+        })()}
+        {forecastCreating && <p className="text-[11px] text-on-surface-variant mt-1" role="status">
+          Reading this metric’s history and starting its forecast…</p>}
+        {forecastUnavailableReason && (
+          <p className="text-[11px] text-on-surface-variant mt-1" role="note">{forecastUnavailableReason}</p>
         )}
       </div>}
+      {/* What the last refresh cost: said on the card when it slows the whole loop down, since the
+          remedy — a refresh interval of its own — is set on this metric. */}
+      {(() => {
+        const note = refreshCostNote(refreshDurationMs, refreshTickMs);
+        return note?.slow ? <p role="note" aria-label="Refresh cost"
+          className="px-4 py-1.5 text-[11px] text-warning border-t border-outline-variant/60 flex items-start gap-1">
+          <span className="material-symbols-outlined text-[12px]" aria-hidden="true">hourglass_top</span>{note.text}</p> : null;
+      })()}
       {/* Footer */}
       <div className="px-4 py-1.5 flex items-center justify-between border-t border-primary/5">
-        <span className="text-[10px] text-outline flex items-center gap-1">
+        <span className="text-[11px] text-outline flex items-center gap-1"
+          title={refreshCostNote(refreshDurationMs, refreshTickMs)?.text}>
           <span className="material-symbols-outlined text-[11px]">schedule</span>
-          {relativeTime(metric.lastUpdateTime)}
+          <RelativeTime at={metric.lastUpdateTime} />
         </span>
-        <span className={`text-[10px] font-bold ${st.text}`}>{st.label}</span>
+        <span className={`text-[11px] font-bold ${st.text}`}>{st.label}</span>
       </div>
     </div>
   );
 };
+
+/**
+ * Memoised: the page polls, edits forms and filters, and every one of those renders it; a card now
+ * renders again only when one of its own props moved. The page keeps each metric, each forecast
+ * series and each handler the same object between polls for that reason.
+ */
+export const MetricCard = React.memo(MetricCardView);

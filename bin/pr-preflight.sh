@@ -5,6 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 echo '==> Documentation contract checks'
 for check in docs/check-*.py; do python3 "$check"; done
+echo '==> Public interactive MCP guide syntax'
+node --check docs/mcp-guide.js
 echo '==> Frontend install, types, bundle, lint, tests'
 cd src/main/webapp
 npm ci

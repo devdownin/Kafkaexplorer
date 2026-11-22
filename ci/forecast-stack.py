@@ -178,12 +178,15 @@ def main():
     def forecast():
         return next((row['result'] for row in api('/api/forecasts')['series'] if row['seriesId'] == series_id), None)
     listed = wait_for(forecast, lambda value: value is not None and value['state'] == 'READY' and value['strategy'] == 'TIMESFM', 'Real TimesFM result', 240)
-    # The list is a summary: it keeps the counts and drops the history points (METRICS-FORECAST-UX-AUDIT.md
-    # P1). The whole record, context included, is the series' own endpoint.
-    assert listed['context']['observedPoints'] > 0 and listed['context']['points'] == []
+    # The list is a summary: it keeps the counts and only the latest 60 history points, what a metric
+    # card draws before its forecast (METRICS-FORECAST-UX-AUDIT.md P1; ForecastController.LIST_HISTORY_POINTS).
+    # The whole record, context included, is the series' own endpoint.
+    assert listed['context']['observedPoints'] > 0 and len(listed['context']['points']) == 60
+    assert all(p['endAt'] <= listed['forecast']['historyEndAt'] for p in listed['context']['points'])
     record = api(f'/api/forecasts/{series_id}')['result']
     assert record['visibility'] == 'SHADOW' and len(record['forecast']['points']) == 10
     assert record['context']['status'] == 'READY' and len(record['context']['points']) == 512
+    assert listed['context']['points'] == record['context']['points'][-60:]
     assert record['forecast']['seriesId'] == series_id
     verify_mcp(series_id, record)
     print('Forecast stack smoke passed; forecast quality and activation are outside this test', flush=True)

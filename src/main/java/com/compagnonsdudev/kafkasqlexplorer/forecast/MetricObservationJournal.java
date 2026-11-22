@@ -35,7 +35,7 @@ public final class MetricObservationJournal {
     private final MetricHistoryProperties properties;
     private final MetricObservationStore store;
     private final ArrayBlockingQueue<List<MetricObservation>> queue;
-    private final Counter persisted, dropped, rejected, failures;
+    private final Counter persisted, dropped, rejected, failures, enrollmentRefused;
     private final Thread writer;
     private volatile boolean running;
     private final java.util.Set<String> autoEnrolled = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -51,6 +51,7 @@ public final class MetricObservationJournal {
         dropped = registry.counter("explorer_forecast_history_dropped_total");
         rejected = registry.counter("explorer_forecast_history_rejected_total");
         failures = registry.counter("explorer_forecast_history_write_failures_total");
+        enrollmentRefused = registry.counter("explorer_forecast_history_enrollment_refused_total");
         Gauge.builder("explorer_forecast_history_queue_batches", queue, ArrayBlockingQueue::size).register(registry);
         writer = new Thread(this::writeLoop, "metric-observation-writer");
         writer.setDaemon(true);
@@ -66,10 +67,22 @@ public final class MetricObservationJournal {
                 return true;
             }
         }
+        // Counted every time, warned once per episode: the warning alone said nothing about how many
+        // metrics were not being recorded (METRICS-FORECAST-AUDIT-2.md B3).
+        enrollmentRefused.increment();
         if (boundReported.compareAndSet(false, true))
             log.warn("History enrollment bound of {} metrics reached; further eligible metrics are not recorded",
                 MetricHistoryProperties.MAX_METRICS);
         return false;
+    }
+
+    /**
+     * Gives back the slot a deleted metric held. Enrolment was never released: after a hundred distinct
+     * ids over the life of the process, a metric created later was silently not recorded, while the
+     * assistant went on listing it as eligible and its card read "History recorded".
+     */
+    public void forget(String metricId) {
+        if (autoEnrolled.remove(metricId)) boundReported.set(false);
     }
 
     public void rejectFrame() { rejected.increment(); }

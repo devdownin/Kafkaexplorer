@@ -34,13 +34,13 @@ const [, , baseUrl = 'http://127.0.0.1:4173', mode] = process.argv;
 const DETAIL = mode === '--detail';
 
 /**
- * Les trois consommateurs du hook. `reset` dit ce que `0` doit faire, et c'est la seule
- * politique qui diffère réellement entre eux : Lineage revient à une origine fixe, les deux
- * autres recadrent sur le contenu — donc on ne peut pas y affirmer une valeur, seulement que
- * le cadrage a bougé et s'est stabilisé.
+ * Les trois consommateurs du hook. `reset` dit ce que `0` doit faire. Les trois recadrent
+ * désormais sur le contenu — Lineage revenait à une origine fixe, qui coupait le nœud de vue au
+ * bord du canevas — donc on ne peut pas y affirmer une valeur, seulement que le cadrage a bougé
+ * et s'est stabilisé.
  */
 const GRAPHS = [
-  { name: 'lineage', url: '/lineage', reset: { x: 40, y: 20, scale: 1 } },
+  { name: 'lineage', url: '/lineage', reset: 'fit' },
   { name: 'stream-flow', url: '/stream-flow?key=ORD-1042&exact=1', reset: 'fit' },
   {
     name: 'data-model',

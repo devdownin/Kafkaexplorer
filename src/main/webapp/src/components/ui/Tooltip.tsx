@@ -58,8 +58,8 @@ export const Tooltip: FC<TooltipProps> = ({ content, placement = 'top', classNam
         role="tooltip"
         className={cn(
           'absolute left-1/2 -translate-x-1/2 z-50 w-max max-w-[18rem] px-2.5 py-1.5 rounded-lg',
-          'bg-surface-container-highest text-on-surface text-[11px] leading-relaxed',
-          'border border-outline-variant shadow-lg transition-opacity duration-100',
+          'kse-float text-on-surface text-[11px] leading-relaxed',
+          'transition-opacity duration-100',
           placement === 'top' ? 'bottom-full mb-1.5' : 'top-full mt-1.5',
           open ? 'opacity-100' : 'opacity-0 pointer-events-none',
           className,

@@ -10,7 +10,7 @@
 [![Docker Hub](https://img.shields.io/docker/pulls/compagnonsdudev/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer)
 [![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
 [![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)
-[![Kafka 4.3](https://img.shields.io/badge/Kafka-4.3_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
+[![Kafka 4.4](https://img.shields.io/badge/Kafka-4.4_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
 [![Flink 2.3](https://img.shields.io/badge/Flink-2.3-E6526F?logo=apacheflink&logoColor=white)](https://flink.apache.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
@@ -59,17 +59,19 @@ These are generated, not photographed: `docs/screenshots/` drives the compiled S
 - 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.
 - 🧠 **Zero-config schemas** — topics are sampled, their structure inferred (JSON, XML, Avro via Schema Registry), and registered as Flink tables the first time you name them — by the topic's own name, as the cluster shows it: `SELECT * FROM "orders.v2-raw"`.
 - 📝 **A real SQL editor** — Monaco (the VS Code engine), auto-completion of topics and tables, query history, Flink SQL by default, and an explicit bounded Kafka Direct exploration mode with earliest/latest scans and scan coverage.
+- 🎨 **A spatial interface, light or dark** — glass navigation floating over opaque reading planes (tables, charts and the SQL editor never blur), light by default with a persistent dark-mode switch, six accent colours and a compact density for dense screens. Contrast is held to WCAG AA, and reduced motion and reduced transparency are honoured.
 - 🕸️ **Lineage & tracing** — an interactive graph of topics → tables → live jobs, resolved by Flink's own parser; plus cross-topic message tracing by key, header, JSONPath or XPath, which streams its hops as it finds them, says exactly what it scanned, resumes where a time budget stopped it, and compares two keys side by side.
 - 🗺️ **A data model you did not have to draw** — pick a set of topics and read them as tables, with the relations between them deduced from key-column names. Kafka has no foreign keys, so every edge is a claim: it carries a confidence grade, states its evidence in plain words, and opens as a ready `JOIN` — one relation or a whole subgraph.
 - 🩺 **One-click cluster audit** — poison messages, duplicates, flow drop-offs and latency, computed across your whole cluster in the background.
 - 🤖 **AI-powered process mining** — reconstruct business flows as flowcharts and hunt anomalies with OpenRouter (the default: one key, most hosted vendors), Claude, any local LLM (llama.cpp…), or a private [SpectraLLM](https://github.com/devdownin/SpectraLLM).
 - 🔭 **Kafka 4 native** — KRaft controller quorum, KIP-848 consumer groups, share groups (KIP-932) and feature versions, visible in the UI and exported to Prometheus.
 - 🔌 **An MCP server for your agent** — expose the analysis layer, not a tenth translation of the `AdminClient`: SQL over vanilla Kafka, schema inference, and answers that say what they did **not** read. Off by default, read-only when on, and read-only is enforced at registration — a mutating tool is not registered at all, so it is neither listed nor invocable.
+- 🧩 **MCP Resources, prompts & Agent Skills** — bounded Kafka resource snapshots, six guided agent workflows and seven packaged skills with SHA-256 manifests, a catalogue in the MCP screen and standard MCP skill resources for incident diagnosis, forecasting, data architecture, security review, schema evolution, CI repair and releases. See the [MCP & Skills guide](docs/mcp-skills.md) and the [illustrated guide to using Skills & MCP Services](docs/mcp-guide.html) (including Kex-anHarness call graphs).
 - 🎁 **A batteries-included sandbox** — 79 demo topics seeded automatically, from a 6-step order pipeline to a 60-topic supply chain, all keyed and header-stamped: an order to trace across partitions, a header-only correlation to follow, a real time series to window, duplicates and poison records for the audit to find.
 
 ## 🚀 Quick Start
 
-One command — Kafka 4.3 (KRaft), the app, and all demo topics:
+One command — Kafka 4.4 (KRaft), the app, and all demo topics:
 
 ```bash
 docker compose up -d
@@ -177,9 +179,15 @@ A single Spring Boot 4.1 JAR embedding Apache Flink 2.3 as the SQL engine, with 
 
 An optional in-process MCP server (Spring AI 2.0) exposes the same services to an LLM agent — same caches, same budgets, no second Kafka client — behind a KIP-1318-shaped guard: resource scope applied to SQL as well as to topic names, per-tool allow/deny enforced by absence from `tools/list`, a rate limit, approval tokens, DLP on everything that leaves, and an append-only call trail. Off unless `explorer.mcp.enabled=true`, read-only when on, and behind a bearer token over TLS once it is. See **[SPEC-MCP.md](SPEC-MCP.md)**.
 
-Operational review tools add `kex_topic_configuration` (effective topic settings and replica/ISR counts), `kex_topic_policy_review` (operator-defined rules per environment), `kex_consumer_lag_trend` (two complete offset/commit snapshots, with producer and consumer rates), and `kex_dlq_review` (DLQ retention, bounded header checks and explicitly declared source/retry/replay links). Set `explorer.mcp.lag-history-directory` to the same writable volume on every instance to retain the lag baseline across instances and restarts (48-hour validity by default, configurable); the filesystem must support cross-process locks. Without it, the baseline stays in this server process for up to 30 minutes. Missing broker data is reported as unmeasured, and the DLQ review does not reprocess records. Configuration examples are in [`docs/DOCKERHUB.md`](docs/DOCKERHUB.md) and `application.yml`.
+Operational review tools add `kex_topic_configuration` (effective topic settings and replica/ISR counts), `kex_topic_policy_review` (operator-defined rules per environment), `kex_consumer_lag_trend` (two complete offset/commit snapshots, with producer and consumer rates), and `kex_dlq_review` (DLQ retention, bounded header checks and explicitly declared source/retry/replay links). Set `explorer.mcp.lag-history-directory` to the same writable volume on every instance to retain the lag baseline across instances and restarts (48-hour validity by default, configurable); the filesystem must support cross-process locks. Without it, the baseline stays in this server process for up to 30 minutes. Missing broker data is reported as unmeasured, and the DLQ review does not reprocess records. Configuration examples are in [`docs/DOCKERHUB-OPERATIONS.md`](docs/DOCKERHUB-OPERATIONS.md) and `application.yml`.
 
 Architecture deep-dive: **[docs/architecture.md](docs/architecture.md)**
+
+**Forecast from a metric card**: press **Forecast** and the forecast is created from the metric's
+recorded history, drawn as the continuation of its curve. The card says when one of the metric's
+thresholds is predicted, how reliable the forecast has been and when the next one is due. Nothing is
+sent; the same reading is the Prometheus series `explorer_forecast_threshold_eta_seconds`, which you
+can alert on. `./demo.sh --forecast` runs it end to end with nothing to configure.
 
 The **Metrics Forecast** panel includes preparation diagnostics, a candidate catalogue, a reviewed
 configuration assistant, live history progress and a result summary. Run `bin/forecast-stack.sh`
@@ -195,7 +203,7 @@ gauge imputations, and rejects counter resets or inadmissible history. See **[hi
 and limitations](docs/notes/timesfm-history.md)**.
 
 The CPU-only TimesFM service is available through the opt-in `compose/timesfm.yml` overlay.
-The production pilot and its five read-only MCP tools are enabled by default; without approved
+The production pilot and its six read-only MCP tools are enabled by default; without approved
 series the catalogue is empty and no database or model calls run. With history, inference and
 approved series configured, the pilot schedules those series, persists forecasts
 and operator activation in PostgreSQL, compares realised errors with four baselines, and exposes
@@ -270,3 +278,10 @@ Run **`mvn verify`** before opening a pull request: it is the complete gate — 
 [AGPL v3](LICENSE) — free to use, study, share and improve.
 
 ---
+
+### Enterprise MCP authentication (opt-in)
+
+A trusted OAuth identity provider can supply JWT access tokens validated against a
+pinned HTTPS JWKS endpoint, issuer, audience and route-level scopes, with RFC 9728 discovery. OAuth mode is
+currently **read-only**; optional per-tool OAuth scopes restrict read tools, while write-tool authorization and MCP Tasks are not yet available.
+See [Enterprise MCP authentication](docs/mcp-enterprise-auth.md).

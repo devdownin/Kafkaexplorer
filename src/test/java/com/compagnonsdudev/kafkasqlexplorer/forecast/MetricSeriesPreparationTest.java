@@ -110,6 +110,43 @@ class MetricSeriesPreparationTest {
         assertEquals(COUNTER_RESET, prepare(hidden, 180_000, 2, COUNTER_RATE).status());
     }
 
+    /** METRICS-FORECAST-AUDIT-2.md O1: a reset no longer refuses the context once enough follows it. */
+    @Test
+    void aCounterResetStartsTheContextAfterItInsteadOfRefusingIt() {
+        var rows = new ArrayList<MetricObservation>();
+        // 10 messages a step; the source restarts at step 100 and counts from zero again.
+        for (int i = 0; i <= 300; i++)
+            rows.add(point("run" + i, i * STEP + 1000, i < 100 ? 5_000 + i * 10 : (i - 100) * 10, "COUNTER"));
+        var actual = prepare(rows, 301 * STEP, 300, COUNTER_RATE);
+        assertEquals(READY, actual.status(), actual.reason());
+        assertTrue(actual.reason().contains("after a counter reset"), actual.reason());
+        assertTrue(actual.points().getFirst().endAt() > 100 * STEP, "nothing from before the reset");
+        assertTrue(actual.points().size() >= SeriesPreparationProfile.MIN_CONTEXT_POINTS);
+        assertTrue(actual.points().stream().allMatch(p -> Math.abs(p.value() - 10.0 / (STEP / 1000.0)) < 1e-9),
+            "every rate is the counter's own, none spans the reset");
+        // Too little since the reset: still a reset, and it says how far it has got.
+        var recent = new ArrayList<MetricObservation>();
+        for (int i = 0; i <= 300; i++)
+            recent.add(point("run" + i, i * STEP + 1000, i < 250 ? 5_000 + i * 10 : (i - 250) * 10, "COUNTER"));
+        var waiting = prepare(recent, 301 * STEP, 300, COUNTER_RATE);
+        assertEquals(COUNTER_RESET, waiting.status());
+        assertTrue(waiting.reason().contains("collected since"), waiting.reason());
+    }
+
+    /** METRICS-FORECAST-AUDIT-2.md P3: the identity digest is memoised, not the guard dropped. */
+    @Test
+    void aRowWhoseFieldsDoNotDeriveItsSeriesIsStillRefused() {
+        var rows = new ArrayList<>(gauges(20));
+        // Same claimed series id, but a label that derives another one: the guard must still see it.
+        var good = rows.get(10);
+        var forged = new MetricObservation(good.observationId() + "x", good.seriesId(), good.clusterId(), good.metricId(),
+            good.definitionVersion(), good.component(), Map.of("topic", "payments"), good.unit(), good.semanticKind(),
+            good.collectorRunId(), good.observedAt() + 1, good.value(), good.qualityState(), good.coverage());
+        rows.add(forged);
+        assertEquals(SCOPE_CHANGED, prepare(rows, 20 * STEP, 20, GAUGE_MEAN).status());
+        assertEquals(READY, prepare(gauges(20), 20 * STEP, 20, GAUGE_MEAN).status());
+    }
+
     @Test
     void separatesScopeChangesUnverifiedQualityUnknownUnitAndSemanticMismatch() {
         var rows = gauges(20);

@@ -33,6 +33,9 @@ src/test/
 docs/
 deploy/
 *.md
+# Maven packages only reviewed Agent Skills from .agents/skills into the application JAR.
+# Keep their Markdown in the Docker build context even though general documentation is ignored.
+!.agents/skills/*/SKILL.md
 *.skill
 *.ps1
 *.bat

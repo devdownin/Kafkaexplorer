@@ -132,7 +132,7 @@ const TopicConsumersPanel: FC<TopicConsumersPanelProps> = ({ topic }) => {
       ) : (
         <Table rowCount={shown.length} className="text-sm">
           <thead>
-            <tr className="bg-surface-container-high/60 border-b border-outline-variant/60 text-[10px] uppercase tracking-widest text-on-surface-variant">
+            <tr className="bg-surface-container-high/60 border-b border-outline-variant/60 text-[11px] uppercase tracking-widest text-on-surface-variant">
               <SortHeader label="Group" column="groupId" sort={sort} desc={desc} onSort={toggleSort} />
               <SortHeader label="State" column="state" sort={sort} desc={desc} onSort={toggleSort} />
               <th className="text-right px-5 py-3">Members</th>
@@ -271,7 +271,7 @@ const SortHeader: FC<{
 const PartitionTable: FC<{ group: ConsumerGroupLag }> = ({ group }) => (
   <table className="w-full text-[12px]">
     <thead>
-      <tr className="text-[10px] uppercase tracking-widest text-on-surface-variant">
+      <tr className="text-[11px] uppercase tracking-widest text-on-surface-variant">
         <th className="text-left py-1.5">Partition</th>
         <th className="text-right py-1.5">Committed</th>
         <th className="text-right py-1.5">End</th>
@@ -387,7 +387,7 @@ const DelayMeasurement: FC<{ topic: string; group: ConsumerGroupLag }> = ({ topi
       {delay && delay.partitions.length > 0 && (
         <table className="w-full text-[12px] mt-3">
           <thead>
-            <tr className="text-[10px] uppercase tracking-widest text-on-surface-variant">
+            <tr className="text-[11px] uppercase tracking-widest text-on-surface-variant">
               <th className="text-left py-1.5">Partition</th>
               <th className="text-right py-1.5">Waiting since</th>
               <th className="text-right py-1.5">Records behind</th>

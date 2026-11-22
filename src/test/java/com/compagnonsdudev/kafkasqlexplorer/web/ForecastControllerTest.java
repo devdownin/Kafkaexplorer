@@ -49,6 +49,27 @@ class ForecastControllerTest {
     assertEquals(404, controller().shadow("unknown").getStatusCode().value());
   }
 
+  /** The forecast set beside what happened: the latest one whose horizon has been measured. */
+  @Test
+  void servesThePreviousMeasuredForecastAndSaysWhenThereIsNone() throws Exception {
+    var s = series("a".repeat(64));
+    when(pilot.resolve(s.seriesId())).thenReturn(s);
+    when(pilot.previous(s.seriesId())).thenReturn(null);
+    assertEquals(204, controller().previous(s.seriesId()).getStatusCode().value());
+
+    var forecast = new MetricForecast("r", s.seriesId(), "v1", "i", "p", "ms", 60_000L, "timesfm", "rev", "a", "q50", 1,
+        java.util.List.of(new MetricForecast.Point(120_000L, 2, 1, 2, 3)));
+    when(pilot.previous(s.seriesId())).thenReturn(forecast);
+    var response = controller().previous(s.seriesId());
+    assertEquals(200, response.getStatusCode().value());
+    assertEquals(forecast, response.getBody());
+
+    when(pilot.resolve("unknown")).thenThrow(new IllegalArgumentException("unknown"));
+    assertEquals(404, controller().previous("unknown").getStatusCode().value());
+    when(pilot.previous(s.seriesId())).thenThrow(new IllegalStateException("db down"));
+    assertEquals(503, controller().previous(s.seriesId()).getStatusCode().value());
+  }
+
   private static ForecastPilotProperties.Series series(String id) {
     return new ForecastPilotProperties.Series(id, "metric-" + id.charAt(0), "local", "v1", "ms",
         java.util.List.of("orders"), java.util.List.of(),
@@ -85,16 +106,17 @@ class ForecastControllerTest {
     org.junit.jupiter.api.Assertions.assertFalse(rows.get(1).error().contains("payload cannot be decoded"));
   }
 
-  /** METRICS-FORECAST-UX-AUDIT.md P1: the list carries no history points; the detail does. */
+  /** METRICS-FORECAST-UX-AUDIT.md P1: the list carries only the latest points a card draws; the detail all. */
   @Test
-  void theListOmitsHistoryPointsAndTheDetailKeepsThem() throws Exception {
+  void theListKeepsOnlyTheLatestHistoryPointsAndTheDetailKeepsThem() throws Exception {
     var s = series("a".repeat(64));
     when(pilot.series()).thenReturn(java.util.List.of(s));
     when(pilot.resolve(s.seriesId())).thenReturn(s);
     when(pilot.get(s.seriesId())).thenReturn(record(s.seriesId(), 512));
 
     var listed = controller().status().getBody().series().getFirst().result();
-    assertEquals(0, listed.context().points().size());
+    assertEquals(ForecastController.LIST_HISTORY_POINTS, listed.context().points().size());
+    assertEquals(511 * 60_000L, listed.context().points().getLast().endAt(), "the latest points, not the first");
     assertEquals(512, listed.context().observedPoints());
     assertEquals(512, controller().series(s.seriesId()).getBody().result().context().points().size());
 

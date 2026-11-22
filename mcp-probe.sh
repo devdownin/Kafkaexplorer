@@ -119,5 +119,50 @@ echo "$PLAIN" | grep -q '"coverage"' || fail "the response carries no coverage e
 echo "   stopReason: $(echo "$PLAIN" | grep -o '"stopReason" *: *"[A-Z_]*' | sed 's/.*"//' | head -1)"
 echo "   $(printf '%s' "$RESULT" | wc -c | tr -d ' ') bytes returned"
 
+echo "→ resources/list"
+call '{"jsonrpc":"2.0","id":4,"method":"resources/list"}' "$WORK/resources.json" "$WORK/resources.headers"
+RESOURCES=$(payload "$WORK/resources.json")
+printf '%s' "$RESOURCES" | grep -q 'kex://contract' || fail "resources/list is missing kex://contract"
+printf '%s' "$RESOURCES" | grep -q 'kafka://topics' || fail "resources/list is missing kafka://topics"
+printf '%s' "$RESOURCES" | grep -q 'kex://skills' || fail "resources/list is missing kex://skills"
+
+echo "→ resources/templates/list"
+call '{"jsonrpc":"2.0","id":5,"method":"resources/templates/list"}' "$WORK/templates.json" "$WORK/templates.headers"
+TEMPLATES=$(payload "$WORK/templates.json")
+printf '%s' "$TEMPLATES" | grep -q 'kafka://topics/{topic}' || fail "resources/templates/list is missing kafka://topics/{topic}"
+printf '%s' "$TEMPLATES" | grep -q 'skill://{name}/SKILL.md' || fail "resources/templates/list is missing the Agent Skill template"
+
+echo "→ resources/read kex://contract"
+call '{"jsonrpc":"2.0","id":6,"method":"resources/read","params":{"uri":"kex://contract"}}' "$WORK/read.json" "$WORK/read.headers"
+READ_RESULT=$(payload "$WORK/read.json")
+printf '%s' "$READ_RESULT" | grep -q 'measurement' || fail "resources/read is missing the measurement contract"
+printf '%s' "$READ_RESULT" | grep -q '"error"' && fail "resources/read was refused"
+
+echo "→ resources/read kex://skills"
+call '{"jsonrpc":"2.0","id":9,"method":"resources/read","params":{"uri":"kex://skills"}}' "$WORK/skills.json" "$WORK/skills.headers"
+SKILLS=$(payload "$WORK/skills.json")
+printf '%s' "$SKILLS" | grep -q 'skill://kafka-incident-triage/SKILL.md' || fail "skills catalogue does not list kafka-incident-triage"
+printf '%s' "$SKILLS" | grep -q 'sha256:' || fail "skills catalogue is missing SHA-256 manifests"
+printf '%s' "$SKILLS" | grep -q '"error"' && fail "skills catalogue resource was refused"
+
+echo "→ resources/read skill://kafka-incident-triage/SKILL.md"
+call '{"jsonrpc":"2.0","id":10,"method":"resources/read","params":{"uri":"skill://kafka-incident-triage/SKILL.md"}}' "$WORK/skill.json" "$WORK/skill.headers"
+SKILL=$(payload "$WORK/skill.json")
+printf '%s' "$SKILL" | grep -q 'name: kafka-incident-triage' || fail "skill resource did not return SKILL.md"
+printf '%s' "$SKILL" | grep -q '"error"' && fail "skill resource was refused"
+
+echo "→ prompts/list"
+call '{"jsonrpc":"2.0","id":7,"method":"prompts/list"}' "$WORK/prompts.json" "$WORK/prompts.headers"
+PROMPTS=$(payload "$WORK/prompts.json")
+for name in kex_incident_triage kex_dlq_postmortem kex_onboard_domain kex_schema_drift_check kex_flow_health kex_forecast_analysis; do
+    printf '%s' "$PROMPTS" | grep -q "$name" || fail "prompts/list is missing $name"
+done
+
+echo "→ prompts/get kex_incident_triage"
+call '{"jsonrpc":"2.0","id":8,"method":"prompts/get","params":{"name":"kex_incident_triage","arguments":{"key":"probe-correlation","window":"15m"}}}' "$WORK/prompt.json" "$WORK/prompt.headers"
+PROMPT=$(payload "$WORK/prompt.json")
+printf '%s' "$PROMPT" | grep -q 'probe-correlation' || fail "prompts/get did not interpolate the correlation key"
+printf '%s' "$PROMPT" | grep -q '"error"' && fail "prompts/get was refused"
+
 echo
-echo "OK — the authenticated MCP surface answers at $ENDPOINT"
+echo "OK — tools, resources, templates and prompts answer at $ENDPOINT"

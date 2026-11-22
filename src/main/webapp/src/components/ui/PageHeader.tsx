@@ -16,15 +16,15 @@ export interface PageHeaderProps {
 
 /** En-tête standard de page : hiérarchie unique pour toutes les vues. */
 export const PageHeader: FC<PageHeaderProps> = ({ kicker, title, description, actions, className }) => (
-  <header className={cn('flex flex-wrap items-end justify-between gap-4', className)}>
-    <div className="min-w-0">
+  <header className={cn('kse-page-header flex flex-wrap items-start justify-between gap-4 md:gap-5', className)}>
+    <div className="min-w-0 flex-1 basis-60">
       {kicker && (
-        <p className="text-[11px] font-medium uppercase tracking-[0.05em] text-on-surface-variant mb-1">{kicker}</p>
+        <p className="text-[12px] font-medium text-on-surface-variant mb-1">{kicker}</p>
       )}
-      <h1 className="text-2xl font-semibold tracking-tight text-on-surface">{title}</h1>
-      {description && <p className="text-[13px] text-on-surface-variant mt-1 max-w-2xl leading-relaxed">{description}</p>}
+      <h1 className="text-[24px] leading-[1.15] sm:text-[28px] md:text-[30px] font-semibold tracking-[-0.02em] text-on-surface">{title}</h1>
+      {description && <p className="text-[13px] text-on-surface-variant mt-1.5 max-w-2xl leading-relaxed">{description}</p>}
     </div>
-    {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+    {actions && <div className="kse-page-actions flex flex-wrap items-center gap-2 min-w-0">{actions}</div>}
   </header>
 );
 

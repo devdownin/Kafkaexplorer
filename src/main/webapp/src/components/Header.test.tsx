@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import Header from './Header';
@@ -12,10 +12,31 @@ import Header from './Header';
  * version asserted by every deployment without ever asking the broker.
  */
 
-const renderHeader = (props: Parameters<typeof Header>[0]) =>
-  render(<RouterProvider router={createMemoryRouter([{ path: '/', element: <Header {...props} /> }], { initialEntries: ['/'] })} />);
+const renderHeader = (props: Omit<Parameters<typeof Header>[0], 'theme' | 'onThemeToggle'>) =>
+  render(<RouterProvider router={createMemoryRouter([{ path: '/', element: <Header theme="dark" onThemeToggle={() => {}} {...props} /> }], { initialEntries: ['/'] })} />);
 
 describe('Header connection pill', () => {
+  it('exposes the selected theme and switches modes through an accessible control', () => {
+    const onThemeToggle = vi.fn();
+    render(<RouterProvider router={createMemoryRouter([{
+      path: '/', element: <Header theme="light" onThemeToggle={onThemeToggle} isHealthy={null} clusterName="" />,
+    }], { initialEntries: ['/'] })} />);
+    const switchButton = screen.getByRole('switch', { name: 'Dark mode' });
+    expect(switchButton).toHaveAttribute('aria-checked', 'false');
+    expect(switchButton.closest('[title]')).toHaveAttribute('title', 'Switch to dark mode');
+    switchButton.click();
+    expect(onThemeToggle).toHaveBeenCalledOnce();
+  });
+
+  it('exposes dark mode as the checked state with an explicit light-mode hint', () => {
+    render(<RouterProvider router={createMemoryRouter([{
+      path: '/', element: <Header theme="dark" onThemeToggle={() => {}} isHealthy={null} clusterName="" />,
+    }], { initialEntries: ['/'] })} />);
+    const switchButton = screen.getByRole('switch', { name: 'Dark mode' });
+    expect(switchButton).toHaveAttribute('aria-checked', 'true');
+    expect(switchButton.closest('[title]')).toHaveAttribute('title', 'Switch to light mode');
+  });
+
   it('shows the deployment name and the effective bootstrap address on hover', () => {
     renderHeader({ isHealthy: true, clusterName: 'Orders prod', bootstrapServers: 'kafka:29092' });
     expect(screen.getByText('Orders prod')).toBeInTheDocument();

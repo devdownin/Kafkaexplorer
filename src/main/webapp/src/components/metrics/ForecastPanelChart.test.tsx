@@ -2,8 +2,10 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import axios from 'axios';
+import userEvent from '@testing-library/user-event';
+import { FORECAST_COLORS } from './forecastColors';
 import { ForecastPanel } from './ForecastPanel';
 
 vi.mock('axios', () => ({ default: { get: vi.fn(), put: vi.fn(), delete: vi.fn(), isAxiosError: () => false } }));
@@ -45,6 +47,20 @@ describe('ForecastPanel chart', () => {
     expect(await screen.findByText('Imputed (gap filled)')).toBeInTheDocument();
   });
 
+  // Accessibility: the chart's numbers are otherwise reachable only by hovering.
+  it('offers the chart points as a table, and summarises the chart for a screen reader', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
+    render(<ForecastPanel />);
+    const chart = await screen.findByRole('img', { name: /3 observed points, 3 predicted/ });
+    expect(chart).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: /Measured values/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText('Chart data as a table'));
+    const table = await screen.findByRole('table', { name: /Measured values/ });
+    expect(table).toHaveTextContent('Observed');
+    expect(table).toHaveTextContent('Predicted');
+    expect(table).toHaveTextContent('8 – 12');
+  });
+
   // METRICS-FORECAST-UX-AUDIT.md B5: the threshold a breach is judged against is on the chart.
   it('draws the configured threshold', async () => {
     const progress = { seriesId: id, state: 'READY', reason: 'ok', observedPoints: 3, requiredPoints: 512, missingPoints: 0, imputedPoints: 0,
@@ -54,6 +70,73 @@ describe('ForecastPanel chart', () => {
       : String(url).endsWith('/progress') ? progress : {} }));
     render(<ForecastPanel />);
     expect(await screen.findByText('Threshold ≥ 11')).toBeInTheDocument();
+  });
+
+  it('reads a threshold the operator only tries out, as the card reads the metric\u2019s own', async () => {
+    const withHistory = structuredClone(status) as typeof status & { series: { result: { forecast: Record<string, unknown> } }[] };
+    withHistory.series[0].result.forecast.historyEndAt = 0;
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? withHistory : {} }));
+    const user = userEvent.setup();
+    render(<ForecastPanel />);
+    const input = await screen.findByRole('spinbutton', { name: 'Try a threshold' });
+    await user.type(input, '11');
+    expect(screen.getByLabelText('Try a threshold', { selector: 'div' })).toHaveTextContent('Reached on the edge of the 80 % band in ~1 min');
+    await user.clear(input);
+    await user.type(input, '50');
+    expect(screen.getByLabelText('Try a threshold', { selector: 'div' })).toHaveTextContent('Not reached within the forecast horizon');
+  });
+
+  it('waits to read the shown series until the panel is on screen', async () => {
+    let callback: ((entries: { isIntersecting: boolean }[]) => void) | undefined;
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(cb: (entries: { isIntersecting: boolean }[]) => void) { callback = cb; }
+      observe() { callback?.([{ isIntersecting: false }]); }
+      disconnect() {}
+    });
+    try {
+      vi.mocked(axios.get).mockClear();
+      vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
+      render(<ForecastPanel />);
+      await screen.findByText('80 % interval');
+      const detailReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) => String(url).startsWith(`/api/forecasts/${id}`)).length;
+      expect(detailReads()).toBe(0);
+      act(() => callback?.([{ isIntersecting: true }]));
+      await waitFor(() => expect(detailReads()).toBeGreaterThan(0));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  // One clock for the page: given one, the panel reads once per tick and runs no timer of its own.
+  it('reads once per tick of the page clock it is given', async () => {
+    vi.mocked(axios.get).mockClear();
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
+    const listReads = () => vi.mocked(axios.get).mock.calls.filter(([url]) => url === '/api/forecasts').length;
+    const { rerender } = render(<ForecastPanel clock={0} />);
+    await screen.findByText('80 % interval');
+    expect(listReads()).toBe(1);
+    rerender(<ForecastPanel clock={0} />);
+    expect(listReads()).toBe(1);
+    rerender(<ForecastPanel clock={1} />);
+    await waitFor(() => expect(listReads()).toBe(2));
+  });
+
+  // The metric's own thresholds, drawn as the card draws them: a near one on the chart, a far one named.
+  it('draws the metric\u2019s own warning and critical thresholds, naming a far one at the edge', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
+    render(<ForecastPanel metricThresholds={{ m: { warning: 11, critical: 5000 } }} />);
+    expect(await screen.findByText('warning 11')).toBeInTheDocument();
+    expect(screen.getByLabelText('Thresholds off the chart scale')).toHaveTextContent('↑ critical 5,000');
+  });
+
+  it('draws none of them against a rate forecast', async () => {
+    const rate = structuredClone(status) as typeof status & { series: { result: { context: Record<string, unknown> } }[] };
+    rate.series[0].result.context.profile = { transformation: 'COUNTER_RATE' };
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? rate : {} }));
+    render(<ForecastPanel metricThresholds={{ m: { warning: 11, critical: 5000 } }} />);
+    expect(await screen.findByText('80 % interval')).toBeInTheDocument();
+    expect(screen.queryByText('warning 11')).toBeNull();
+    expect(screen.queryByLabelText('Thresholds off the chart scale')).toBeNull();
   });
 
   // A threshold above every value was drawn outside the plot: `ifOverflow="extendDomain"` does not
@@ -69,5 +152,60 @@ describe('ForecastPanel chart', () => {
     const ticks = [...container.querySelectorAll('.recharts-yAxis .recharts-cartesian-axis-tick-value')]
       .map(t => Number(t.textContent));
     expect(Math.max(...ticks)).toBeGreaterThanOrEqual(50);
+  });
+
+  // One past forecast against what happened, point by point, only once it is asked for.
+  it('sets the latest fully measured forecast beside what happened, on request', async () => {
+    // Measured 9 at 0, 1 and 2 minutes; the previous forecast said 10 (8–12) at 1 and 2, and 20 at 0.
+    const previous = { historyEndAt: -60000, points: [0, 1, 2].map(i => ({ at: i * 60000, central: 10, q10: i === 0 ? 18 : 8, q50: i === 0 ? 20 : 10, q90: i === 0 ? 22 : 12 })) };
+    const asked: string[] = [];
+    vi.mocked(axios.get).mockImplementation(url => {
+      asked.push(String(url));
+      return Promise.resolve(String(url).endsWith('/previous') ? { status: 200, data: previous } : { data: url === '/api/forecasts' ? status : {} });
+    });
+    const { container } = render(<ForecastPanel />);
+    await screen.findByText('Median forecast');
+    expect(asked.some(u => u.endsWith('/previous'))).toBe(false);
+    await userEvent.setup().click(screen.getByRole('checkbox', { name: /Previous forecast vs actual/ }));
+    const summary = await screen.findByText(/measured/, { selector: '[aria-label="Previous forecast against what happened"]' });
+    expect(summary).toHaveTextContent('2 of 3 measured points inside its 80 % band');
+    expect(summary).toHaveTextContent('mean error 4.33 ms');
+    // Measured below what it predicted on average, by as much as its mean error: said, as a direction.
+    expect(summary).toHaveTextContent('it ran high by 4.33 on average');
+    expect(screen.getByText('Previous forecast')).toBeInTheDocument();
+    expect(container.querySelector(`path[stroke="${FORECAST_COLORS.previous}"]`)).not.toBeNull();
+  });
+
+  it('says so when no forecast has been fully measured yet', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve(String(url).endsWith('/previous')
+      ? { status: 204, data: '' } : { data: url === '/api/forecasts' ? status : {} }));
+    render(<ForecastPanel />);
+    await screen.findByText('Median forecast');
+    await userEvent.setup().click(screen.getByRole('checkbox', { name: /Previous forecast vs actual/ }));
+    expect(await screen.findByText(/No forecast has been fully measured yet/)).toBeInTheDocument();
+  });
+
+  // The axis started at zero: a latency between 1 900 and 2 300 was a flat line and its band a sliver.
+  it('fits the value axis to the series rather than starting at zero', async () => {
+    const high = structuredClone(status);
+    high.series[0].result.context.points.forEach((p, i) => { p.value = 1900 + 100 * i; });
+    high.series[0].result.forecast.points.forEach((p, i) => Object.assign(p, { q10: 2050 + i, q50: 2100 + i, q90: 2300 + i }));
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? high : {} }));
+    const { container } = render(<ForecastPanel />);
+    await screen.findByText('Median forecast');
+    const ticks = [...container.querySelectorAll('.recharts-yAxis .recharts-cartesian-axis-tick-value')]
+      .map(t => Number(t.textContent!.replace(/[^\d.-]/g, '')));
+    expect(Math.min(...ticks)).toBeGreaterThan(1000);
+    expect(Math.max(...ticks)).toBeGreaterThanOrEqual(2300);
+  });
+
+  // Where the measurements stop is marked, and the median leaves from the last measured point.
+  it('marks the start of the forecast and joins it to the last measurement', async () => {
+    vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? status : {} }));
+    const { container } = render(<ForecastPanel />);
+    expect(await screen.findByText('Forecast begins')).toBeInTheDocument();
+    const median = container.querySelector('.recharts-line path[stroke-dasharray="6 3"]');
+    // Three predicted points plus the measured one it starts from: four vertices, three segments.
+    expect(median?.getAttribute('d')?.match(/[ML]/g)?.length ?? (median?.getAttribute('d')?.match(/C/g)?.length ?? 0) + 1).toBe(4);
   });
 });

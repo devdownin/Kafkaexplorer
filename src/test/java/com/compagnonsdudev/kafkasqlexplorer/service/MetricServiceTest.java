@@ -236,6 +236,31 @@ class MetricServiceTest {
         assertThrows(IllegalArgumentException.class, () -> service.save(topicless));
     }
 
+    /** A silent topic: the age of its newest record. An empty topic or a failed read is never an age of zero. */
+    @Test
+    void latestRecordAgeIsTheSilenceOfATopicAndNeverZeroForNothingRead() {
+        var silence = new MetricConfig("silence", "orders_silence", "GAUGE", null, "description",
+            null, null, null, null, null, List.of(), Map.of(), null, "KAFKA_CLUSTER_COUNT",
+            Map.of("measurement", "LATEST_RECORD_AGE", "topic", "orders"), "TEMPLATE_BOUNDED_SCAN", null, List.of());
+        long fiveMinutesAgo = System.currentTimeMillis() - 300_000L;
+        Mockito.when(kafkaAdminService.getLatestMessage("orders"))
+            .thenReturn(java.util.Optional.of(new com.compagnonsdudev.kafkasqlexplorer.domain.KafkaMessage(
+                "orders", 0, 41L, fiveMinutesAgo, "k", "{}")));
+        var preview = service.previewMetric(silence);
+        assertNull(preview.error());
+        assertTrue(preview.value() >= 300_000.0 && preview.value() < 310_000.0, String.valueOf(preview.value()));
+
+        Mockito.when(kafkaAdminService.getLatestMessage("orders")).thenReturn(java.util.Optional.empty());
+        var empty = service.previewMetric(silence);
+        assertNull(empty.value());
+        assertTrue(empty.error().contains("no record"), empty.error());
+
+        Mockito.when(kafkaAdminService.getLatestMessage("orders")).thenThrow(new IllegalStateException("broker down"));
+        var failed = service.previewMetric(silence);
+        assertNull(failed.value());
+        assertTrue(failed.error().contains("broker down"), failed.error());
+    }
+
     @Test
     void kafkaDefaultsReportMetadataFailureInsteadOfZero() throws Exception {
         Mockito.when(flinkSqlService.listTables()).thenReturn(List.of());
@@ -507,6 +532,48 @@ class MetricServiceTest {
             .tag("metric_name", "before_rename").meters().isEmpty(), "the old name must not survive a rename");
         assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", id)
             .tag("metric_name", "after_rename").meters().isEmpty());
+    }
+
+    /** Stream Flow names the hop a metric measures: fixed labels reach every series of it. */
+    @Test
+    void fixedLabelsAreOnTheSeriesAndSurviveAnEdit() {
+        Mockito.when(flinkSqlService.executeSql(Mockito.any()))
+            .thenReturn(new QueryResult(List.of("metric_value"), List.of(Map.of("metric_value", 5.0)), 10L, null));
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put(MetricService.STATIC_LABELS_PARAM, Map.of("source_topic", "orders", "target_topic", "shipped"));
+        service.save(new MetricConfig(
+            null, "hop_metric", "GAUGE", "SELECT 5 AS metric_value", null, null, null,
+            null, null, null, List.of(), Map.of(), null, null, params, null, null, List.of()));
+        MetricConfig saved = service.getAllMetrics().stream()
+            .filter(m -> "hop_metric".equals(m.name())).findFirst().orElseThrow();
+        service.refreshMetrics();
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", saved.id())
+            .tag("source_topic", "orders").tag("target_topic", "shipped").meters().isEmpty());
+
+        // An edit that changes another field keeps them: the record is copied, its params with it.
+        service.save(new MetricConfig(
+            saved.id(), "hop_metric", "GAUGE", "SELECT 5 AS metric_value", "described", 10.0, null,
+            null, null, null, List.of(), Map.of(), null, null, saved.templateParams(), null, null, List.of()));
+        service.refreshMetrics();
+        assertFalse(meterRegistry.find("explorer_metric_gauge").tag("metric_id", saved.id())
+            .tag("source_topic", "orders").meters().isEmpty());
+    }
+
+    @Test
+    void aFixedLabelThatIsNotALabelOrOverwritesTheIdentityIsRefused() {
+        for (Map<String, Object> labels : List.<Map<String, Object>>of(
+                Map.of("Source Topic", "orders"), Map.of("metric_id", "x"), Map.of("source_topic", " "))) {
+            Map<String, Object> params = new LinkedHashMap<>();
+            params.put(MetricService.STATIC_LABELS_PARAM, labels);
+            var metric = new MetricConfig(
+                null, "bad_labels", "GAUGE", "SELECT 5 AS metric_value", null, null, null,
+                null, null, null, List.of(), Map.of(), null, null, params, null, null, List.of());
+            var error = assertThrows(IllegalArgumentException.class, () -> MetricService.staticLabels(metric.templateParams()));
+            assertTrue(error.getMessage().startsWith("Fixed label"), error.getMessage());
+        }
+        Map<String, Object> many = new LinkedHashMap<>();
+        for (int i = 0; i <= MetricService.MAX_STATIC_LABELS; i++) many.put("l" + i, "v");
+        assertThrows(IllegalArgumentException.class, () -> MetricService.staticLabels(Map.of(MetricService.STATIC_LABELS_PARAM, many)));
     }
 
     /** METRICS-CREATION-AUDIT.md B2: a definition no topic received is not saved, and says so. */
@@ -1067,6 +1134,15 @@ class MetricServiceTest {
         // Both labels come from the configuration, so the series cannot change subject silently.
         assertEquals("demo.orders", preview.rows().get(0).get("topic"));
         assertEquals("orders-api", preview.rows().get(0).get("group"));
+    }
+
+    /** METRICS-FORECAST-AUDIT-2.md B3: deleting a metric releases its history enrolment slot. */
+    @Test
+    void deletingAMetricReleasesItsHistoryEnrolmentSlot() {
+        var journal = Mockito.mock(com.compagnonsdudev.kafkasqlexplorer.forecast.MetricObservationJournal.class);
+        service.setObservationJournal(journal);
+        service.delete("some-metric");
+        Mockito.verify(journal).forget("some-metric");
     }
 
     @Test

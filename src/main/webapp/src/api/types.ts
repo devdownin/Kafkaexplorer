@@ -1434,6 +1434,30 @@ export interface McpCatalogView {
   observedWindow: ObservedWindow;
 }
 
+/** The live resource/prompt specification inventory, not a frontend-maintained list. */
+export interface McpSurfaceView {
+  kind: 'RESOURCE' | 'RESOURCE_TEMPLATE' | 'PROMPT';
+  name: string;
+  uri: string | null;
+  description: string | null;
+}
+
+/** Immutable Agent Skills shipped in KafkaExplorer's application package. */
+export interface McpSkillView {
+  name: string;
+  description: string;
+  uri: string;
+  digest: string;
+  size: number;
+  audience: 'KAFKA' | 'ENGINEERING';
+}
+
+/** Lazily fetched exact SKILL.md bytes and manifest metadata. */
+export interface McpSkillDetail {
+  skill: McpSkillView;
+  content: string;
+}
+
 /** @java McpCallView */
 export interface McpCallView {
   correlationId: string;
@@ -1697,6 +1721,8 @@ export interface ForecastStatus {
   shadowEnabled: boolean;
   /** Whether a forecasting model (TimesFM) is configured: without one, no forecast can be created. */
   modelAvailable: boolean;
+  /** When the next forecast cycle starts; null while one is running, or with no pilot. */
+  nextCycleAt?: number | null;
 }
 /** @java ForecastSetupService.Check */
 export interface ForecastPreparationCheck {
@@ -1907,4 +1933,15 @@ export interface AssistantMetricResponse {
   name: string | null;
   type: string;
   description: string | null;
+}
+/** @java MetricRefreshCosts.Cost */
+export interface MetricRefreshCost {
+  lastDurationMs: number;
+  collectionIntervalMs: number;
+}
+/** @java MetricRefreshCosts */
+export interface MetricRefreshCosts {
+  tickMs: number;
+  /** Absent for a metric not refreshed yet in this process. */
+  metrics: Record<string, MetricRefreshCost>;
 }

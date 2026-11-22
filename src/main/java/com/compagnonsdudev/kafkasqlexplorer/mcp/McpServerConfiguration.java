@@ -12,6 +12,10 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRateLimiter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRuntimeSwitches;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolFilter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.skills.McpSkillCatalog;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.skills.McpSkillResources;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.resources.KafkaMcpResources;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.prompts.KafkaMcpPrompts;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpAuditSink;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.KafkaMcpAuditSink;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCallRecorder;
@@ -208,6 +212,36 @@ public class McpServerConfiguration {
         return new McpToolInvoker(toolSpecs);
     }
 
+    /**
+     * Resources and prompts are optional along with the MCP transport. Resource reads go through
+     * the same scoped topic adapters and explicitly repeat the tool interception guards.
+     */
+    @Bean
+    KafkaMcpResources kafkaMcpResources(TopicMcpTools topics, McpCatalogService catalog,
+                                       McpRuntimeSwitches switches, McpRateLimiter limiter,
+                                       ToolGuard guard) {
+        return new KafkaMcpResources(topics, catalog, switches, limiter, guard);
+    }
+
+    /**
+     * Skills are immutable packaged resources; they have no access to Kafka or credentials.
+     * MCP extension negotiation stays disabled until the Java SDK supports SEP-2640 methods.
+     */
+    @Bean
+    McpSkillCatalog mcpSkillCatalog() {
+        return new McpSkillCatalog();
+    }
+
+    @Bean
+    McpSkillResources mcpSkillResources(McpSkillCatalog skills, McpProperties properties) {
+        return new McpSkillResources(skills, properties);
+    }
+
+    @Bean
+    KafkaMcpPrompts kafkaMcpPrompts() {
+        return new KafkaMcpPrompts();
+    }
+
     @Bean
     TopicMcpTools topicMcpTools(KafkaAdminService kafka, SchemaInferenceService schemas,
                                 MessageFormatterService formatter, ToolGuard guard) {
@@ -304,8 +338,11 @@ public class McpServerConfiguration {
     @Bean
     @ConditionalOnProperty(prefix = "explorer.forecasting.pilot", name = "enabled", havingValue = "true", matchIfMissing = true)
     @Conditional(ApprovedForecastSeriesCondition.class)
-    ForecastMcpTools forecastMcpTools(ForecastPilotService pilot, ToolGuard guard) {
-        return new ForecastMcpTools(pilot, guard);
+    ForecastMcpTools forecastMcpTools(ForecastPilotService pilot, ToolGuard guard,
+                                      ObjectProvider<com.compagnonsdudev.kafkasqlexplorer.service.MetricService> metrics) {
+        // The metrics' own thresholds, for the reach tool; absent in a slice that has no MetricService,
+        // where that one tool answers DEPENDENCY_UNAVAILABLE and the five others are unaffected.
+        return new ForecastMcpTools(pilot, guard, metrics.getIfAvailable());
     }
 
     @Bean

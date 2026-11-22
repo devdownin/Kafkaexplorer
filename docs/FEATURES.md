@@ -45,7 +45,7 @@ A language model drafts Flink SQL, and **never runs or saves anything**: `explor
 - **Measured**: 50 cases run and executed on four candidate models — see `EMBEDDED-LLM-SCOPE.md` §7.1 and `docs/benchmarks/assistant-eval/`.
 
 ## 4. Professional SQL Editor
-- **Monaco Editor**: High-performance SQL editor (VS Code engine) with SQL syntax highlighting and Cyberpunk theme.
+- **Monaco Editor**: High-performance SQL editor (VS Code engine) with SQL syntax highlighting and a light and a dark theme matching the application (`kse-light`, `kse-dark`).
 - **Read Mode Switch**: Toggle between **Earliest** (the oldest retained records) and **Latest** (the most recent ones) directly in the UI. **Latest is the default**, here and in the Topic Explorer's sample, where the switch sits above the sample it governs and gives way to the search's own scope while a search is shown.
 - **Dynamic SQL Hints**: Automatic injection of Flink SQL hints (`/*+ OPTIONS(...) */`) for per-query offset control without DDL changes.
 - **Auto-completion**: Intelligent suggestion of topic names and registered tables (`Ctrl+Space`).
@@ -237,6 +237,10 @@ Not a tenth Kafka MCP server: the surface those expose is the `AdminClient` tran
 JSON-RPC — `list_topics`, `consume`, `describe_consumer_group` — which answers none of the
 questions an engineer actually asks. What is exposed here is SQL over vanilla Kafka, schema
 inference, and the correlation tools; the Kafka control plane is deliberately delegated elsewhere.
+
+For an interactive, source-backed walkthrough of Skills, Tools, Resources, Prompts and
+the Kex-anHarness → KafkaExplorer call graph, open **MCP → MCP Guide** in the app,
+or read the [public illustrated guide](mcp-guide.html).
 
 Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, and why:
 [`docs/notes/mcp-server.md`](notes/mcp-server.md).

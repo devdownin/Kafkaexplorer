@@ -4,6 +4,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { FC, ReactNode } from 'react';
 import { Button } from './Button';
+import { GlassModal } from './Spatial';
 
 export interface ConfirmOptions {
   title: string;
@@ -95,8 +96,8 @@ export const ConfirmProvider: FC<{ children: ReactNode }> = ({ children }) => {
           className="fixed inset-0 z-[60] flex items-center justify-center p-4 confirm-overlay animate-fade-in"
           onClick={() => settle(false)}
         >
-          <div
-            className="w-full max-w-lg bg-surface-container border border-outline-variant rounded-xl shadow-2xl p-5 animate-slide-up"
+          <GlassModal
+            className="w-full max-w-lg p-5 animate-slide-up"
             role="dialog"
             aria-modal="true"
             aria-labelledby="confirm-title"
@@ -119,7 +120,7 @@ export const ConfirmProvider: FC<{ children: ReactNode }> = ({ children }) => {
                 {options.confirmLabel ?? 'Confirm'}
               </Button>
             </div>
-          </div>
+          </GlassModal>
         </div>
       )}
     </ConfirmContext.Provider>

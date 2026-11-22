@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
-import Editor, { useMonaco } from '@monaco-editor/react';
+import { useMonaco } from '@monaco-editor/react';
+import Editor from '../components/ThemedEditor';
 import '../monaco-setup';
 import { useToast } from '../components/Toast';
 import { useCatalog } from '../catalogStore';
@@ -24,15 +25,21 @@ import { DEFAULT_REQUEST_TIMEOUT_MS } from '../api/requestTimeout';
 // une interface écrite dans la page est exactement ce qui a divergé sans bruit ailleurs.
 import type {
   AuditHistory, ForecastCandidates, ForecastStatus, MetricConfig, MetricLabelPreview, MetricSuggestion, MetricSuggestions, MetricTemplateDescriptor,
-  MetricTestResponse, TableMetadata,
+  MetricRefreshCosts, MetricTestResponse, TableMetadata,
 } from '../api/types';
 import { hasRunningMetric } from './metricsHealth';
 import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop';
+
+const BACKDROP_KEY = 'kse:metrics-backdrop';
 import { ForecastSetupWizard } from '../components/metrics/ForecastSetupWizard';
 import { ForecastPanel } from '../components/metrics/ForecastPanel';
-import { forecastStage } from '../components/metrics/forecastStage';
+import { AutoCreateRefused, createForecastFromMetric } from '../components/metrics/forecastAutoCreate';
+import { about, forecastStage, type ForecastStageSummary } from '../components/metrics/forecastStage';
+import { EMPTY_REACH_MEMORY, forecastReadDue, groupReasons, keepUnchanged, nextReachMemory } from './metricsPolling';
+import { forecastReachFor, type MetricForecastReach } from '../components/metrics/forecastBreach';
 import { SuggestionsPanel } from '../components/metrics/SuggestionsPanel';
 import { MetricCard } from '../components/metrics/MetricCard';
+import { MetricRow } from '../components/metrics/MetricRow';
 import { TemplateParamsEditor } from '../components/metrics/TemplateParamsEditor';
 import { MetricDraftAssist } from '../components/assistant/MetricDraftAssist';
 import { useAssistantStatus } from '../components/assistant/useAssistantStatus';
@@ -68,6 +75,9 @@ import {
   validateThresholds,
 } from './metricsEditor';
 import type { ValidationMsg } from './metricsEditor';
+
+/** A card whose forecast was just created, before the next poll lists it. One object, so a memoised card is not re-rendered for it. */
+const STARTED_STAGE: ForecastStageSummary = { stage: 'WAITING', label: 'Started', tone: 'neutral', detail: 'Waiting for the first forecast cycle' };
 
 // ── Metric template metadata (mirrors the backend TEMPLATE_DESCRIPTORS) ──────
 /** Hauteurs de l'ornement affiché tant qu'aucune donnée n'est arrivée. */
@@ -153,10 +163,20 @@ const Metrics: React.FC = () => {
    * Le brouillon est relu au montage et rouvre le modal tel qu'il était.
    */
   const [restoredEditor] = useState(() => readDraft<EditorDraft | null>(EDITOR_DRAFT, null));
-  const [forecastRequest, setForecastRequest] = useState<{ metricId?: string; sequence: number } | null>(null);
+  /*
+   * The form for one metric, opened only when its card's one-click creation stopped — with the
+   * reason it stopped. A success needs no form: the card shows where the new forecast stands.
+   */
+  const [forecastRequest, setForecastRequest] = useState<{ metricId: string; error: string; sequence: number } | null>(null);
+  // The metric whose forecast is being created from its card, so the button can say so.
+  const [creatingForecastId, setCreatingForecastId] = useState('');
   // The panel's own poll feeds the cards: one request for both, not one per card.
   const [forecastStatus, setForecastStatus] = useState<ForecastStatus | null>(null);
   const [forecastRevision, setForecastRevision] = useState(0);
+  // The page's one clock, handed to the forecast panel so both read on the same tick.
+  const [forecastClock, setForecastClock] = useState(0);
+  // What each metric's last refresh cost, and the loop's tick the page polls at.
+  const [refreshCosts, setRefreshCosts] = useState<MetricRefreshCosts | null>(null);
   // The series the assistant just started: the panel shows it, not whichever series is first.
   const [forecastFocus, setForecastFocus] = useState('');
   // The creation response arrives before the next /api/forecasts poll: disable the card at once.
@@ -201,12 +221,17 @@ const Metrics: React.FC = () => {
   const candidatesByMetric = useMemo(() => new Map(
     forecastCandidates?.metrics.map(candidate => [candidate.metricId, candidate] as const) ?? [],
   ), [forecastCandidates]);
+  // Recomputed only when the status object changes, which the identity-keeping poll below makes
+  // "when a forecast moved" rather than "every 30 s".
   const forecastStages = useMemo(() => {
-    const stages = new Map<string, ReturnType<typeof forecastStage>>();
+    const stages = new Map<string, ForecastStageSummary>();
     // A metric forecast in two environments shows the first, as the panel's selector does.
     for (const s of forecastStatus?.series ?? []) if (!stages.has(s.metricId)) stages.set(s.metricId, forecastStage(s));
     return stages;
   }, [forecastStatus]);
+  const metricThresholds = useMemo(() => Object.fromEntries(metrics.map(m =>
+    [m.id, { warning: m.warningThreshold, critical: m.criticalThreshold }])), [metrics]);
+  const metricNames = useMemo(() => Object.fromEntries(metrics.map(m => [m.id, m.name || m.id])), [metrics]);
   const forecastSeriesByMetric = useMemo(() => {
     const series = new Map<string, ForecastStatus['series'][number]>();
     for (const s of forecastStatus?.series ?? []) if (!series.has(s.metricId)) series.set(s.metricId, s);
@@ -220,6 +245,25 @@ const Metrics: React.FC = () => {
     heading?.focus({ preventScroll: true });
     heading?.closest('section')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
   }, [forecastRequest]);
+  async function createForecast(metric: MetricConfig) {
+    if (creatingForecastId) return;
+    setCreatingForecastId(metric.id);
+    setForecastRequest(null);
+    try {
+      const created = await createForecastFromMetric(metric.id);
+      setCreatedForecastMetricId(metric.id);
+      setForecastFocus(created.seriesId);
+      setForecastRevision(v => v + 1);
+      toast(`Forecast started for ${created.name}. ${created.firstForecast}.`, 'success');
+    } catch (e) {
+      const reason = e instanceof AutoCreateRefused ? e.message
+        : axios.isAxiosError(e) && typeof e.response?.data?.reason === 'string' ? e.response.data.reason : '';
+      setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1,
+        error: reason ? `Automatic creation stopped: ${reason}. Review the settings below.` : 'Automatic creation failed. Review the settings below and retry.' }));
+    } finally {
+      setCreatingForecastId('');
+    }
+  }
   const [isModalOpen, setIsModalOpen]   = useState(restoredEditor !== null);
   const [editingMetric, setEditingMetric] = useState<Partial<MetricConfig>>(restoredEditor?.metric ?? EMPTY_METRIC);
   const [selectedTopic, setSelectedTopic] = useState<string>(restoredEditor?.topic ?? '');
@@ -264,6 +308,19 @@ const Metrics: React.FC = () => {
   const [priorityRoute, setPriorityRoute] = useState<string | null>(null);
   const [filterType, setFilterType]     = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  // The forecast is what an operator asks the list about: which metrics are about to breach, which
+  // have a forecast at all. Both views read the same reach the card's badge does.
+  const [filterForecast, setFilterForecast] = useState<'all' | 'breach' | 'running' | 'none'>('all');
+  const [sortBy, setSortBy] = useState<'severity' | 'breach'>('severity');
+  // Cards, or one line per metric for a deployment with dozens of them. Remembered in this browser
+  // only — a per-viewer convenience, so a storage that throws (private window) just means cards.
+  const [view, setView] = useState<'cards' | 'compact'>(() => {
+    try { return localStorage.getItem('metrics.view') === 'compact' ? 'compact' : 'cards'; } catch { return 'cards'; }
+  });
+  const chooseView = (next: 'cards' | 'compact') => {
+    setView(next);
+    try { localStorage.setItem('metrics.view', next); } catch { /* not remembered, still applied */ }
+  };
   const [nameIsAuto, setNameIsAuto]     = useState(restoredEditor?.nameIsAuto ?? false);
   const [labelPreview, setLabelPreview] = useState<MetricLabelPreview | null>(null);
   const [labelPreviewLoading, setLabelPreviewLoading] = useState(false);
@@ -297,8 +354,9 @@ const Metrics: React.FC = () => {
   const fetchMetrics = useCallback(async () => {
     try {
       const res = await axios.get<MetricConfig[]>('/api/metrics');
-      // A poll that brought nothing new keeps the array, so nothing below re-renders for it.
-      setMetrics(previous => JSON.stringify(previous) === JSON.stringify(res.data) ? previous : res.data);
+      // Element by element: a metric that did not move stays the same object, so its memoised card
+      // does not render again; a poll that brought nothing new keeps the array itself.
+      setMetrics(previous => keepUnchanged(previous, res.data, m => m.id));
       listFailing.current = false;
       setListError(null);
     } catch (err) {
@@ -310,6 +368,14 @@ const Metrics: React.FC = () => {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- toast is stable
+  }, []);
+
+  const fetchRefreshCosts = useCallback(async () => {
+    try {
+      const { data } = await axios.get<MetricRefreshCosts>('/api/metrics/refresh-costs');
+      if (data && typeof data.tickMs === 'number' && data.metrics && typeof data.metrics === 'object')
+        setRefreshCosts(previous => JSON.stringify(previous) === JSON.stringify(data) ? previous : data);
+    } catch { /* a cost that cannot be read is simply not shown */ }
   }, []);
 
   // The mount derivation and the one a save triggers can overlap: the older answer, landing last,
@@ -367,9 +433,25 @@ const Metrics: React.FC = () => {
     axios.get<MetricTemplateDescriptor[]>('/api/metrics/templates')
       .then(r => setTemplates(r.data))
       .catch(err => setTemplatesError(describeApiError(err, 'Failed to load metric templates.')));
-    return startVisiblePolling(() => void fetchMetrics(), 15000);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- poll on mount; fetchMetrics/toast are stable
+    void fetchRefreshCosts();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- load on mount; fetchMetrics/toast are stable
   }, []);
+  /*
+   * One clock, at the server's own cadence. The list was read every 15 s while the server
+   * recomputes every 30 s (`explorer.metrics-refresh-rate`), so one read in two brought nothing,
+   * and the forecast panel ran a second loop of its own beside it. The tick is the one the server
+   * reports, so a deployment that refreshes every minute is read every minute.
+   */
+  const pollMs = refreshCosts && refreshCosts.tickMs >= 5000 ? refreshCosts.tickMs : 30000;
+  // When the forecasts were last read and when the pilot's next cycle starts: the forecast panel is
+  // only asked again once something can have changed (`forecastReadDue`). Written by the panel's
+  // status callback and read by this timer, never during render.
+  const forecastReads = useRef<{ lastAt: number | null; nextCycleAt: number | null }>({ lastAt: null, nextCycleAt: null });
+  useEffect(() => startVisiblePolling(() => {
+    void fetchMetrics();
+    void fetchRefreshCosts();
+    if (forecastReadDue(Date.now(), forecastReads.current.nextCycleAt, forecastReads.current.lastAt)) setForecastClock(c => c + 1);
+  }, pollMs), [pollMs, fetchMetrics, fetchRefreshCosts]);
 
   /** Called with every preview that arrived: drops the labels the new topic's message does not carry. */
   const reconcileLabelFields = useCallback((preview: MetricLabelPreview) => {
@@ -884,12 +966,184 @@ const Metrics: React.FC = () => {
   // `counts.ok` juste au-dessus répond à une autre question (le verdict par seuil), et une
   // métrique peut être `critical` tout en tournant parfaitement.
   const anyMetricRunning = useMemo(() => hasRunningMetric(metrics), [metrics]);
+  // The animated background is an ornament, and lines drifting across the cards read as noise on a
+  // page kept open to be read: off unless the operator turns it on, and remembered on this browser.
+  const [backdropOn, setBackdropOn] = useState(() => {
+    try { return localStorage.getItem(BACKDROP_KEY) === '1'; } catch { return false; }
+  });
+  const toggleBackdrop = () => setBackdropOn(on => {
+    try { localStorage.setItem(BACKDROP_KEY, on ? '0' : '1'); } catch { /* the choice just is not remembered */ }
+    return !on;
+  });
 
   const SEVERITY_ORDER: Record<string, number> = { error: 0, critical: 1, warning: 2, ok: 3, pending: 4 };
+  // Metric id → when its forecast first reaches one of its own thresholds (forecastReachFor: the
+  // card's badge reads the same function, so the list and the card cannot disagree).
+  const forecastReaches = useMemo(() => {
+    const reaches = new Map<string, MetricForecastReach>();
+    for (const m of metrics) {
+      const reach = forecastReachFor(m, forecastSeriesByMetric.get(m.id));
+      if (reach) reaches.set(m.id, reach);
+    }
+    return reaches;
+  }, [metrics, forecastSeriesByMetric]);
+  /*
+   * Why each metric has no forecast to create, or undefined when it can be created now — one
+   * reading for the card's disabled button and for the summary the "No forecast" filter shows.
+   */
+  const forecastReasons = useMemo(() => {
+    const reasons = new Map<string, string | undefined>();
+    if (!canCreateForecast) return reasons;
+    for (const m of metrics) {
+      const candidate = candidatesByMetric.get(m.id);
+      reasons.set(m.id, forecastCandidatesError ? 'Forecast eligibility could not be verified. Retry after reloading.'
+        : !forecastCandidates ? 'Checking forecast eligibility…'
+          : forecastCandidates.applyUnavailable !== null
+            ? forecastCandidates.applyUnavailable || 'Forecast creation is currently unavailable.'
+            : !candidate
+              ? forecastCandidates.truncated
+                ? 'Metric not included in the candidate catalogue (catalogue truncated).'
+                : 'Metric is not available as a forecast candidate.'
+              : !candidate.eligible
+                ? candidate.blockers.join('; ') || 'Metric cannot be forecast.'
+                : !candidate.topics.length
+                  ? 'This metric has no forecastable source topics.'
+                  : undefined);
+    }
+    return reasons;
+  }, [canCreateForecast, metrics, candidatesByMetric, forecastCandidates, forecastCandidatesError]);
+  /*
+   * The cards' handlers, stable per metric id. Each card is memoised, and a handler written inline
+   * is a new function on every render — which made every card render again on every poll whatever
+   * its metric did. The stable handler reads the page's current state when it is called, so it is
+   * never a stale closure either.
+   */
+  const cardActions = useRef<{
+    edit: (id: string) => void; remove: (id: string) => void; refresh: (id: string) => void;
+    prepare: (id: string) => void; show: (id: string) => void;
+  } | null>(null);
+  useLayoutEffect(() => {
+    cardActions.current = {
+      edit: id => { const metric = metrics.find(m => m.id === id); if (metric) openEdit(metric); },
+      remove: id => void handleDelete(id),
+      refresh: id => void handleRefreshOne(id),
+      prepare: id => {
+        const metric = metrics.find(m => m.id === id);
+        const candidate = candidatesByMetric.get(id);
+        if (!metric || !candidate?.eligible || !candidate.topics.length
+          || forecastCandidates?.applyUnavailable !== null
+          || forecastMetricIds.includes(id)) return;
+        void createForecast(metric);
+      },
+      show: id => {
+        const series = forecastSeriesByMetric.get(id);
+        if (!series) return;
+        setForecastFocus(series.seriesId);
+        document.querySelector('section[aria-label="Metrics Forecast"]')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+      },
+    };
+  });
+  // One stable function per action, taking the metric's id: the same for every card and every render.
+  const onEditCard = useCallback((id: string) => cardActions.current?.edit(id), []);
+  const onDeleteCard = useCallback((id: string) => cardActions.current?.remove(id), []);
+  const onRefreshCard = useCallback((id: string) => cardActions.current?.refresh(id), []);
+  const onPrepareCard = useCallback((id: string) => cardActions.current?.prepare(id), []);
+  const onShowCard = useCallback((id: string) => cardActions.current?.show(id), []);
+  const forecastFilterAvailable = Boolean(forecastStatus?.enabled) && forecastStatus!.series.length > 0;
+  /*
+   * What the page remembers of each metric's predicted threshold, from one forecast to the next:
+   * how far a new forecast moved it (the card says "4 min sooner than the previous forecast"), and
+   * which reaches are news — the ones a browser notification is for, when the operator asked.
+   */
+  const [reachMemory, setReachMemory] = useState(EMPTY_REACH_MEMORY);
+  const notificationsSupported = typeof window !== 'undefined' && 'Notification' in window;
+  const [notify, setNotify] = useState(() => {
+    try { return notificationsSupported && localStorage.getItem('metrics.notify') === 'on'; } catch { return false; }
+  });
+  useEffect(() => {
+    if (!forecastStatus) return;
+    const current = [...forecastReaches].map(([metricId, reach]) => ({
+      metricId, key: forecastSeriesByMetric.get(metricId)?.result?.key ?? '', at: reach.at, level: reach.level }));
+    const { memory, news } = nextReachMemory(reachMemory, current);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- derived from the forecasts a poll brought
+    if (memory !== reachMemory) setReachMemory(memory);
+    if (notify && news.length && notificationsSupported && Notification.permission === 'granted') {
+      for (const item of news) {
+        const series = forecastSeriesByMetric.get(item.metricId);
+        const steps = series ? Math.max(1, Math.round((item.at - Date.now()) / series.stepMillis)) : 0;
+        try {
+          new Notification(`${metricNames[item.metricId] ?? item.metricId}: ${item.level} threshold predicted`, {
+            body: series ? `In ${about(steps, series.stepMillis)}, by its forecast. Nothing else was sent.` : 'By its forecast.',
+            tag: `kex-forecast-${item.metricId}`,
+          });
+        } catch { /* a browser that refuses to construct one: the card still says it */ }
+      }
+    }
+  }, [forecastStatus, forecastReaches, forecastSeriesByMetric, reachMemory, notify, notificationsSupported, metricNames]);
+  const toggleNotify = async () => {
+    if (notify) {
+      setNotify(false);
+      try { localStorage.setItem('metrics.notify', 'off'); } catch { /* not remembered */ }
+      return;
+    }
+    const permission = Notification.permission === 'default' ? await Notification.requestPermission() : Notification.permission;
+    if (permission !== 'granted') {
+      toast('This browser does not allow notifications for this page: allow them in its site settings, then try again.', 'error');
+      return;
+    }
+    setNotify(true);
+    try { localStorage.setItem('metrics.notify', 'on'); } catch { /* not remembered, still applied */ }
+  };
+  /*
+   * Every metric that can be forecast now and has no forecast yet, created in one go. Sequential
+   * (each creation reads the metric's history) and summarised: what started, and for each refusal
+   * the server's own reason — the last slot taken by an earlier one in the same batch included.
+   */
+  const bulkCandidates = canCreateForecast && forecastCandidates
+    ? metrics.filter(m => forecastReasons.get(m.id) === undefined && !forecastMetricIds.includes(m.id)) : [];
+  const [bulk, setBulk] = useState<{ running: boolean; done: number; total: number;
+    refused: { name: string; reason: string }[] } | null>(null);
+  const forecastAllEligible = async () => {
+    const targets = bulkCandidates;
+    if (!targets.length || bulk?.running) return;
+    if (!await confirm({ title: `Forecast ${targets.length} metric${targets.length > 1 ? 's' : ''}?`, icon: 'insights',
+      confirmLabel: 'Forecast all',
+      description: `Each one is created from its recorded history with the suggested settings, one after the other: ${targets.map(m => m.name || m.id).join(', ')}.` })) return;
+    const refused: { name: string; reason: string }[] = [];
+    let started = 0;
+    setBulk({ running: true, done: 0, total: targets.length, refused });
+    for (const [i, metric] of targets.entries()) {
+      try {
+        await createForecastFromMetric(metric.id);
+        started++;
+      } catch (e) {
+        const reason = e instanceof AutoCreateRefused ? e.message
+          : axios.isAxiosError(e) && typeof e.response?.data?.reason === 'string' ? e.response.data.reason : 'Creation failed';
+        refused.push({ name: metric.name || metric.id, reason });
+      }
+      setBulk({ running: true, done: i + 1, total: targets.length, refused: [...refused] });
+    }
+    setBulk({ running: false, done: targets.length, total: targets.length, refused });
+    setForecastRevision(v => v + 1);
+    toast(`${started} forecast${started === 1 ? '' : 's'} started${refused.length ? `, ${refused.length} refused` : ''}.`,
+      refused.length && !started ? 'error' : 'success');
+  };
   const filteredMetrics = metrics
     .filter(m => filterType === 'all' || m.type === filterType)
     .filter(m => filterStatus === 'all' || getStatus(m) === filterStatus)
-    .sort((a, b) => SEVERITY_ORDER[getStatus(a)] - SEVERITY_ORDER[getStatus(b)]);
+    .filter(m => filterForecast === 'all'
+      || (filterForecast === 'breach' ? forecastReaches.has(m.id)
+        : filterForecast === 'running' ? forecastSeriesByMetric.has(m.id) : !forecastSeriesByMetric.has(m.id)))
+    .sort((a, b) => {
+      if (sortBy === 'breach') {
+        // Soonest predicted breach first, critical before warning at the same instant; the rest by severity.
+        const ra = forecastReaches.get(a.id), rb = forecastReaches.get(b.id);
+        if (ra && rb) return ra.inMillis - rb.inMillis || (ra.level === rb.level ? 0 : ra.level === 'critical' ? -1 : 1);
+        if (ra || rb) return ra ? -1 : 1;
+      }
+      return SEVERITY_ORDER[getStatus(a)] - SEVERITY_ORDER[getStatus(b)];
+    });
+  const filtersActive = filterType !== 'all' || filterStatus !== 'all' || filterForecast !== 'all';
 
   return (
     // `relative` ancre le fond animé de la page, et rien de plus : surtout pas `isolate`, qui
@@ -897,9 +1151,9 @@ const Metrics: React.FC = () => {
     // il est `fixed z-50`, la Sidebar aussi, et la Sidebar est en dehors de cette page. Le modal
     // passerait sous la barre latérale. Le calque passe donc derrière le contenu par l'ordre du
     // DOM entre deux éléments positionnés `z-auto`, pas par un `-z-10` qui exigerait ce contexte.
-    <div className="relative p-6 overflow-y-auto h-full">
+    <div className="kse-page relative p-4 md:p-6 overflow-y-auto h-full">
 
-      <MetricsPulseBackdrop active={anyMetricRunning} />
+      <MetricsPulseBackdrop active={backdropOn && anyMetricRunning} />
 
       {/* `space-y-6` vit ici plutôt que sur la racine : sur la racine, il donnerait une marge
           haute au calque et décalerait son `inset-0`. */}
@@ -912,6 +1166,8 @@ const Metrics: React.FC = () => {
         actions={
           <>
             <Button variant="ghost" size="sm" icon="refresh" onClick={fetchMetrics} aria-label="Refresh all">Refresh</Button>
+            <Button variant="ghost" size="sm" icon="blur_on" onClick={toggleBackdrop} aria-pressed={backdropOn}
+              aria-label="Animated background" title="Animated background (off by default)">{backdropOn ? 'Background on' : 'Background'}</Button>
             <Button variant="ghost" size="sm" icon="help" onClick={() => navigate('/metrics/help')} aria-label="Help">Help</Button>
             <Button variant="primary" icon="add" onClick={() => openEdit()}>Add metric</Button>
           </>
@@ -919,7 +1175,7 @@ const Metrics: React.FC = () => {
       />
 
       {/* Summary bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Stat label="Total" value={metrics.length} />
         <Stat label="Healthy" value={counts.ok} tone={counts.ok > 0 ? 'success' : 'none'} />
         <Stat label="Warning" value={counts.warning} tone={counts.warning > 0 ? 'warning' : 'none'} />
@@ -944,15 +1200,76 @@ const Metrics: React.FC = () => {
             <option value="ok">Healthy</option>
             <option value="pending">Pending</option>
           </Select>
-          {(filterType !== 'all' || filterStatus !== 'all') && (
-            <button onClick={() => { setFilterType('all'); setFilterStatus('all'); }}
+          {forecastFilterAvailable && (
+            <Select value={filterForecast} onChange={e => setFilterForecast(e.target.value as typeof filterForecast)}
+              className="w-auto" aria-label="Filter by forecast">
+              <option value="all">All forecasts</option>
+              <option value="breach">Breach predicted ({forecastReaches.size})</option>
+              <option value="running">Has a forecast</option>
+              <option value="none">No forecast</option>
+            </Select>
+          )}
+          {forecastFilterAvailable && (
+            <Select value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)}
+              className="w-auto" aria-label="Sort by">
+              <option value="severity">Sort: severity</option>
+              <option value="breach">Sort: next predicted breach</option>
+            </Select>
+          )}
+          {canCreateForecast && bulkCandidates.length > 0 && (
+            <Button variant="outline" size="sm" icon="insights" loading={bulk?.running} onClick={() => void forecastAllEligible()}
+              aria-label={`Forecast all eligible metrics (${bulkCandidates.length})`}>
+              {bulk?.running ? `Creating ${bulk.done} / ${bulk.total}…` : `Forecast all eligible (${bulkCandidates.length})`}
+            </Button>
+          )}
+          {notificationsSupported && forecastFilterAvailable && (
+            <button type="button" aria-pressed={notify} onClick={() => void toggleNotify()}
+              title="A browser notification when a forecast newly predicts a threshold, while this page is open. Nothing is sent anywhere else."
+              className={`inline-flex items-center gap-1 px-2.5 h-9 text-xs rounded-lg border border-outline-variant transition-colors ${notify
+                ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}>
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">{notify ? 'notifications_active' : 'notifications_off'}</span>
+              Notify me
+            </button>
+          )}
+          <div role="group" aria-label="Layout" className="inline-flex rounded-lg border border-outline-variant overflow-hidden">
+            {(['cards', 'compact'] as const).map(option => (
+              <button key={option} type="button" aria-pressed={view === option} onClick={() => chooseView(option)}
+                title={option === 'cards' ? 'Cards with charts' : 'One line per metric'}
+                className={`inline-flex items-center gap-1 px-2.5 h-9 text-xs transition-colors ${view === option
+                  ? 'bg-primary/15 text-primary' : 'text-on-surface-variant hover:text-on-surface'}`}>
+                <span className="material-symbols-outlined text-[16px]" aria-hidden="true">{option === 'cards' ? 'grid_view' : 'view_list'}</span>
+                {option === 'cards' ? 'Cards' : 'Compact'}
+              </button>
+            ))}
+          </div>
+          {filtersActive && (
+            <button onClick={() => { setFilterType('all'); setFilterStatus('all'); setFilterForecast('all'); }}
               className="text-[12px] text-on-surface-variant hover:text-on-surface transition-colors flex items-center gap-1">
               <span className="material-symbols-outlined text-[16px]">close</span>Clear filters
             </button>
           )}
           <span className="text-[12px] text-outline ml-auto tabular-nums">
-            {filteredMetrics.length} / {metrics.length} metrics · sorted by severity
+            {filteredMetrics.length} / {metrics.length} metrics · sorted by {sortBy === 'breach' && forecastFilterAvailable ? 'next predicted breach' : 'severity'}
           </span>
+        </div>
+      )}
+      {/* Why the metrics shown have no forecast, grouped: each card says it under its own button,
+          and the list answers the question the filter asks — what stands between these and one. */}
+      {filterForecast === 'none' && canCreateForecast && filteredMetrics.length > 0 && (
+        <div role="note" aria-label="Why these metrics have no forecast" className="text-xs text-on-surface-variant -mt-2">
+          <span className="font-semibold">Why no forecast: </span>
+          {groupReasons(filteredMetrics.map(m => forecastReasons.get(m.id)))
+            .map(({ reason, count }) => `${count} × ${reason}`).join(' · ')}
+        </div>
+      )}
+
+      {bulk && !bulk.running && bulk.refused.length > 0 && (
+        <div role="note" aria-label="Forecasts not started" className="text-xs text-on-surface-variant -mt-2 flex items-start gap-2">
+          <span><span className="font-semibold">Not started: </span>
+            {bulk.refused.map(r => `${r.name} — ${r.reason}`).join(' · ')}</span>
+          <button type="button" className="ml-auto text-outline hover:text-on-surface" aria-label="Dismiss" onClick={() => setBulk(null)}>
+            <span className="material-symbols-outlined text-[14px]" aria-hidden="true">close</span>
+          </button>
         </div>
       )}
 
@@ -974,44 +1291,39 @@ const Metrics: React.FC = () => {
             : 'Pick one of the quick-start templates below, or create your own.'}
           action={<Button variant="primary" icon="add" onClick={() => openEdit()}>Add metric</Button>}
         />
-      )) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      )) : view === 'compact' ? (
+        filteredMetrics.length > 0 ? (
+          <ul aria-label="Metrics" className="rounded-xl border border-outline-variant bg-surface-container-low overflow-hidden">
+            {filteredMetrics.map(metric => (
+              <MetricRow key={metric.id} metric={metric} refreshing={refreshingId === metric.id}
+                onEdit={onEditCard} onRefresh={onRefreshCard}
+                onShowForecast={forecastSeriesByMetric.has(metric.id) ? onShowCard : undefined}
+                forecast={forecastStages.get(metric.id)} forecastSeries={forecastSeriesByMetric.get(metric.id)} />
+            ))}
+          </ul>
+        ) : (
+          <div className="text-center py-12 text-on-surface-variant text-sm">No metrics match the current filters.</div>
+        )
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-4">
           {filteredMetrics.length > 0 ? filteredMetrics.map(metric => (
             <MetricCard
               key={metric.id}
               metric={metric}
-              onEdit={() => openEdit(metric)}
-              onDelete={() => handleDelete(metric.id)}
-              onRefresh={() => handleRefreshOne(metric.id)}
+              onEdit={onEditCard}
+              onDelete={onDeleteCard}
+              onRefresh={onRefreshCard}
               refreshing={refreshingId === metric.id}
-              onPrepareForecast={canCreateForecast
-                ? () => {
-                    const candidate = candidatesByMetric.get(metric.id);
-                    if (!candidate?.eligible || !candidate.topics.length
-                      || forecastCandidates?.applyUnavailable !== null
-                      || forecastMetricIds.includes(metric.id)) return;
-                    setForecastRequest(previous => ({ metricId: metric.id, sequence: (previous?.sequence ?? 0) + 1 }));
-                  }
-                : undefined}
-              forecastUnavailableReason={canCreateForecast ? (
-                forecastCandidatesError ? 'Forecast eligibility could not be verified. Retry after reloading.'
-                  : !forecastCandidates ? 'Checking forecast eligibility…'
-                    : forecastCandidates.applyUnavailable !== null
-                      ? forecastCandidates.applyUnavailable || 'Forecast creation is currently unavailable.'
-                      : !candidatesByMetric.has(metric.id)
-                        ? forecastCandidates.truncated
-                          ? 'Metric not included in the candidate catalogue (catalogue truncated).'
-                          : 'Metric is not available as a forecast candidate.'
-                        : !candidatesByMetric.get(metric.id)!.eligible
-                          ? candidatesByMetric.get(metric.id)!.blockers.join('; ') || 'Metric cannot be forecast.'
-                          : !candidatesByMetric.get(metric.id)!.topics.length
-                            ? 'This metric has no forecastable source topics.'
-                            : undefined
-              ) : undefined}
-              forecast={forecastStages.get(metric.id) ?? (createdForecastMetricId === metric.id
-                ? { stage: 'WAITING', label: 'Started', tone: 'neutral', detail: 'Waiting for the first forecast cycle' }
-                : undefined)}
+              onPrepareForecast={canCreateForecast ? onPrepareCard : undefined}
+              forecastCreating={creatingForecastId === metric.id}
+              onShowForecast={forecastSeriesByMetric.has(metric.id) ? onShowCard : undefined}
+              forecastUnavailableReason={forecastReasons.get(metric.id)}
+              forecast={forecastStages.get(metric.id) ?? (createdForecastMetricId === metric.id ? STARTED_STAGE : undefined)}
               forecastSeries={forecastSeriesByMetric.get(metric.id)}
+              nextForecastAt={forecastSeriesByMetric.has(metric.id) ? forecastStatus?.nextCycleAt ?? null : null}
+              refreshDurationMs={refreshCosts?.metrics[metric.id]?.lastDurationMs}
+              refreshTickMs={refreshCosts?.tickMs}
+              reachShiftMs={reachMemory.shifts[metric.id]}
             />
           )) : (
             <div className="col-span-full text-center py-12 text-on-surface-variant text-sm">
@@ -1027,26 +1339,32 @@ const Metrics: React.FC = () => {
           trouvée — et en dessous des métriques existantes, qui restent le sujet de la page. */}
       {canCreateForecast && forecastRequest && <section aria-labelledby="metric-forecast-preparation" className="space-y-3 scroll-mt-20">
         <div className="flex items-center justify-between gap-3">
-          <h3 id="metric-forecast-preparation" tabIndex={-1} className="text-lg font-semibold outline-none">Prepare a forecast</h3>
-          <Button variant="ghost" size="sm" icon="close" onClick={() => setForecastRequest(null)}>Close forecast preparation</Button>
+          <h3 id="metric-forecast-preparation" tabIndex={-1} className="text-lg font-semibold outline-none">Forecast setup</h3>
+          <Button variant="ghost" size="sm" icon="close" onClick={() => setForecastRequest(null)}>Close forecast setup</Button>
         </div>
-        <ForecastSetupWizard key={forecastRequest.sequence} initialMetricId={forecastRequest.metricId}
+        <ForecastSetupWizard key={forecastRequest.sequence} metricId={forecastRequest.metricId}
+          initialError={forecastRequest.error}
+          sourcesInferred={(metrics.find(m => m.id === forecastRequest.metricId)?.templateType ?? RAW_SQL) === RAW_SQL}
           onApplied={seriesId => {
-            if (forecastRequest.metricId) setCreatedForecastMetricId(forecastRequest.metricId);
+            setCreatedForecastMetricId(forecastRequest.metricId);
             setForecastFocus(seriesId);
             setForecastRevision(v => v + 1);
-          }}
-          forecastMetricIds={forecastMetricIds} />
+          }} />
       </section>}
-      <ForecastPanel refresh={forecastRevision} focus={forecastFocus} onStatus={status => {
-        setForecastStatus(status);
+      <ForecastPanel refresh={forecastRevision} clock={forecastClock} focus={forecastFocus} metricNames={metricNames} metricThresholds={metricThresholds} onStatus={status => {
+        if (status) forecastReads.current = { lastAt: Date.now(), nextCycleAt: status.nextCycleAt ?? null };
+        // Series by series, as the list: a series that did not move stays the same object.
+        setForecastStatus(previous => {
+          if (!status || !previous) return status;
+          const series = keepUnchanged(previous.series, status.series, row => row.seriesId);
+          const next = { ...status, series };
+          return series === previous.series && JSON.stringify({ ...previous, series: [] }) === JSON.stringify({ ...status, series: [] })
+            ? previous : next;
+        });
         // Once the server lists the new series, its status becomes authoritative. A later
         // withdrawal can then re-enable the metric's Prepare action.
         setCreatedForecastMetricId(id => id && status?.series.some(series => series.metricId === id) ? '' : id);
-      }}
-        onConfigure={canCreateForecast
-          ? () => setForecastRequest(previous => ({ sequence: (previous?.sequence ?? 0) + 1 }))
-          : undefined} />
+      }} />
       <SuggestionsPanel
         response={suggestions}
         loading={suggestionsLoading}
@@ -1069,18 +1387,18 @@ const Metrics: React.FC = () => {
                 <div key={ex.type} className={`flex flex-col border ${tm.border} ${tm.bg} rounded-xl p-4 gap-3`}>
                   <div className="flex items-center gap-2">
                     <span className={`material-symbols-outlined text-xl ${tm.color}`}>{tm.icon}</span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${tm.badge}`}>{ex.type}</span>
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase ${tm.badge}`}>{ex.type}</span>
                   </div>
                   <div>
                     <p className="font-bold text-on-surface text-sm">{ex.title}</p>
                     <p className="text-xs text-on-surface-variant mt-0.5 leading-relaxed">{ex.description}</p>
                   </div>
-                  <pre className="text-[10px] font-mono text-on-surface-variant bg-black/20 rounded-lg p-2 overflow-hidden line-clamp-4 whitespace-pre-wrap">
+                  <pre className="text-[11px] font-mono text-on-surface-variant bg-surface-container-high rounded-lg p-2 overflow-hidden line-clamp-4 whitespace-pre-wrap">
                     {ex.sql(firstTable)}
                   </pre>
                   <button
                     onClick={() => openEdit(undefined, ex.type, ex.sql, ex.warn, ex.crit)}
-                    className={`mt-auto w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border ${tm.border} ${tm.color} font-bold text-xs hover:bg-black/20 transition-colors`}
+                    className={`mt-auto w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border ${tm.border} ${tm.color} font-bold text-xs hover:bg-surface-container-high transition-colors`}
                   >
                     <span className="material-symbols-outlined text-sm">add_circle</span>
                     Use this template
@@ -1162,7 +1480,7 @@ const Metrics: React.FC = () => {
                             setNameIsAuto(true);
                             setEditingMetric(m => ({ ...m, name: buildAutoName(m.type ?? 'GAUGE', selectedTopic) }));
                           }}
-                          className="flex items-center gap-0.5 min-h-6 px-1 text-[10px] text-outline hover:text-primary transition-colors uppercase tracking-wider"
+                          className="flex items-center gap-0.5 min-h-6 px-1 text-[11px] text-outline hover:text-primary transition-colors uppercase tracking-wider"
                         >
                           <span className="material-symbols-outlined text-[11px]">refresh</span>regenerate
                         </button>
@@ -1184,7 +1502,7 @@ const Metrics: React.FC = () => {
                         {nameValidation.map((m, i) => (
                           <p key={i}
                             role={m.level === 'error' ? 'alert' : undefined}
-                            className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
+                            className={`text-[11px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
                             <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
                             {m.text}
                           </p>
@@ -1206,9 +1524,9 @@ const Metrics: React.FC = () => {
                     >
                       {f => (
                         <Select {...f} value={templateType} onChange={e => onTemplateTypeChange(e.target.value)}>
-                          <option value={RAW_SQL} className="bg-[#12151a] text-on-surface">Raw SQL</option>
+                          <option value={RAW_SQL} className="bg-surface-container text-on-surface">Raw SQL</option>
                           {templates.map(t => (
-                            <option key={t.type} value={t.type} className="bg-[#12151a] text-on-surface">{t.label}</option>
+                            <option key={t.type} value={t.type} className="bg-surface-container text-on-surface">{t.label}</option>
                           ))}
                         </Select>
                       )}
@@ -1242,7 +1560,7 @@ const Metrics: React.FC = () => {
                           { value: 'HISTOGRAM', label: 'HISTOGRAM — bucket distribution' },
                           { value: 'SUMMARY',   label: 'SUMMARY — quantile observations' },
                         ].filter(o => allowedTypes.includes(o.value)).map(o => (
-                          <option key={o.value} value={o.value} className="bg-[#12151a] text-on-surface">{o.label}</option>
+                          <option key={o.value} value={o.value} className="bg-surface-container text-on-surface">{o.label}</option>
                         ))}
                       </Select>
                     )}
@@ -1270,7 +1588,7 @@ const Metrics: React.FC = () => {
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <span className="block text-[12px] font-medium text-on-surface-variant">Prometheus Labels</span>
-                        <p className="text-[10px] text-outline mt-1 leading-relaxed">
+                        <p className="text-[11px] text-outline mt-1 leading-relaxed">
                           Select fields from the latest message on this topic. Their current values will be exported as labels on each metric refresh.
                         </p>
                       </div>
@@ -1308,7 +1626,7 @@ const Metrics: React.FC = () => {
                       <p className="text-[11px] text-on-surface-variant">No recent message available on this topic.</p>
                     ) : (
                       <>
-                        <div className="flex items-center justify-between gap-2 text-[10px] text-outline">
+                        <div className="flex items-center justify-between gap-2 text-[11px] text-outline">
                           <span>Latest message at {formatPreviewTimestamp(labelPreview.timestamp)}</span>
                           <span>{selectedLabelFields.length} selected</span>
                         </div>
@@ -1331,7 +1649,7 @@ const Metrics: React.FC = () => {
                                   />
                                   <div className="min-w-0">
                                     <div className="font-mono text-[11px] text-on-surface break-all">{field}</div>
-                                    <div className="font-mono text-[10px] text-on-surface-variant break-all">{value || '""'}</div>
+                                    <div className="font-mono text-[11px] text-on-surface-variant break-all">{value || '""'}</div>
                                   </div>
                                 </label>
                               );
@@ -1344,8 +1662,8 @@ const Metrics: React.FC = () => {
                         )}
 
                         <div className="rounded-lg border border-outline-variant/60 bg-background-dark/40 p-2">
-                          <p className="text-[10px] uppercase font-bold tracking-wider text-on-surface-variant mb-2">Latest Message</p>
-                          <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all text-[10px] font-mono text-on-surface-variant">
+                          <p className="text-[11px] uppercase font-bold tracking-wider text-on-surface-variant mb-2">Latest Message</p>
+                          <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all text-[11px] font-mono text-on-surface-variant">
                             {labelPreview.message}
                           </pre>
                         </div>
@@ -1393,7 +1711,7 @@ const Metrics: React.FC = () => {
                       </Field>
                     </div>
                     {refreshCost && (
-                      <p className="text-[10px] text-on-surface-variant flex items-start gap-1 pt-0.5">
+                      <p className="text-[11px] text-on-surface-variant flex items-start gap-1 pt-0.5">
                         <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">bolt</span>
                         {refreshCost}
                       </p>
@@ -1403,7 +1721,7 @@ const Metrics: React.FC = () => {
                         {thresholdHints.map((m, i) => (
                           <p key={i}
                             role={m.level === 'error' ? 'alert' : undefined}
-                            className={`text-[10px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
+                            className={`text-[11px] flex items-start gap-1 ${HINT_COLORS[m.level]}`}>
                             <span aria-hidden="true" className="material-symbols-outlined text-[11px] shrink-0 mt-px">{HINT_ICONS[m.level]}</span>
                             {m.text}
                           </p>
@@ -1415,11 +1733,11 @@ const Metrics: React.FC = () => {
                   {/* SQL templates (raw SQL mode only) */}
                   {!isTemplate && (
                   <div className="border-t border-outline-variant/60 pt-4">
-                    <p className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider mb-3">SQL Templates</p>
+                    <p className="text-[11px] uppercase font-bold text-on-surface-variant tracking-wider mb-3">SQL Templates</p>
                     <div className="space-y-3">
                       {sqlTemplates.map(group => (
                         <div key={group.group}>
-                          <p className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 ${group.color}`}>{group.group}</p>
+                          <p className={`text-[11px] font-bold uppercase tracking-wider mb-1.5 ${group.color}`}>{group.group}</p>
                           <div className="space-y-1">
                             {group.items.map(t => (
                               <button key={t.label} type="button"
@@ -1437,13 +1755,13 @@ const Metrics: React.FC = () => {
                 </div>
 
                 {/* Right: tabbed editors */}
-                <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
 
                   {/* Tabs */}
-                  <div role="tablist" aria-label="Metric definition" className="flex items-center border-b border-outline-variant/60 bg-primary/5 px-4 gap-1">
+                  <div role="tablist" aria-label="Metric definition" className="flex min-w-0 items-center overflow-x-auto border-b border-outline-variant/60 bg-primary/5 px-2 sm:px-4 gap-1">
                     {(['metric', 'ddl'] as const).map(tab => (
                       <button key={tab} type="button" role="tab" aria-selected={editorTab === tab} onClick={() => setEditorTab(tab)}
-                        className={`px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${
+                        className={`shrink-0 px-3 sm:px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-colors border-b-2 ${
                           editorTab === tab
                             ? 'border-primary text-primary'
                             : 'border-transparent text-on-surface-variant hover:text-on-surface'
@@ -1475,7 +1793,7 @@ const Metrics: React.FC = () => {
                     )}
 
                     {editorTab === 'ddl' && (
-                      <span className="ml-auto text-[10px] text-outline pr-1">
+                      <span className="ml-auto text-[11px] text-outline pr-1">
                         Executed before metric SQL — <code className="text-on-surface-variant">IF NOT EXISTS</code> is auto-added
                       </span>
                     )}
@@ -1502,7 +1820,7 @@ const Metrics: React.FC = () => {
                           setExecutionMode={setExecutionMode}
                         />
                       ) : (
-                      <Editor height="100%" defaultLanguage="sql" theme="vs-dark"
+                      <Editor height="100%" defaultLanguage="sql" theme="kse-dark"
                         value={editingMetric.sql ?? ''}
                         onChange={val => { setEditingMetric(m => ({ ...m, sql: val ?? '' })); clearPreview(); }}
                         options={{ minimap: { enabled: false }, fontSize: 13, fontFamily: 'JetBrains Mono, monospace',
@@ -1511,7 +1829,7 @@ const Metrics: React.FC = () => {
                       />
                       )
                     ) : (
-                      <Editor height="100%" defaultLanguage="sql" theme="vs-dark"
+                      <Editor height="100%" defaultLanguage="sql" theme="kse-dark"
                         value={editingMetric.createTableSql ?? ''}
                         onChange={val => setEditingMetric(m => ({ ...m, createTableSql: val ?? '' }))}
                         options={{ minimap: { enabled: false }, fontSize: 13, fontFamily: 'JetBrains Mono, monospace',
@@ -1574,7 +1892,7 @@ const Metrics: React.FC = () => {
                             <div className="flex flex-wrap gap-1.5 pt-0.5">
                               {previewChips.map(chip => (
                                 <span key={chip.label} title={chip.detail}
-                                  className={`px-2 py-0.5 rounded text-[10px] ${
+                                  className={`px-2 py-0.5 rounded text-[11px] ${
                                     chip.tone === 'warning' ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'
                                   }`}>
                                   {chip.label}

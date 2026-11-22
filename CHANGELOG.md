@@ -20,6 +20,276 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Optional MCP OAuth JWT resource-server mode:** external issuer/JWK validation,
+  required audience and separate `mcp:invoke` / `mcp:admin` transport scopes.
+  Legacy shared-token mode remains the default; MCP Tasks and per-tool OAuth RBAC
+  remain explicitly unsupported pending separate implementation.
+- **Light-first application appearance.** First visits always render in light mode regardless of the OS, including the pre-paint background and browser chrome. The header now uses an accessible binary dark-mode switch instead of cycling System / Light / Dark. Dark mode persists per browser; switching back to light restores the default without a stored override.
+
+- **MCP guide usability pass.** Role-lens filtering without hiding intermediate nodes,
+  accessible mobile step list, graph zoom, arrow/Home/End keyboard traversal,
+  shareable scenario/step/focus URLs and portable Mermaid export. The public GitHub
+  Pages edition now uses a separate checked JavaScript asset and offers the same
+  filters, deep links, mobile presentation and focus controls, without live calls.
+
+- **Two additional reviewed Kafka Agent Skills:** `kafka-security-review` for bounded
+  topic-policy and MCP deployment posture evidence, and `kafka-schema-evolution`
+  for baseline-based drift assessment. Both are read-only, refuse invented security
+  or registry compatibility verdicts, and are distributed in the existing MCP
+  Skills catalogue with SHA-256 manifests.
+
+- **MCP Skills & Services pedagogical guide.** New in-app page `/mcp/guide`
+  and public Pages guide `docs/mcp-guide.html`: four primitives explained through
+  examples, actionable do/don't rules, and interactive incident, forecast and skill
+  discovery call graphs based on Kex-anHarness's published architecture. Each graph
+  node identifies its source and safety contract; it is explicitly not a live trace.
+  Help, MCP catalogue, README, Features and the public site link to the guide.
+  The text/accessible Mermaid companion is `docs/mcp-skills-services-guide.md`.
+
+
+- **Agent Skills distribution and catalogue.** The five reviewed `SKILL.md` documents are
+  packaged from `.agents/skills` into the JAR and exposed as exact `skill://` resources,
+  with a `kex://skills` SHA-256 manifest. The MCP console lists, previews and copies
+  skills without executing or installing them. Resource and UI tests verify publication
+  and integrity. Full `skills/list`/`skills/get` negotiation remains explicitly
+  unadvertised until supported by the Java MCP SDK.
+
+
+- **MCP Resources, guided prompts and reusable Agent Skills.** The MCP server exposes scoped,
+  bounded topic resources with the same tool-level permission, runtime disable, rate, DLP and
+  output guards; six parameterized diagnostic prompts; and project-local incident, forecast,
+  architecture, CI repair and release skills. The transport probe and its failure cases cover
+  resource and prompt discovery/read, with registration and admission tests. See
+  `docs/mcp-skills.md`.
+
+- **A spatial interface, light or dark.** The application follows the system appearance — or a choice made
+  from the header: System, Light, Dark — and the choice no longer freezes the first time it is read. Floating
+  navigation (sidebar, header, palette, dialogs, tooltips, toasts) is glass; tables, charts and the SQL editor
+  stay opaque. Settings → Appearance adds six accent colours (every pair held at 4.5:1 or more in both
+  schemes) and a compact density. Along the way: the light-theme outline of 24 cards that did not render, input
+  borders held at 3:1, an iOS-style switch, a sliding segmented control, a two-ring focus indicator, a
+  dashboard in bento composition, and Data Model nodes that follow the scheme. The documentation screenshots
+  are regenerated in both schemes (`docs/img/<screen>.png` and `<screen>-dark.png`), and the Pages site
+  follows the visitor's system with the same tokens. Rationale, pass by pass, in
+  `docs/notes/spatial-light-theme.md`.
+
+- **Opt-in enterprise MCP OAuth JWT authentication (phase 1):** pinned HTTPS JWKS,
+  validated issuer/audience/time, scoped HTTP routes and stable principal fingerprints.
+  OAuth mode is restricted to read-only MCP until tool-level RBAC exists; the legacy
+  bearer-token mode remains the default. See `docs/mcp-enterprise-auth.md`.
+
+## [2.8.2] — 2026-11-21
+
+Released from `main` with no entry recorded here; see [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.8.2).
+
+## [2.8.1] — 2026-11-21
+
+- **Forecast demo: five live series instead of two.** `./demo.sh --forecast` now feeds five topic pairs
+  (`demo.live.*`) and seeds nine hours of history for each: the unshipped orders (a ramp towards its
+  thresholds) and the request backlog (an hourly cycle) as before, plus imports creeping up with noise, a
+  stationary noisy series with nothing to announce, and a level that shifts every ninety minutes — a change
+  no forecast can see coming, which *Previous forecast vs actual* then shows. *Forecast all eligible* starts
+  the four that are not forecast on arrival. The two topics of a pair share their keys, so a key traced in
+  Stream Flow (`orders-1`) is found in both and the time between them is real. The noise is a function of the
+  minute, so the seeded past and the live future are one signal.
+- **Type scale and loading states.** Secondary text uses two sizes, 11 and 12 px: the 10 px step (184
+  uses in 26 files) is gone, read too small beside 11 px for no distinction anyone could name; 9 px is
+  left to the uppercase type badges. Panels that said "Loading…" in a sentence — the SQL editor's topic
+  list, the Process Mining topic picker, the forecast panel, its assistant, the metrics help — show a
+  skeleton in the shape of what is coming (`ListSkeleton`, announced once as a status).
+- **UI, third pass.** Lineage opens framed on its graph (at a readable scale, scrolling from its sources when
+  wider) and names its node types in plain English ("Queries", not "Querys"). Compare's topic pickers are
+  searchable fields with a border instead of borderless `<select>`s that read as a bare chevron, and a topic
+  list that cannot be loaded is said in the panes rather than in a toast. The SQL editor says what to do when
+  it is empty. The dashboard says a healthy topic quietly — a coloured badge only for what is not — and its
+  diagnostic overview counts the topics that went silent (on the rows measured) instead of repeating the
+  health tile. A metric card's actions show on hover and keyboard focus (always on touch), and deleting it
+  is behind a "⋯" menu rather than an icon beside Refresh and Edit.
+- **Dashboard, second pass.** An accent on a KPI tile now means a state: only *Cluster Health* carries one
+  (green, or red when degraded); the counts no longer do, so the row reads as one family. The topic table's
+  controls are two rows instead of one crowded wrap: the filter and the saved views above, the display
+  options (the four toggles, Activity, Scale, Show) in a group of their own below, at one control height.
+- **UI polish.** The sidebar's last entry (Process Mining) is no longer cut flat on a 900 px window: tighter
+  spacing, and an edge that fades only while the list really scrolls. The Metrics page's animated
+  background is now opt-in (a *Background* toggle, remembered on this browser; off by default) — lines
+  drifting across the cards read as noise on a page kept open to be read. The SQL editors use a Monaco
+  theme in the application's own colours (`kse-dark`) instead of `vs-dark`'s neutral grey. The metric
+  cards fill the page width (`auto-fit`) instead of leaving a column empty.
+- **Stream Flow metrics: labels from the payload.** The drawer can add up to three fields of the latest
+  record of the topic (the hop's source) as labels — the existing `labelTopic` / `labelFields`
+  mechanism. A field that visibly changes with every record (an id, an instant, a UUID, a measured
+  number, long text) is shown with the reason and cannot be chosen: it would mint a new series at
+  each refresh.
+- **The silence of a topic** (`KAFKA_CLUSTER_COUNT`, measurement `LATEST_RECORD_AGE`): the age of its
+  newest record, in milliseconds — a producer that stopped shows even when nothing reads the topic.
+  An empty topic or a failed read is an error, never an age of zero. Offered in the Stream Flow
+  drawer and in the metric editor.
+- **Stream Flow: create metrics from a link between two topics.** Each arrow of the graph is now a target
+  (mouse and keyboard): clicking it opens the metrics drawer for that hop only — its transit latency,
+  ticked, and the records it loses, labelled `source_topic` / `target_topic`.
+- **Stream Flow: create metrics from a topic of the graph.** Select a topic and press *Create metrics*:
+  a drawer proposes the transit latency of the hop into and out of it (the server's own suggestion,
+  thresholds derived from the measured hop), the records lost on each hop, the consumer lag of a group
+  reading it and the records produced to it. Tick, untick the labels you do not want, create — no SQL.
+- **Fixed Prometheus labels on a metric** (`templateParams.staticLabels`, at most 8): added to every
+  series of the metric, checked on save (label names only, never `metric_id` / `metric_name` /
+  `metric_type`). Stream Flow names the hop it measures with them (`source_topic`, `target_topic`,
+  `topic`, `consumer_group`).
+- **Forecast chart: an accessible alternative.** The panel's chart carries a summary label (observed and
+  predicted point counts, the forecast's range) and a "Chart data as a table" disclosure listing every
+  point — time, kind (observed, imputed, predicted), value and the 80 % band — which was reachable only on
+  hover. Rendered only when opened. The card's two charts are named too (latest value, predicted range; the components chart lists its series).
+- **Compact layout: the forecast continues the sparkline.** Each line now carries its forecast's median as a
+  dashed continuation of the measured history, from the last measured point and at the same step width;
+  at most half as many predicted points as measured ones, so a short history is not squeezed into a corner
+  (the card's own fix). None for a counter, whose forecast is a rate per second beside a counter's reading.
+- **Forecasts: fewer reads, and more to do with what they say.** The pilot service keeps each series'
+  latest record between writes: `GET /api/forecasts` read and decoded every series' whole record (up to
+  512 context points) on every poll of every tab, to strip its history; a local write drops the entry, a
+  write by another instance shows within 15 s, and STALE is still judged on every read. The page asks for
+  the forecasts again only once the pilot's next cycle is due (`nextCycleAt`, at least every two minutes),
+  and the panel's per-series reads wait while it is off screen. A card says how far a new forecast moved
+  its predicted threshold ("4 min sooner than the previous forecast"); the panel lets a threshold be tried
+  before it is set; *Forecast all eligible* creates the missing forecasts in one confirmed batch and names
+  each refusal; and *Notify me* raises a browser notification when a forecast newly predicts a threshold,
+  while the page is open — nothing is sent anywhere else.
+
+- **MCP: `kex_list_forecast_threshold_reaches`, the card's predicted threshold for an agent.** The only
+  forecast-threshold tool, `kex_list_predicted_threshold_breaches`, judges a series' configured threshold
+  *policy*; the Metrics page and `explorer_forecast_threshold_eta_seconds` read the metric's *own* warning
+  and critical thresholds — so an agent asking "what is about to breach" got a different answer from the
+  screen. The new read-only tool gives one row per authorized series through the same
+  `ForecastThresholdReach`: `REACH` (level, likelihood, instant, seconds until it), `NO_REACH`,
+  `NO_THRESHOLDS`, `NOT_COMPARABLE` (a counter's rate forecast) or `NOT_EVALUATED`, each with its reason,
+  and `PARTIAL_FAILURE` coverage naming the series with nothing to read. The pilot now has six tools.
+- **Docs: Docker Hub, GitHub Pages and READMEs caught up with the forecasts.** The Docker Hub overview
+  describes forecasting from a metric card and alerting on `explorer_forecast_threshold_eta_seconds`, and
+  stays under its 25,000-byte limit by sending the MCP review configuration to `DOCKERHUB-OPERATIONS.md`,
+  which already carried it. On the GitHub Pages site, the "work in progress" list named three pull requests
+  merged since, and the forecast section still described the retired "Prepare a forecast" flow.
+- **Metrics page: a compact layout, the reliability trend, and what to do about a predicted threshold.**
+  A *Compact* layout shows one line per metric (verdict, value, a plain-SVG sparkline, the forecast's
+  predicted threshold) for deployments with dozens of metrics, remembered in the browser. Beside the
+  Reliable / Fair / Watch badge, the coverage of each open cohort is drawn as a trend and named
+  (improving / steady / degrading), since the badge says where the forecast is, not where it is going.
+  And the predicted-threshold badge offers the Alertmanager rule on `explorer_forecast_threshold_eta_seconds`
+  (paired with collection freshness) and a link to each topic the metric reads.
+
+- **Metrics page: one clock, cards that render only when they change, and what each forecast and refresh
+  costs.** The list was read every 15 s while the server recomputes every 30 s, and the forecast panel ran
+  a second loop beside it; both now read on one clock, at the tick the server reports. Each card is
+  memoised and the page keeps every unchanged metric, forecast series and handler the same object between
+  polls, so typing in the editor or a poll that moved one metric no longer redraws every chart. A card says
+  when its forecast was made and when the next cycle is due, and, when its last refresh took more than half
+  the loop's tick, that it delays every other metric (`GET /api/metrics/refresh-costs`; the loop stays
+  single threaded by design). The "No forecast" filter says why, grouped. And the predicted threshold the
+  card shows is published as `explorer_forecast_threshold_eta_seconds{metric_id,level,likelihood}`, so a
+  forecast can be alerted on in Alertmanager — `ForecastThresholdReach`, the server twin of
+  `forecastBreach.ts`, recomputed on the forecast pilot's own thread, never on the scheduler metric
+  collection owns.
+
+- **Compose: one broker definition, one Kafka image.** `compose/spectra-hub.yml` extended nothing and
+  carried its own copy of the broker, its volume fix and the demo seeder; it now `extends` the base's, as
+  `compose/dev.yml` already did. The image is written once (`KAFKA_IMAGE`, default `apache/kafka:4.4.0`,
+  in `.env.example`) instead of in a dozen places. The resolved configuration is unchanged for every
+  stack and overlay combination; `docs/check-image-pins.py` now resolves the YAML alias it is read through.
+- **Housekeeping: `unused/`.** Two files nothing referenced moved there, path preserved, so a `git mv`
+  restores them: `docs/SQL-BOUNDED-FLINK-STUDY.md` and the SPA's `LoadingSpinner.tsx`. Everything else that
+  looked orphaned is loaded by convention (workflows, test discovery, issue templates) or named by a note.
+
+- **CI drives the Metrics page against the forecast demo.** `ci/demo-forecast-ui.mjs` runs in the
+  `forecast-stack` job after the backend smoke: the list's *Has a forecast* / *No forecast* filters keep
+  what the server lists, *Breach predicted (N)* keeps N cards each with its badge, the sort keeps every
+  card, and the forecast panel draws the metric's own thresholds. Relations only — never whether the
+  badge is showing, which depends on where the demo's curve is in its cycle.
+- **Kafka 4.4.0.** `kafka-clients` (`kafka.version`), every bundled broker image
+  (`apache/kafka:4.4.0`, the CI's `apache/kafka-native:4.4.0`), the Testcontainers broker and the
+  docs, badges and pins that name the version. Unchanged on purpose: `flink-connector-kafka`
+  (5.0.0-2.2 is still the latest published) and Confluent 8.3.1.
+
+- **The Metrics page reads at a glance.** The card's disclaimer paragraph is an ⓘ beside a one-line
+  legend, its chart is taller (120 px), and "Last checked: 87 % … mean error" became a *Reliable / Fair /
+  Watch* badge with the figures one hover away. The Forecast button says what it does on hover and focus
+  and says "Creating forecast…" while it works. The list can be filtered on *breach predicted* and sorted
+  by the soonest predicted threshold, and the Forecast panel draws the metric's own warning and critical
+  thresholds the way its card does (`thresholdPlacement.ts`, one rule for both; none against a rate).
+
+- **The demo can show a forecast working.** Its topics were seeded once and stood still, so no metric
+  had a history and a forecast waited two hours. `./demo.sh` now also starts `compose/demo-forecast.yml`:
+  a generator feeds two topic pairs (orders not yet shipped, degrading towards their threshold; a
+  request backlog on an hourly cycle) and a seeder writes the nine hours before the Explorer's first
+  recording of each, marked `demo-seed-<n>`, from the same curves. The first is already forecast when the Metrics page
+  opens, with its "Warning expected in ~N min" badge; the backlog's is the Forecast button, with its
+  hourly cycle found and its first forecast one minute away. `docs/metrics-demo-scenarios.md` tells the
+  story; `docs/check-demo-forecast.py` and the `forecast-stack` CI job hold it. **`./demo.sh --forecast`
+  (`.\demo.cmd -Forecast`) starts that demo alone**, with nothing to configure: no LLM key, no SpectraLLM,
+  no agent, every variable defaulted.
+- **A forecast can be set beside what then happened.** "Previous forecast vs actual" on the forecast
+  panel draws the latest forecast whose whole horizon has been measured over the measured curve,
+  and says how it did: how many measured points fell inside its 80 % band, its mean error in the
+  series' unit, and which way it leaned when it leaned. The metric card says the same in one line
+  from the quality window the list already carries ("Last checked: 87% of 30 points in the 80% band
+  · mean error 42 ms"). `GET /api/forecasts/{seriesId}/previous` serves that forecast (204 until one
+  has matured): it is read from the results already kept, so nothing new is stored.
+- **Creating a forecast is one click, and the form is only for when it fails.** Every forecast
+  starts from an existing metric, so the card's **Forecast** button creates it without opening
+  anything and a toast says when the first forecast follows; the form opens for that metric, on the
+  reason, only if the creation stops. Gone with it: the panel's "Configure a forecast" and the
+  form's metric selector, the fields the metric already answers (unit, environment, history cluster
+  and collector IDs), and the source attestation for a template metric, whose sources are declared.
+  The forecast panel's five folds are two: Quality and Configuration, and it has no series selector:
+  a card's **Details** shows that metric's forecast in it, named as the card names it.
+- **The SPA's seven open dependency alerts are closed.** `dompurify` (bundled by the Monaco editor,
+  five low advisories) to 3.4.17, `minimatch` (ESLint's TypeScript parser, a moderate ReDoS) to
+  11.0.5 and `zod` (an ESLint plugin's, memory exhaustion) to 4.6.7, through `overrides` since no
+  parent release carries them yet. Only `dompurify` ships in the application; the other two are
+  build-time. `npm audit` reports none.
+- **A metric card says when its forecast reaches a threshold.** "Warning expected in ~12 min
+  (≥ 2,150, median)" when the median reaches the metric's own warning or critical threshold,
+  "possible" when only the 80 % band does, critical before warning, in the direction the two
+  thresholds imply — a reading of the forecast, not an alert. A threshold near the curve widens the
+  card's scale to stay drawn; one far away is named under the chart ("↑ crit 7,600 off scale")
+  instead of silently leaving it. A counter's forecast is a rate per second, so its thresholds are
+  neither drawn nor compared there, and the card says the chart is a rate. The forecast status
+  carries a progress bar, and the assistant counts the history already recorded when it says when
+  the first forecast follows (it promised "~2 h" whatever was there).
+- **A metric's forecast reads as the continuation of its curve.** The card's button is now
+  **Forecast**: one click creates it (with the cycle the history shows), it is disabled with the
+  reason when no forecast is possible and gone once one exists. The card draws the last hour the
+  model read on a time axis shared with the prediction, a "now" marker and a cyan dashed median with
+  its 80 % band — the median was never drawn before (an `AreaChart` ignores `<Line>`) and shared
+  the healthy-card colour. In the panel the median starts on the last measurement, the value axis
+  fits the data and the threshold instead of starting at zero, and the tooltip is dark.
+  `GET /api/forecasts` now keeps the latest 60 context points per series.
+- **Forecast polling no longer decodes what it throws away.** `GET /api/forecasts`, polled every
+  30 s, decoded each series' whole latest result (512-point context included) only to drop the points;
+  the latest result key is now read first and the payload decoded only when it changed, results being
+  immutable. Series preparation hashes each distinct identity once rather than every row (2.45 of
+  10.4 ms per 4 096-row preparation). This closes `METRICS-FORECAST-AUDIT-2.md`.
+- **The rest of the second forecast audit.** A counter reset no longer refuses the whole 512-point
+  context: it starts after the last reset once 128 points follow it, and says how far it has got until
+  then. Cycle detection reads the history on its regular grid, a missing or imputed point as a hole,
+  and the preview is computed once per closed step. In the assistant, the threshold suggestion follows
+  its direction (0.5× the latest value for "Below"), and no history is drawn under an interval it was
+  not read at; the panel offers only the windows the context can fill. `kex-llm` runs as uid 10001. The
+  publication workflows no longer depend on an empty `inputs.tag` on a tag push, and
+  `compose/llama-cpp.yml` mounts its scripts from this checkout (`./scripts`, resolved against the first
+  file's directory) — `docs/local-ai-stack-check.py` now refuses a bind mount that is not a file here.
+- **The forecast assistant no longer proposes a cycle for a series that merely drifts.** Its cycle
+  detection read a raw autocorrelation, which is high at every lag of a trending series: 94.5 % of
+  random walks were given an hourly cycle, applied by default. The correlation at the cycle's lag must
+  now also stand 0.5 above the one at half that lag. The history preview now normalises the metric as
+  the approval does (a non-canonical stored form read another series), and deleting a metric gives its
+  history enrolment slot back (the 101st distinct metric of a process was silently not recorded;
+  refusals are now counted in `explorer_forecast_history_enrollment_refused_total`).
+- **The Dashboard's two diagnostic links have a 24 px target.** "Inspect topics" and "Open
+  dead-letter explorer" (added with the actionable diagnostics) measured 16 px high, which put the
+  Dashboard at 3 undersized targets against a budget of 1 and failed the layout check of the
+  screenshots job on every pull request. `min-h-6`, as `SortButton` and `Tooltip` do; the budgets
+  are unchanged.
+
+## [2.7.0] — 2026-11-19
+
 - **The offline forecast overlay can no longer be used without its base.** Run as
   `-f docker-compose.yml -f compose/forecast-offline.yml`, it started a bare `timesfm` beside an Explorer
   with no inference, no history and no credentials, and the panel read "The forecast stack is not
@@ -59,6 +329,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   row ceiling — and the assistant now refuses it before approval, naming `countBy: OFFSETS`.
   Found by the Convergence suite's forecast bench; the test reads the summary the refresh writes
   rather than one written for it.
+
+## [2.5.0]
+
+See [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.5.0).
 
 ## [0.3.0] — 2026-11-15
 
@@ -2814,7 +3088,10 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.5.0...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.8.2...HEAD
+[2.8.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.8.1...v2.8.2
+[2.8.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.7.0...v2.8.1
+[2.7.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.5.0...v2.7.0
 [2.5.0]: https://github.com/devdownin/Kafkaexplorer/compare/v0.3.0...v2.5.0
 [0.3.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.4.1...v0.3.0
 [2.4.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.3.4...v2.4.1

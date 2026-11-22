@@ -29,6 +29,7 @@ const Cluster = lazy(() => import('./pages/Cluster'));
 const ProcessMining = lazy(() => import('./pages/ProcessMining'));
 const DataModel = lazy(() => import('./pages/DataModel'));
 const Mcp = lazy(() => import('./pages/Mcp'));
+const McpGuide = lazy(() => import('./pages/McpGuide'));
 
 const PageFallback: FC = () => (
   <div className="flex items-center justify-center h-full min-h-[60vh]">
@@ -45,7 +46,7 @@ const NotFound: FC = () => (
     </p>
     <Link
       to="/"
-      className="mt-5 inline-flex items-center gap-2 h-9 px-4 rounded-md bg-primary text-on-primary text-[13px] font-medium hover:bg-primary-fixed transition-colors"
+      className="mt-5 inline-flex items-center gap-2 h-9 px-4 rounded-md bg-primary text-on-primary text-[13px] font-medium hover:bg-primary-dim transition-colors"
     >
       <span aria-hidden="true" className="material-symbols-outlined text-[16px]">arrow_back</span>
       Back to Dashboard
@@ -98,6 +99,7 @@ const router = createBrowserRouter([
       { path: '/process-mining', element: <ProcessMining /> },
       { path: '/data-model', element: <DataModel /> },
       { path: '/mcp', element: <Mcp /> },
+      { path: '/mcp/guide', element: <McpGuide /> },
       { path: '*', element: <NotFound /> },
     ],
   },

@@ -22,7 +22,7 @@
 	<properties>
 		<java.version>21</java.version>
 		<flink.version>2.3.0</flink.version>
-		<kafka.version>4.3.1</kafka.version>
+		<kafka.version>4.4.0</kafka.version>
 		<confluent.version>8.3.1</confluent.version>
 		<!--
 			Surefire's own default, declared explicitly so `${skipTests}` always resolves:
@@ -81,6 +81,11 @@
 			<groupId>org.springframework.ai</groupId>
 			<artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
 			<version>${spring-ai.version}</version>
+		</dependency>
+		<!-- JWT signature validation for optional OAuth 2.1 resource-server mode. -->
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-oauth2-jose</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -218,6 +223,22 @@
 		</dependency>
 	</dependencies>
 	<build>
+		<!-- Package the reviewed SKILL.md files from their single source in .agents/skills.
+		     No runtime filesystem mount and no second set of skill content to drift. -->
+		<resources>
+			<resource>
+				<directory>src/main/resources</directory>
+			</resource>
+			<resource>
+				<directory>.agents/skills</directory>
+				<targetPath>mcp-skills</targetPath>
+				<filtering>false</filtering>
+				<includes>
+					<include>catalog.txt</include>
+					<include>**/SKILL.md</include>
+				</includes>
+			</resource>
+		</resources>
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>

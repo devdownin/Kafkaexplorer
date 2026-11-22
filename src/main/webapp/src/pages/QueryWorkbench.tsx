@@ -3,13 +3,14 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import Editor, { useMonaco } from '@monaco-editor/react';
+import { useMonaco } from '@monaco-editor/react';
+import Editor from '../components/ThemedEditor';
 import type { editor } from 'monaco-editor';
 import '../monaco-setup';
 import axios from 'axios';
 import { useToast } from '../components/Toast';
 import {
-  Button, Badge, Input, Select, EmptyState, Tooltip, useConfirm, cn,
+  Button, Badge, Input, Select, EmptyState, Tooltip, Segmented, useConfirm, cn,
   useVirtualRows,
 } from '../components/ui';
 import {
@@ -58,30 +59,6 @@ import type {
   QueryCancelResponse,
   AssistantSqlResponse,
 } from '../api/types';
-
-/** Contrôle segmenté compact (offset de lecture). */
-function Segmented<T extends string>({ value, onChange, options, ariaLabel }: {
-  value: T; onChange: (v: T) => void; options: { value: T; label: string }[]; ariaLabel: string;
-}) {
-  return (
-    <div role="group" aria-label={ariaLabel} className="inline-flex bg-surface-container-low border border-outline-variant rounded-md p-0.5">
-      {options.map(o => (
-        <button
-          key={o.value}
-          onClick={() => onChange(o.value)}
-          aria-pressed={value === o.value}
-          className={cn(
-            'px-3 h-7 text-[12px] font-medium rounded transition-colors',
-            value === o.value ? 'bg-surface-container-highest text-on-surface' : 'text-on-surface-variant hover:text-on-surface',
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 
 interface Tab { id: string; name: string; sql: string; }
 
@@ -1829,7 +1806,7 @@ const QueryWorkbench: React.FC = () => {
      * sans rien pousser hors de l'écran : la ligne éditeur/résultats garde `flex-1 min-h-0`, donc
      * elle continue de se partager exactement la hauteur restante.
      */
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="kse-query-workbench flex flex-col h-full overflow-hidden">
       <NarrowWindowNotice />
       <div className="flex flex-1 min-h-0 overflow-hidden">
 
@@ -1887,7 +1864,7 @@ const QueryWorkbench: React.FC = () => {
       {/* ── Main Content ─────────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
-        <header className="h-14 border-b border-outline-variant/60 flex items-center px-4 md:px-6 justify-between gap-4 bg-surface-container-low/40 shrink-0">
+        <header className="kse-workbench-toolbar min-h-14 border-b border-outline-variant/60 flex flex-wrap items-center px-3 md:px-5 py-2 justify-between gap-2 bg-surface-container-low/70 shrink-0">
           {/* Les réglages de lecture défilent au lieu de disparaître. « Offset » était masqué sous
               `md`, « Rows » sous `lg` — mais ils continuaient de s'appliquer : sur une fenêtre
               étroite, la requête partait en EARLIEST/50 sans qu'aucun des deux ne soit visible,
@@ -1920,7 +1897,7 @@ const QueryWorkbench: React.FC = () => {
                 aria-expanded={showHistory} aria-haspopup="dialog"
                 className="inline-flex items-center gap-1.5 h-9 px-3 text-on-surface-variant hover:text-on-surface border border-outline-variant rounded-md hover:bg-surface-container-high transition-colors" title="Query history">
                 <span className="material-symbols-outlined text-[18px]">history</span>
-                {history.length > 0 && <span className="text-[10px] bg-primary text-on-primary font-semibold px-1.5 rounded-full tabular-nums">{history.length}</span>}
+                {history.length > 0 && <span className="text-[11px] bg-primary text-on-primary font-semibold px-1.5 rounded-full tabular-nums">{history.length}</span>}
               </button>
               {showHistory && (
                 <div role="dialog" aria-label="Query history" className="absolute right-0 top-full mt-1.5 w-[32rem] max-h-96 overflow-y-auto bg-surface-container-high border border-outline-variant rounded-xl shadow-2xl z-30 animate-slide-up">
@@ -2016,7 +1993,7 @@ const QueryWorkbench: React.FC = () => {
 
           {/* Editor + Window Assistant */}
           <div className="flex overflow-hidden" style={{ height: `${splitPercent}%` }}>
-            <div className="flex-1 flex flex-col min-w-0 bg-surface/40">
+            <div className="flex-1 flex flex-col min-w-0 bg-surface">
 
               {/* ── Tab bar ── */}
               {/* Une barre d'onglets est un `tablist` : les onglets étaient des `<div onClick>`,
@@ -2118,7 +2095,7 @@ const QueryWorkbench: React.FC = () => {
                 <Editor
                   height="100%"
                   defaultLanguage="sql"
-                  theme="vs-dark"
+                  theme="kse-dark"
                   value={sql}
                   onChange={val => updateSql(val || '')}
                   onMount={(editor, monacoApi) => {
@@ -2142,6 +2119,9 @@ const QueryWorkbench: React.FC = () => {
                     padding: { top: 16 }, scrollBeyondLastLine: false, automaticLayout: true,
                     suggestOnTriggerCharacters: true,
                     quickSuggestions: { other: true, comments: false, strings: false },
+                    // An empty editor says what to do: a blank pane with a blinking cursor gave no
+                    // hint that the examples below, or the sidebar, are where a first query starts.
+                    placeholder: 'Write a Flink SQL query, or start from an example below — Ctrl+Enter runs it',
                   }}
                 />
               </div>
@@ -2177,7 +2157,7 @@ const QueryWorkbench: React.FC = () => {
           </div>
 
           {/* Results panel */}
-          <div className="flex flex-col bg-surface-container-low/40 overflow-hidden" style={{ height: `calc(${100 - splitPercent}% - 0.5rem)` }}>
+          <div className="flex flex-col bg-surface-container-low overflow-hidden" style={{ height: `calc(${100 - splitPercent}% - 0.5rem)` }}>
             <div className="h-10 border-b border-outline-variant/60 flex items-center px-4 justify-between gap-3 bg-surface-container-low/80 shrink-0">
               <div className="flex items-center gap-5 min-w-0">
                 <div className="flex items-center gap-1.5">
@@ -2196,7 +2176,7 @@ const QueryWorkbench: React.FC = () => {
                     {truncated && (
                       <Tooltip content={changelog?.truncated
                         ?? `The scan stopped at the ${resultLimit.toLocaleString()}-row limit, so this result is probably incomplete — raise "Rows" to fetch more.`}>
-                        <span tabIndex={0} className="ml-1.5 text-[10px] text-warning font-medium rounded">limit reached</span>
+                        <span tabIndex={0} className="ml-1.5 text-[11px] text-warning font-medium rounded">limit reached</span>
                       </Tooltip>
                     )}
                   </span>
@@ -2305,16 +2285,16 @@ const QueryWorkbench: React.FC = () => {
                               : run.status === 'running' ? 'text-primary animate-pulse' : 'text-outline',
                         )}>{STATEMENT_ICON[run.status]}</span>
                         <span className="text-[11px] font-medium text-on-surface tabular-nums">{run.index}</span>
-                        <span className="text-[10px] text-on-surface-variant uppercase tracking-wide">
+                        <span className="text-[11px] text-on-surface-variant uppercase tracking-wide">
                           {run.kind.replace('_', ' ')}
                         </span>
                       </span>
-                      <span className="block font-mono text-[10px] text-on-surface-variant truncate mt-0.5">
+                      <span className="block font-mono text-[11px] text-on-surface-variant truncate mt-0.5">
                         {previewStatement(run.sql, 40)}
                       </span>
                       {/* Rien d'inventé : une instruction jamais atteinte n'affiche pas « 0 ligne ». */}
                       {describeStatementRun(run) && (
-                        <span className="block text-[10px] text-outline mt-0.5">{describeStatementRun(run)}</span>
+                        <span className="block text-[11px] text-outline mt-0.5">{describeStatementRun(run)}</span>
                       )}
                     </button>
                   ))}
@@ -2423,7 +2403,7 @@ const QueryWorkbench: React.FC = () => {
                         </button>
                       </div>
                       {showErrorDetails && (
-                        <pre className="mt-2 text-[10px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{queryError.raw}</pre>
+                        <pre className="mt-2 text-[11px] text-on-surface-variant font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed border-t border-error/20 pt-2">{queryError.raw}</pre>
                       )}
                       {assistantReady && isFixableError(queryError.raw, ranSql ?? sql) && (
                         <FixSuggestion key={`${queryError.raw}\u0000${ranSql ?? sql}`}

@@ -182,7 +182,7 @@ the original missing-point count stays visible. Counter gaps are never filled. A
 | `STALE` | Recent complete buckets have no usable measurement beyond the tolerated gap |
 | `INVALID_DATA` | Ambiguous timestamps, incompatible transformation, unknown units or unverified quality |
 | `SCOPE_CHANGED` | Identity, definition, unit or semantic kind differs from the requested series |
-| `COUNTER_RESET` | Cumulative readings decreased or became negative |
+| `COUNTER_RESET` | A reading was negative, or the counter decreased and fewer than 128 points have been collected since (the context then starts after the last reset instead of being refused — `METRICS-FORECAST-AUDIT-2.md` O1) |
 | `HISTORY_LIMIT` | The observation count or payload budget prevented a complete read |
 
 `PreparedMetricSeries` carries source/output units, window bounds, per-bucket sample counts,

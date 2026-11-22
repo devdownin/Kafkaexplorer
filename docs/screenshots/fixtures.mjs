@@ -1018,16 +1018,28 @@ const forecastResult = {
 const forecastActivation = { eligible: false, reason: '24 of the 30 realised points required have been evaluated',
   blockPoints: 24, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 };
 
+/**
+ * GET /api/forecasts/{seriesId}/previous — the latest forecast whose horizon has been measured: made
+ * thirty minutes before the one on screen, from the same smooth swell, so it follows the measured
+ * curve without its faster ripple — mostly inside its band, as a decent forecast is.
+ */
+export const forecastPrevious = { ...forecastResult.forecast, requestId: 'r-0', historyEndAt: forecastEnd - 30 * FORECAST_STEP,
+  points: Array.from({ length: 30 }, (_, k) => {
+    const i = 512 - 30 + k;
+    const central = Math.round(2140 + 180 * Math.sin(i / 24));
+    return { at: forecastEnd - (511 - i) * FORECAST_STEP, central, q10: central - 50 - 3 * k, q50: central, q90: central + 50 + 3 * k };
+  }) };
+
 /** GET /api/forecasts/{seriesId} — the series on screen, its 512 context points included. */
 export const forecastSeries = {
   seriesId: FORECAST_ID, metricId: 'm-hop-latency', environment: 'local', result: forecastResult,
   activation: forecastActivation, stepMillis: FORECAST_STEP, minimumContextPoints: 32, withdrawable: true, thresholdConfigured: true, error: null,
 };
 
-/** GET /api/forecasts — the list is a summary: the same row without its history points. */
+/** GET /api/forecasts — the list is a summary: the same row with only its latest 60 history points. */
 export const forecastStatus = {
-  enabled: true, state: 'AVAILABLE', shadowEnabled: false, modelAvailable: true,
-  series: [{ ...forecastSeries, result: { ...forecastResult, context: { ...forecastContext, points: [] } } }],
+  enabled: true, state: 'AVAILABLE', shadowEnabled: false, modelAvailable: true, nextCycleAt: NOW + FORECAST_STEP,
+  series: [{ ...forecastSeries, result: { ...forecastResult, context: { ...forecastContext, points: forecastContext.points.slice(-60) } } }],
 };
 
 /** GET /api/forecasts/{seriesId}/progress — the threshold of the card, judged on the cautious edge. */
@@ -1090,4 +1102,13 @@ export const assistantStatus = {
   contextWindowTokens: 0,
   providerCode: 'OPENROUTER',
   dataRetentionRefused: true,
+};
+
+// What each metric's last refresh cost: both cheap here, so no card carries the slow-refresh note.
+export const metricRefreshCosts = {
+  tickMs: 30000,
+  metrics: {
+    'm-orders-volume': { lastDurationMs: 420, collectionIntervalMs: 30000 },
+    'm-hop-latency': { lastDurationMs: 1350, collectionIntervalMs: 30000 },
+  },
 };

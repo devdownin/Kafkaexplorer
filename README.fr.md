@@ -10,7 +10,7 @@
 [![Docker Hub](https://img.shields.io/docker/pulls/compagnonsdudev/kafkaexplorer?logo=docker&logoColor=white&label=docker%20pulls)](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer)
 [![GHCR](https://img.shields.io/badge/ghcr.io-kafkaexplorer-2496ED?logo=github&logoColor=white)](https://github.com/devdownin/Kafkaexplorer/pkgs/container/kafkaexplorer)
 [![Java 21](https://img.shields.io/badge/Java-21-orange)](pom.xml)
-[![Kafka 4.3](https://img.shields.io/badge/Kafka-4.3_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
+[![Kafka 4.4](https://img.shields.io/badge/Kafka-4.4_KRaft-231F20?logo=apachekafka)](https://kafka.apache.org/)
 [![Flink 2.3](https://img.shields.io/badge/Flink-2.3-E6526F?logo=apacheflink&logoColor=white)](https://flink.apache.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
@@ -59,6 +59,8 @@ Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilot
 - 🖱️ **Cliquer, c'est requêter** — cliquez sur une clé JSON ou une balise XML dans l'aperçu d'un message et elle atterrit dans votre `SELECT`/`WHERE`, `JSON_VALUE`/XPath générés pour vous.
 - 🧠 **Schémas sans configuration** — les topics sont échantillonnés, leur structure inférée (JSON, XML, Avro via Schema Registry) et enregistrée comme table Flink dès que vous la nommez — par le nom du topic, tel que le cluster l'affiche : `SELECT * FROM "orders.v2-raw"`.
 - 📝 **Un vrai éditeur SQL** — Monaco (le moteur de VS Code), auto-complétion des topics et tables, historique de requêtes, lecture earliest/latest.
+- 🎨 **Une interface spatiale, claire ou sombre** — une navigation en verre qui flotte au-dessus de plans de lecture opaques (tables, graphiques et éditeur SQL ne sont jamais floutés), claire par défaut avec un interrupteur de mode sombre qui mémorise votre choix, avec six couleurs d'accent et une densité compacte pour les écrans chargés. Les contrastes respectent WCAG AA, et la réduction des animations et de la transparence est honorée.
+- 🎨 **Une interface spatiale, claire ou sombre** — une navigation en verre qui flotte au-dessus de plans de lecture opaques (tables, graphiques et éditeur SQL ne sont jamais floutés), claire par défaut avec un interrupteur de mode sombre qui mémorise votre choix, avec six couleurs d'accent et une densité compacte pour les écrans chargés. Les contrastes respectent WCAG AA, et la réduction des animations et de la transparence est honorée.
 - 🕸️ **Lignage & traçage** — un graphe interactif topics → tables → jobs actifs, résolu par le parseur de Flink lui-même ; plus le traçage d'un message à travers les topics par clé, header, JSONPath ou XPath, qui affiche ses sauts au fil de la recherche, dit exactement ce qu'il a lu, reprend là où le budget l'a arrêté, et compare deux clés côte à côte.
 - 🗺️ **Un modèle de données que vous n'avez pas eu à dessiner** — choisissez des topics et lisez-les comme des tables, avec les relations entre elles déduites des noms de colonnes clés. Kafka n'a pas de clés étrangères : chaque arête est donc une affirmation, qui porte son grade de confiance, énonce son évidence en toutes lettres, et s'ouvre en `JOIN` prêt à l'emploi — une relation ou tout un sous-graphe.
 - 🩺 **Audit du cluster en un clic** — messages toxiques, doublons, pertes en ligne et latence des flux, calculés sur tout le cluster en tâche de fond.
@@ -69,7 +71,7 @@ Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilot
 
 ## 🚀 Démarrage rapide
 
-Une seule commande — Kafka 4.3 (KRaft), l'application et tous les topics de démo :
+Une seule commande — Kafka 4.4 (KRaft), l'application et tous les topics de démo :
 
 ```bash
 docker compose up -d
@@ -181,13 +183,19 @@ Le défaut est un point d'accès *hébergé* : les digests de messages qu'il con
 
 ## 🛠️ Sous le capot
 
-Un unique JAR Spring Boot 4.1 embarquant Apache Flink 2.3 comme moteur SQL, avec un frontend React 19 + Tailwind. Clients Kafka 4.3 (compatibles brokers 2.1+), Avro via Confluent Schema Registry, métriques Prometheus sur `/actuator/prometheus`. Le SQL est restreint par liste blanche (`SELECT` / `EXPLAIN` / `CREATE TABLE` uniquement), le parsing XML est durci contre les attaques XXE, et les secrets sont masqués dans tout DDL affiché par l'UI.
+Un unique JAR Spring Boot 4.1 embarquant Apache Flink 2.3 comme moteur SQL, avec un frontend React 19 + Tailwind. Clients Kafka 4.4 (compatibles brokers 2.1+), Avro via Confluent Schema Registry, métriques Prometheus sur `/actuator/prometheus`. Le SQL est restreint par liste blanche (`SELECT` / `EXPLAIN` / `CREATE TABLE` uniquement), le parsing XML est durci contre les attaques XXE, et les secrets sont masqués dans tout DDL affiché par l'UI.
 
 Un serveur MCP optionnel, dans le même processus (Spring AI 2.0), expose ces mêmes services à un agent LLM — mêmes caches, mêmes budgets, aucun second client Kafka — derrière une garde calquée sur KIP-1318 : la portée ressource appliquée au SQL autant qu'aux noms de topics, un allow/deny par outil tenu par l'absence de `tools/list`, une limite de débit, des jetons d'approbation, le DLP sur tout ce qui sort, et un journal d'appels en ajout seul. Inactif sauf `explorer.mcp.enabled=true`, en lecture seule une fois actif, et derrière un jeton bearer sur TLS dès lors. Voir **[SPEC-MCP.md](SPEC-MCP.md)**.
 
-Les outils de revue opérationnelle `kex_topic_configuration`, `kex_topic_policy_review`, `kex_consumer_lag_trend` et `kex_dlq_review` exposent les mesures et les limites de leurs diagnostics. Définissez `explorer.mcp.lag-history-directory` sur un volume accessible en écriture depuis chaque instance et prenant en charge les verrous interprocessus : le relevé de lag reste alors disponible après un redémarrage (validité de 48 heures par défaut, configurable). Sans ce volume, le relevé reste dans le processus pendant 30 minutes. Les règles de topic dépendent de l'environnement déclaré et les liens DLQ vers source, retry et runbook restent des déclarations à vérifier. Les exemples de configuration figurent dans [`docs/DOCKERHUB.md`](docs/DOCKERHUB.md) et `application.yml`.
+Les outils de revue opérationnelle `kex_topic_configuration`, `kex_topic_policy_review`, `kex_consumer_lag_trend` et `kex_dlq_review` exposent les mesures et les limites de leurs diagnostics. Définissez `explorer.mcp.lag-history-directory` sur un volume accessible en écriture depuis chaque instance et prenant en charge les verrous interprocessus : le relevé de lag reste alors disponible après un redémarrage (validité de 48 heures par défaut, configurable). Sans ce volume, le relevé reste dans le processus pendant 30 minutes. Les règles de topic dépendent de l'environnement déclaré et les liens DLQ vers source, retry et runbook restent des déclarations à vérifier. Les exemples de configuration figurent dans [`docs/DOCKERHUB-OPERATIONS.md`](docs/DOCKERHUB-OPERATIONS.md) et `application.yml`.
 
 Plongée dans l'architecture : **[docs/architecture.md](docs/architecture.md)**
+
+**Prévoir depuis la carte d'une métrique** : appuyez sur **Forecast** et la prévision est créée à partir
+de l'historique enregistré de la métrique, tracée dans le prolongement de sa courbe. La carte dit quand
+un des seuils de la métrique est prévu, la fiabilité de la prévision et l'heure de la suivante. Rien
+n'est envoyé ; la même lecture est la série Prometheus `explorer_forecast_threshold_eta_seconds`, sur
+laquelle vous pouvez alerter. `./demo.sh --forecast` la fait tourner de bout en bout sans configuration.
 
 Le panneau **Metrics Forecast** propose un diagnostic, un catalogue de métriques candidates,
 un assistant de configuration avec approbation, le suivi de l’historique et une synthèse des résultats.
@@ -200,7 +208,7 @@ présente la page Prévisions de l’agent et les diagnostics MCP.
 
 Le journal PostgreSQL optionnel capture les métriques sélectionnées et prépare des contextes
 réguliers pour TimesFM. Le service CPU-only utilise l'overlay `compose/timesfm.yml` et un
-checkpoint épinglé. Le pilote et ses cinq outils MCP en lecture seule sont activés par défaut. Sans série approuvée,
+checkpoint épinglé. Le pilote et ses six outils MCP en lecture seule sont activés par défaut. Sans série approuvée,
 le catalogue est vide et aucun appel à la base ou au modèle ne démarre. Une fois l’historique,
 l’inférence et les séries configurés, le pilote planifie les séries explicitement approuvées,
 persiste les prévisions et l'activation opérateur, puis compare les erreurs réalisées à quatre
@@ -275,3 +283,12 @@ Lancez **`mvn verify`** avant d'ouvrir une pull request : c'est la porte complè
 [AGPL v3](LICENSE) — libre d'utiliser, d'étudier, de partager et d'améliorer.
 
 ---
+
+### Authentification MCP Enterprise (optionnelle)
+
+Un fournisseur d'identité OAuth de confiance peut émettre des jetons JWT validés contre
+une URL JWKS HTTPS configurée, avec découverte RFC 9728 et contrôle de l'émetteur, de l'audience et des permissions
+par route. Le mode OAuth est actuellement limité à la **lecture seule** ; les permissions
+supplémentaires OAuth permettent de limiter chaque outil en lecture, mais les outils
+d'écriture et MCP Tasks ne sont pas encore disponibles.
+Consultez la [documentation de l'authentification MCP Enterprise](docs/mcp-enterprise-auth.md).

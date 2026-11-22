@@ -39,6 +39,66 @@ self.MonacoEnvironment = {
 loader.config({ monaco });
 
 /**
+ * The editor in the application's own colours. `vs-dark` paints a neutral grey (#1e1e1e) inside a
+ * blue-black shell; this takes the surface tokens of `tailwind.config.js` so the editor reads as
+ * part of the page. Pages ask for it by name: `theme="kse-dark"`.
+ */
+export const KSE_THEME = 'kse-dark';
+monaco.editor.defineTheme(KSE_THEME, {
+  base: 'vs-dark',
+  inherit: true,
+  rules: [],
+  colors: {
+    'editor.background': '#0b0d10',
+    'editor.foreground': '#e8eaf0',
+    'editorLineNumber.foreground': '#4d566a',
+    'editorLineNumber.activeForeground': '#9aa3b2',
+    'editor.lineHighlightBackground': '#12151a',
+    'editor.lineHighlightBorder': '#12151a',
+    'editor.selectionBackground': '#a3adff33',
+    'editor.inactiveSelectionBackground': '#a3adff1f',
+    'editorCursor.foreground': '#a3adff',
+    'editorGutter.background': '#0b0d10',
+    'editorWidget.background': '#191d24',
+    'editorWidget.border': '#2a303b',
+    'editorSuggestWidget.background': '#191d24',
+    'editorSuggestWidget.border': '#2a303b',
+    'editorSuggestWidget.selectedBackground': '#262c36',
+    'scrollbarSlider.background': '#2a303b99',
+    'scrollbarSlider.hoverBackground': '#3a4252cc',
+    'minimap.background': '#0b0d10',
+  },
+});
+
+
+/** Separate Monaco language/editor palette for the light spatial theme. */
+monaco.editor.defineTheme('kse-light', {
+  base: 'vs',
+  inherit: true,
+  rules: [],
+  colors: {
+    'editor.background': '#f9fbfe',
+    'editor.foreground': '#1c293a',
+    'editorLineNumber.foreground': '#77879a',
+    'editorLineNumber.activeForeground': '#3444a2',
+    'editor.lineHighlightBackground': '#edf2f8',
+    'editor.lineHighlightBorder': '#edf2f8',
+    'editor.selectionBackground': '#c4ceff88',
+    'editor.inactiveSelectionBackground': '#dce4ff66',
+    'editorCursor.foreground': '#4453b8',
+    'editorGutter.background': '#f9fbfe',
+    'editorWidget.background': '#ffffff',
+    'editorWidget.border': '#c9d4e1',
+    'editorSuggestWidget.background': '#ffffff',
+    'editorSuggestWidget.border': '#c9d4e1',
+    'editorSuggestWidget.selectedBackground': '#e3e8ff',
+    'scrollbarSlider.background': '#a8b6c766',
+    'scrollbarSlider.hoverBackground': '#a8b6c799',
+    'minimap.background': '#f9fbfe',
+  },
+});
+
+/**
  * Formateur SQL, enregistré **ici** et non dans une page.
  *
  * Monaco n'embarque aucun formateur pour ce langage : il fournit une coloration Monarch et rien

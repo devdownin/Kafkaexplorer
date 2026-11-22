@@ -587,6 +587,17 @@ GROUP BY window_start, window_end`}
         <div className="space-y-3">
           <Card padding="md" className="space-y-3">
             <h3 className="text-[13px] font-semibold text-on-surface flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary text-[18px]">menu_book</span>
+              <Link to="/mcp/guide" className="text-primary hover:underline">Guide Skills & Services MCP</Link>
+            </h3>
+            <p className="text-[12px] text-on-surface-variant leading-relaxed">
+              Un parcours pédagogique pour distinguer Skill, Tool, Resource et Prompt.
+              Le graphe interactif relie l'orchestration documentée de Kex-anHarness aux services KafkaExplorer,
+              sans confondre architecture et traces d'exécution.
+            </p>
+          </Card>
+          <Card padding="md" className="space-y-3">
+            <h3 className="text-[13px] font-semibold text-on-surface flex items-center gap-2">
               <span className="material-symbols-outlined text-primary text-[18px]">waves</span>
               &ldquo;Where did this message go?&rdquo; — <Link to="/stream-flow" className="text-primary hover:underline">Stream Flow</Link>
             </h3>

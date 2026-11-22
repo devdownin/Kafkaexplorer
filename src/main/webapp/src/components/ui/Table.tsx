@@ -38,14 +38,14 @@ export const Table: FC<TableProps> = ({
   return (
     <div
       className={cn(
-        'bg-surface-container rounded-xl ring-1 ring-white/[0.045]',
+        'kse-data-table bg-surface-container rounded-xl border border-outline-variant/60',
         // `kse-scroll-table` rend l'en-tête collant (voir index.css) quand on borne la hauteur.
-        scroll ? 'overflow-auto custom-scrollbar kse-scroll-table' : 'overflow-x-auto',
+        scroll ? 'overflow-auto custom-scrollbar kse-scroll-table' : 'overflow-x-auto custom-scrollbar',
         scrollContainerClassName,
       )}
       style={scroll ? { maxHeight } : undefined}
     >
-      <table className={cn('w-full text-left border-collapse', className)} {...props}>
+      <table className={cn('w-full text-left border-collapse text-on-surface', className)} {...props}>
         {children}
       </table>
     </div>
@@ -53,7 +53,7 @@ export const Table: FC<TableProps> = ({
 };
 
 export const TableHead: FC<HTMLAttributes<HTMLTableSectionElement>> = ({ className, children, ...props }) => (
-  <thead className={cn('bg-surface-container-high/60', className)} {...props}>
+  <thead className={cn('bg-surface-container-high/70', className)} {...props}>
     {children}
   </thead>
 );
@@ -61,7 +61,7 @@ export const TableHead: FC<HTMLAttributes<HTMLTableSectionElement>> = ({ classNa
 export const Th: FC<ThHTMLAttributes<HTMLTableCellElement>> = ({ className, children, ...props }) => (
   <th
     scope="col"
-    className={cn('px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.05em] text-on-surface-variant whitespace-nowrap', className)}
+    className={cn('px-4 py-2.5 text-[12px] font-medium text-on-surface-variant whitespace-nowrap', className)}
     {...props}
   >
     {children}
@@ -75,13 +75,13 @@ export const TableBody: FC<HTMLAttributes<HTMLTableSectionElement>> = ({ classNa
 );
 
 export const TableRow: FC<HTMLAttributes<HTMLTableRowElement>> = ({ className, children, ...props }) => (
-  <tr className={cn('hover:bg-surface-container-high/40 transition-colors', className)} {...props}>
+  <tr className={cn('hover:bg-surface-container-high/45 transition-colors duration-150', className)} {...props}>
     {children}
   </tr>
 );
 
 export const Td: FC<TdHTMLAttributes<HTMLTableCellElement>> = ({ className, children, ...props }) => (
-  <td className={cn('px-4 py-3 text-[12px] text-on-surface align-middle', className)} {...props}>
+  <td className={cn('px-4 py-3 text-[12px] text-on-surface align-middle break-words', className)} {...props}>
     {children}
   </td>
 );

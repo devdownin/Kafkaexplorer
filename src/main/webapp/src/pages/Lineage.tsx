@@ -32,14 +32,18 @@ interface LineageData {
 }
 
 const nodeConfig: Record<string, { shape: 'circle' | 'rect' | 'diamond' | 'hex'; color: string; bg: string }> = {
-  topic:  { shape: 'circle',  color: '#a3adff', bg: '#12151a' },
-  table:  { shape: 'rect',    color: '#a3adff', bg: '#14402a' },
-  view:   { shape: 'diamond', color: '#c9a9f7', bg: '#3b2762' },
-  query:  { shape: 'hex',     color: '#f5c264', bg: '#4a3a12' },
+  topic:  { shape: 'circle',  color: 'var(--viz-primary)', bg: 'var(--viz-node-bg)' },
+  table:  { shape: 'rect',    color: 'var(--viz-primary)', bg: 'var(--viz-node-bg)' },
+  view:   { shape: 'diamond', color: 'var(--viz-previous)', bg: 'var(--viz-node-bg)' },
+  query:  { shape: 'hex',     color: 'var(--viz-warning)', bg: 'var(--viz-node-bg)' },
 };
 
 /** Le cadrage de départ, et ce que le bouton « recentrer » et la touche `0` visent. */
 const RESET_VIEW = { x: 40, y: 20, scale: 1 };
+/** The smallest scale framing goes to: node labels are 10 px, unreadable much below this. */
+const READABLE_SCALE = 0.8;
+/** The legend's names, written out: `${type}s` gave "Querys". */
+const TYPE_PLURAL = { topic: 'Topics', table: 'Tables', view: 'Views', query: 'Queries' } as const;
 
 const NODE_W = 140;
 const NODE_H = 48;
@@ -140,7 +144,7 @@ const NodeShape: React.FC<{
   const cx = x + NODE_W / 2;
   const cy = y + NODE_H / 2;
   const label = node.label.length > 16 ? node.label.slice(0, 15) + '…' : node.label;
-  const stroke = selected ? '#ffffff' : cfg.color;
+  const stroke = selected ? 'var(--viz-node-text)' : cfg.color;
   const sw = selected ? 2.5 : 1.5;
 
   const renderShape = () => {
@@ -193,12 +197,12 @@ const NodeShape: React.FC<{
           fill={cfg.color} fillOpacity={0.1} stroke={cfg.color} strokeWidth={1} strokeOpacity={0.3} />
       )}
       {renderShape()}
-      <text x={cx} y={cy + 4} textAnchor="middle" fill="white" fontSize={11}
+      <text x={cx} y={cy + 4} textAnchor="middle" fill="var(--viz-node-text)" fontSize={11}
         fontFamily="JetBrains Mono, monospace" fontWeight={selected ? 'bold' : 'normal'}>
         {label}
       </text>
       <text x={cx} y={y + NODE_H + 15} textAnchor="middle" fill={cfg.color}
-        fontSize={9} fontFamily="Inter, sans-serif" opacity={0.65}>
+        fontSize={9} fontFamily="Inter, sans-serif">
         {subLabel}
       </text>
     </g>
@@ -220,7 +224,7 @@ const Lineage: React.FC = () => {
   // Pan / zoom / clavier : la mécanique est partagée avec Stream Flow et Data Model
   // (`useGraphViewport`), la politique — ce que `0` et `Échap` font — reste ici.
   const {
-    transform, setTransform, svgRef, canvas, panBy, zoomFromCenter, isPanning,
+    transform, setTransform, svgRef, canvas, panBy, zoomFromCenter, isPanning, viewport,
     onPointerDown, onPointerMove, onPointerUp,
   } = useGraphViewport({
     initial: RESET_VIEW,
@@ -330,7 +334,35 @@ const Lineage: React.FC = () => {
   }, [positions, setTransform, canvas]);
 
 
-  const resetView = useCallback(() => setTransform(RESET_VIEW), [setTransform]);
+  /**
+   * The whole graph in view, never enlarged past 1. It opened at a fixed origin, so a view node
+   * three columns to the right was cut by the edge of the canvas on an ordinary window, and the
+   * first thing the page asked was to drag it into sight. `0` and the button do the same.
+   */
+  const resetView = useCallback(() => {
+    const box = viewport();
+    const placed = Object.values(positions);
+    if (!box || placed.length === 0) { setTransform(RESET_VIEW); return; }
+    const LABEL_BELOW = 20; // the type line drawn under each node
+    const pad = 32;
+    const minX = Math.min(...placed.map(p => p.x)), minY = Math.min(...placed.map(p => p.y));
+    const maxX = Math.max(...placed.map(p => p.x + NODE_W)), maxY = Math.max(...placed.map(p => p.y + NODE_H + LABEL_BELOW));
+    const fit = Math.min(1, (box.width - 2 * pad) / (maxX - minX), (box.height - 2 * pad) / (maxY - minY));
+    // Framing must not make it unreadable: below READABLE_SCALE the graph starts from its sources
+    // on the left, at a size where labels can be read, and scrolls — as Stream Flow does.
+    const scale = Math.max(READABLE_SCALE, fit);
+    const width = (maxX - minX) * scale;
+    setTransform({
+      x: width + 2 * pad <= box.width ? (box.width - width) / 2 - minX * scale : pad - minX * scale,
+      y: (box.height - (maxY - minY) * scale) / 2 - minY * scale,
+      scale,
+    });
+  }, [viewport, positions, setTransform]);
+
+  // Framed when the graph arrives, and when the canvas first exists.
+  useEffect(() => {
+    if (data.nodes.length > 0) resetView();
+  }, [data.nodes, canvas, resetView]);
 
   /**
    * Le graphe se pilote au clavier : flèches pour se déplacer, +/− pour zoomer, 0 pour recadrer,
@@ -365,9 +397,9 @@ const Lineage: React.FC = () => {
           className="bg-background-dark/95 border border-primary/30 rounded-lg px-3 py-2 shadow-2xl text-xs max-w-[220px]"
         >
           <p className="font-mono font-bold text-on-surface break-all leading-snug">{tooltip.node.label}</p>
-          <p className="text-on-surface-variant uppercase text-[10px] mt-0.5">{tooltip.node.type}</p>
+          <p className="text-on-surface-variant uppercase text-[11px] mt-0.5">{tooltip.node.type}</p>
           {tooltip.node.type === 'topic' && tooltip.node.messageCount !== undefined && (
-            <p className="text-primary font-mono text-[10px] mt-0.5">
+            <p className="text-primary font-mono text-[11px] mt-0.5">
               {tooltip.node.messageCount.toLocaleString()} messages
             </p>
           )}
@@ -428,8 +460,8 @@ const Lineage: React.FC = () => {
               return (
                 <div key={type} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg bg-surface-container-high">
                   <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: cfg.color, opacity: 0.8 }} />
-                  <span className="capitalize text-on-surface text-xs">{type}s</span>
-                  <span className="ml-auto text-[10px] bg-primary/10 px-1.5 py-0.5 rounded text-primary font-mono">{count}</span>
+                  <span className="text-on-surface text-xs">{TYPE_PLURAL[type]}</span>
+                  <span className="ml-auto text-[11px] bg-primary/10 px-1.5 py-0.5 rounded text-primary font-mono">{count}</span>
                 </div>
               );
             })}
@@ -460,7 +492,7 @@ const Lineage: React.FC = () => {
 
         {/* Stats */}
         <div className="border-t border-outline-variant/60 pt-3 text-xs text-on-surface-variant space-y-1">
-          <p className="font-bold text-on-surface-variant uppercase tracking-wider text-[10px]">Stats</p>
+          <p className="font-bold text-on-surface-variant uppercase tracking-wider text-[11px]">Stats</p>
           <p>{data.nodes.length} nodes · {data.edges.length} edges</p>
           {selectedNode && (
             <p className="text-primary truncate">
@@ -470,7 +502,7 @@ const Lineage: React.FC = () => {
         </div>
 
         {/* Controls hint */}
-        <div className="mt-auto text-[10px] text-outline space-y-0.5 border-t border-outline-variant/60 pt-3">
+        <div className="mt-auto text-[11px] text-outline space-y-0.5 border-t border-outline-variant/60 pt-3">
           <p>Scroll to zoom</p>
           <p>Drag to pan</p>
           <p>Click node for details</p>
@@ -517,7 +549,7 @@ const Lineage: React.FC = () => {
             className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface border-b border-outline-variant/60 transition-colors">
             <span className="material-symbols-outlined text-lg">remove</span>
           </button>
-          <button onClick={resetView} title="Reset view"
+          <button onClick={resetView} title="Fit graph to view"
             className="p-2 hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors">
             <span className="material-symbols-outlined text-lg">center_focus_weak</span>
           </button>
@@ -563,10 +595,10 @@ const Lineage: React.FC = () => {
           >
             <defs>
               <marker id="arrow-lin" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                <polygon points="0 0, 8 3, 0 6" fill="#a3adff" opacity="0.6" />
+                <polygon points="0 0, 8 3, 0 6" fill="var(--viz-edge)" opacity="0.6" />
               </marker>
               <marker id="arrow-lin-hi" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-                <polygon points="0 0, 8 3, 0 6" fill="#ffffff" opacity="0.9" />
+                <polygon points="0 0, 8 3, 0 6" fill="var(--viz-node-text)" opacity="0.9" />
               </marker>
             </defs>
 
@@ -591,7 +623,7 @@ const Lineage: React.FC = () => {
                     <path
                       d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
                       fill="none"
-                      stroke={hi ? '#ffffff' : '#a3adff'}
+                      stroke={hi ? 'var(--viz-node-text)' : 'var(--viz-edge)'}
                       strokeWidth={hi ? 2 : 1.5}
                       opacity={dim ? 0.05 : (hi ? 0.9 : 0.3)}
                       // Remove marker on dimmed edges (markers ignore parent opacity)
@@ -599,7 +631,7 @@ const Lineage: React.FC = () => {
                     />
                     {edge.label && !dim && (
                       <text x={mx} y={Math.min(y1, y2) - 7} textAnchor="middle"
-                        fill="#79839a" fontSize={9}>{edge.label}</text>
+                        fill="var(--viz-axis)" fontSize={9}>{edge.label}</text>
                     )}
                   </g>
                 );
@@ -641,7 +673,7 @@ const Lineage: React.FC = () => {
           <div className="p-4 border-b border-outline-variant/60">
             <div className="flex items-center justify-between mb-2">
               <span
-                className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider"
+                className="px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider"
                 style={{
                   backgroundColor: `${(nodeConfig[selectedNode.type] ?? nodeConfig.table).color}20`,
                   color: (nodeConfig[selectedNode.type] ?? nodeConfig.table).color,
@@ -660,7 +692,7 @@ const Lineage: React.FC = () => {
                 {selectedNode.messageCount.toLocaleString()} messages
               </p>
             )}
-            <p className="text-[10px] text-outline font-mono mt-0.5">ID: {selectedNode.id}</p>
+            <p className="text-[11px] text-outline font-mono mt-0.5">ID: {selectedNode.id}</p>
           </div>
 
           <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
@@ -668,7 +700,7 @@ const Lineage: React.FC = () => {
             {/* Writes to (outgoing) */}
             {outgoingEdges.length > 0 && (
               <section>
-                <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Writes to</h3>
+                <h3 className="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Writes to</h3>
                 <div className="space-y-1.5">
                   {outgoingEdges.map((e, i) => (
                     <button
@@ -693,7 +725,7 @@ const Lineage: React.FC = () => {
             {/* Reads from (incoming) */}
             {incomingEdges.length > 0 && (
               <section>
-                <h3 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Reads from</h3>
+                <h3 className="text-[11px] font-bold text-on-surface-variant uppercase tracking-widest mb-2">Reads from</h3>
                 <div className="space-y-1.5">
                   {incomingEdges.map((e, i) => (
                     <button

@@ -31,7 +31,7 @@ import {
 
 const Figure: React.FC<{ label: string; value: string; hint?: string }> = ({ label, value, hint }) => (
   <div className="min-w-0">
-    <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">{label}</p>
+    <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider">{label}</p>
     <p className="text-sm text-on-surface font-mono tabular-nums truncate" title={hint ?? value}>{value}</p>
   </div>
 );
@@ -40,7 +40,7 @@ const Section: React.FC<{ title: string; hint?: string; children: React.ReactNod
   title, hint, children,
 }) => (
   <div>
-    <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider mb-1.5">
+    <p className="text-[11px] font-bold text-on-surface-variant uppercase tracking-wider mb-1.5">
       {title}
     </p>
     {hint && <p className="text-[11px] text-on-surface-variant mb-1.5 leading-snug">{hint}</p>}
@@ -108,7 +108,7 @@ export const ProcessModelPanel: React.FC<{ model: ProcessModel | null | undefine
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-[10px] uppercase tracking-wider text-on-surface-variant">
+                <tr className="text-[11px] uppercase tracking-wider text-on-surface-variant">
                   <th className="text-left font-medium py-1 pr-3">From → To</th>
                   <th className="text-right font-medium py-1 px-2">Cases</th>
                   <th className="text-right font-medium py-1 px-2">p50</th>
@@ -125,7 +125,7 @@ export const ProcessModelPanel: React.FC<{ model: ProcessModel | null | undefine
                       <span className="font-mono">{e.to}</span>
                       {e.outOfOrderCount > 0 && (
                         <span
-                          className="ml-1.5 text-[10px] text-warning"
+                          className="ml-1.5 text-[11px] text-warning"
                           title={`${e.outOfOrderCount} occurrence(s) produced in the opposite order to their business timestamps`}
                         >
                           clock skew
@@ -168,7 +168,7 @@ export const ProcessModelPanel: React.FC<{ model: ProcessModel | null | undefine
                     {v.path.join(' → ')}
                   </span>
                 </div>
-                <p className="text-[10px] text-outline ml-[4.5rem]">
+                <p className="text-[11px] text-outline ml-[4.5rem]">
                   {v.cases.toLocaleString()} case(s) · e.g. <span className="font-mono">{v.example}</span>
                 </p>
               </li>

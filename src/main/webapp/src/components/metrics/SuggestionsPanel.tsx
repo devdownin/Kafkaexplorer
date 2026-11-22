@@ -64,7 +64,7 @@ const SuggestionCard: React.FC<{
       {topics.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {topics.map(topic => (
-            <span key={topic} className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-surface-container-high text-on-surface-variant">
+            <span key={topic} className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-surface-container-high text-on-surface-variant">
               {topic}
             </span>
           ))}

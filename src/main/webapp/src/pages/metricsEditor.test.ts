@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 import { describe, expect, it } from 'vitest';
-import { buildDdlTemplate, carryTemplateParams, previewTimeoutMs, saveErrorTab, keepLabelsPresentIn, retargetDdl, sqlOutsideLiterals, validateDdlSql, validateMetricSql } from './metricsEditor';
+import { buildDdlTemplate, carryTemplateParams, previewTimeoutMs, saveErrorTab, keepLabelsPresentIn, retargetDdl, sqlOutsideLiterals, validateDdlSql, validateMetricSql, validateTemplate } from './metricsEditor';
 
 const ddl = (topic: string) => `CREATE TABLE t (id STRING) WITH ('connector' = 'kafka', 'topic' = '${topic}')`;
 
@@ -123,5 +123,14 @@ describe('saveErrorTab', () => {
     expect(saveErrorTab("Missing required option 'connector'")).toBe('ddl');
     expect(saveErrorTab('Object not found: demo_orders')).toBe('metric');
     expect(saveErrorTab(null)).toBe('metric');
+  });
+});
+
+describe('the silence of a topic', () => {
+  it('is a cluster measurement that needs its topic', () => {
+    const errors = (params: Record<string, unknown>) =>
+      validateTemplate('KAFKA_CLUSTER_COUNT', 'GAUGE', params).filter(m => m.level === 'error').map(m => m.text);
+    expect(errors({ measurement: 'LATEST_RECORD_AGE', topic: 'orders' })).toEqual([]);
+    expect(errors({ measurement: 'LATEST_RECORD_AGE' })).toEqual(['The silence of a topic needs the topic.']);
   });
 });

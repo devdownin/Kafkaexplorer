@@ -1,9 +1,12 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kafka SQL Explorer — See your Kafka. Query it like a database. Audit it with AI.</title>
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#f3f6fb" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
     <meta name="description" content="Explore Kafka, query it in Flink SQL, audit it with AI — one container, one URL.">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -11,19 +14,25 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <script>
+        // Same semantic tokens as the application (src/main/webapp/src/spatial-tokens.css): a
+        // light and a dark scheme chosen by the visitor's system, one indigo accent.
         tailwind.config = {
-            darkMode: 'class',
+            darkMode: 'media',
             theme: {
                 extend: {
                     colors: {
-                        primary: "#25f4f4",
-                        secondary: "#10b981",
-                        surface: "#102222",
-                        "surface-light": "#1b2d2d",
-                        border: "#2d4444",
+                        primary: "rgb(var(--p) / <alpha-value>)",
+                        secondary: "rgb(var(--s) / <alpha-value>)",
+                        "on-primary": "rgb(var(--on-p) / <alpha-value>)",
+                        surface: "rgb(var(--bg) / <alpha-value>)",
+                        "surface-light": "rgb(var(--bg2) / <alpha-value>)",
+                        border: "rgb(var(--line) / <alpha-value>)",
+                        ink: "rgb(var(--ink) / <alpha-value>)",
+                        muted: "rgb(var(--muted) / <alpha-value>)",
                     },
                     fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
+                        // SF Pro on Apple platforms, Inter everywhere else — as in the application.
+                        sans: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'Inter', 'sans-serif'],
                         mono: ['JetBrains Mono', 'monospace'],
                     },
                 }
@@ -31,28 +40,51 @@
         }
     </script>
     <style>
+        :root {
+            color-scheme: light dark;
+            --bg: 243 246 251; --bg2: 255 255 255; --line: 201 212 225;
+            --ink: 28 41 58; --muted: 74 91 112;
+            --p: 68 83 184; --s: 105 65 158; --on-p: 255 255 255;
+            --glass: rgba(255, 255, 255, .72); --edge: rgba(255, 255, 255, .8);
+            --lift: 0 12px 40px rgba(20, 30, 50, .08), 0 0 0 .5px rgba(20, 30, 50, .11);
+            --scene: radial-gradient(circle at 20% 0%, rgba(160, 190, 255, .18), transparent 40%),
+                     radial-gradient(circle at 85% 10%, rgba(210, 180, 255, .14), transparent 45%);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: 11 13 16; --bg2: 18 21 26; --line: 42 48 59;
+                --ink: 232 234 240; --muted: 154 163 178;
+                --p: 163 173 255; --s: 201 169 247; --on-p: 20 24 51;
+                --glass: rgba(24, 27, 34, .64); --edge: rgba(255, 255, 255, .095);
+                --lift: 0 12px 40px rgba(0, 0, 0, .28), 0 0 0 .5px rgba(0, 0, 0, .55);
+                --scene: radial-gradient(circle at 20% 0%, rgba(70, 100, 180, .16), transparent 40%);
+            }
+        }
+        body { background-image: var(--scene); background-repeat: no-repeat; }
         .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0;
         }
         .cyber-gradient {
-            background: radial-gradient(circle at 50% 50%, rgba(37, 244, 244, 0.1) 0%, transparent 50%);
+            background: radial-gradient(circle at 50% 0%, rgb(var(--p) / .14) 0%, transparent 55%);
         }
+        /* The application's glass: translucent, blurred, a light inner rim and a hairline outside. */
         .glass-effect {
-            background: rgba(16, 34, 34, 0.8);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(45, 68, 68, 0.5);
-        }
-        .glow-text {
-            text-shadow: 0 0 20px rgba(37, 244, 244, 0.5);
+            background: var(--glass);
+            backdrop-filter: blur(22px) saturate(160%);
+            -webkit-backdrop-filter: blur(22px) saturate(160%);
+            border: 1px solid var(--edge);
+            box-shadow: inset 0 1px 0 var(--edge), var(--lift);
         }
         .hero-pattern {
-            background-image: radial-gradient(#2d4444 0.5px, transparent 0.5px);
+            background-image: radial-gradient(rgb(var(--line)) 0.5px, transparent 0.5px);
             background-size: 24px 24px;
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, ::before, ::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
         }
     </style>
 </head>
-<body class="bg-surface text-slate-200 font-sans selection:bg-primary/30 selection:text-primary">
+<body class="bg-surface text-ink font-sans selection:bg-primary/30 selection:text-primary">
 
     <!-- Navigation -->
     <nav class="fixed top-0 left-0 right-0 z-50 glass-effect border-b border-border">
@@ -60,7 +92,7 @@
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center gap-2">
                     <span class="material-symbols-outlined text-primary text-3xl">terminal</span>
-                    <span class="text-xl font-bold tracking-tight text-white">KAFKA <span class="text-primary">SQL</span> EXPLORER</span>
+                    <span class="text-xl font-bold tracking-tight text-ink">Kafka <span class="text-primary">SQL</span> Explorer</span>
                 </div>
 
                 <!-- Desktop Menu -->
@@ -70,11 +102,11 @@
                     <a href="#innovation" class="text-sm font-medium hover:text-primary transition-colors">Innovation</a>
                     <a href="#ai" class="text-sm font-medium hover:text-primary transition-colors">AI Analysis</a>
                     <a href="#ecosystem" class="text-sm font-medium hover:text-primary transition-colors">Ecosystem</a>
-                    <a href="#quickstart" class="px-4 py-2 bg-primary text-surface font-bold rounded hover:bg-white transition-all transform hover:scale-105">Get Started</a>
+                    <a href="#quickstart" class="px-4 py-2 bg-primary text-on-primary font-bold rounded hover:opacity-90 transition-all transform hover:scale-105">Get Started</a>
                 </div>
 
                 <!-- Mobile Toggle -->
-                <button id="mobile-menu-toggle" class="md:hidden text-white p-2">
+                <button id="mobile-menu-toggle" class="md:hidden text-ink p-2">
                     <span class="material-symbols-outlined">menu</span>
                 </button>
             </div>
@@ -88,7 +120,7 @@
                 <a href="#ai" class="block text-lg font-medium hover:text-primary transition-colors py-2 border-b border-border/50">AI Analysis</a>
                 <a href="#docs" class="block text-lg font-medium hover:text-primary transition-colors py-2 border-b border-border/50">Docs</a>
                 <a href="#ecosystem" class="block text-lg font-medium hover:text-primary transition-colors py-2 border-b border-border/50">Ecosystem</a>
-                <a href="#quickstart" class="block w-full text-center px-4 py-3 bg-primary text-surface font-bold rounded mt-4">Get Started</a>
+                <a href="#quickstart" class="block w-full text-center px-4 py-3 bg-primary text-on-primary font-bold rounded mt-4">Get Started</a>
             </div>
         </div>
     </nav>
@@ -97,25 +129,25 @@
     <header class="relative pt-32 pb-20 overflow-hidden hero-pattern">
         <div class="absolute inset-0 cyber-gradient pointer-events-none"></div>
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
-            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-bold mb-6 tracking-wider uppercase">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-bold mb-6">
                 <span class="relative flex h-2 w-2">
                   <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
                   <span class="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
                 </span>
                 Powered by Flink 2.3 & React 19
             </div>
-            <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 tracking-tight">
+            <h1 class="text-5xl md:text-7xl font-semibold text-ink mb-6 tracking-tight">
                 See your Kafka. Query it like a database. <br/>
-                <span class="text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary glow-text uppercase">Audit it with AI.</span>
+                <span class="text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary">Audit it with AI.</span>
             </h1>
-            <p class="text-xl text-slate-400 max-w-3xl mx-auto mb-10 leading-relaxed">
+            <p class="text-xl text-muted max-w-3xl mx-auto mb-10 leading-relaxed">
                 Explore Kafka, query it in Flink SQL, audit it with AI — one container, one URL. No manual DDL: topics become tables on their own.
             </p>
             <div class="flex flex-col sm:flex-row justify-center gap-4">
-                <a href="#quickstart" class="px-8 py-4 bg-primary text-surface font-bold rounded-lg text-lg hover:bg-white transition-all shadow-[0_0_20px_rgba(37,244,244,0.3)]">
+                <a href="#quickstart" class="px-8 py-4 bg-primary text-on-primary font-bold rounded-lg text-lg hover:opacity-90 transition-all shadow-lg shadow-primary/30">
                     Start Deploying
                 </a>
-                <a href="https://github.com/devdownin/Kafkaexplorer" class="px-8 py-4 glass-effect text-white font-bold rounded-lg text-lg hover:border-primary transition-all flex items-center justify-center gap-2">
+                <a href="https://github.com/devdownin/Kafkaexplorer" class="px-8 py-4 glass-effect text-ink font-bold rounded-lg text-lg hover:border-primary transition-all flex items-center justify-center gap-2">
                     <span class="material-symbols-outlined">code</span>
                     View Source
                 </a>
@@ -129,42 +161,55 @@
     <section id="screens" class="py-24 border-y border-border">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="text-center mb-16">
-                <h2 class="text-primary font-bold tracking-widest text-sm uppercase mb-4">Screens</h2>
-                <h3 class="text-4xl font-bold text-white mb-4">What it actually looks like.</h3>
-                <p class="text-lg text-slate-400 max-w-2xl mx-auto">The real interface, over the demo dataset seeded by <code class="text-primary">docker compose up -d</code>.</p>
+                <h2 class="text-primary font-bold text-sm mb-4">Screens</h2>
+                <h3 class="text-4xl font-bold text-ink mb-4">What it actually looks like.</h3>
+                <p class="text-lg text-muted max-w-2xl mx-auto">The real interface, in light or dark to match your system, over the demo dataset seeded by <code class="text-primary">docker compose up -d</code>.</p>
             </div>
 
             <figure class="mb-16">
-                <img src="img/dashboard.png" alt="The dashboard: every topic, its message count, its state and when it last received something" loading="lazy" class="w-full rounded-lg border border-border shadow-2xl">
-                <figcaption class="mt-4 text-sm text-slate-400 text-center">Dashboard — every topic, its size, its state, and when it last received something.</figcaption>
+                <picture><source media="(prefers-color-scheme: dark)" srcset="img/dashboard-dark.png"><img src="img/dashboard.png" alt="The dashboard: every topic, its message count, its state and when it last received something" loading="lazy" class="w-full rounded-2xl border border-border shadow-2xl"></picture>
+                <figcaption class="mt-4 text-sm text-muted text-center">Dashboard — every topic, its size, its state, and when it last received something.</figcaption>
             </figure>
 
             <div class="grid md:grid-cols-2 gap-12">
                 <figure>
-                    <img src="img/topic-explorer.png" alt="Topic Explorer: a text search over demo.orders.5.shipped with two highlighted matches and a coverage strip" loading="lazy" class="w-full rounded-lg border border-border shadow-xl">
-                    <figcaption class="mt-4 text-sm text-slate-400"><strong class="text-white">Topic Explorer</strong> — search the whole topic by text, regex, field path, key or header, with the matches highlighted and the coverage stated: how much was scanned, why the pass stopped, whether it can continue.</figcaption>
+                    <picture><source media="(prefers-color-scheme: dark)" srcset="img/topic-explorer-dark.png"><img src="img/topic-explorer.png" alt="Topic Explorer: a text search over demo.orders.5.shipped with two highlighted matches and a coverage strip" loading="lazy" class="w-full rounded-2xl border border-border shadow-xl"></picture>
+                    <figcaption class="mt-4 text-sm text-muted"><strong class="text-ink">Topic Explorer</strong> — search the whole topic by text, regex, field path, key or header, with the matches highlighted and the coverage stated: how much was scanned, why the pass stopped, whether it can continue.</figcaption>
                 </figure>
                 <figure>
-                    <img src="img/sql-editor.png" alt="SQL Editor: a SELECT over demo_orders_5_shipped returning ten rows in 11 ms through the Flink engine" loading="lazy" class="w-full rounded-lg border border-border shadow-xl">
-                    <figcaption class="mt-4 text-sm text-slate-400"><strong class="text-white">SQL Editor</strong> — Monaco, topics and Flink tables in the sidebar, completion scoped to the tables the query cites, and the engine that answered stated on the result.</figcaption>
+                    <picture><source media="(prefers-color-scheme: dark)" srcset="img/sql-editor-dark.png"><img src="img/sql-editor.png" alt="SQL Editor: a SELECT over demo_orders_5_shipped returning ten rows in 11 ms through the Flink engine" loading="lazy" class="w-full rounded-2xl border border-border shadow-xl"></picture>
+                    <figcaption class="mt-4 text-sm text-muted"><strong class="text-ink">SQL Editor</strong> — Monaco, topics and Flink tables in the sidebar, completion scoped to the tables the query cites, and the engine that answered stated on the result.</figcaption>
                 </figure>
                 <figure>
-                    <img src="img/stream-flow.png" alt="Stream Flow: key ORD-1042 traced across six topics with per-hop latency and the slowest hop highlighted" loading="lazy" class="w-full rounded-lg border border-border shadow-xl">
-                    <figcaption class="mt-4 text-sm text-slate-400"><strong class="text-white">Stream Flow</strong> — one record key across the cluster. Each hop carries its latency, the slowest is called out, and the evidence table gives partition, offset and payload so the graph can be checked rather than believed.</figcaption>
+                    <picture><source media="(prefers-color-scheme: dark)" srcset="img/stream-flow-dark.png"><img src="img/stream-flow.png" alt="Stream Flow: key ORD-1042 traced across six topics with per-hop latency and the slowest hop highlighted" loading="lazy" class="w-full rounded-2xl border border-border shadow-xl"></picture>
+                    <figcaption class="mt-4 text-sm text-muted"><strong class="text-ink">Stream Flow</strong> — one record key across the cluster. Each hop carries its latency, the slowest is called out, and the evidence table gives partition, offset and payload so the graph can be checked rather than believed.</figcaption>
                 </figure>
                 <figure>
-                    <img src="img/audit.png" alt="Cluster Audit: 28 topics, 2 critical and 3 warning, health score 89 percent, with the per-topic findings table" loading="lazy" class="w-full rounded-lg border border-border shadow-xl">
-                    <figcaption class="mt-4 text-sm text-slate-400"><strong class="text-white">Cluster Audit</strong> — poison payloads, duplicate keys, flow drop-off and latency, graded healthy / warning / critical. Every run states its own scope.</figcaption>
+                    <picture><source media="(prefers-color-scheme: dark)" srcset="img/audit-dark.png"><img src="img/audit.png" alt="Cluster Audit: 28 topics, 2 critical and 3 warning, health score 89 percent, with the per-topic findings table" loading="lazy" class="w-full rounded-2xl border border-border shadow-xl"></picture>
+                    <figcaption class="mt-4 text-sm text-muted"><strong class="text-ink">Cluster Audit</strong> — poison payloads, duplicate keys, flow drop-off and latency, graded healthy / warning / critical. Every run states its own scope.</figcaption>
                 </figure>
                 <figure>
-                    <img src="img/dead-letter.png" alt="Dead Letter and Retry: three failure queues with their arrivals and the share of their source topic that represents" loading="lazy" class="w-full rounded-lg border border-border shadow-xl">
-                    <figcaption class="mt-4 text-sm text-slate-400"><strong class="text-white">Dead Letter &amp; Retry</strong> — every failure queue with what landed in it and what share of its source that represents. Where the source cannot be identified without guessing, the page says so.</figcaption>
+                    <picture><source media="(prefers-color-scheme: dark)" srcset="img/dead-letter-dark.png"><img src="img/dead-letter.png" alt="Dead Letter and Retry: three failure queues with their arrivals and the share of their source topic that represents" loading="lazy" class="w-full rounded-2xl border border-border shadow-xl"></picture>
+                    <figcaption class="mt-4 text-sm text-muted"><strong class="text-ink">Dead Letter &amp; Retry</strong> — every failure queue with what landed in it and what share of its source that represents. Where the source cannot be identified without guessing, the page says so.</figcaption>
                 </figure>
                 <figure>
-                    <img src="img/metrics-forecast.png" alt="The forecast panel of the Metrics page: a series in observation with its 80 percent interval and the threshold drawn on the chart" loading="lazy" class="w-full rounded-lg border border-border shadow-xl">
-                    <figcaption class="mt-4 text-sm text-slate-400"><strong class="text-white">Metrics Forecast</strong> — the chart, its 80&nbsp;% interval and the threshold it is judged against, with the decision and where the series stands beside it.</figcaption>
+                    <picture><source media="(prefers-color-scheme: dark)" srcset="img/metrics-forecast-dark.png"><img src="img/metrics-forecast.png" alt="The forecast panel of the Metrics page: a series in observation with its 80 percent interval and the threshold drawn on the chart" loading="lazy" class="w-full rounded-2xl border border-border shadow-xl"></picture>
+                    <figcaption class="mt-4 text-sm text-muted"><strong class="text-ink">Metrics Forecast</strong> — the chart, its 80&nbsp;% interval and the threshold it is judged against, with the decision and where the series stands beside it.</figcaption>
                 </figure>
             </div>
+        </div>
+    </section>
+
+    <!-- Shipped UI/UX work (all merged; see CHANGELOG.md for the release that carries each) -->
+    <section id="ui-ux-roadmap" class="py-12 border-t border-border">
+        <div class="container mx-auto px-6 max-w-4xl">
+            <h2 class="text-2xl font-bold text-ink mb-3">Faster investigations — recently shipped</h2>
+            <ul class="list-disc pl-6 space-y-2 text-ink/80">
+                <li><strong class="text-ink">Diagnostic overview</strong> on the Dashboard — broker reachability, empty and dead-letter topics, remembered table density.</li>
+                <li><strong class="text-ink">Saved topic view</strong> — search and filters restored in the same browser.</li>
+                <li><strong class="text-ink">Recent topics</strong> in the Ctrl+K palette.</li>
+                <li><strong class="text-ink">Metrics page</strong> — filter and sort by predicted breach, one polling clock, cards that redraw only when their metric moves, and a note on any metric whose refresh slows the others.</li>
+            </ul>
         </div>
     </section>
 
@@ -173,57 +218,57 @@
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="grid lg:grid-cols-2 gap-16 items-center">
                 <div>
-                    <h2 class="text-primary font-bold tracking-widest text-sm uppercase mb-4">Core Innovation</h2>
-                    <h3 class="text-4xl font-bold text-white mb-6 leading-tight">Query Design <span class="text-slate-500">at the speed of a click.</span></h3>
-                    <p class="text-lg text-slate-400 mb-8">
+                    <h2 class="text-primary font-bold text-sm mb-4">Core Innovation</h2>
+                    <h3 class="text-4xl font-bold text-ink mb-6 leading-tight">Query Design <span class="text-muted">at the speed of a click.</span></h3>
+                    <p class="text-lg text-muted mb-8">
                         Stop manual typing of deep JSON paths. Our Query Assistant analyzes your live stream and lets you build complex Flink SQL by simply clicking on message fields.
                     </p>
                     <ul class="space-y-4">
                         <li class="flex items-start gap-3">
                             <span class="material-symbols-outlined text-primary">check_circle</span>
-                            <span><strong class="text-white">Interactive Selection:</strong> Click any key to add to <code>SELECT</code>.</span>
+                            <span><strong class="text-ink">Interactive Selection:</strong> Click any key to add to <code>SELECT</code>.</span>
                         </li>
                         <li class="flex items-start gap-3">
                             <span class="material-symbols-outlined text-primary">check_circle</span>
-                            <span><strong class="text-white">Smart Filters:</strong> Click values to populate <code>WHERE</code> clauses instantly.</span>
+                            <span><strong class="text-ink">Smart Filters:</strong> Click values to populate <code>WHERE</code> clauses instantly.</span>
                         </li>
                         <li class="flex items-start gap-3">
                             <span class="material-symbols-outlined text-primary">check_circle</span>
-                            <span><strong class="text-white">Auto-Inference:</strong> Detecting JSON and XML structures for perfect DDL generation.</span>
+                            <span><strong class="text-ink">Auto-Inference:</strong> Detecting JSON and XML structures for perfect DDL generation.</span>
                         </li>
                     </ul>
                 </div>
                 <div class="relative group">
                     <div class="absolute -inset-1 bg-gradient-to-r from-primary to-secondary rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
                     <div class="relative glass-effect rounded-xl overflow-hidden shadow-2xl">
-                        <div class="flex items-center gap-2 px-4 py-2 bg-black/40 border-b border-border">
+                        <div class="flex items-center gap-2 px-4 py-2 bg-ink/5 border-b border-border">
                             <div class="flex gap-1.5">
                                 <div class="w-3 h-3 rounded-full bg-red-500/50"></div>
                                 <div class="w-3 h-3 rounded-full bg-yellow-500/50"></div>
                                 <div class="w-3 h-3 rounded-full bg-green-500/50"></div>
                             </div>
-                            <span class="text-xs font-mono text-slate-500 ml-2">query_assistant.sql</span>
+                            <span class="text-xs font-mono text-muted ml-2">query_assistant.sql</span>
                         </div>
                         <div class="p-6 font-mono text-sm">
-                            <div class="text-slate-500 mb-2">// Select fields by clicking preview</div>
+                            <div class="text-muted mb-2">// Select fields by clicking preview</div>
                             <div class="flex flex-wrap gap-x-2">
                                 <span class="text-primary">SELECT</span>
-                                <span class="text-white">order_id,</span>
+                                <span class="text-ink">order_id,</span>
                             </div>
                             <div class="flex flex-wrap gap-x-2 ml-4">
-                                <span class="text-secondary">JSON_VALUE</span>(raw_value, <span class="text-orange-300">'$.customer.name'</span>) <span class="text-primary">AS</span> customer,
+                                <span class="text-secondary">JSON_VALUE</span>(raw_value, <span class="text-orange-700 dark:text-orange-300">'$.customer.name'</span>) <span class="text-primary">AS</span> customer,
                             </div>
                             <div class="flex flex-wrap gap-x-2 ml-4">
-                                <span class="text-white">amount</span>
+                                <span class="text-ink">amount</span>
                             </div>
-                            <div class="text-primary mt-2">FROM <span class="text-white">"demo.orders.received"</span></div>
-                            <div class="text-primary">WHERE <span class="text-white">amount > 500;</span></div>
+                            <div class="text-primary mt-2">FROM <span class="text-ink">"demo.orders.received"</span></div>
+                            <div class="text-primary">WHERE <span class="text-ink">amount > 500;</span></div>
                         </div>
-                        <div class="bg-black/20 p-4 border-t border-border flex justify-between items-center">
-                            <span class="text-[10px] text-slate-500 uppercase tracking-widest">Live Result Preview</span>
+                        <div class="bg-ink/5 p-4 border-t border-border flex justify-between items-center">
+                            <span class="text-[10px] text-muted">Live Result Preview</span>
                             <div class="flex gap-2">
                                 <div class="px-2 py-1 bg-primary/20 text-primary text-[10px] font-bold rounded">EARLIEST</div>
-                                <div class="px-2 py-1 bg-surface-light text-slate-400 text-[10px] font-bold rounded">RUNNING</div>
+                                <div class="px-2 py-1 bg-surface-light text-muted text-[10px] font-bold rounded">RUNNING</div>
                             </div>
                         </div>
                     </div>
@@ -236,9 +281,9 @@
     <section id="features" class="py-24">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="text-center mb-16">
-                <h2 class="text-primary font-bold tracking-widest text-sm uppercase mb-4">Features</h2>
-                <h3 class="text-4xl font-bold text-white mb-4 uppercase">Powerful Tools for Data Engineers</h3>
-                <p class="text-slate-400 max-w-2xl mx-auto">One integrated platform to handle everything from discovery to deep auditing.</p>
+                <h2 class="text-primary font-bold text-sm mb-4">Features</h2>
+                <h3 class="text-4xl font-bold text-ink mb-4">Powerful Tools for Data Engineers</h3>
+                <p class="text-muted max-w-2xl mx-auto">One integrated platform to handle everything from discovery to deep auditing.</p>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6 auto-rows-[240px]">
@@ -246,12 +291,12 @@
                 <div class="md:col-span-2 glass-effect rounded-2xl p-8 flex flex-col justify-between hover:border-primary/50 transition-colors group">
                     <div>
                         <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">account_tree</span>
-                        <h4 class="text-2xl font-bold text-white mb-2">Visual SQL Lineage</h4>
-                        <p class="text-slate-400">Track data flow from Kafka topics through Flink tables and views in an interactive dependency graph.</p>
+                        <h4 class="text-2xl font-bold text-ink mb-2">Visual SQL Lineage</h4>
+                        <p class="text-muted">Track data flow from Kafka topics through Flink tables and views in an interactive dependency graph.</p>
                     </div>
                     <div class="flex gap-2">
-                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 uppercase tracking-tighter">SVG Graph</span>
-                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 uppercase tracking-tighter">Real-time DAG</span>
+                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 tracking-tighter">SVG Graph</span>
+                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 tracking-tighter">Real-time DAG</span>
                     </div>
                 </div>
 
@@ -259,8 +304,8 @@
                 <div class="glass-effect rounded-2xl p-8 flex flex-col justify-between hover:border-primary/50 transition-colors group">
                     <div>
                         <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">code_blocks</span>
-                        <h4 class="text-xl font-bold text-white mb-2">Monaco Editor</h4>
-                        <p class="text-slate-400">VS Code power in your browser. Syntax highlighting, autocomplete, and history.</p>
+                        <h4 class="text-xl font-bold text-ink mb-2">Monaco Editor</h4>
+                        <p class="text-muted">VS Code power in your browser. Syntax highlighting, autocomplete, and history.</p>
                     </div>
                     <span class="text-primary font-mono text-xs">Ctrl + Space to Complete</span>
                 </div>
@@ -269,8 +314,8 @@
                 <div class="glass-effect rounded-2xl p-8 flex flex-col justify-between hover:border-primary/50 transition-colors group">
                     <div>
                         <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">trace</span>
-                        <h4 class="text-xl font-bold text-white mb-2">Stream Flow</h4>
-                        <p class="text-slate-400">Trace a specific message ID across your entire architecture chronologically.</p>
+                        <h4 class="text-xl font-bold text-ink mb-2">Stream Flow</h4>
+                        <p class="text-muted">Trace a specific message ID across your entire architecture chronologically.</p>
                     </div>
                     <span class="text-primary font-mono text-xs">JSONPath & XPath Support</span>
                 </div>
@@ -279,12 +324,12 @@
                 <div class="md:col-span-2 glass-effect rounded-2xl p-8 flex flex-col justify-between hover:border-primary/50 transition-colors group relative overflow-hidden">
                     <div class="relative z-10">
                         <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">difference</span>
-                        <h4 class="text-2xl font-bold text-white mb-2">Side-by-Side Compare</h4>
-                        <p class="text-slate-400">Compare topics with shared SQL logic. Highlight data discrepancies and identify missing records instantly.</p>
+                        <h4 class="text-2xl font-bold text-ink mb-2">Side-by-Side Compare</h4>
+                        <p class="text-muted">Compare topics with shared SQL logic. Highlight data discrepancies and identify missing records instantly.</p>
                     </div>
                     <div class="flex gap-2 relative z-10">
-                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 uppercase tracking-tighter">Intelligent Diffing</span>
-                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 uppercase tracking-tighter">Live Metrics</span>
+                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 tracking-tighter">Intelligent Diffing</span>
+                        <span class="px-2 py-1 bg-primary/10 text-primary text-[10px] font-bold rounded border border-primary/20 tracking-tighter">Live Metrics</span>
                     </div>
                 </div>
 
@@ -292,17 +337,17 @@
                 <div class="md:col-span-3 glass-effect rounded-2xl p-8 flex flex-col md:flex-row gap-8 items-center hover:border-primary/50 transition-colors group">
                     <div class="flex-1">
                         <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">smart_toy</span>
-                        <h4 class="text-2xl font-bold text-white mb-2">An MCP Server for Your Agent</h4>
-                        <p class="text-slate-400">The same analysis layer over the Model Context Protocol — SQL over vanilla Kafka, schema inference, key tracing, graded consumer lag. Every answer carries a <span class="font-mono text-primary">coverage</span> envelope naming what it did <strong class="text-white">not</strong> read, because an empty list is the one shape a model reads as "it does not exist". Off by default, read-only by registration, behind a bearer token over TLS.</p>
+                        <h4 class="text-2xl font-bold text-ink mb-2">An MCP Server for Your Agent</h4>
+                        <p class="text-muted">The same analysis layer over the Model Context Protocol — SQL over vanilla Kafka, schema inference, key tracing, graded consumer lag. Every answer carries a <span class="font-mono text-primary">coverage</span> envelope naming what it did <strong class="text-ink">not</strong> read, because an empty list is the one shape a model reads as "it does not exist". Off by default, read-only by registration, behind a bearer token over TLS.</p>
                         <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/SPEC-MCP.md" class="inline-block mt-4 text-primary text-sm font-bold hover:underline">Read the specification →</a>
                     </div>
-                    <div class="min-w-[260px] bg-black/40 rounded-2xl border border-border p-5 font-mono text-[11px] leading-relaxed">
-                        <div class="text-slate-500 mb-2">kex_trace_key → ORD-1042</div>
+                    <div class="min-w-[260px] bg-ink/5 rounded-2xl border border-border p-5 font-mono text-[11px] leading-relaxed">
+                        <div class="text-muted mb-2">kex_trace_key → ORD-1042</div>
                         <p><span class="text-primary">hops:</span> 7 topics</p>
                         <p><span class="text-primary">stopReason:</span> TIME_BUDGET</p>
-                        <p class="text-yellow-500">topicsNotReached: 3 (named)</p>
-                        <p class="text-slate-400">lagMs: { measured: false,</p>
-                        <p class="text-slate-400 pl-4">reason: "retention" }</p>
+                        <p class="text-amber-600 dark:text-yellow-500">topicsNotReached: 3 (named)</p>
+                        <p class="text-muted">lagMs: { measured: false,</p>
+                        <p class="text-muted pl-4">reason: "retention" }</p>
                     </div>
                 </div>
 
@@ -310,14 +355,14 @@
                 <div class="md:col-span-3 glass-effect rounded-2xl p-8 flex flex-col md:flex-row gap-8 items-center hover:border-primary/50 transition-colors group">
                     <div class="flex-1">
                         <span class="material-symbols-outlined text-primary text-4xl mb-4 group-hover:scale-110 transition-transform">health_metrics</span>
-                        <h4 class="text-2xl font-bold text-white mb-2">Automated Functional Audit</h4>
-                        <p class="text-slate-400">Detect "poison messages", measure end-to-end latency, and monitor drop-off rates across business processes without writing a single line of code.</p>
+                        <h4 class="text-2xl font-bold text-ink mb-2">Automated Functional Audit</h4>
+                        <p class="text-muted">Detect "poison messages", measure end-to-end latency, and monitor drop-off rates across business processes without writing a single line of code.</p>
                     </div>
                     <div class="flex flex-col gap-3 min-w-[200px]">
                         <div class="h-2 w-full bg-surface-light rounded-full overflow-hidden">
                             <div class="h-full bg-primary w-[92%]"></div>
                         </div>
-                        <div class="flex justify-between text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                        <div class="flex justify-between text-[10px] font-bold text-muted">
                             <span>Cluster Health</span>
                             <span class="text-primary">92% Reliable</span>
                         </div>
@@ -333,37 +378,37 @@
             <div class="glass-effect rounded-3xl p-8 md:p-16 border-primary/20 shadow-[0_0_50px_rgba(37,244,244,0.1)]">
                 <div class="grid lg:grid-cols-2 gap-12 items-center">
                     <div>
-                        <div class="inline-flex items-center gap-2 text-secondary font-bold text-xs uppercase tracking-widest mb-4">
+                        <div class="inline-flex items-center gap-2 text-secondary font-bold text-xs mb-4">
                             <span class="material-symbols-outlined text-sm">psychology</span>
                             Process Mining AI
                         </div>
-                        <h3 class="text-4xl font-bold text-white mb-6">Autonomous Stream <span class="text-primary uppercase">Analysis</span></h3>
-                        <p class="text-lg text-slate-400 mb-8 leading-relaxed">
+                        <h3 class="text-4xl font-bold text-ink mb-6">Autonomous Stream <span class="text-primary">Analysis</span></h3>
+                        <p class="text-lg text-muted mb-8 leading-relaxed">
                             Leverage LLMs — OpenRouter out of the box, Claude, a local llama.cpp model (one command: <code class="text-primary">bin/local-ai-stack.sh</code>), or a fully private SpectraLLM instance — to automatically profile fields, reconstruct business flows, and detect anomalies. Every analysis shows what it cost, and the page states what becomes of the message content: the default is hosted, and pointing it at a loopback address keeps everything on your machine.
                         </p>
                         <div class="grid grid-cols-2 gap-6">
                             <div class="p-4 bg-surface-light rounded-xl border border-border">
-                                <h5 class="font-bold text-white mb-1">Field Profiling</h5>
-                                <p class="text-xs text-slate-500">Detects IDs, timestamps, and status fields automatically.</p>
+                                <h5 class="font-bold text-ink mb-1">Field Profiling</h5>
+                                <p class="text-xs text-muted">Detects IDs, timestamps, and status fields automatically.</p>
                             </div>
                             <div class="p-4 bg-surface-light rounded-xl border border-border">
-                                <h5 class="font-bold text-white mb-1">Anomaly Detection</h5>
-                                <p class="text-xs text-slate-500">Identifies sequence breaks and temporal delays.</p>
+                                <h5 class="font-bold text-ink mb-1">Anomaly Detection</h5>
+                                <p class="text-xs text-muted">Identifies sequence breaks and temporal delays.</p>
                             </div>
                         </div>
                     </div>
                     <div class="relative">
-                         <div class="bg-black/40 rounded-2xl border border-border p-6 font-mono text-xs">
+                         <div class="bg-ink/5 rounded-2xl border border-border p-6 font-mono text-xs">
                              <div class="text-secondary mb-4 flex items-center gap-2">
                                  <span class="animate-pulse w-2 h-2 rounded-full bg-secondary"></span>
                                  AI_ANALYSIS_REPORT.md
                              </div>
                              <div class="space-y-3">
-                                 <p><span class="text-slate-500"># Analysis:</span> Topic "demo.sc.08.logistics.planned"</p>
+                                 <p><span class="text-muted"># Analysis:</span> Topic "demo.sc.08.logistics.planned"</p>
                                  <p><span class="text-primary">DETECTED:</span> Correlation ID mapping across 12 topics.</p>
-                                 <p><span class="text-yellow-500">WARNING:</span> Temporal anomaly detected between step 07 and 08. Avg delay: +450ms.</p>
-                                 <p><span class="text-slate-500"># Flow:</span> Mermaid generated.</p>
-                                 <div class="pl-4 border-l border-border text-slate-400">
+                                 <p><span class="text-amber-600 dark:text-yellow-500">WARNING:</span> Temporal anomaly detected between step 07 and 08. Avg delay: +450ms.</p>
+                                 <p><span class="text-muted"># Flow:</span> Mermaid generated.</p>
+                                 <div class="pl-4 border-l border-border text-muted">
                                      graph LR<br/>
                                      A[Received] --> B[Processing]<br/>
                                      B -- anomaly --> C[Error]
@@ -380,24 +425,30 @@
     <section id="docs" class="py-24 bg-surface-light/20">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="text-center mb-16">
-                <h2 class="text-primary font-bold tracking-widest text-sm uppercase mb-4">Resources</h2>
-                <h3 class="text-4xl font-bold text-white mb-4 uppercase">Technical Deep Dives</h3>
+                <h2 class="text-primary font-bold text-sm mb-4">Resources</h2>
+                <h3 class="text-4xl font-bold text-ink mb-4">Technical Deep Dives</h3>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
                 <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/architecture.md" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
                     <span class="material-symbols-outlined text-primary mb-4">architecture</span>
-                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">Architecture</h4>
-                    <p class="text-sm text-slate-400">Deep dive into the Flink Embedded integration and backend design.</p>
+                    <h4 class="text-xl font-bold text-ink mb-2 group-hover:text-primary transition-colors">Architecture</h4>
+                    <p class="text-sm text-muted">Deep dive into the Flink Embedded integration and backend design.</p>
                 </a>
                 <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/FEATURES.md" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
                     <span class="material-symbols-outlined text-primary mb-4">description</span>
-                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">Feature Tour</h4>
-                    <p class="text-sm text-slate-400">Every module walked through in turn, screenshots included.</p>
+                    <h4 class="text-xl font-bold text-ink mb-2 group-hover:text-primary transition-colors">Feature Tour</h4>
+                    <p class="text-sm text-muted">Every module walked through in turn, screenshots included.</p>
                 </a>
                 <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/LLM-PROVIDERS.md" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
                     <span class="material-symbols-outlined text-primary mb-4">smart_toy</span>
-                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">LLM Guide</h4>
-                    <p class="text-sm text-slate-400">Every provider, what each one costs you in privacy, and how to keep it all local.</p>
+                    <h4 class="text-xl font-bold text-ink mb-2 group-hover:text-primary transition-colors">LLM Guide</h4>
+                    <p class="text-sm text-muted">Every provider, what each one costs you in privacy, and how to keep it all local.</p>
+                </a>
+                <a href="mcp-guide.html" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group" aria-label="Skills and MCP Services guide with interactive Kex-anHarness call graph">
+                    <span class="material-symbols-outlined text-primary mb-4">account_tree</span>
+                    <h4 class="text-xl font-bold text-ink mb-2 group-hover:text-primary transition-colors">Skills &amp; MCP Guide</h4>
+                    <p class="text-sm text-muted">Learn Skills, Tools, Resources and Prompts, then explore a documented interactive call graph from Kex-anHarness to KafkaExplorer.</p>
+                    <span class="inline-block mt-4 text-sm font-semibold text-primary">Explore the guide →</span>
                 </a>
             </div>
         </div>
@@ -407,38 +458,38 @@
     <section id="ecosystem" class="py-24">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="text-center mb-16">
-                <h2 class="text-primary font-bold tracking-widest text-sm uppercase mb-4">Ecosystem</h2>
-                <h3 class="text-4xl font-bold text-white mb-4 uppercase">Three projects, one MCP wiring</h3>
-                <p class="text-slate-400 max-w-2xl mx-auto">Each one runs on its own; all three are published under the same Docker Hub namespace and plug into each other through MCP.</p>
+                <h2 class="text-primary font-bold text-sm mb-4">Ecosystem</h2>
+                <h3 class="text-4xl font-bold text-ink mb-4">Three projects, one MCP wiring</h3>
+                <p class="text-muted max-w-2xl mx-auto">Each one runs on its own; all three are published under the same Docker Hub namespace and plug into each other through MCP.</p>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <a href="https://hub.docker.com/r/compagnonsdudev/kafkaexplorer" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
                     <span class="material-symbols-outlined text-primary mb-4">terminal</span>
-                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">Kafka SQL Explorer <span class="text-xs text-primary align-middle">· This project</span></h4>
-                    <p class="text-sm text-slate-400 mb-4">Explore Kafka, query it in Flink SQL, audit it with AI — and serve it to agents as a read-only MCP server.</p>
-                    <p class="text-xs text-slate-500 font-mono">compagnonsdudev/kafkaexplorer · AGPL-3.0</p>
+                    <h4 class="text-xl font-bold text-ink mb-2 group-hover:text-primary transition-colors">Kafka SQL Explorer <span class="text-xs text-primary align-middle">· This project</span></h4>
+                    <p class="text-sm text-muted mb-4">Explore Kafka, query it in Flink SQL, audit it with AI — and serve it to agents as a read-only MCP server.</p>
+                    <p class="text-xs text-muted font-mono">compagnonsdudev/kafkaexplorer · AGPL-3.0</p>
                 </a>
                 <a href="https://github.com/devdownin/SpectraLLM" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
                     <span class="material-symbols-outlined text-primary mb-4">library_books</span>
-                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">SpectraLLM</h4>
-                    <p class="text-sm text-slate-400 mb-4">Turn your documents into a private, fine-tuned AI — local RAG, fine-tuning, and an MCP server over the corpus. Can answer Process Mining here with no API key.</p>
-                    <p class="text-xs text-slate-500 font-mono">compagnonsdudev/spectrallm · AGPL-3.0</p>
+                    <h4 class="text-xl font-bold text-ink mb-2 group-hover:text-primary transition-colors">SpectraLLM</h4>
+                    <p class="text-sm text-muted mb-4">Turn your documents into a private, fine-tuned AI — local RAG, fine-tuning, and an MCP server over the corpus. Can answer Process Mining here with no API key.</p>
+                    <p class="text-xs text-muted font-mono">compagnonsdudev/spectrallm · AGPL-3.0</p>
                 </a>
                 <a href="https://github.com/devdownin/Kex-anHarness" class="glass-effect p-8 rounded-2xl hover:border-primary transition-all group">
                     <span class="material-symbols-outlined text-primary mb-4">smart_toy</span>
-                    <h4 class="text-xl font-bold text-white mb-2 group-hover:text-primary transition-colors">Kex-anHarness</h4>
-                    <p class="text-sm text-slate-400 mb-4">A governed AI agent that works through MCP tools — it reads this cluster through the MCP server above, with supervision, human approvals and an audit trail.</p>
-                    <p class="text-xs text-slate-500 font-mono">compagnonsdudev/kex-agent-ai · GPL-3.0</p>
+                    <h4 class="text-xl font-bold text-ink mb-2 group-hover:text-primary transition-colors">Kex-anHarness</h4>
+                    <p class="text-sm text-muted mb-4">A governed AI agent that works through MCP tools — it reads this cluster through the MCP server above, with supervision, human approvals and an audit trail.</p>
+                    <p class="text-xs text-muted font-mono">compagnonsdudev/kex-agent-ai · GPL-3.0</p>
                 </a>
             </div>
             <div class="mt-12 max-w-4xl mx-auto">
-                <p class="text-slate-300 mb-4"><span class="font-bold text-white">All three together</span>, from published images — nothing is built:</p>
-                <div class="bg-black/60 rounded-lg p-4 border border-border overflow-x-auto">
+                <p class="text-ink/80 mb-4"><span class="font-bold text-ink">All three together</span>, from published images — nothing is built:</p>
+                <div class="bg-ink/5 rounded-lg p-4 border border-border overflow-x-auto">
                     <code class="text-primary font-mono text-sm whitespace-pre">git clone https://github.com/devdownin/Kafkaexplorer.git &amp;&amp; cd Kafkaexplorer
 docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
   -f compose/ecosystem.yml up -d</code>
                 </div>
-                <p class="text-sm text-slate-400 mt-4">One port plan for the three: <span class="font-mono text-slate-300">8080</span> Kafka SQL Explorer · <span class="font-mono text-slate-300">8081</span> Kex-anHarness · <span class="font-mono text-slate-300">8088 / 8089</span> SpectraLLM UI / API · <span class="font-mono text-slate-300">9092</span> Kafka.</p>
+                <p class="text-sm text-muted mt-4">One port plan for the three: <span class="font-mono text-ink/80">8080</span> Kafka SQL Explorer · <span class="font-mono text-ink/80">8081</span> Kex-anHarness · <span class="font-mono text-ink/80">8088 / 8089</span> SpectraLLM UI / API · <span class="font-mono text-ink/80">9092</span> Kafka.</p>
             </div>
         </div>
     </section>
@@ -446,62 +497,77 @@ docker compose -f compose/spectra-hub.yml -f compose/spectra-hub.mcp.yml \
     <!-- Quickstart -->
     <section id="quickstart" class="py-24">
         <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-            <h2 class="text-4xl font-bold text-white mb-12 uppercase">Get Started in <span class="text-primary">Seconds</span></h2>
+            <h2 class="text-4xl font-bold text-ink mb-12">Get Started in <span class="text-primary">Seconds</span></h2>
 
             <div class="space-y-8 text-left">
                 <div class="relative pl-12 pb-8 border-l border-border">
-                    <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-primary text-surface flex items-center justify-center font-bold">1</div>
-                    <h4 class="text-xl font-bold text-white mb-2">Launch Infrastructure</h4>
-                    <p class="text-slate-400 mb-4">Spin up Kafka 4.3 (KRaft, no Zookeeper) via Docker Compose.</p>
-                    <div class="bg-black/60 rounded-lg p-4 border border-border group relative">
+                    <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold">1</div>
+                    <h4 class="text-xl font-bold text-ink mb-2">Launch Infrastructure</h4>
+                    <p class="text-muted mb-4">Spin up Kafka 4.4 (KRaft, no Zookeeper) via Docker Compose.</p>
+                    <div class="bg-ink/5 rounded-lg p-4 border border-border group relative">
                         <code class="text-primary font-mono text-sm">docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d</code>
                     </div>
                 </div>
 
                 <div class="relative pl-12 pb-8 border-l border-border">
-                    <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-primary text-surface flex items-center justify-center font-bold">2</div>
-                    <h4 class="text-xl font-bold text-white mb-2">Run the Explorer</h4>
-                    <p class="text-slate-400 mb-4">Launch the Spring Boot application locally with a single command.</p>
-                    <div class="bg-black/60 rounded-lg p-4 border border-border group relative">
+                    <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold">2</div>
+                    <h4 class="text-xl font-bold text-ink mb-2">Run the Explorer</h4>
+                    <p class="text-muted mb-4">Launch the Spring Boot application locally with a single command.</p>
+                    <div class="bg-ink/5 rounded-lg p-4 border border-border group relative">
                         <code class="text-primary font-mono text-sm">./mvnw spring-boot:run</code>
                     </div>
                 </div>
 
                 <div class="relative pl-12 border-l border-border">
-                    <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-primary text-surface flex items-center justify-center font-bold">3</div>
-                    <h4 class="text-xl font-bold text-white mb-2">Explore & Query</h4>
-                    <p class="text-slate-400">Open <span class="text-primary">http://localhost:8080</span> and start mastering your streams.</p>
+                    <div class="absolute left-0 top-0 -translate-x-1/2 w-8 h-8 rounded-full bg-primary text-on-primary flex items-center justify-center font-bold">3</div>
+                    <h4 class="text-xl font-bold text-ink mb-2">Explore & Query</h4>
+                    <p class="text-muted">Open <span class="text-primary">http://localhost:8080</span> and start mastering your streams.</p>
                 </div>
             </div>
 
             <div class="mt-16">
-                <a href="https://github.com/devdownin/Kafkaexplorer" class="inline-flex items-center gap-3 px-10 py-5 bg-white text-surface font-bold rounded-xl text-xl hover:bg-primary transition-all shadow-[0_0_30px_rgba(255,255,255,0.1)]">
+                <a href="https://github.com/devdownin/Kafkaexplorer" class="inline-flex items-center gap-3 px-10 py-5 bg-primary text-on-primary font-bold rounded-xl text-xl hover:opacity-90 transition-all shadow-lg shadow-primary/30">
                     <span class="material-symbols-outlined">rocket_launch</span>
-                    DEPLOY NOW
+                    Deploy now
                 </a>
             </div>
         </div>
     </section>
 
     <!-- Footer -->
-    <footer class="py-12 border-t border-border bg-black/40">
+<section id="metric-forecast-workflow" class="py-16 border-t border-border">
+        <div class="container mx-auto px-6 max-w-4xl">
+            <h2 class="text-3xl font-bold text-ink mb-4">Forecast from an existing metric</h2>
+            <p class="text-muted mb-4">Press <strong class="text-ink">Forecast</strong> on a metric card: the forecast is created from the metric's recorded history, with nothing to fill in, and drawn as the continuation of its curve with its 80&nbsp;% band. The card then tells you:</p>
+            <ul class="list-disc pl-6 space-y-2 text-ink/80 mb-5">
+                <li>when one of the metric's own thresholds is predicted — <em>"Warning expected in ~12 min"</em>, on the median or on the edge of the band;</li>
+                <li>how reliable the forecast has been against what then happened (Reliable / Fair / Watch);</li>
+                <li>when it was made and when the next one is due.</li>
+            </ul>
+            <p class="text-muted mb-3">The page sends no alert. The same reading is a Prometheus series, so the alert lives where alerts belong:</p>
+            <pre class="bg-ink/5 border border-border rounded-lg p-4 text-sm text-ink overflow-x-auto mb-5"><code>explorer_forecast_threshold_eta_seconds{level="critical", likelihood="expected"} &lt; 1800</code></pre>
+            <p class="text-muted mb-5"><code class="text-primary">./demo.sh --forecast</code> runs it end to end — live traffic, seeded history, TimesFM — with nothing to configure.</p>
+            <a class="text-primary hover:underline" href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md">Forecast setup, alerting and prerequisites</a>
+        </div>
+    </section>
+    <footer class="py-12 border-t border-border bg-ink/5">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex flex-col md:flex-row justify-between items-center gap-8">
                 <div class="flex items-center gap-2">
                     <span class="material-symbols-outlined text-primary">terminal</span>
-                    <span class="text-lg font-bold text-white uppercase tracking-tighter">Kafka SQL Explorer</span>
+                    <span class="text-lg font-bold text-ink tracking-tighter">Kafka SQL Explorer</span>
                 </div>
-                <div class="text-slate-500 text-sm">
-                    &copy; 2026 Compagnons du dev. Released under <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/LICENSE" class="text-slate-400 hover:text-primary underline">AGPL v3</a>.
+                <div class="text-muted text-sm">
+                    &copy; 2026 Compagnons du dev. Released under <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/LICENSE" class="text-muted hover:text-primary underline">AGPL v3</a>.
                 </div>
                 <div class="flex gap-6">
-                    <a href="https://github.com/devdownin/Kafkaexplorer" class="text-slate-500 hover:text-white transition-colors">
+                    <a href="https://github.com/devdownin/Kafkaexplorer" class="text-muted hover:text-ink transition-colors">
                         <span class="material-symbols-outlined">star</span> GitHub
                     </a>
-                    <a href="https://hub.docker.com/r/compagnonsdudev/kafkaexplorer" class="text-slate-500 hover:text-white transition-colors">
+                    <a href="https://hub.docker.com/r/compagnonsdudev/kafkaexplorer" class="text-muted hover:text-ink transition-colors">
                         <span class="material-symbols-outlined">deployed_code</span> Docker Hub
                     </a>
-                    <a href="mailto:contact@compagnonsdudev.com" class="text-slate-500 hover:text-white transition-colors">
+                    <a href="mailto:contact@compagnonsdudev.com" class="text-muted hover:text-ink transition-colors">
                         <span class="material-symbols-outlined">mail</span> Contact
                     </a>
                 </div>

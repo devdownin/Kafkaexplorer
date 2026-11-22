@@ -15,6 +15,7 @@ compared is what would run.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import re
 import sys
 
@@ -47,6 +48,13 @@ def main() -> int:
         problems.append('TIMESTRAL_REVISION is not a 40-hex commit')
     if not re.fullmatch(r'[0-9a-f]{64}', env('timesfm', 'TIMESTRAL_SHA256')):
         problems.append('TIMESTRAL_SHA256 is not a 64-hex digest')
+    # A bind-mounted script must be a file of this checkout. `compose/llama-cpp.yml` wrote `../scripts/…`,
+    # which Compose resolves against the FIRST file's directory — the repository root here — so it
+    # named a path outside the checkout, where Docker mounts an empty directory instead of serve.sh.
+    for name in ('llama-cpp', 'llama-cpp-model'):
+        for volume in services[name].get('volumes', []):
+            if volume.get('type') == 'bind' and not Path(volume['source']).is_file():
+                problems.append(f"{name} mounts {volume['source']}, which is not a file of this checkout")
     if env('explorer', 'EXPLORER_FORECASTING_INFERENCE_SHADOW_ENABLED') != 'true':
         problems.append('the shadow is pinned on the service but not scored by the Explorer')
     if env('explorer', 'CLAUDE_PROVIDER') != 'LLAMA_CPP':

@@ -16,7 +16,7 @@
  * frontière d'erreur avant d'avoir rendu quoi que ce soit d'observable.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
@@ -193,14 +193,119 @@ beforeEach(() => {
 });
 
 describe('Metrics page', () => {
-  it('opens the forecast assistant from the matching metric card and aborts it on close', async () => {
-    stubApi([templateMetric], [suggestion], READY_FORECASTS); const user = userEvent.setup(); await renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Prepare a forecast' }));
+  /*
+   * Every forecast starts from an existing metric, so the card's button creates it outright: no
+   * form opens on success, and the toast says when its first forecast follows.
+   */
+  it('creates the forecast from its card without opening a form', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, body?: unknown) =>
+      url === '/api/forecasts/series' ? Promise.resolve({ data: { seriesId: 'forecast-1' } }) : post(url, body));
+    const user = userEvent.setup(); await renderPage();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Forecast' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Forecast' }));
+    expect(await screen.findByText(/Forecast started for gauge_latency_a_to_b\./)).toBeInTheDocument();
+    expect(mockedAxios.post).toHaveBeenCalledWith('/api/forecasts/series',
+      expect.objectContaining({ metricId: templateMetric.id, confirmed: true }), expect.anything());
+    expect(screen.queryByRole('heading', { name: 'Forecast setup' })).toBeNull();
+    expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
+  });
+  it('filters the list to the metrics whose forecast reaches a threshold, and sorts by the soonest', async () => {
+    const other = { ...templateMetric, id: 'm-2', name: 'gauge_other', warningThreshold: 5000, criticalThreshold: 9000 };
+    const later = { ...templateMetric, id: 'm-3', name: 'gauge_later', warningThreshold: 800, criticalThreshold: 1600 };
+    const mk = (metricId: string, first: number) => ({ seriesId: metricId.padEnd(64, 'x'), metricId, environment: 'e', stepMillis: 60000,
+      minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+      activation: { eligible: false, reason: 'not yet', blockPoints: 0, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: { key: metricId, state: 'READY', strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'ok', quality: null,
+        context: { status: 'READY', observedPoints: 512, outputUnit: 'ms', profile: { transformation: 'GAUGE_MEAN' }, points: [] },
+        forecast: { historyEndAt: 0, points: [1, 2, 3, 4].map(i => ({ at: i * 60000, central: first, q10: first - 5, q50: i >= first / 100 ? 900 : 100, q90: first + 5 })) } } });
+    stubApi([templateMetric, other, later], [suggestion],
+      { ...READY_FORECASTS, series: [mk('m-1', 400), mk('m-2', 400), mk('m-3', 200)] });
+    const user = userEvent.setup(); await renderPage();
+    await user.selectOptions(await screen.findByLabelText('Filter by forecast'), 'breach');
+    await waitFor(() => expect(screen.getByText(/2 \/ 3 metrics/)).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText('Sort by'), 'breach');
+    expect(screen.getByText(/sorted by next predicted breach/)).toBeInTheDocument();
+  });
+  it('says, under the "No forecast" filter, why the metrics shown have none', async () => {
+    const other = { ...templateMetric, id: 'm-2', name: 'gauge_other' };
+    const series = { seriesId: 'm-1'.padEnd(64, 'x'), metricId: 'm-1', environment: 'e', stepMillis: 60000,
+      minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+      activation: { eligible: false, reason: 'not yet', blockPoints: 0, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: null };
+    stubApi([templateMetric, other], [suggestion], { ...READY_FORECASTS, series: [series] });
+    const user = userEvent.setup(); await renderPage();
+    await user.selectOptions(await screen.findByLabelText('Filter by forecast'), 'none');
+    // The catalogue says gauge_other can be forecast: nothing stands between it and a forecast but a click.
+    expect(await screen.findByLabelText('Why these metrics have no forecast'))
+      .toHaveTextContent('1 × Ready: press Forecast on the card');
+  });
+  it('shows one line per metric in the compact layout, and remembers the choice in this browser', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const user = userEvent.setup(); await renderPage();
+    await user.click(await screen.findByRole('button', { name: /Compact/ }));
+    const list = screen.getByRole('list', { name: 'Metrics' });
+    expect(within(list).getByLabelText(/gauge_latency_a_to_b: /)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Compact/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(localStorage.getItem('metrics.view')).toBe('compact');
+    await user.click(within(list).getByRole('button', { name: 'Edit gauge_latency_a_to_b' }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+  it('forecasts every eligible metric in one go, once confirmed, and says which were not started and why', async () => {
+    const other = { ...templateMetric, id: 'm-2', name: 'gauge_other' };
+    stubApi([templateMetric, other], [suggestion], READY_FORECASTS);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, body?: unknown) => {
+      if (url !== '/api/forecasts/series') return post(url, body);
+      return (body as { metricId: string }).metricId === 'm-2'
+        ? Promise.reject({ response: { data: { reason: 'All 1 forecast series are in use' } } })
+        : Promise.resolve({ data: { seriesId: 'forecast-1' } });
+    });
+    mockedAxios.isAxiosError.mockReturnValue(true);
+    const user = userEvent.setup(); await renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Forecast all eligible metrics (2)' }));
+    await user.click(await screen.findByRole('button', { name: 'Forecast all' }));
+    expect(await screen.findByLabelText('Forecasts not started')).toHaveTextContent('gauge_other — All 1 forecast series are in use');
+    expect(mockedAxios.post.mock.calls.filter(([url]) => url === '/api/forecasts/series')).toHaveLength(2);
+    mockedAxios.isAxiosError.mockReset();
+  });
+
+  it('offers browser notifications only where the browser has them, and remembers the choice', async () => {
+    const requestPermission = vi.fn().mockResolvedValue('granted');
+    vi.stubGlobal('Notification', Object.assign(vi.fn(), { permission: 'default', requestPermission }));
+    try {
+      const series = { seriesId: 'm-1'.padEnd(64, 'x'), metricId: 'm-1', environment: 'e', stepMillis: 60000,
+        minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+        activation: { eligible: false, reason: 'not yet', blockPoints: 0, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+        result: null };
+      stubApi([templateMetric], [suggestion], { ...READY_FORECASTS, series: [series] });
+      const user = userEvent.setup(); await renderPage();
+      await user.click(await screen.findByRole('button', { name: /Notify me/ }));
+      expect(requestPermission).toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: /Notify me/ })).toHaveAttribute('aria-pressed', 'true');
+      expect(localStorage.getItem('metrics.notify')).toBe('on');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('opens the form for that metric, on the reason, only when the one-click creation stops', async () => {
+    stubApi([templateMetric], [suggestion], READY_FORECASTS);
+    const post = mockedAxios.post.getMockImplementation()!;
+    mockedAxios.post.mockImplementation((url: string, body?: unknown) => url === '/api/forecasts/series'
+      ? Promise.reject({ response: { data: { reason: 'History not available' } } }) : post(url, body));
+    mockedAxios.isAxiosError.mockReturnValueOnce(true);
+    const user = userEvent.setup(); await renderPage();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Forecast' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Forecast' }));
     // Opened for that metric, its sources are there at once (METRICS-FORECAST-UX-AUDIT.md U4).
     expect(await screen.findByRole('list', { name: 'All source topics: selected' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Prepare a forecast' })).toHaveFocus();
-    expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/forecasts/configuration', expect.anything(), expect.anything());
-    await user.click(screen.getByRole('button', { name: 'Close forecast preparation' }));
+    expect(screen.getByRole('heading', { name: 'Forecast setup' })).toHaveFocus();
+    expect(screen.getByLabelText('Forecast configuration assistant')).toHaveTextContent('Automatic creation stopped: History not available.');
+    // A template declares its sources: nothing to attest.
+    expect(screen.queryByRole('checkbox', { name: /I confirm these are all the topics/ })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Close forecast setup' }));
     expect(screen.queryByLabelText('Forecast configuration assistant')).toBeNull();
   });
   /*
@@ -213,16 +318,16 @@ describe('Metrics page', () => {
     await renderPage();
 
     expect(await screen.findByText(/No forecasting model is configured/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Prepare a forecast' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Forecast' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Configure a forecast' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Prepare a forecast' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Forecast setup' })).toBeNull();
   });
   it('offers none either while the pilot itself is off', async () => {
     stubApi([templateMetric]);
     await renderPage();
 
     expect(await screen.findByText(/Forecast pilot disabled/)).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Prepare a forecast' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Forecast' })).toBeNull();
   });
   it('disables forecast preparation when the backend marks a metric ineligible', async () => {
     stubApi([templateMetric], [suggestion], READY_FORECASTS);
@@ -240,8 +345,8 @@ describe('Metrics page', () => {
     });
     await renderPage();
     expect(await screen.findByText('Unsupported metric transformation')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
-    expect(screen.queryByRole('heading', { name: 'Prepare a forecast' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Forecast' })).toBeDisabled();
+    expect(screen.queryByRole('heading', { name: 'Forecast setup' })).toBeNull();
   });
 
   it('disables forecast preparation when the backend cannot apply a forecast', async () => {
@@ -259,7 +364,7 @@ describe('Metrics page', () => {
     });
     await renderPage();
     expect(await screen.findByText('Forecast storage is not configured')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Forecast' })).toBeDisabled();
   });
 
   it('shows where a forecast stands on its card instead of offering to prepare another', async () => {
@@ -272,9 +377,25 @@ describe('Metrics page', () => {
     const status = await screen.findByLabelText(`Forecast status of ${templateMetric.name}`);
     expect(status).toHaveTextContent('Collecting');
     expect(status).toHaveTextContent('History 68 / 128 points · first forecast in ~60 min');
-    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+    // The status row stands in for the action: no greyed-out duplicate of it.
+    expect(screen.queryByRole('button', { name: 'Forecast' })).toBeNull();
   });
-  it('extends the selected metric chart with a distinguishable forecast and disables preparation', async () => {
+  // Every forecast belongs to a card: the card's Details is how the panel is pointed at it.
+  it('points the forecast panel at a card\'s series from its Details button', async () => {
+    const series = (id: string, metricId: string) => ({ seriesId: id, metricId, environment: 'local', stepMillis: 60000,
+      minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+      activation: { eligible: false, reason: 'No forecast', blockPoints: 0, blockPointsRequired: 180, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: { state: 'WARMING_UP', strategy: 'UNAVAILABLE', visibility: 'SHADOW', reason: 'Collecting history', forecast: null, quality: null,
+        baselineMae: {}, evaluatedPoints: 0, context: { status: 'WARMING_UP', observedPoints: 68, points: [], outputUnit: 'milliseconds' } } });
+    const second = { ...templateMetric, id: 'm-2', name: 'gauge_second' };
+    stubApi([templateMetric, second], [suggestion], { enabled: true, state: 'AVAILABLE',
+      series: [series('a'.repeat(64), templateMetric.id), series('b'.repeat(64), second.id)] });
+    const user = userEvent.setup(); await renderPage();
+    expect(await screen.findByLabelText('Forecast series')).toHaveTextContent('gauge_latency_a_to_b');
+    await user.click(screen.getByRole('button', { name: 'Show the forecast of gauge_second' }));
+    await waitFor(() => expect(screen.getByLabelText('Forecast series')).toHaveTextContent('gauge_second'));
+  });
+  it('extends the selected metric chart with a distinguishable forecast and offers no second one', async () => {
     const historyEndAt = Date.now();
     const forecastSeries = {
       seriesId: 'b'.repeat(64), metricId: templateMetric.id, environment: 'local',
@@ -293,7 +414,30 @@ describe('Metrics page', () => {
     await renderPage();
     expect(await screen.findByLabelText('Metric chart legend')).toHaveTextContent('Observed');
     expect(screen.getByLabelText('Metric chart legend')).toHaveTextContent('Forecast');
-    expect(screen.getByRole('button', { name: 'Prepare a forecast' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Forecast' })).toBeNull();
+  });
+  /*
+   * The card draws the series the model read, on the forecast's time axis: the metric's own
+   * sparkline is a handful of untimed values that 30 predicted points squeezed to a fifth of the width.
+   */
+  it('draws the forecast series history on the card, on the same time axis as the forecast', async () => {
+    const historyEndAt = Date.UTC(2026, 10, 20, 12);
+    const points = Array.from({ length: 60 }, (_, i) => ({ endAt: historyEndAt - (59 - i) * 60000, value: 400 + i, imputed: false, samples: 1 }));
+    const forecastPoints = Array.from({ length: 30 }, (_, i) => ({ at: historyEndAt + (i + 1) * 60000, central: 460, q50: 460, q10: 450, q90: 470 }));
+    stubApi([templateMetric], [suggestion], { ...READY_FORECASTS, series: [{
+      seriesId: 'c'.repeat(64), metricId: templateMetric.id, environment: 'local',
+      stepMillis: 60000, minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
+      activation: { eligible: false, reason: 'Collecting quality evidence', blockPoints: 0,
+        blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
+      result: { state: 'READY', strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'Forecast ready',
+        context: { status: 'READY', observedPoints: 512, outputUnit: 'milliseconds',
+          profile: { transformation: 'GAUGE_MEAN', stepMillis: 60000, contextPoints: 512 }, points },
+        forecast: { historyEndAt, points: forecastPoints }, quality: null } }] });
+    await renderPage();
+    await screen.findByLabelText('Metric chart legend');
+    // Sixty measured minutes, then thirty predicted ones — not "N pts" of a sparkline.
+    expect(screen.getByText('~60 min + ~30 min ahead')).toBeInTheDocument();
+    expect(screen.getByText('400')).toBeInTheDocument(); // min of the context, not of the sparkline
   });
   it('renders a template metric, whose SQL is null by construction', async () => {
     stubApi([templateMetric]);
@@ -887,13 +1031,31 @@ describe('Metrics pulse backdrop', () => {
     expect(screen.queryByTestId('metrics-pulse-backdrop')).toBeNull();
   });
 
-  it('mounts once at least one metric is running', async () => {
+  /** The background is an opt-in ornament: these cases choose it the way an operator does. */
+  const optIn = () => localStorage.setItem('kse:metrics-backdrop', '1');
+  afterEach(() => localStorage.removeItem('kse:metrics-backdrop'));
+
+  it('is off by default, even while a metric is running, and the toggle turns it on and off', async () => {
+    stubApi([running]);
+    await renderPage();
+    await screen.findByText(running.name);
+    expect(screen.queryByTestId('metrics-pulse-backdrop')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Animated background' }));
+    expect(await screen.findByTestId('metrics-pulse-backdrop')).toBeInTheDocument();
+    expect(localStorage.getItem('kse:metrics-backdrop')).toBe('1');
+    await userEvent.click(screen.getByRole('button', { name: 'Animated background' }));
+    expect(screen.queryByTestId('metrics-pulse-backdrop')).toBeNull();
+  });
+
+  it('mounts once at least one metric is running, when chosen', async () => {
+    optIn();
     stubApi([running]);
     await renderPage();
     await waitFor(() => expect(screen.getByTestId('metrics-pulse-backdrop')).toBeInTheDocument());
   });
 
   it('stays out of the reading order and takes no pointer', async () => {
+    optIn();
     stubApi([running]);
     await renderPage();
     const layer = await screen.findByTestId('metrics-pulse-backdrop');
@@ -915,6 +1077,7 @@ describe('Metrics pulse backdrop', () => {
    * et la suite de tests n'a pas à la faire taire avec un bouchon.
    */
   it('carries a canvas that draws nothing until something has been laid out', async () => {
+    optIn();
     stubApi([running]);
     await renderPage();
     const layer = await screen.findByTestId('metrics-pulse-backdrop');
@@ -933,6 +1096,7 @@ describe('Metrics pulse backdrop', () => {
    * ici, c'est la décision : un retour à `absolute inset-0` la reprendrait en silence.
    */
   it('follows the viewport rather than scrolling away with the content', async () => {
+    optIn();
     stubApi([running]);
     await renderPage();
     const layer = await screen.findByTestId('metrics-pulse-backdrop');

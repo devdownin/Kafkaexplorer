@@ -31,6 +31,7 @@ const MIME = {
 /** Routes are matched in order; the first predicate that answers wins. */
 const API = [
   [m => m === '/api/dashboard', () => F.dashboard],
+  [m => m === '/api/compare/topics', () => F.TOPICS],
   // Reçoit l'URL : la colonne d'activité ne mesure que les topics affichés, donc la réponse
   // dépend de la requête — les autres routes ignorent simplement l'argument.
   [m => m === '/api/dashboard/activity', url => F.topicActivity(url)],
@@ -54,12 +55,14 @@ const API = [
   [m => m === '/api/forecasts/candidates', () => F.forecastCandidates],
   [m => /^\/api\/forecasts\/candidates\/[^/]+\/history$/.test(m), () => F.forecastHistory],
   [m => /^\/api\/forecasts\/[a-f0-9]{64}\/progress$/.test(m), () => F.forecastProgress],
+  [m => /^\/api\/forecasts\/[a-f0-9]{64}\/previous$/.test(m), () => F.forecastPrevious],
   // No shadow model on this deployment: the panel reads a 404 as "not configured" and stops asking.
   [m => /^\/api\/forecasts\/[a-f0-9]{64}\/shadow$/.test(m), () => ({ [STATUS]: 404 })],
   [m => /^\/api\/forecasts\/[a-f0-9]{64}$/.test(m), () => F.forecastSeries],
   [m => m === '/api/assistant/status', () => F.assistantStatus],
   [m => m === '/api/metrics', () => F.metrics],
   [m => m === '/api/metrics/templates', () => F.metricTemplates],
+  [m => m === '/api/metrics/refresh-costs', () => F.metricRefreshCosts],
   [m => m === '/api/metrics/metadata', () => ({ demo_orders_1_received: ['id', 'status', 'amount_cents'] })],
   [m => m === '/api/metrics/suggestions', () => F.metricSuggestions],
   [m => m === '/api/metrics/label-preview', url => F.labelPreview(url)],

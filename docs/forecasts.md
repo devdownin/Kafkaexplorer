@@ -5,6 +5,16 @@ a configuration assistant, history progress and a forecast summary. The pilot an
 tools are enabled by default, with an empty approved catalogue. No forecast runs until sources,
 durable history and TimesFM are explicitly configured.
 
+## Dashboard investigation and saved views (UI/UX roadmap)
+
+The Dashboard already provides topic search, activity sparklines, refresh controls and `Ctrl+K` navigation. The UI/UX enhancements under review are delivered separately:
+
+- [PR #604](https://github.com/devdownin/Kafkaexplorer/pull/604): diagnostic overview of broker reachability, empty topics and dead-letter topics, with investigation links and remembered table page size.
+- [PR #605](https://github.com/devdownin/Kafkaexplorer/pull/605): save and restore a local topic-filter view (search text, empty/dead-letter/internal-topic visibility).
+- [PR #606](https://github.com/devdownin/Kafkaexplorer/pull/606): recently opened topics in the `Ctrl+K` palette.
+
+These changes are **proposed, not guaranteed to be present in a published image** until their PRs are merged and a new image is released. Saved views and recent topics use browser-local storage, not server-side profiles. They do not change TimesFM configuration or forecast calculation.
+
 ## Companion agent: Kex-anHarness
 
 [Kex-anHarness](https://github.com/devdownin/Kex-anHarness), formerly Kex Agent AI, reads
@@ -68,6 +78,47 @@ Pulling the images is then the only network use (`docker save` / `docker load` c
 host with no registry access). It also scores Timestral-28M beside TimesFM by default. **Timestral's
 licence is not open source:** it excludes companies above USD 20 M monthly revenue; read
 [`services/timesfm/licenses/NOTICE.md`](../services/timesfm/licenses/NOTICE.md) before using it.
+
+## Windows: one-command Docker Compose startup
+
+From a Windows Command Prompt or PowerShell in the repository root, with Docker Desktop
+running (Compose v2):
+
+```bat
+run.bat
+run.bat ps
+run.bat logs explorer timesfm forecast-postgres
+run.bat config
+run.bat down
+```
+
+`run.bat` invokes the bundled `run.ps1` in a single PowerShell process; it does not
+change system execution policy and requires no Git Bash or OpenSSL. It starts the same
+`docker-compose.yml` + `compose/forecasts.yml` stack as `bin/forecast-stack.sh`,
+including PostgreSQL history, the authenticated TimesFM CPU service, runtime approvals
+and the Kafka demo broker. The first start builds the Explorer and TimesFM images,
+downloads the pinned checkpoint and waits on Compose's PostgreSQL/TimesFM health
+dependencies. On success the UI is at http://localhost:8080 (or `EXPLORER_PORT`).
+
+On first use the launcher creates `.forecast-stack/.env` with random persistent
+`FORECAST_POSTGRES_PASSWORD`, `TIMESFM_TOKEN`, and `EXPLORER_MCP_AUTH_TOKEN`
+values and creates `.forecast-stack/config/forecasts.yml` if missing. Neither file
+is overwritten on subsequent starts. Existing process environment variables take
+precedence over the root `.env`, then the generated private file, then built-in
+defaults. The launcher explicitly defaults `BIND_ADDR=127.0.0.1`,
+`EXPLORER_PORT=8080`, `KAFKA_PORT=9092`,
+`FORECAST_ENVIRONMENTS=local`, `FORECAST_CLUSTER_ID=local`,
+`FORECAST_COLLECTOR_ID=kafkaexplorer`, `FORECAST_RUNTIME_APPROVAL=true`,
+`TIMESFM_THREADS=4`, `TIMESFM_CPUS=4.0`,
+`TIMESFM_MEM_LIMIT=8g`, `TIMESFM_TIMEOUT=35s` and
+`TIMESTRAL_SHADOW_ENABLED=false`, along with the remaining Compose inputs.
+See `.env.example` to override any value. Timestral is deliberately **not**
+enabled automatically because of its separate model licence.
+
+`run.bat config` validates the merged Compose files without starting containers;
+`run.bat down` preserves downloaded models and forecast history volumes. A
+healthy container does not imply that every metric already has enough historical
+samples to produce a prediction. The Metrics page reports per-metric readiness.
 
 ## Configure and approve
 
@@ -151,6 +202,37 @@ before the button is pressed. Forecasts send no alerts. Nominal quantiles
 are not guaranteed confidence. See the [pilot runbook](notes/timesfm-pilot.md) for quality gates,
 source authorization, persistence and failover behavior.
 
+## Alerting on a predicted threshold
+
+The Metrics page reads each forecast against its metric's own warning and critical thresholds and
+says so on the card ("Warning expected in ~12 min"), but it sends nothing: a predicted threshold is a
+reading of the forecast, not an alert. The same reading is published for Prometheus, so an operator can
+alert on it in Alertmanager:
+
+```promql
+# A critical threshold the median forecast reaches within half an hour
+explorer_forecast_threshold_eta_seconds{level="critical", likelihood="expected"} < 1800
+```
+
+`explorer_forecast_threshold_eta_seconds{metric_id, level, likelihood}` is the number of seconds until the
+first predicted point at or past the threshold; `level` is `warning` or `critical`, `likelihood` is
+`expected` (the median reaches it) or `possible` (only the edge of the 80 % band does). A series exists
+only while a threshold is predicted within the horizon, and a counter's rate forecast is never compared
+with its thresholds. It is recomputed after each forecast-pilot cycle, so a threshold edited on a metric
+shows at the next cycle. The value floors at zero and a forecast that stops being refreshed keeps saying
+zero: pair the rule with `explorer_metric_last_success_timestamp_seconds`, as the card's own alert rule
+does. The reading is `ForecastThresholdReach`, the server twin of the page's `forecastBreach.ts`.
+
+## From the Metrics page
+
+- **Forecast all eligible** creates the missing forecasts in one confirmed batch, one after the other, and
+  names each metric that was not started with the server's reason (the last series slot taken, for example).
+- **Try a threshold**, in the forecast panel, draws a value and says when this forecast would reach it — on
+  the median, or on the edge of the 80 % band — without saving anything.
+- A card says how far a new forecast moved its predicted threshold ("4 min sooner than the previous forecast").
+- **Notify me** raises a browser notification when a forecast newly predicts a threshold, while the page is
+  open. It is local to that browser; for alerts that reach people, use the Prometheus series above.
+
 ## Operator API
 
 | Endpoint | Purpose |
@@ -186,3 +268,11 @@ and requires a READY/TIMESFM/SHADOW result readable through authenticated MCP.
 This verifies integration, not forecasting accuracy, realised quality or activation.
 The ephemeral project's volumes are removed at the end. Run this driver only against
 an isolated disposable stack, never against an existing deployment.
+
+## Forecast directly from an existing metric
+
+On **Metrics**, use **Prepare a forecast** on a compatible metric. The existing metric is the source of the forecast: the assistant reuses its identity, unit and collection configuration instead of asking for a new metric. An ineligible metric has a disabled action; check the preparation diagnostics for missing history, unsupported metric types or unavailable inference.
+
+After successful preparation, the action is disabled to avoid creating a duplicate forecast. The metric chart retains the observed series and extends it with a visually distinct forecast segment; where available, forecast uncertainty is displayed separately from measured values. The forecast is not historical observation, and no threshold or alert is activated automatically. Review the forecast status and quality before enabling operational use.
+
+For a reproducible local environment, run `bin/forecast-stack.sh` and follow the [forecast setup guide](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/forecasts.md). The stack uses PostgreSQL for durable observations and TimesFM for inference; Timestral is a shadow comparison, not an alternative primary inference engine.

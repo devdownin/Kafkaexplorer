@@ -49,6 +49,26 @@ class ForecastPilotSchedulerTest {
     }
   }
 
+  /**
+   * What is derived from the forecasts (the threshold-reach series) is recomputed on the pilot's
+   * thread after its cycle — after a failed one too, the previous forecasts being still the latest —
+   * and never on Spring's single scheduler thread, which metric collection owns.
+   */
+  @Test
+  void theStepAfterACycleRunsOnThePilotThreadEvenWhenTheCycleFailed() throws Exception {
+    var pilot = mock(ForecastPilotService.class);
+    doThrow(new IllegalStateException("boom")).when(pilot).refresh();
+    var thread = new CompletableFuture<String>();
+    var scheduler = new ForecastPilotScheduler(pilot, Duration.ofMillis(10),
+        () -> thread.complete(Thread.currentThread().getName()));
+    scheduler.start();
+    try {
+      assertEquals(ForecastPilotScheduler.THREAD_NAME, thread.get(5, TimeUnit.SECONDS));
+    } finally {
+      scheduler.stop();
+    }
+  }
+
   /** Either bean type would switch off Spring Boot's task scheduler and capture @Scheduled. */
   @Test
   void configurationPublishesNoSchedulerBeanSpringBootWouldAdopt() {

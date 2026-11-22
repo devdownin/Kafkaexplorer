@@ -4,6 +4,7 @@
 import type { FC } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { resolvePageName } from '../navigation';
+import { Switch } from './ui/Switch';
 import { connectionLabel, connectionTitle, connectionTone, type Health } from './connectionStatus';
 
 const PILL_TONES = {
@@ -19,6 +20,11 @@ const DOT_TONES = {
 } as const;
 
 interface HeaderProps {
+  /** The resolved scheme actually painted. */
+  theme: 'light' | 'dark';
+  /** Strengthen the optical separation when the content plane has scrolled. */
+  scrolled?: boolean;
+  onThemeToggle: () => void;
   onMenuClick?: () => void;
   /** Ouvre la palette de commandes (⌘K). */
   onSearchClick?: () => void;
@@ -40,14 +46,14 @@ interface HeaderProps {
  * chaud par `POST /api/config`. Ce qui est vérifiable voyage à côté : l'adresse d'amorçage
  * effective, lue dans la configuration en cours d'exécution, en infobulle.
  */
-const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName, bootstrapServers }) => {
+const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, clusterName, bootstrapServers, theme, onThemeToggle, scrolled = false }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const pageName = resolvePageName(location.pathname);
   const tone = connectionTone({ isHealthy });
 
   return (
-    <header className="header-border flex justify-between items-center gap-3 px-4 md:px-6 h-14 sticky top-0 z-30 bg-surface/80 backdrop-blur-md">
+    <header className={`kse-header ${scrolled ? 'kse-header-scrolled' : ''} flex justify-between items-center gap-3 px-4 md:px-6 h-14 shrink-0 sticky top-3 z-30 mx-3 md:mx-4 mt-3 mb-2`}>
       <div className="flex items-center gap-2 min-w-0">
         <button
           type="button"
@@ -84,16 +90,29 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
           onClick={onSearchClick}
           aria-label="Search (Command palette)"
           title="Search — ⌘K"
-          className="flex items-center gap-2 h-8 pl-2.5 pr-2 rounded-md bg-surface-container-low border border-outline-variant/70 text-on-surface-variant hover:text-on-surface hover:border-outline transition-colors"
+          className="kse-search-trigger flex items-center gap-2 h-9 pl-3 pr-2.5 text-on-surface-variant hover:text-on-surface"
         >
           <span aria-hidden="true" className="material-symbols-outlined text-[17px]">search</span>
           <span className="hidden sm:inline text-[13px] w-24 md:w-40 text-left text-outline">Search…</span>
-          <kbd className="hidden sm:inline text-[10px] text-outline border border-outline-variant rounded px-1 py-0.5">⌘K</kbd>
+          <kbd className="hidden sm:inline text-[11px] text-outline border border-outline-variant rounded px-1 py-0.5">⌘K</kbd>
         </button>
 
+        <div
+          className="kse-header-action inline-flex items-center gap-1.5 px-1.5 text-on-surface-variant"
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          <span aria-hidden="true" className="material-symbols-outlined text-[19px]">
+            {theme === 'dark' ? 'dark_mode' : 'light_mode'}
+          </span>
+          <Switch
+            checked={theme === 'dark'}
+            onChange={onThemeToggle}
+            aria-label="Dark mode"
+          />
+        </div>
         <button
           onClick={() => navigate('/help')}
-          className="p-1.5 rounded-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-colors"
+          className="kse-header-action p-2 text-on-surface-variant hover:text-on-surface"
           title="Help"
           aria-label="Help"
         >
