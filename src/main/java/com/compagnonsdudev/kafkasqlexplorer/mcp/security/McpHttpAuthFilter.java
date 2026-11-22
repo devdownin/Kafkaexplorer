@@ -97,13 +97,13 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
                         ? "mcp:invoke" : "mcp:admin";
                 String scopes = jwt.getClaimAsString("scope");
                 java.util.Set<String> granted = new java.util.HashSet<>();
-                if (scopes != null) granted.addAll(java.util.Arrays.asList(scopes.split("\\\\s+")));
+                if (scopes != null) granted.addAll(java.util.Arrays.asList(scopes.split("\\s+")));
                 java.util.List<String> scp = jwt.getClaimAsStringList("scp");
                 if (scp != null) granted.addAll(scp);
                 if (!granted.contains(requiredScope)) {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     response.setContentType("application/json");
-                    response.getWriter().write("{\\"error\\":\\"mcp_insufficient_scope\\"}");
+                    response.getWriter().write("{\"error\":\"mcp_insufficient_scope\"}");
                     return;
                 }
                 identity = "oauth:" + identityOf(jwt.getIssuer() + "|" + jwt.getSubject()).substring(7);
@@ -116,7 +116,7 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
                 response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
                 response.setHeader("WWW-Authenticate", "Bearer");
                 response.setContentType("application/json");
-                response.getWriter().write("{\\"error\\":\\"mcp_auth_not_configured\\",\\"message\\":\\"EXPLORER_MCP_AUTH_TOKEN must be configured before the HTTP MCP surface is enabled.\\"}");
+                response.getWriter().write("{\"error\":\"mcp_auth_not_configured\",\"message\":\"EXPLORER_MCP_AUTH_TOKEN must be configured before the HTTP MCP surface is enabled.\"}");
                 return;
             }
             if (supplied == null || !constantTimeEquals(configuredToken, supplied)) {
@@ -133,9 +133,9 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
 
     private static void unauthorized(HttpServletResponse response) throws IOException {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-        response.setHeader("WWW-Authenticate", "Bearer realm=\\"mcp\\"");
+        response.setHeader("WWW-Authenticate", "Bearer realm=\"mcp\"");
         response.setContentType("application/json");
-        response.getWriter().write("{\\"error\\":\\"mcp_unauthorized\\"}");
+        response.getWriter().write("{\"error\":\"mcp_unauthorized\"}");
     }
 
     static String bearerToken(HttpServletRequest request) {
