@@ -1776,6 +1776,101 @@ public class KafkaAdminService {
         return new TopicActivityResponse(series, start, end, bucketMs, bucketCount, available, warnings);
     }
 
+    /**
+     * Only the selected topic, at most 24 partitions and a bounded offset lookup budget.
+     * A missing partition or partially retained interval must not become zero activity.
+     * The ordinary dashboard still reads topic totals and does not pay for this detail.
+     */
+    public com.compagnonsdudev.kafkasqlexplorer.domain.PartitionActivityResponse getPartitionActivity(
+            String topicName, long windowMs, int buckets, int maxLookups) {
+        int bucketCount = Math.clamp(buckets, ACTIVITY_MIN_BUCKETS, ACTIVITY_MAX_BUCKETS);
+        long window = Math.clamp(windowMs, ACTIVITY_MIN_WINDOW_MS, ACTIVITY_MAX_WINDOW_MS);
+        long bucketMs = Math.max(1000L, window / bucketCount);
+        long end = (System.currentTimeMillis() / bucketMs) * bucketMs;
+        long start = end - bucketMs * bucketCount;
+        List<String> warnings = new ArrayList<>();
+        List<TopicPartition> all;
+        try {
+            all = describePartitions(List.of(topicName), 10_000, warnings)
+                    .getOrDefault(topicName, List.of()).stream()
+                    .sorted(Comparator.comparingInt(TopicPartition::partition)).toList();
+        } catch (Exception e) {
+            warnings.add("Partition metadata unavailable: " + SqlErrorClassifier.explain(e));
+            return new com.compagnonsdudev.kafkasqlexplorer.domain.PartitionActivityResponse(
+                    topicName, start, end, bucketMs, bucketCount, 0, 0, false, List.of(), warnings);
+        }
+        int limit = Math.min(24, Math.max(0, maxLookups / (bucketCount + 1)));
+        boolean truncated = all.size() > limit;
+        if (truncated) warnings.add("Only " + limit + " of " + all.size()
+                + " partitions could be measured within the spatial view budget.");
+        if (all.isEmpty()) warnings.add("No partitions were described; no activity can be inferred.");
+        List<TopicPartition> scoped = all.subList(0, Math.min(limit, all.size()));
+        if (scoped.isEmpty()) {
+            return new com.compagnonsdudev.kafkasqlexplorer.domain.PartitionActivityResponse(
+                    topicName, start, end, bucketMs, bucketCount, all.size(), 0,
+                    truncated, List.of(), warnings);
+        }
+
+        List<com.compagnonsdudev.kafkasqlexplorer.domain.PartitionActivity> rows = new ArrayList<>();
+        int measured = 0;
+        try {
+            ListOffsetsResult earliest = adminClient.listOffsets(specs(scoped, OffsetSpec.earliest()));
+            ListOffsetsResult latest = adminClient.listOffsets(specs(scoped, OffsetSpec.latest()));
+            List<ListOffsetsResult> boundaries = new ArrayList<>(bucketCount + 1);
+            for (int i = 0; i <= bucketCount; i++) {
+                boundaries.add(adminClient.listOffsets(
+                        specs(scoped, OffsetSpec.forTimestamp(start + i * bucketMs))));
+            }
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ACTIVITY_TIMEOUT_MS);
+            for (TopicPartition partition : scoped) {
+                try {
+                    long begin = awaitOffset(earliest, partition, deadline).offset();
+                    long finish = awaitOffset(latest, partition, deadline).offset();
+                    if (begin < 0 || finish < begin) throw new IllegalStateException("Invalid partition offsets");
+                    long[] offsets = new long[bucketCount + 1];
+                    long firstOffset = -1L;
+                    long firstTimestamp = -1L;
+                    for (int i = 0; i <= bucketCount; i++) {
+                        ListOffsetsResult.ListOffsetsResultInfo info =
+                                awaitOffset(boundaries.get(i), partition, deadline);
+                        long value = info.offset();
+                        if (value < 0) value = finish;
+                        else if (firstOffset < 0) {
+                            firstOffset = value;
+                            firstTimestamp = info.timestamp();
+                        }
+                        offsets[i] = Math.clamp(value, begin, finish);
+                    }
+                    List<Long> counts = new ArrayList<>(bucketCount);
+                    for (int i = 0; i < bucketCount; i++) {
+                        counts.add(Math.max(0L, offsets[i + 1] - offsets[i]));
+                    }
+                    Long coveredFrom = begin > 0 && firstOffset == begin && firstTimestamp > start
+                            && firstTimestamp < end ? firstTimestamp : null;
+                    String note = coveredFrom == null ? null
+                            : "Older offsets have been removed by retention; initial buckets are lower bounds.";
+                    rows.add(new com.compagnonsdudev.kafkasqlexplorer.domain.PartitionActivity(
+                            partition.partition(), counts, coveredFrom, true, note));
+                    measured++;
+                } catch (Exception e) {
+                    rows.add(new com.compagnonsdudev.kafkasqlexplorer.domain.PartitionActivity(
+                            partition.partition(), List.of(), null, false,
+                            "Partition offsets unavailable: " + SqlErrorClassifier.explain(e)));
+                }
+            }
+        } catch (Exception e) {
+            warnings.add("Partition activity could not be sampled: " + SqlErrorClassifier.explain(e));
+            for (TopicPartition partition : scoped) rows.add(
+                    new com.compagnonsdudev.kafkasqlexplorer.domain.PartitionActivity(
+                            partition.partition(), List.of(), null, false, "Offset read failed."));
+        }
+        if (measured < all.size()) warnings.add((all.size() - measured)
+                + " partition(s) are not fully measured; missing values are unknown, not zero.");
+        return new com.compagnonsdudev.kafkasqlexplorer.domain.PartitionActivityResponse(
+                topicName, start, end, bucketMs, bucketCount, all.size(), measured,
+                truncated, rows, warnings);
+    }
+
     private static Map<TopicPartition, OffsetSpec> specs(List<TopicPartition> partitions, OffsetSpec spec) {
         Map<TopicPartition, OffsetSpec> request = new LinkedHashMap<>();
         partitions.forEach(tp -> request.put(tp, spec));
