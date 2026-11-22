@@ -30,11 +30,11 @@ Les séries de production représentent des **différences d'offsets**, pas le n
 | S3D-03 | P1 | Le budget du service partition divisait par `buckets + 1`, sans compter les appels `earliest` et `latest`. | **Corrigé** : calcul `buckets + 3` dans `KafkaAdminService` |
 | S3D-04 | P1 | Certaines tailles et totaux issus de données partielles étaient présentés comme mesurés. | **Corrigé** : chiffres conditionnés à la couverture ; valeurs absentes explicitement « Unknown » ; aucun zéro fictif |
 | S3D-05 | P1 | L'interface à trois panneaux s'écrasait sur les écrans intermédiaires ; les commandes occupaient trop de place. | **Corrigé** : scène en premier sur écran étroit, agencement trois colonnes à partir de `2xl`, chronologie et couches intégrées |
-| S3D-06 | P1 | La nouvelle interface n'exposait pas de raccourcis propres à la scène ; `Ctrl/⌘+K` appartient déjà à la palette globale. | **Corrigé** : `/`, `?`, `F`, `O`, `C`, espace, Échap, aide accessible ; aucun détournement de la palette globale |
+| S3D-06 | P1 | La nouvelle interface n'exposait pas de raccourcis propres à la scène ; **Ctrl/⌘+K** appartient déjà à la palette globale. | **Corrigé** : `/`, `?`, `F`, `O`, `C`, espace, Échap, aide accessible ; aucun détournement de la palette globale |
 | S3D-07 | P1 | Le popover des couches ne gérait pas Échap ni la fermeture au clic extérieur. | **Corrigé** : fermeture, retour de focus, cases à cocher standard |
 | S3D-08 | P2 | Cibles de mini-carte trop petites et statut d'interaction peu explicite. | **Amélioré** : cibles de 24 px, états `aria-pressed`, focus visible, `Shift+Enter` pour le focus, liste de topics alternative |
 | S3D-09 | P2 | Les mouvements du pointeur provoquaient des rendus React redondants même pour le même topic. | **Atténué** : déduplication par topic et déplacement minimal du curseur ; performances GPU à mesurer en conditions réelles |
-| S3D-10 | P2 | L'ancienne implémentation « une heure » (`strata3d/`) subsistait alors que `/strata` utilisait le nouveau module. | **Corrigé** : suppression des composants et tests orphelins ; guide historique conservé comme archive |
+| S3D-10 | P2 | L'ancienne implémentation « une heure » (l’ancien répertoire de composants Strata 3D) subsistait alors que `/strata` utilisait le nouveau module. | **Corrigé** : suppression des composants et tests orphelins ; guide historique conservé comme archive |
 | S3D-11 | P2 | Changer le topic sélectionné laissait parfois la caméra focalisée sur l'ancien topic. | **Corrigé** : retour au contexte général lors de la sélection d'un autre topic |
 | S3D-12 | P1 | Le lien de partage pouvait transmettre un fragment d'URL sans rapport, potentiellement sensible. | **Corrigé** : `shareStrataUrl` ne conserve que les paramètres Strata autorisés ; test de non-divulgation de requête et fragment |
 
@@ -51,7 +51,7 @@ Les séries de production représentent des **différences d'offsets**, pas le n
 
 | Axe | Contrôle | Observation |
 |---|---|---|
-| Navigateur clavier | Recherche `/`, aide `?`, focus `F`, vue d'ensemble `O`, comparaison `C`, replay espace, Échap | Implémenté sans intercepter `Ctrl/⌘+K` |
+| Navigateur clavier | Recherche `/`, aide `?`, focus `F`, vue d'ensemble `O`, comparaison `C`, replay espace, Échap | Implémenté sans intercepter **Ctrl/⌘+K** |
 | Lecteur d'écran | Liste de topics, boutons et sélection de groupes HTML standards ; dialogue `aria-modal` avec retour de focus | Le canvas WebGL n'est pas l'unique accès aux données |
 | Préférences système | Réduction de mouvement, transparence réduite, contraste fort et couleurs forcées | Styles de repli prévus pour les surfaces flottantes |
 | Mise en page | Scène prioritaire sur mobile ; panneaux escamotables et redimensionnables sur grand écran | À valider aussi sur terminaux tactiles réels |
