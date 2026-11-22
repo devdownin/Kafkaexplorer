@@ -16,9 +16,20 @@ le protocole sans ouvrir un accès au cluster.
 Dans l’application comme sur le site public, le graphe propose les filtres de rôles
 **Utilisateur, Agent, Gouvernance, Transport, Services, Preuves**. Les nœuds non
 sélectionnés sont atténués, **jamais retirés**, pour préserver les intermédiaires
-de la chaîne d’appel. Le graphe accepte les flèches et les touches Début/Fin.
-Le zoom est proposé sur grand écran ; sur mobile, une liste verticale conserve
-les neuf étapes et leur détail sans imposer un panoramique horizontal.
+de la chaîne d’appel. Les neuf étapes sont stables et ordonnées : **1 à 7**
+décrivent la demande, l’invocation et l’accès au service ; **8 et 9** expliquent
+le retour des preuves et leur restitution. Ces numéros sont des **repères
+documentaires**, pas des étapes exécutées, un pourcentage d’avancement ou des
+latences mesurées.
+
+Sur grand écran (à partir de **1 024 px**), la piste de navigation rapide permet
+de sélectionner directement une étape. Le graphe centre horizontalement la
+sélection, y compris à l’ouverture d’un lien partagé ; le zoom (75, 100, 125 %)
+reste disponible. Les flèches et les touches **Début/Fin** naviguent entre les
+nœuds lorsque le focus clavier est sur le graphe. Sur mobile et tablette
+(en dessous de 1 024 px), une **liste verticale** conserve les neuf étapes et
+leurs contrats sans imposer de défilement horizontal. La sélection conserve
+l’inspection de la source et le garde-fou associé.
 
 Les paramètres `?scenario=incident|forecast|skill&step=<identifiant>&focus=<rôle>`
 permettent de partager une vue précise. Par exemple :
@@ -29,8 +40,13 @@ L’option **Copier Mermaid** exporte la version textuelle du scénario affiché
 avec les flèches d’appel et de retour. Ce code décrit toujours une architecture
 de référence : **aucune télémétrie d’exécution n’est fabriquée**.
 
-La page GitHub Pages charge son script local `mcp-guide.js` sans service
-externe ; le pré-contrôle PR valide la syntaxe JavaScript avec `node --check`.
+La page GitHub Pages charge réellement son script local `mcp-guide.js`
+(une seule inclusion, sans script de graphe obsolète) et ne dépend d’aucun service
+externe. Le pré-contrôle PR valide la syntaxe JavaScript avec `node --check`
+**et** vérifie avec `docs/check-mcp-guide.py` que les boutons, nœuds, filtres
+et éléments HTML requis par le script existent. Le script et la page HTML doivent
+être publiés ensemble. La vue publique est pédagogique, **sans requête réseau
+vers Kafka, sans jeton d’accès et sans fausse télémétrie**.
 
 ## 1. Quel concept employer ?
 

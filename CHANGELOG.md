@@ -78,6 +78,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   OAuth mode is restricted to read-only MCP until tool-level RBAC exists; the legacy
   bearer-token mode remains the default. See `docs/mcp-enterprise-auth.md`.
 
+- **MCP reference graph navigation and Pages parity.** The in-app guide gains a
+  nine-step quick-navigation rail, separates invocation from evidence return,
+  recentres deep-linked/keyboard-selected nodes and uses a full-size vertical list
+  on tablets. GitHub Pages now actually loads the external interactive controller,
+  restores filters, zoom, deep links, copy actions and accessible mobile navigation;
+  a PR preflight guard catches missing DOM controls or script inclusion.
+
 ## [2.8.2] — 2026-11-21
 
 Released from `main` with no entry recorded here; see [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.8.2).

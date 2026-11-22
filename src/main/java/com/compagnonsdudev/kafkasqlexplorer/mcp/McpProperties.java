@@ -14,6 +14,7 @@ public class McpProperties {
     private String authToken;
     private String authMode = "bearer";
     private Oauth2 oauth2 = new Oauth2();
+    private OAuth oauth = new OAuth();
 
     public static class Oauth2 {
         private String issuerUri;

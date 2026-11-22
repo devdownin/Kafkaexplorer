@@ -56,6 +56,16 @@
       const mobileList=document.getElementById("mobile-steps");
       const wrapper=document.getElementById("graph-wrap");
       const graph=document.getElementById("graph-canvas");
+      const graphScroll=document.querySelector(".graph-scroll");
+      const rail=document.getElementById("step-rail");
+      function revealStep(id) {
+        if (!graphScroll || getComputedStyle(graphScroll).display === "none") return;
+        const target=buttons.find(btn=>btn.dataset.node===id);
+        if (!target || !graphScroll.clientWidth) return;
+        const center=(target.offsetLeft+target.offsetWidth/2)*zoom;
+        const max=Math.max(0,wrapper.offsetWidth-graphScroll.clientWidth);
+        graphScroll.scrollTo?.({left:Math.max(0,Math.min(max,center-graphScroll.clientWidth/2)),behavior:"smooth"});
+      }
       function permalink() {
         const url = new URL(window.location.href);
         url.searchParams.set("scenario", selectedScenario);
@@ -66,13 +76,18 @@
       }
       function updateUrl() { window.history.replaceState(null, "", permalink()); }
       function focusStep(id, focusButton=false) {
+        // Both lists are rebuilt when a scenario changes. Restore focus for
+        // keyboard and switch users rather than leaving it on <body>.
+        const fromMobile=mobileList.contains(document.activeElement);
+        const fromRail=rail.contains(document.activeElement);
         selectedId=id;
         updateUrl();
         render();
-        if(focusButton) {
-          const target=buttons.find((btn)=>btn.dataset.node===id);
-          target?.focus();
-          target?.scrollIntoView?.({block:"nearest",inline:"nearest"});
+        revealStep(id);
+        if(fromMobile) mobileList.querySelector('[data-step="'+id+'"]')?.focus({preventScroll:true});
+        else if(fromRail) rail.querySelector('[data-step="'+id+'"]')?.focus({preventScroll:true});
+        else if(focusButton) {
+          buttons.find((btn)=>btn.dataset.node===id)?.focus({preventScroll:true});
         }
       }
       function zoomTo(value) {
@@ -83,6 +98,7 @@
         document.getElementById("zoom-label").textContent=Math.round(zoom*100)+"%";
         document.getElementById("zoom-out").disabled=zoom<=.75;
         document.getElementById("zoom-in").disabled=zoom>=1.25;
+        revealStep(selectedId);
       }
       async function copyValue(value) {
         const output=document.getElementById("copy-status");
@@ -104,10 +120,31 @@
       function render() {
         const entries=ids.map((id,i)=>variant[selectedScenario][id]||shared[i]);
         mobileList.replaceChildren();
+        rail.replaceChildren();
+        document.getElementById("rail-position").textContent=
+          "Position "+String(ids.indexOf(selectedId)+1).padStart(2,"0")+" / 09";
+        for (let i=0;i<ids.length;i++) {
+          const id=ids[i], row=entries[i];
+          if(i===7){
+            const phase=document.createElement("span");
+            phase.className="step-rail-phase";
+            phase.textContent="↩ Retour";
+            rail.append(phase);
+          }
+          const jump=document.createElement("button");
+          jump.type="button";
+          jump.dataset.step=id;
+          jump.textContent=String(i+1).padStart(2,"0")+" · "+row[0];
+          jump.title=row[1];
+          if(id===selectedId)jump.setAttribute("aria-current","step");
+          jump.addEventListener("click",()=>focusStep(id));
+          rail.append(jump);
+        }
         for (let i=0;i<ids.length;i++) {
           const id=ids[i], row=entries[i];
           const li=document.createElement("li");
           const button=document.createElement("button"); button.type="button";
+          button.dataset.step=id;
           button.setAttribute("aria-label","Choisir le point "+(i+1)+" : "+row[0]);
           button.setAttribute("aria-pressed",String(id===selectedId));
           if(selectedLens!=="all"&&selectedLens!==kinds[id]&&id!==selectedId)button.classList.add("role-muted");
@@ -132,6 +169,7 @@
         }
         const i=ids.indexOf(selectedId), row=entries[i];
         document.getElementById("selected-step").textContent=`Étape ${i+1} / ${ids.length}`;
+        document.getElementById("selected-phase").textContent=i<7?"Demande et invocation":"Retour et restitution";
         document.getElementById("selected-title").textContent=row[0];
         document.getElementById("selected-desc").textContent=row[2];
         document.getElementById("selected-guard").textContent=row[3];
@@ -157,13 +195,13 @@
         });
       }
       for(const btn of document.querySelectorAll("[data-scenario]"))
-        btn.addEventListener("click",()=>{selectedScenario=btn.dataset.scenario;selectedId="server";updateUrl();render()});
+        btn.addEventListener("click",()=>{selectedScenario=btn.dataset.scenario;focusStep("server")});
       for(const btn of document.querySelectorAll("[data-lens]"))
         btn.addEventListener("click",()=>{
           selectedLens=btn.dataset.lens;
           const target=ids.find((id)=>kinds[id]===selectedLens);
           if(target)selectedId=target;
-          updateUrl();render();
+          updateUrl();render();revealStep(selectedId);
         });
       document.getElementById("prev-node").addEventListener("click",()=>focusStep(ids[(ids.indexOf(selectedId)+ids.length-1)%ids.length]));
       document.getElementById("next-node").addEventListener("click",()=>focusStep(ids[(ids.indexOf(selectedId)+1)%ids.length]));
@@ -178,7 +216,9 @@
         selectedId=ids.includes(query.get("step"))?query.get("step"):"server";
         selectedLens=validLenses.includes(query.get("focus"))?query.get("focus"):"all";
         render();
+        revealStep(selectedId);
       });
       zoomTo(1);
       render();
+      revealStep(selectedId);
     })();

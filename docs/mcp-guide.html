@@ -65,7 +65,31 @@
     .chooser {display:flex;flex-wrap:wrap;gap:8px;padding:16px 24px;border-bottom:1px solid var(--line)}
     .chooser button {border:1px solid var(--line);border-radius:22px;padding:9px 15px;background:var(--card);color:var(--muted);cursor:pointer;font-size:12px;font-weight:700}
     .chooser button[aria-pressed="true"] {background:var(--soft);border-color:var(--brand);color:var(--brand)}
-    .graph-scroll {overflow-x:auto;padding:22px;background:var(--panel)}
+    .graph-toolbar {display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:14px 24px;border-bottom:1px solid var(--line);background:var(--panel)}
+    .lens-picker,.graph-tools,.zoom-controls {display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+    .lens-picker button,.graph-tools button {border:1px solid var(--line);border-radius:9px;padding:7px 10px;background:var(--card);color:var(--ink);font-size:12px;cursor:pointer}
+    .lens-picker button[aria-pressed="true"] {background:var(--soft);color:var(--brand);border-color:var(--brand)}
+    .graph-tools output {min-width:42px;text-align:center;font:600 12px ui-monospace,monospace;color:var(--ink)}
+    .graph-tools button:disabled {opacity:.45;cursor:not-allowed}
+    .tool-note {flex-basis:100%;margin:0;color:var(--muted);font-size:12px}
+    .tool-note[hidden] {display:none}
+    .step-rail-wrap {padding:12px 24px;border-bottom:1px solid var(--line);background:var(--card)}
+    .step-rail-caption {display:flex;justify-content:space-between;gap:12px;font-size:11px;color:var(--muted);margin-bottom:9px}
+    .step-rail {display:flex;align-items:center;gap:6px;overflow-x:auto;padding-bottom:3px}
+    .step-rail button {flex-shrink:0;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--muted);padding:8px 9px;cursor:pointer;font-size:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .step-rail button[aria-current="step"] {background:var(--soft);border-color:var(--brand);color:var(--brand);font-weight:750}
+    .step-rail-phase {flex-shrink:0;color:var(--muted);font-size:11px;padding:0 6px}
+    .graph-scroll {overflow-x:auto;overscroll-behavior-x:contain;padding:22px;background:var(--panel)}
+    .graph-wrap {position:relative;width:1380px;height:478px}
+    .graph {transform-origin:top left}
+    .mobile-steps {display:none;list-style:none;margin:0;padding:16px;gap:9px;background:var(--panel)}
+    .mobile-steps li button {display:flex;gap:12px;align-items:center;width:100%;text-align:left;padding:13px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);cursor:pointer}
+    .mobile-steps li button[aria-pressed="true"] {border-color:var(--brand);background:var(--soft)}
+    .mobile-steps .mobile-number {display:grid;place-items:center;min-width:32px;height:32px;border-radius:8px;background:var(--soft);font-size:12px;color:var(--brand)}
+    .mobile-steps strong,.mobile-steps small {display:block}
+    .mobile-steps strong {font-size:13px}.mobile-steps small {font-size:11px;color:var(--muted);margin-top:4px}
+    .node.role-muted,.mobile-steps .role-muted {opacity:.5}
+    .node.role-muted[aria-pressed="true"] {opacity:1}
     .graph {position:relative;width:1380px;height:478px;border:1px solid var(--line);border-radius:16px;background:radial-gradient(ellipse at 50% 0%,color-mix(in srgb,var(--brand) 13%,transparent),transparent 55%)}
     .graph:before {content:"";position:absolute;inset:0;opacity:.12;background-image:radial-gradient(var(--muted) 0.7px,transparent 0.7px);background-size:19px 19px;pointer-events:none}
     .lane {position:absolute;top:26px;font-size:10px;text-transform:uppercase;letter-spacing:.16em;color:var(--muted);font-weight:750}
@@ -95,6 +119,7 @@
     details p {font-size:13px;color:var(--muted);line-height:1.7}
     footer {border-top:1px solid var(--line);margin-top:65px;padding:28px 0 50px;font-size:12px;color:var(--muted)}
     footer a {margin-right:18px;line-height:2.4}
+    @media(max-width:1023px) {.graph-scroll,.step-rail-wrap,.zoom-controls {display:none}.mobile-steps {display:grid}}
     @media(max-width:990px) {.grid4 {grid-template-columns:repeat(2,1fr)}.hero-wrap,.inspect,.checks {grid-template-columns:1fr}.hero-proof {max-width:420px}.workshops {grid-template-columns:1fr}}
     @media(max-width:560px) {.wrap {width:calc(100% - 28px)}.grid4 {grid-template-columns:1fr}.hero {padding:56px 0 40px}.header-links {gap:8px}.header-links a {font-size:11px}.inspect {padding:17px}.box {padding:18px}}
     @media(prefers-reduced-motion:reduce) {html {scroll-behavior:auto}.node {transition:none}}
@@ -157,7 +182,8 @@
       <div class="eyebrow">02 · Visualiser</div>
       <h2>Le graphe d’appel, de la question à la preuve</h2>
       <p class="subhead">Les filtres mettent en avant un rôle sans supprimer les nœuds intermédiaires.
-        Le zoom et les touches fléchées facilitent l’exploration sur grand écran ; sur mobile, les étapes deviennent une liste verticale.
+        La navigation rapide suit les neuf étapes documentées, avec une séparation entre l'invocation et le retour des preuves.
+        Le zoom et les touches fléchées facilitent l’exploration sur grand écran ; sur mobile et tablette, les étapes deviennent une liste verticale.
         Copiez le lien pour partager exactement un scénario, une étape et un focus.</p>
       <p class="subhead">Architecture reconstituée depuis le
         <a href="https://github.com/devdownin/Kex-anHarness/blob/main/docs/ARCHITECTURE.md">parcours de Kex-anHarness</a>
@@ -170,8 +196,37 @@
           <button type="button" data-scenario="forecast" aria-pressed="false">Analyse forecast</button>
           <button type="button" data-scenario="skill" aria-pressed="false">Découverte Skill</button>
         </div>
-        <div class="graph-scroll" aria-label="Diagramme horizontal, défilable sur mobile">
-          <div class="graph">
+        <div class="graph-toolbar">
+          <div class="lens-picker" role="group" aria-label="Filtrer les responsabilités">
+            <button type="button" data-lens="all" aria-pressed="true">Tous</button>
+            <button type="button" data-lens="human" aria-pressed="false">Utilisateur</button>
+            <button type="button" data-lens="agent" aria-pressed="false">Agent</button>
+            <button type="button" data-lens="guard" aria-pressed="false">Gouvernance</button>
+            <button type="button" data-lens="transport" aria-pressed="false">Transport</button>
+            <button type="button" data-lens="service" aria-pressed="false">Services</button>
+            <button type="button" data-lens="evidence" aria-pressed="false">Preuves</button>
+          </div>
+          <div class="graph-tools">
+            <div class="zoom-controls" role="group" aria-label="Zoom du graphe">
+              <button type="button" id="zoom-out" aria-label="Zoom arrière">−</button>
+              <output id="zoom-label" aria-label="Zoom actuel">100%</output>
+              <button type="button" id="zoom-in" aria-label="Zoom avant">+</button>
+              <button type="button" id="zoom-reset" aria-label="Réinitialiser le zoom">100%</button>
+            </div>
+            <button type="button" id="copy-mermaid">Copier Mermaid</button>
+            <button type="button" id="copy-link">Copier ce parcours</button>
+          </div>
+          <p class="tool-note" id="guide-note" hidden>Les autres étapes restent visibles : chaque filtre met un rôle en avant sans supprimer le trajet d'appel.</p>
+          <p class="tool-note" id="copy-status" role="status" aria-live="polite"></p>
+        </div>
+        <div class="step-rail-wrap">
+          <div class="step-rail-caption"><span>Navigation rapide · chemin de référence, pas état d'exécution</span><span id="rail-position">Position 06 / 09</span></div>
+          <div class="step-rail" id="step-rail" role="group" aria-label="Accès rapide aux étapes"></div>
+        </div>
+        <ol class="mobile-steps" id="mobile-steps" aria-label="Parcours accessible sur mobile et tablette"></ol>
+        <div class="graph-scroll" aria-label="Diagramme de référence défilable horizontalement">
+          <div class="graph-wrap" id="graph-wrap">
+          <div class="graph" id="graph-canvas">
             <span class="lane" style="left:28px">Demande</span>
             <span class="lane" style="left:260px">Kex-anHarness · agent et gouvernance</span>
             <span class="lane" style="left:925px">Client MCP</span>
@@ -192,9 +247,10 @@
             <button class="node" data-node="answer" style="left:474px;top:317px" aria-pressed="false"></button>
             <span class="graph-legend">→ Appel · - - Retour des preuves</span>
           </div>
+          </div>
         </div>
         <div class="inspect" aria-live="polite" aria-atomic="true">
-          <div><span class="step-label" id="selected-step">Étape 6 / 9</span><h3 id="selected-title">Serveur MCP KafkaExplorer</h3>
+          <div><span class="step-label" id="selected-step">Étape 6 / 9</span> · <span class="step-label" id="selected-phase">Demande et invocation</span><h3 id="selected-title">Serveur MCP KafkaExplorer</h3>
             <p id="selected-desc">Les outils exposés appliquent leur contrôle de périmètre et leurs plafonds.</p>
             <a id="selected-source" target="_blank" rel="noopener noreferrer" href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/notes/mcp-server.md">Consulter la source ↗</a>
           </div>
@@ -266,76 +322,6 @@
     <a href="https://github.com/devdownin/Kex-anHarness/blob/main/docs/GOVERNED-GENERAL-AGENT.md">Kex · Skills revus</a>
     <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/mcp-skills.md">KafkaExplorer · Skills MCP</a>
   </div></footer>
-  <script>
-    (() => {
-      "use strict";
-      // This is a read-only architectural illustration. No fetch, token, Kafka request or fake trace.
-      const kex = "https://github.com/devdownin/Kex-anHarness/blob/main/docs/ARCHITECTURE.md";
-      const policy = "https://github.com/devdownin/Kex-anHarness/blob/main/docs/TOOL-CONTROLS.md";
-      const reviewed = "https://github.com/devdownin/Kex-anHarness/blob/main/docs/GOVERNED-GENERAL-AGENT.md";
-      const explorer = "https://github.com/devdownin/Kafkaexplorer/blob/main/docs/notes/mcp-server.md";
-      const skillDoc = "https://github.com/devdownin/Kafkaexplorer/blob/main/docs/mcp-skills.md";
-      const ids = ["request","entry","agent","policy","client","server","backend","evidence","answer"];
-      // title, subtitle, explanation, invariant, documented source
-      const shared = [
-        ["Demande","Utilisateur","Une requête précise lance la conversation de Kex.","La question ne donne pas de nouveau droit.",kex],
-        ["AgentController","API Kex","Kex authentifie l’appel avant de conduire la conversation.","Le bearer ne doit pas entrer dans le prompt.",kex],
-        ["AgentService","ChatClient","Kex choisit les outils disponibles et organise les étapes.","Un modèle ne peut pas inventer un outil autorisé.",kex],
-        ["Tool controls","Callbacks Kex","Sélection, arguments et policy filtrent l’invocation.","Une permission côté agent ne remplace pas celle du serveur.",policy],
-        ["McpSyncClient","Transport MCP","Kex transporte les appels via le client MCP Java.","La connexion et son bearer sont limités à leur cible.",kex],
-        ["kex_trace_key","KafkaExplorer MCP","Le serveur applique scope, budgets et lecture seule.","Aucun contournement d’un refus serveur.",explorer],
-        ["Services Kafka","StreamFlowService","Les adaptateurs MCP relisent les services métier de KafkaExplorer.","Les scans restent bornés.",explorer],
-        ["Preuves","Coverage · Measured","Le résultat nomme ce qui est mesuré, partiel ou inconnu.","Une absence partielle ne prouve pas le néant.",explorer],
-        ["Synthèse","Réponse Kex","La réponse distingue faits, hypothèses et inconnues.","Un incident n’est pas résolu sans nouvelle mesure comparable.",kex],
-      ];
-      const variant = {
-        incident:{},
-        forecast:{
-          server:["kex_forecast_*","Outils forecast","KafkaExplorer expose les séries approuvées, l’historique et la qualité calculée.","Pas d’inférence implicite.",explorer],
-          backend:["ForecastPilot","Historique & prédictions","Le service retourne des valeurs mesurées et prévues.","Le modèle et l’horizon doivent être identifiés.",explorer],
-          evidence:["Qualité & bandes","Observation ≠ projection","Les points réels, les quantiles et la qualité sont séparés.","Une bande nominale n’est pas une garantie.",explorer],
-          answer:["Verdict de risque","Synthèse Kex","Kex explique risques prévus et limites du modèle.","Une prévision ne masque pas un incident observé.",kex],
-        },
-        skill:{
-          agent:["Skills Kex","Index · read_skill","Kex possède ses propres compétences revues et indexées.","Un skill PENDING n’est pas activé.",reviewed],
-          policy:["Revue & droits","Gouvernance Kex","Le client ne confond pas contenu lu et permission d’exécuter.","Une procédure n’accorde pas un nouveau privilège.",reviewed],
-          client:["McpSyncClient","Lecture Resources","Le client peut consulter kex://skills et une URI skill://.","Pas d’import automatique dans Kex.",kex],
-          server:["kex://skills","Manifest KafkaExplorer","Le serveur publie des URI, descriptions et SHA-256.","skills/list/get natifs non annoncés.",skillDoc],
-          backend:["SKILL.md","Ressource versionnée","Le serveur lit les fichiers approuvés depuis le classpath.","Aucune lecture arbitraire de disque.",skillDoc],
-          evidence:["Manifeste","SHA-256","Le client peut comparer la somme des octets au digest publié.","L’intégrité ne garantit pas la sûreté.",skillDoc],
-          answer:["Choix explicite","Validation côté hôte","L’utilisateur ou l’hôte décide si la compétence doit être utilisée.","Lu ne veut pas dire approuvé ni activé.",reviewed],
-        },
-      };
-      let selectedScenario="incident", selectedId="server";
-      const buttons=[...document.querySelectorAll("[data-node]")];
-      function render() {
-        const entries=ids.map((id,i)=>variant[selectedScenario][id]||shared[i]);
-        for(const btn of buttons) {
-          const id=btn.dataset.node, i=ids.indexOf(id), row=entries[i];
-          btn.replaceChildren();
-          const num=document.createElement("span");num.className="num";num.textContent=String(i+1).padStart(2,"0");
-          const title=document.createElement("strong");title.textContent=row[0];
-          const subtitle=document.createElement("small");subtitle.textContent=row[1];
-          btn.append(num,title,subtitle);
-          btn.setAttribute("aria-label",`Étape ${i+1} : ${row[0]} — ${row[1]}`);
-          btn.setAttribute("aria-pressed",String(id===selectedId));
-        }
-        const i=ids.indexOf(selectedId), row=entries[i];
-        document.getElementById("selected-step").textContent=`Étape ${i+1} / ${ids.length}`;
-        document.getElementById("selected-title").textContent=row[0];
-        document.getElementById("selected-desc").textContent=row[2];
-        document.getElementById("selected-guard").textContent=row[3];
-        document.getElementById("selected-source").href=row[4];
-        for (const btn of document.querySelectorAll("[data-scenario]")) {
-          btn.setAttribute("aria-pressed",String(btn.dataset.scenario===selectedScenario));
-        }
-      }
-      for(const btn of buttons) btn.addEventListener("click",()=>{selectedId=btn.dataset.node;render()});
-      for(const btn of document.querySelectorAll("[data-scenario]")) btn.addEventListener("click",()=>{selectedScenario=btn.dataset.scenario;selectedId="server";render()});
-      document.getElementById("prev-node").addEventListener("click",()=>{selectedId=ids[(ids.indexOf(selectedId)+ids.length-1)%ids.length];render()});
-      document.getElementById("next-node").addEventListener("click",()=>{selectedId=ids[(ids.indexOf(selectedId)+1)%ids.length];render()});
-      render();
-    })();
-  </script>
+  <script defer src="mcp-guide.js"></script>
 </body>
 </html>

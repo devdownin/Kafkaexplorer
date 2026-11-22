@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import McpGuide from './McpGuide';
@@ -63,6 +63,18 @@ describe('Guide pédagogique MCP', () => {
     expect(screen.getByRole('button', { name: /Étape 4 : Revue & droits/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('guide-url')).toHaveTextContent('focus=guard');
     expect(screen.getByTestId('guide-url')).toHaveTextContent('step=policy');
+  });
+
+  it('donne accès aux neuf étapes par la piste rapide et distingue le retour des preuves', async () => {
+    const user = userEvent.setup();
+    renderGuide('/mcp/guide?scenario=forecast&step=evidence&focus=evidence');
+    const rail = screen.getByRole('group', { name: 'Accès rapide aux étapes' });
+    const selectedRailStep = within(rail).getByRole('button', { name: /08.*Historique ≠ futur/ });
+    expect(selectedRailStep).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByText(/Retour et restitution/)).toBeInTheDocument();
+    await user.click(within(rail).getByRole('button', { name: /04.*Tool controls/ }));
+    expect(screen.getByTestId('guide-url')).toHaveTextContent('step=policy');
+    expect(screen.getByText(/Demande et invocation/)).toBeInTheDocument();
   });
 
   it('reste lisible en liste sur mobile et navigable au clavier sur le graphe', async () => {
