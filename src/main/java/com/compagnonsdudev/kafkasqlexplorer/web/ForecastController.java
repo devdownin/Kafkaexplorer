@@ -21,6 +21,10 @@ public class ForecastController {
       String seriesId,
       String metricId,
       String environment,
+      /** Explicit operator-approved topic scope, never inferred from the metric name. */
+      List<String> topics,
+      /** A group-scoped metric is not necessarily a topic throughput forecast. */
+      List<String> groups,
       ForecastRecord result,
       ForecastPilotService.ActivationReadiness activation,
       long stepMillis,
@@ -85,7 +89,8 @@ public class ForecastController {
     String id = s.seriesId();
     try {
       var result = p.get(id);
-      return new SeriesView(id, s.metricId(), s.environment(), full ? result : withoutHistory(result),
+      return new SeriesView(id, s.metricId(), s.environment(), s.topics(), s.groups(),
+          full ? result : withoutHistory(result),
           p.readiness(id, result), s.profile().stepMillis(), p.minimumContextPoints(s), p.isWithdrawable(id), s.threshold() != null, null);
     } catch (Exception e) {
       org.slf4j.LoggerFactory.getLogger(ForecastController.class)
@@ -99,7 +104,8 @@ public class ForecastController {
         activation = new ForecastPilotService.ActivationReadiness(
             false, error, 0, 0, null, 0, ForecastQualityWindow.FAILED_BLOCKS_TO_DEGRADE);
       }
-      return new SeriesView(id, s.metricId(), s.environment(), null, activation, s.profile().stepMillis(),
+      return new SeriesView(id, s.metricId(), s.environment(), s.topics(), s.groups(),
+          null, activation, s.profile().stepMillis(),
           p.minimumContextPoints(s), p.isWithdrawable(id), s.threshold() != null, error);
     }
   }
