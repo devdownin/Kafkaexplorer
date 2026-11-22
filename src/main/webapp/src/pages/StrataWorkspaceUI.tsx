@@ -66,7 +66,7 @@ export function StrataMiniMap({ items, totalTopics, selected, peer, onSelect, on
   return <section className="rounded-xl border border-outline-variant bg-surface-container-low p-3" aria-label="Topic mini-map">
     <div className="flex items-center justify-between">
       <h3 className="text-xs font-semibold text-on-surface">Topic map</h3>
-      <span className="text-[11px] text-on-surface-variant">Top-down · N ↑</span>
+      <span className="text-[11px] text-on-surface-variant">Top-down · X/Z</span>
     </div>
     <div className="relative mx-auto mt-2 w-full max-w-[240px] aspect-[240/164] rounded-lg bg-surface overflow-hidden">
       <svg viewBox="0 0 240 164" className="absolute inset-0 h-full w-full" aria-hidden="true">
