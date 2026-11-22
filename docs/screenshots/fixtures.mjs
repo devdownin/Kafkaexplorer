@@ -1032,7 +1032,9 @@ export const forecastPrevious = { ...forecastResult.forecast, requestId: 'r-0', 
 
 /** GET /api/forecasts/{seriesId} — the series on screen, its 512 context points included. */
 export const forecastSeries = {
-  seriesId: FORECAST_ID, metricId: 'm-hop-latency', environment: 'local', result: forecastResult,
+  seriesId: FORECAST_ID, metricId: 'm-hop-latency', environment: 'local',
+  topics: ['demo.orders.3.enriched', 'demo.orders.4.transformed'], groups: [],
+  result: forecastResult,
   activation: forecastActivation, stepMillis: FORECAST_STEP, minimumContextPoints: 32, withdrawable: true, thresholdConfigured: true, error: null,
 };
 
