@@ -239,8 +239,8 @@ for (const screen of SCREENS) {
     colorScheme: theme,
   });
 
-  // The app reads its scheme from here before first paint; `colorScheme` alone would only matter
-  // for the "system" preference, and a stored choice is what a shared link would carry.
+  // The app reads its scheme from here before first paint; `colorScheme` does not choose
+  // the initial theme, which is light unless a dark override was stored.
   await page.addInitScript(t => localStorage.setItem('kse.theme', t), theme);
 
   /*
