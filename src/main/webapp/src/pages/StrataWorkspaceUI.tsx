@@ -56,26 +56,27 @@ export function StrataLayerMenu({ layers, onChange }: {
   </div>;
 }
 
-export function StrataMiniMap({ items, selected, peer, onSelect, onFocus }: {
+export function StrataMiniMap({ items, totalTopics, selected, peer, onSelect, onFocus }: {
   items: readonly { name: string; layoutIndex: number }[];
+  totalTopics: number;
   selected: string | null; peer: string | null;
   onSelect: (name: string) => void; onFocus: (name: string) => void;
 }) {
-  const positions = topicMapPositions(items);
+  const positions = topicMapPositions(items, totalTopics);
   return <section className="rounded-xl border border-outline-variant bg-surface-container-low p-3" aria-label="Topic mini-map">
     <div className="flex items-center justify-between">
       <h3 className="text-xs font-semibold text-on-surface">Topic map</h3>
       <span className="text-[11px] text-on-surface-variant">Top-down · N ↑</span>
     </div>
     <div className="relative mx-auto mt-2 w-full max-w-[240px] aspect-[240/164] rounded-lg bg-surface overflow-hidden">
-      <svg viewBox="0 0 240 164" role="img" aria-label="Spatial distribution of visible topics"
-        className="absolute inset-0 h-full w-full" aria-hidden="true">
+      <svg viewBox="0 0 240 164" className="absolute inset-0 h-full w-full" aria-hidden="true">
         <path d="M0 82H240M120 0V164" stroke="currentColor" opacity=".10" strokeDasharray="3 6" />
         {positions.map(p => <circle key={p.name} cx={p.x} cy={p.y}
           r={p.name === selected || p.name === peer ? 5 : 2.7}
           fill={p.name === selected ? '#0c9da9' : p.name === peer ? '#9b76db' : '#8aa5b8'}
           opacity={p.name === selected || p.name === peer ? 1 : .7} />)}
       </svg>
+      <span className="sr-only">Position of visible topics in the full cluster.</span>
       {positions.map(p => <button type="button" key={p.name} title={p.name}
         aria-label={`Select ${p.name} on the topic map`}
         className="absolute rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
@@ -198,6 +199,6 @@ export function StrataResizeHandle({ side, value, onChange }: {
     onPointerMove={pointerMove}
     onPointerUp={event => { drag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
     onPointerCancel={() => { drag.current = null; }}
-    className={`hidden lg:block absolute top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/15 focus-visible:bg-primary/20 focus-visible:outline-primary z-10 ${side === 'left' ? '-right-2' : '-left-2'}`}
+    className={`hidden lg:block absolute top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/15 focus-visible:bg-primary/20 focus-visible:outline-primary z-10 ${side === 'left' ? 'right-0' : 'left-0'}`}
   />;
 }
