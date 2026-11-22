@@ -32,7 +32,7 @@ shown. No link is not evidence of absent activity.
 1. Open **Analyze → Kafka Strata 3D**. Use the search box to limit to at most 48
    visible topics. Camera movement uses OrbitControls: drag to orbit, wheel to
    zoom, and pointer dragging to pan; keyboard-only selection is available in
-   the topic list below the canvas.
+   the adjacent topic navigator and its accessible mini-map controls.
 2. Use **Temporal lens** to select an interval. The plane and highlighted ring
    correspond to the same server-provided interval across all topics.
    **Most recent** returns to the latest bucket. A new activity snapshot is
@@ -51,6 +51,53 @@ shown. No link is not evidence of absent activity.
    flagged if complete and deviates strongly from a measured four-bucket local
    baseline. These are **visual leads**, not health incidents or automatic
    alerts. Comparisons use **offset production**, not Kafka record payloads.
+
+## Immersive cockpit and diagnostic UI — UI/UX P1–P2
+
+The main workspace is arranged as **three coordinated panes** on desktop:
+
+- **Left — Topic navigator:** searchable bounded topic list, evidence completeness dots,
+  selected-bucket offset counts and a stable top-down mini-map. Single-click selects;
+  double-click focuses. The mini-map uses coordinates anchored to the **whole cluster**,
+  so filtering cannot move a topic's point relative to its previous location.
+- **Center — Spatial scene:** Three.js view with bounded, hover-triggered readouts,
+  a compact layer control and a **timeline dock inside the scene**. The dock shows
+  the twelve bucket contributions from topics with full coverage; unknown readings
+  do not count toward totals. Amber bars indicate incomplete topic coverage, not a
+  confirmed anomaly. Replay remains bounded to the latest sampled 30-minute window
+  and stops when an operator manually selects a time bucket.
+- **Right — Diagnostic inspector:** Investigate/Compare modes, topic provenance,
+  synchronized A/B curves, measured throughput differences, the selected group's
+  consumer positions and bounded peer lag measurements. The group comparison only
+  considers the **same selected group ID** on both topics; when it is absent from
+  the bounded search or any partition has no commit, lag stays **unknown**, never 0.
+
+On large displays, navigator and inspector have pointer-draggable separators
+and keyboard-operable resize handles (left/right arrows, 206–430px). Both panes
+can be hidden to give the scene additional space. On smaller screens, panels
+stack beneath the scene. Forecast, partition evidence and operator-initiated key
+tracing remain accessible in the **Evidence details** section.
+
+The **Layers** menu toggles activity rings, declared Flink lineage, key traces,
+selected consumer-group satellites, anomaly highlights and the spatial forecast.
+These are *presentation-only* switches; they do not change the shared time
+window, trigger Kafka message scans or alter stored data. Selection in
+Investigate also emphasizes declared neighbors without inventing edges.
+
+### Measurement truth and hover readouts
+
+Hovering a topic shows its selected-bucket offset production, latest measured
+offsets/minute, partition coverage, completeness and last sample time. A
+measurement can be **measured**, **partial**, **unavailable** or **stale**
+(older than 90 seconds). The mini-map and topic list work without WebGL.
+
+The inspector deliberately withholds the 30-minute total and latest rate when
+the corresponding measurement cannot be guaranteed complete by
+`bucketReading`. Comparisons only display A−B throughput differences when
+**both** topic rates are fully covered. Relative percentages are unavailable
+when topic B has a zero rate. Consumer-group lag is never presented as a
+topic-wide health score; missing commits or unknown group discovery are not
+represented by zero.
 
 ## Immersive exploration — P1
 
