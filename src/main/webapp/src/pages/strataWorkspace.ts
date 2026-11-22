@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import type { TopicActivity } from '../api/types';
+import type { PartitionActivityResponse, TopicActivity, TopicActivityResponse } from '../api/types';
 import { bucketReading } from './strataTime';
 
 export type StrataLayer = 'activity' | 'lineage' | 'traces' | 'consumers' | 'anomalies' | 'forecast';
@@ -81,4 +81,15 @@ export function comparisonDelta(firstRate: number | null, secondRate: number | n
     || !Number.isFinite(firstRate) || !Number.isFinite(secondRate)) return null;
   return { absolute: firstRate - secondRate,
     percent: secondRate === 0 ? null : (firstRate - secondRate) / secondRate * 100 };
+}
+
+/** Never overlay partition ribbons onto a lens with different Kafka sampling boundaries. */
+export function partitionFrameMatches(
+  partition: PartitionActivityResponse | null, snapshot: TopicActivityResponse | null,
+): boolean {
+  return Boolean(partition && snapshot && partition.windowStartMs === snapshot.windowStartMs
+    && partition.windowEndMs === snapshot.windowEndMs
+    && partition.bucketMs === snapshot.bucketMs && partition.buckets === snapshot.buckets
+    && partition.partitionsMeasured <= partition.partitionsTotal
+    && partition.partitions.every(row => !row.available || row.counts.length === snapshot.buckets));
 }
