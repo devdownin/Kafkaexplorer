@@ -25,9 +25,8 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
     public static final String IDENTITY_ATTRIBUTE = McpHttpAuthFilter.class.getName() + ".identity";
     private final String configuredToken;
     private final boolean requireTls;
-    private final JwtDecoder jwtDecoder;
-    private final McpProperties.OAuth oauth;
-    private final McpOAuthProtectedResourceMetadata metadata;
+    private final org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder;
+    private final String requiredAudience;
 
     public McpHttpAuthFilter(String configuredToken) { this(configuredToken, true); }
 
@@ -35,17 +34,16 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
         this.configuredToken = configuredToken == null ? "" : configuredToken.trim();
         this.requireTls = requireTls;
         this.jwtDecoder = null;
-        this.oauth = null;
-        this.metadata = null;
+        this.requiredAudience = null;
     }
 
-    /** OAuth mode is exclusive: static bearer credentials cannot bypass JWT validation. */
-    public McpHttpAuthFilter(JwtDecoder jwtDecoder, McpProperties.OAuth oauth, boolean requireTls) {
+    /** OAuth mode never accepts the legacy shared token as a fallback. */
+    public McpHttpAuthFilter(org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder,
+                             String requiredAudience, boolean requireTls) {
         this.configuredToken = "";
         this.requireTls = requireTls;
         this.jwtDecoder = java.util.Objects.requireNonNull(jwtDecoder);
-        this.oauth = java.util.Objects.requireNonNull(oauth);
-        this.metadata = new McpOAuthProtectedResourceMetadata(oauth);
+        this.requiredAudience = java.util.Objects.requireNonNull(requiredAudience);
     }
 
     /**
@@ -85,102 +83,63 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
             response.getWriter().write("{\"error\":\"mcp_tls_required\",\"message\":\"the MCP HTTP endpoint requires TLS\"}");
             return;
         }
-        if (jwtDecoder != null) {
-            authenticateJwt(request, response, filterChain);
-            return;
-        }
-        if (configuredToken.isEmpty()) {
-            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-            response.setHeader("WWW-Authenticate", "Bearer");
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"mcp_auth_not_configured\",\"message\":\"EXPLORER_MCP_AUTH_TOKEN must be configured before the HTTP MCP surface is enabled.\"}");
-            return;
-        }
         String supplied = bearerToken(request);
-        if (supplied == null || !constantTimeEquals(configuredToken, supplied)) {
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.setHeader("WWW-Authenticate", "Bearer realm=\"mcp\"");
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"mcp_unauthorized\",\"message\":\"a valid MCP bearer token is required\"}");
-            return;
+        String identity;
+        if (jwtDecoder != null) {
+            if (supplied == null) {
+                unauthorized(response);
+                return;
+            }
+            try {
+                org.springframework.security.oauth2.jwt.Jwt jwt = jwtDecoder.decode(supplied);
+                if (!jwt.getAudience().contains(requiredAudience) || jwt.getSubject() == null
+                        || jwt.getSubject().isBlank() || jwt.getIssuer() == null) {
+                    unauthorized(response);
+                    return;
+                }
+                String requiredScope = request.getRequestURI().startsWith(request.getContextPath() + "/mcp")
+                        ? "mcp:invoke" : "mcp:admin";
+                String scopes = jwt.getClaimAsString("scope");
+                java.util.Set<String> granted = new java.util.HashSet<>();
+                if (scopes != null) granted.addAll(java.util.Arrays.asList(scopes.split("\\s+")));
+                java.util.List<String> scp = jwt.getClaimAsStringList("scp");
+                if (scp != null) granted.addAll(scp);
+                if (!granted.contains(requiredScope)) {
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json");
+                    response.getWriter().write("{\"error\":\"mcp_insufficient_scope\"}");
+                    return;
+                }
+                identity = "oauth:" + identityOf(jwt.getIssuer() + "|" + jwt.getSubject()).substring(7);
+            } catch (org.springframework.security.oauth2.jwt.JwtException exception) {
+                unauthorized(response);
+                return;
+            }
+        } else {
+            if (configuredToken.isEmpty()) {
+                response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+                response.setHeader("WWW-Authenticate", "Bearer");
+                response.setContentType("application/json");
+                response.getWriter().write("{\"error\":\"mcp_auth_not_configured\",\"message\":\"EXPLORER_MCP_AUTH_TOKEN must be configured before the HTTP MCP surface is enabled.\"}");
+                return;
+            }
+            if (supplied == null || !constantTimeEquals(configuredToken, supplied)) {
+                unauthorized(response);
+                return;
+            }
+            identity = identityOf(supplied);
         }
-        String identity = identityOf(supplied);
         request.setAttribute(IDENTITY_ATTRIBUTE, identity);
         McpCallerContext.set(identity);
         try { filterChain.doFilter(request, response); }
         finally { McpCallerContext.clear(); request.removeAttribute(IDENTITY_ATTRIBUTE); }
     }
 
-    private void authenticateJwt(HttpServletRequest request, HttpServletResponse response,
-                                 FilterChain chain) throws IOException, ServletException {
-        String supplied = bearerToken(request);
-        if (supplied == null) { deny(response, 401, "mcp_unauthorized", null); return; }
-        Jwt jwt;
-        try {
-            jwt = jwtDecoder.decode(supplied);
-        } catch (JwtException exception) {
-            deny(response, 401, "mcp_unauthorized", null);
-            return;
-        }
-        if (jwt.getSubject() == null || jwt.getSubject().isBlank()) {
-            deny(response, 401, "mcp_unauthorized", null);
-            return;
-        }
-        String required = requiredScope(request);
-        Object scope = jwt.getClaims().get("scope");
-        Object scp = jwt.getClaims().get("scp");
-        boolean allowed = containsScope(scope, required) || containsScope(scp, required);
-        if (!allowed) { deny(response, 403, "mcp_insufficient_scope", required); return; }
-        // Bind to the verified issuer + subject rather than the rotating access-token bytes.
-        String identity = identityOf(jwt.getIssuer().toString() + ":" + jwt.getSubject());
-        request.setAttribute(IDENTITY_ATTRIBUTE, identity);
-        McpCallerContext.setVerified(identity, verifiedScopes(scope, scp));
-        try { chain.doFilter(request, response); }
-        finally { McpCallerContext.clear(); request.removeAttribute(IDENTITY_ATTRIBUTE); }
-    }
-
-    private String requiredScope(HttpServletRequest request) {
-        String path = request.getRequestURI();
-        String context = request.getContextPath();
-        if (context != null && !context.isEmpty() && path.startsWith(context)) path = path.substring(context.length());
-        if ("/api/mcp/calls/replay".equals(path)) return oauth.getAuditScope();
-        if (path.startsWith("/api/mcp/") && !"GET".equalsIgnoreCase(request.getMethod())) {
-            return oauth.getAdminScope();
-        }
-        return oauth.getReadScope();
-    }
-
-    private static java.util.Set<String> verifiedScopes(Object scope, Object scp) {
-        java.util.Set<String> result = new java.util.HashSet<>();
-        addVerifiedScopes(result, scope);
-        addVerifiedScopes(result, scp);
-        return java.util.Set.copyOf(result);
-    }
-
-    private static void addVerifiedScopes(java.util.Set<String> scopes, Object value) {
-        if (value instanceof String text) {
-            for (String scope : text.split("\\s+")) if (!scope.isBlank()) scopes.add(scope);
-        } else if (value instanceof java.util.Collection<?> values) {
-            for (Object item : values) if (item instanceof String text && !text.isBlank()) scopes.add(text);
-        }
-    }
-
-    private static boolean containsScope(Object value, String expected) {
-        if (value instanceof String scopes) return java.util.Arrays.asList(scopes.split("\\s+")).contains(expected);
-        if (value instanceof java.util.Collection<?> scopes) return scopes.contains(expected);
-        return false;
-    }
-
-    private void deny(HttpServletResponse response, int status, String code, String requiredScope)
-            throws IOException {
-        response.setStatus(status);
-        String challenge = "Bearer realm=\"mcp\", resource_metadata=\"" + metadata.metadataUrl() + "\"";
-        if (requiredScope != null) {
-            challenge += ", error=\"insufficient_scope\", scope=\"" + requiredScope + "\"";
-        }
-        response.setHeader("WWW-Authenticate", challenge);
+    private static void unauthorized(HttpServletResponse response) throws IOException {
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setHeader("WWW-Authenticate", "Bearer realm=\"mcp\"");
         response.setContentType("application/json");
-        response.getWriter().write("{\"error\":\"" + code + "\"}");
+        response.getWriter().write("{\"error\":\"mcp_unauthorized\"}");
     }
 
     static String bearerToken(HttpServletRequest request) {

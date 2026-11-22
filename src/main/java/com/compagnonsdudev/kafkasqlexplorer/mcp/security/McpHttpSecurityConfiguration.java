@@ -32,48 +32,25 @@ public class McpHttpSecurityConfiguration {
     @Bean
     FilterRegistrationBean<McpHttpAuthFilter> mcpHttpAuthFilter(McpProperties properties) {
         FilterRegistrationBean<McpHttpAuthFilter> registration = new FilterRegistrationBean<>();
-        McpProperties.OAuth oauth = properties.getOauth();
-        if (oauth != null && oauth.isEnabled()) {
-            // MCP tool calls share /mcp: HTTP scopes cannot distinguish mutating tool names.
-            // Do not offer OAuth mode with write-capable tool beans until per-tool RBAC exists.
-            if (!properties.isReadonly()) {
-                throw new IllegalStateException("MCP OAuth currently requires explorer.mcp.readonly=true");
+        McpHttpAuthFilter filter;
+        if ("oauth2".equalsIgnoreCase(properties.getAuthMode())) {
+            var oauth = properties.getOauth2();
+            if (oauth.getIssuerUri() == null || oauth.getIssuerUri().isBlank()
+                    || oauth.getJwkSetUri() == null || oauth.getJwkSetUri().isBlank()
+                    || oauth.getAudience() == null || oauth.getAudience().isBlank()) {
+                throw new IllegalStateException("OAuth2 MCP requires issuer-uri, jwk-set-uri and audience");
             }
-            requireHttps(oauth.getIssuerUri(), "issuer-uri");
-            requireHttps(oauth.getJwkSetUri(), "jwk-set-uri");
-            if (blank(oauth.getAudience()) || blank(oauth.getReadScope())
-                    || blank(oauth.getAdminScope()) || blank(oauth.getAuditScope())) {
-                throw new IllegalStateException("MCP OAuth requires audience and all three scope names");
-            }
-            // RFC 9728 resource identifier is immutable and cannot follow request Host headers.
-            new McpOAuthProtectedResourceMetadata(oauth);
-            for (String scope : java.util.List.of(oauth.getReadScope(), oauth.getAdminScope(),
-                    oauth.getAuditScope())) {
-                if (!scope.matches("[A-Za-z0-9:._/-]+")) {
-                    throw new IllegalStateException("MCP OAuth scope must be a safe token");
-                }
-            }
-            // Reject ambiguous wildcard tool policies and configuration typos at startup.
-            for (var rule : oauth.getToolScopes().entrySet()) {
-                if (blank(rule.getKey()) || "*".equals(rule.getKey()) || blank(rule.getValue())
-                        || !rule.getKey().matches("[A-Za-z0-9_.-]+")
-                        || !rule.getValue().matches("[A-Za-z0-9:._/-]+")) {
-                    throw new IllegalStateException("MCP OAuth tool-scopes needs exact tool names and scope strings");
-                }
-            }
-            NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(oauth.getJwkSetUri()).build();
-            OAuth2TokenValidator<Jwt> issuer = JwtValidators.createDefaultWithIssuer(oauth.getIssuerUri());
-            decoder.setJwtValidator(jwt -> {
-                OAuth2TokenValidatorResult result = issuer.validate(jwt);
-                if (result.hasErrors()) return result;
-                return jwt.getAudience().contains(oauth.getAudience())
-                        ? OAuth2TokenValidatorResult.success()
-                        : OAuth2TokenValidatorResult.failure(new OAuth2Error("invalid_token", "Invalid MCP audience", null));
-            });
-            registration.setFilter(new McpHttpAuthFilter(decoder, oauth, properties.isRequireTls()));
+            var decoder = org.springframework.security.oauth2.jwt.NimbusJwtDecoder
+                    .withJwkSetUri(oauth.getJwkSetUri()).build();
+            decoder.setJwtValidator(org.springframework.security.oauth2.jwt.JwtValidators
+                    .createDefaultWithIssuer(oauth.getIssuerUri()));
+            filter = new McpHttpAuthFilter(decoder, oauth.getAudience(), properties.isRequireTls());
+        } else if ("bearer".equalsIgnoreCase(properties.getAuthMode())) {
+            filter = new McpHttpAuthFilter(properties.getAuthToken(), properties.isRequireTls());
         } else {
-            registration.setFilter(new McpHttpAuthFilter(properties.getAuthToken(), properties.isRequireTls()));
+            throw new IllegalStateException("Unsupported explorer.mcp.auth-mode; expected bearer or oauth2");
         }
+        registration.setFilter(filter);
         registration.addUrlPatterns("/mcp", "/mcp/*", "/api/mcp/*");
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
         registration.setName("mcpHttpAuthFilter");

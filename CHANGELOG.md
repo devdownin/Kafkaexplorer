@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Optional MCP OAuth JWT resource-server mode:** external issuer/JWK validation,
+  required audience and separate `mcp:invoke` / `mcp:admin` transport scopes.
+  Legacy shared-token mode remains the default; MCP Tasks and per-tool OAuth RBAC
+  remain explicitly unsupported pending separate implementation.
 - **Light-first application appearance.** First visits always render in light mode regardless of the OS, including the pre-paint background and browser chrome. The header now uses an accessible binary dark-mode switch instead of cycling System / Light / Dark. Dark mode persists per browser; switching back to light restores the default without a stored override.
 
 - **MCP guide usability pass.** Role-lens filtering without hiding intermediate nodes,
