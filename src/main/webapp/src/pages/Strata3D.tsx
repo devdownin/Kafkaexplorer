@@ -99,10 +99,10 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
 }) {
   const host = useRef<HTMLDivElement>(null);
   const onSelectRef = useRef(onSelect);
-  onSelectRef.current = onSelect;
   const motionRef = useRef(motion);
-  motionRef.current = motion;
   const [webglFailed, setWebglFailed] = useState(false);
+  useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
+  useEffect(() => { motionRef.current = motion; }, [motion]);
   const state = useRef<{
     scene: THREE.Scene;
     camera: THREE.OrthographicCamera;
@@ -125,8 +125,9 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'low-power' });
     } catch {
-      setWebglFailed(true);
-      return;
+      // Defer the fallback update: React disallows synchronous state writes from effects.
+      const fallback = window.setTimeout(() => setWebglFailed(true), 0);
+      return () => window.clearTimeout(fallback);
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
