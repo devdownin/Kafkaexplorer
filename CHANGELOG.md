@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Optional MCP OAuth JWT resource-server mode:** external issuer/JWK validation,
+  required audience and separate `mcp:invoke` / `mcp:admin` transport scopes.
+  Legacy shared-token mode remains the default; MCP Tasks and per-tool OAuth RBAC
+  remain explicitly unsupported pending separate implementation.
+
 - **Two additional reviewed Kafka Agent Skills:** `kafka-security-review` for bounded
   topic-policy and MCP deployment posture evidence, and `kafka-schema-evolution`
   for baseline-based drift assessment. Both are read-only, refuse invented security

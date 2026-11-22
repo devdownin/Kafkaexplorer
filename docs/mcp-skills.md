@@ -19,7 +19,7 @@ actual Spring AI specifications. The read-only `GET /api/mcp/surfaces` endpoint 
 kind, name, URI and description; it returns an empty list when MCP is disabled.
 
 The server is **off by default** and its read-only posture is the default when enabled.
-See [MCP specification](../SPEC-MCP.md) and [security notes](notes/mcp-security-p0.md).
+For optional OAuth JWT resource-server authentication and the explicit MCP Tasks roadmap, see [Enterprise MCP](mcp-enterprise.md).\nSee [MCP specification](../SPEC-MCP.md) and [security notes](notes/mcp-security-p0.md).
 The probe `mcp-probe.sh` checks each MCP discovery/read path over real streamable HTTP.
 
 ## MCP resources

@@ -21,12 +21,25 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
     public static final String IDENTITY_ATTRIBUTE = McpHttpAuthFilter.class.getName() + ".identity";
     private final String configuredToken;
     private final boolean requireTls;
+    private final org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder;
+    private final String requiredAudience;
 
     public McpHttpAuthFilter(String configuredToken) { this(configuredToken, true); }
 
     public McpHttpAuthFilter(String configuredToken, boolean requireTls) {
         this.configuredToken = configuredToken == null ? "" : configuredToken.trim();
         this.requireTls = requireTls;
+        this.jwtDecoder = null;
+        this.requiredAudience = null;
+    }
+
+    /** OAuth mode never accepts the legacy shared token as a fallback. */
+    public McpHttpAuthFilter(org.springframework.security.oauth2.jwt.JwtDecoder jwtDecoder,
+                             String requiredAudience, boolean requireTls) {
+        this.configuredToken = "";
+        this.requireTls = requireTls;
+        this.jwtDecoder = java.util.Objects.requireNonNull(jwtDecoder);
+        this.requiredAudience = java.util.Objects.requireNonNull(requiredAudience);
     }
 
     /**
@@ -66,26 +79,63 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
             response.getWriter().write("{\"error\":\"mcp_tls_required\",\"message\":\"the MCP HTTP endpoint requires TLS\"}");
             return;
         }
-        if (configuredToken.isEmpty()) {
-            response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
-            response.setHeader("WWW-Authenticate", "Bearer");
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"mcp_auth_not_configured\",\"message\":\"EXPLORER_MCP_AUTH_TOKEN must be configured before the HTTP MCP surface is enabled.\"}");
-            return;
-        }
         String supplied = bearerToken(request);
-        if (supplied == null || !constantTimeEquals(configuredToken, supplied)) {
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.setHeader("WWW-Authenticate", "Bearer realm=\"mcp\"");
-            response.setContentType("application/json");
-            response.getWriter().write("{\"error\":\"mcp_unauthorized\",\"message\":\"a valid MCP bearer token is required\"}");
-            return;
+        String identity;
+        if (jwtDecoder != null) {
+            if (supplied == null) {
+                unauthorized(response);
+                return;
+            }
+            try {
+                org.springframework.security.oauth2.jwt.Jwt jwt = jwtDecoder.decode(supplied);
+                if (!jwt.getAudience().contains(requiredAudience) || jwt.getSubject() == null
+                        || jwt.getSubject().isBlank() || jwt.getIssuer() == null) {
+                    unauthorized(response);
+                    return;
+                }
+                String requiredScope = request.getRequestURI().startsWith(request.getContextPath() + "/mcp")
+                        ? "mcp:invoke" : "mcp:admin";
+                String scopes = jwt.getClaimAsString("scope");
+                java.util.Set<String> granted = new java.util.HashSet<>();
+                if (scopes != null) granted.addAll(java.util.Arrays.asList(scopes.split("\\\\s+")));
+                java.util.List<String> scp = jwt.getClaimAsStringList("scp");
+                if (scp != null) granted.addAll(scp);
+                if (!granted.contains(requiredScope)) {
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json");
+                    response.getWriter().write("{\\"error\\":\\"mcp_insufficient_scope\\"}");
+                    return;
+                }
+                identity = "oauth:" + identityOf(jwt.getIssuer() + "|" + jwt.getSubject()).substring(7);
+            } catch (org.springframework.security.oauth2.jwt.JwtException exception) {
+                unauthorized(response);
+                return;
+            }
+        } else {
+            if (configuredToken.isEmpty()) {
+                response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+                response.setHeader("WWW-Authenticate", "Bearer");
+                response.setContentType("application/json");
+                response.getWriter().write("{\\"error\\":\\"mcp_auth_not_configured\\",\\"message\\":\\"EXPLORER_MCP_AUTH_TOKEN must be configured before the HTTP MCP surface is enabled.\\"}");
+                return;
+            }
+            if (supplied == null || !constantTimeEquals(configuredToken, supplied)) {
+                unauthorized(response);
+                return;
+            }
+            identity = identityOf(supplied);
         }
-        String identity = identityOf(supplied);
         request.setAttribute(IDENTITY_ATTRIBUTE, identity);
         McpCallerContext.set(identity);
         try { filterChain.doFilter(request, response); }
         finally { McpCallerContext.clear(); request.removeAttribute(IDENTITY_ATTRIBUTE); }
+    }
+
+    private static void unauthorized(HttpServletResponse response) throws IOException {
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setHeader("WWW-Authenticate", "Bearer realm=\\"mcp\\"");
+        response.setContentType("application/json");
+        response.getWriter().write("{\\"error\\":\\"mcp_unauthorized\\"}");
     }
 
     static String bearerToken(HttpServletRequest request) {

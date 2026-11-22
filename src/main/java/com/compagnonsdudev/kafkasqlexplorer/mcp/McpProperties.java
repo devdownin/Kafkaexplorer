@@ -12,6 +12,24 @@ public class McpProperties {
     private boolean enabled = false;
     private boolean readonly = true;
     private String authToken;
+    private String authMode = "bearer";
+    private Oauth2 oauth2 = new Oauth2();
+
+    public static class Oauth2 {
+        private String issuerUri;
+        private String jwkSetUri;
+        private String audience;
+        public String getIssuerUri() { return issuerUri; }
+        public void setIssuerUri(String issuerUri) { this.issuerUri = issuerUri; }
+        public String getJwkSetUri() { return jwkSetUri; }
+        public void setJwkSetUri(String jwkSetUri) { this.jwkSetUri = jwkSetUri; }
+        public String getAudience() { return audience; }
+        public void setAudience(String audience) { this.audience = audience; }
+    }
+    public String getAuthMode() { return authMode; }
+    public void setAuthMode(String authMode) { this.authMode = authMode; }
+    public Oauth2 getOauth2() { return oauth2; }
+    public void setOauth2(Oauth2 oauth2) { this.oauth2 = oauth2; }
     /** Production HTTP MCP requires TLS; local development may explicitly opt out. */
     private boolean requireTls = true;
     private Tools tools = new Tools();
