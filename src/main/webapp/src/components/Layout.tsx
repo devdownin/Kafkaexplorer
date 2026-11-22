@@ -52,7 +52,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
   const [searchTopics, setSearchTopics] = useState<string[]>([]);
   const [searchTables, setSearchTables] = useState<string[]>([]);
 
-  const { preference: themePreference, theme, cycle: cycleTheme } = useThemePreference();
+  const { theme, toggle: toggleTheme } = useThemePreference();
 
   // The entrance replays when the *section* changes, not on every path change: keying on the whole
   // pathname would remount a page (and drop its state) when only a route parameter moves.
@@ -138,8 +138,7 @@ const Layout: FC<{ children: ReactNode }> = ({ children }) => {
         <Header
           theme={theme}
           scrolled={contentScrolled}
-          themePreference={themePreference}
-          onThemeToggle={cycleTheme}
+          onThemeToggle={toggleTheme}
           onMenuClick={() => setMobileOpen(true)}
           onSearchClick={() => setPaletteOpen(true)}
           isHealthy={isHealthy}
