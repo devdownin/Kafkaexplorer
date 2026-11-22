@@ -29,7 +29,7 @@ export function topicEvidence(activity: TopicActivity | undefined, bucket: numbe
   const measuredBuckets = readings.filter(value => value !== null).length;
   const allComplete = Boolean(activity?.available && readings.length > 0
     && measuredBuckets === readings.length);
-  const latest = readings.at(-1) ?? null;
+  const latest = readings[readings.length - 1] ?? null;
   const stale = receivedAt !== null && now - receivedAt > 90_000;
   return {
     status: !activity?.available ? 'unavailable' : stale ? 'stale' :
