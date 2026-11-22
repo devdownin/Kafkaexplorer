@@ -2,9 +2,12 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ConsumerGroupLag, DashboardResponse, TopicActivity, TopicActivityResponse } from '../api/types';
+import type { ConsumerGroupLag, DashboardResponse, PartitionActivityResponse, TopicActivity, TopicActivityResponse } from '../api/types';
 import StrataConsumerPanel from './StrataConsumerPanel';
 import StrataTracePanel from './StrataTracePanel';
+import StrataForecastPanel from './StrataForecastPanel';
+import { createForecastCanopy, createPartitionRibbons } from './strataImmersive';
+import type { StrataProjection } from './strataForecast';
 import { consumerHealth } from './StrataConsumerPanel';
 import { bucketInterval, bucketReading, detectActivityAnomaly } from './strataTime';
 import type { ParsedFlow } from './streamFlowLogic';
@@ -17,7 +20,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 type Dashboard = DashboardResponse;
 type Activity = TopicActivity;
 type ActivityResponse = TopicActivityResponse;
-type Topic = { name: string; size: number; activity?: Activity };
+type Topic = { name: string; size: number; activity?: Activity; layoutIndex: number };
 const MAX_TOPICS = 48;
 const BUCKETS = 12;
 const WINDOW_MS = 30 * 60 * 1000;
@@ -27,6 +30,19 @@ function position(index: number): THREE.Vector3 {
   const radius = 3.4 * Math.sqrt(index);
   const angle = index * 2.399963229728653;
   return new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+}
+
+function sceneFrame(topics: Topic[]): { center: THREE.Vector3; extent: number } {
+  if (!topics.length) return { center: new THREE.Vector3(0, 2.6, 0), extent: 9 };
+  const positions = topics.map(topic => position(topic.layoutIndex));
+  const minX = Math.min(...positions.map(p => p.x));
+  const maxX = Math.max(...positions.map(p => p.x));
+  const minZ = Math.min(...positions.map(p => p.z));
+  const maxZ = Math.max(...positions.map(p => p.z));
+  return {
+    center: new THREE.Vector3((minX + maxX) / 2, 2.6, (minZ + maxZ) / 2),
+    extent: Math.max(9, Math.max(maxX - minX, maxZ - minZ) * 0.65 + 5.5),
+  };
 }
 
 function disposeGroup(group: THREE.Group) {
@@ -72,7 +88,7 @@ function topicLabel(name: string, dark: boolean): THREE.Sprite | null {
 
 function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean): THREE.Group {
   const group = new THREE.Group();
-  group.position.copy(position(index));
+  group.position.copy(position(topic.layoutIndex));
   group.userData.topic = topic.name;
   const counts = topic.activity?.available ? topic.activity.counts.slice(-BUCKETS) : [];
   const hasData = counts.length > 0;
@@ -129,10 +145,15 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
   return group;
 }
 
-function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable }: {
+function StrataCanvas({ topics, selected, onSelect, onFocus, focused, partitionActivity, forecast,
+  motion, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable }: {
   topics: Topic[];
   selected: string | null;
   onSelect: (topic: string) => void;
+  onFocus: (topic: string) => void;
+  focused: string | null;
+  partitionActivity: PartitionActivityResponse | null;
+  forecast: StrataProjection | null;
   motion: boolean;
   links: StrataLink[];
   selectedGroup: ConsumerGroupLag | null;
@@ -143,9 +164,11 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
 }) {
   const host = useRef<HTMLDivElement>(null);
   const onSelectRef = useRef(onSelect);
+  const onFocusRef = useRef(onFocus);
   const motionRef = useRef(motion);
   const [webglFailed, setWebglFailed] = useState(false);
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
+  useEffect(() => { onFocusRef.current = onFocus; }, [onFocus]);
   useEffect(() => { motionRef.current = motion; }, [motion]);
   const state = useRef<{
     scene: THREE.Scene;
@@ -156,17 +179,22 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
     groups: THREE.Group[];
     lens: THREE.Mesh;
     signature: string;
-    fit: (count: number) => void;
+    fit: (items: Topic[]) => void;
+    focus: (topic: string | null) => void;
+    positions: Map<string, THREE.Vector3>;
+    overview: { position: THREE.Vector3; target: THREE.Vector3; zoom: number };
   } | null>(null);
   useEffect(() => {
     const element = host.current;
     if (!element) return;
     const scene = new THREE.Scene();
     const camera = new THREE.OrthographicCamera(-12, 12, 12, -12, 0.1, 500);
-    const extent = 3.4 * Math.sqrt(Math.max(0, topics.length - 1)) + 4;
-    let halfHeight = Math.max(9, extent * 0.8);
-    const controlsTarget = new THREE.Vector3(0, 2.6, 0);
-    camera.position.set(extent * 1.2, extent * 1.05, extent * 1.2);
+    const initialFrame = sceneFrame(topics);
+    const extent = initialFrame.extent;
+    let halfHeight = extent;
+    const controlsTarget = initialFrame.center.clone();
+    camera.position.set(controlsTarget.x + extent * 1.2, extent * 1.05,
+      controlsTarget.z + extent * 1.2);
     camera.lookAt(controlsTarget);
     let renderer: THREE.WebGLRenderer;
     try {
@@ -198,33 +226,51 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
         side: THREE.DoubleSide, depthWrite: false }),
     );
     lens.rotation.x = -Math.PI / 2;
+    lens.position.copy(initialFrame.center);
     lens.position.y = 0.35 + 11 * 0.43;
     scene.add(lens);
     const ground = new THREE.GridHelper(Math.max(40, extent * 2.8), 24, 0x7794ab, 0xb1c1cf);
-    ground.position.y = -0.12;
+    ground.position.set(initialFrame.center.x, -0.12, initialFrame.center.z);
     scene.add(ground);
     const current = {
       scene, camera, renderer, controls, content: contentGroup,
-      groups: [] as THREE.Group[], lens, signature: topics.map(t => t.name).join('\\u0000'),
-      fit: (_count: number) => {},
+      groups: [] as THREE.Group[], lens, signature: topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000'),
+      positions: new Map<string, THREE.Vector3>(),
+      overview: { position: camera.position.clone(), target: controlsTarget.clone(), zoom: 1 },
+      fit: (_items: Topic[]) => {},
+      focus: (_topic: string | null) => {},
     };
     state.current = current;
 
     const pointer = new THREE.Vector2();
     const raycaster = new THREE.Raycaster();
     let down: { x: number; y: number } | null = null;
+    let transition: {
+      startedAt: number; fromPosition: THREE.Vector3; toPosition: THREE.Vector3;
+      fromTarget: THREE.Vector3; toTarget: THREE.Vector3; fromZoom: number; toZoom: number;
+    } | null = null;
     const onPointerDown = (event: PointerEvent) => { down = { x: event.clientX, y: event.clientY }; };
-    const onPointerUp = (event: PointerEvent) => {
-      if (!down || Math.hypot(down.x - event.clientX, down.y - event.clientY) > 5) return;
+    const pickedTopic = (event: PointerEvent | MouseEvent): string | null => {
       const bounds = renderer.domElement.getBoundingClientRect();
-      if (!bounds.width || !bounds.height) return;
-      pointer.set((event.clientX - bounds.left) / bounds.width * 2 - 1, 1 - (event.clientY - bounds.top) / bounds.height * 2);
+      if (!bounds.width || !bounds.height) return null;
+      pointer.set((event.clientX - bounds.left) / bounds.width * 2 - 1,
+        1 - (event.clientY - bounds.top) / bounds.height * 2);
       raycaster.setFromCamera(pointer, camera);
       const picked = raycaster.intersectObjects(current.groups, true)[0]?.object;
       let item: THREE.Object3D | null = picked ?? null;
       while (item && !item.userData.topic) item = item.parent;
-      if (item?.userData.topic) onSelectRef.current(item.userData.topic as string);
+      return typeof item?.userData.topic === 'string' ? item.userData.topic as string : null;
     };
+    const onPointerUp = (event: PointerEvent) => {
+      if (!down || Math.hypot(down.x - event.clientX, down.y - event.clientY) > 5) return;
+      const topic = pickedTopic(event);
+      if (topic) onSelectRef.current(topic);
+    };
+    const onDoubleClick = (event: MouseEvent) => {
+      const topic = pickedTopic(event);
+      if (topic) { onSelectRef.current(topic); onFocusRef.current(topic); }
+    };
+    renderer.domElement.addEventListener('dblclick', onDoubleClick);
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
     const resize = () => {
@@ -238,14 +284,39 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
       renderer.setSize(width, height, false);
       renderer.render(scene, camera);
     };
-    current.fit = (count: number) => {
-      const width = 3.4 * Math.sqrt(Math.max(0, count - 1)) + 4;
-      halfHeight = Math.max(9, width * 0.8);
-      camera.position.set(width * 1.2, width * 1.05, width * 1.2);
-      controls.target.set(0, 2.6, 0);
+    current.fit = (items: Topic[]) => {
+      transition = null;
+      const frame = sceneFrame(items);
+      halfHeight = frame.extent;
+      camera.position.set(frame.center.x + frame.extent * 1.2, frame.extent * 1.05,
+        frame.center.z + frame.extent * 1.2);
+      controls.target.copy(frame.center);
       camera.zoom = 1;
+      camera.updateProjectionMatrix();
+      current.overview = {
+        position: camera.position.clone(), target: controls.target.clone(), zoom: 1,
+      };
+      ground.position.set(frame.center.x, -0.12, frame.center.z);
+      current.lens.position.x = frame.center.x;
+      current.lens.position.z = frame.center.z;
+      const planeSize = Math.max(28, extent * 2.65);
+      current.lens.scale.setScalar(Math.max(1, (frame.extent * 2.65) / planeSize));
       controls.update();
       resize();
+    };
+    current.focus = (topic: string | null) => {
+      const point = topic ? current.positions.get(topic) : null;
+      const target = point ? new THREE.Vector3(point.x, 2.8, point.z) : current.overview.target.clone();
+      const offset = camera.position.clone().sub(controls.target);
+      const direction = offset.lengthSq() > 0.1 ? offset.normalize() : new THREE.Vector3(1, 1, 1).normalize();
+      const goal = point ? target.clone().addScaledVector(direction, Math.max(15, halfHeight * 0.8))
+        : current.overview.position.clone();
+      const targetZoom = point ? Math.min(5, Math.max(1.65, halfHeight / 6)) : current.overview.zoom;
+      transition = {
+        startedAt: performance.now(), fromPosition: camera.position.clone(), toPosition: goal,
+        fromTarget: controls.target.clone(), toTarget: target,
+        fromZoom: camera.zoom, toZoom: targetZoom,
+      };
     };
     const observer = new ResizeObserver(resize);
     observer.observe(element);
@@ -257,6 +328,16 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
       if (time - last < (motionRef.current ? 33 : 100)) return;
       last = time;
       controls.enableDamping = motionRef.current;
+      if (transition) {
+        const elapsed = Math.max(0, time - transition.startedAt);
+        const t = motionRef.current ? Math.min(1, elapsed / 640) : 1;
+        const eased = 1 - (1 - t) ** 3;
+        camera.position.copy(transition.fromPosition).lerp(transition.toPosition, eased);
+        controls.target.copy(transition.fromTarget).lerp(transition.toTarget, eased);
+        camera.zoom = THREE.MathUtils.lerp(transition.fromZoom, transition.toZoom, eased);
+        camera.updateProjectionMatrix();
+        if (t >= 1) transition = null;
+      }
       controls.update();
       for (const group of current.groups) {
         for (const object of group.children) {
@@ -272,6 +353,7 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       controls.dispose();
@@ -291,10 +373,10 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
   useEffect(() => {
     const current = state.current;
     if (!current) return;
-    const signature = topics.map(t => t.name).join('\\u0000');
+    const signature = topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000');
     if (signature !== current.signature) {
       current.signature = signature;
-      current.fit(topics.length);
+      current.fit(topics);
     }
     // Replace measured geometry without tearing down WebGL, orbit or pointer handlers.
     disposeGroup(current.content);
@@ -304,12 +386,13 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
     (current.lens.material as THREE.MeshBasicMaterial).color.setHex(dark ? 0x83b9d5 : 0x5888af);
     const values = topics.flatMap(t => t.activity?.available ? t.activity.counts : []);
     const maxRate = Math.max(1, ...values);
+    current.positions = new Map(topics.map(topic => [topic.name, position(topic.layoutIndex)]));
     current.groups = topics.map((topic, index) => {
       const column = createTopic(topic, index, maxRate, dark);
       current.content.add(column);
       return column;
     });
-    const lookup = new Map(topics.map((t, index) => [t.name, position(index)]));
+    const lookup = current.positions;
     for (const link of links) {
       const start = lookup.get(link.from);
       const end = lookup.get(link.to);
@@ -360,7 +443,7 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
 
     const selectedIndex = topics.findIndex(t => t.name === selected);
     if (selectedIndex >= 0 && selectedGroup) {
-      const point = position(selectedIndex);
+      const point = position(topics[selectedIndex].layoutIndex);
       const partitions = selectedGroup.partitions.slice(0, 64);
       const healthColor = selectedGroup.error ? 0x8592a1 : selectedGroup.totalLag > 0 && selectedGroup.membersKnown && selectedGroup.assignedMembers === 0
         ? 0xdd5b59 : 0xe4a757;
@@ -377,8 +460,19 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
         current.content.add(marker);
       }
     }
+    if (focused && partitionActivity?.topic === focused && partitionActivity.partitionsMeasured > 0) {
+      const center = lookup.get(focused);
+      if (center) current.content.add(createPartitionRibbons(partitionActivity, center, dark));
+    }
+    if (forecast && focused === forecast.topic) {
+      const center = lookup.get(forecast.topic);
+      if (center) current.content.add(createForecastCanopy(forecast, center, dark));
+    }
     current.renderer.render(current.scene, current.camera);
-  }, [topics, links, selectedGroup, selected, themeRevision, trace]);
+  }, [topics, links, selectedGroup, selected, focused, partitionActivity, forecast, themeRevision, trace]);
+
+  const scopeKey = topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000');
+  useEffect(() => { state.current?.focus(focused); }, [focused, scopeKey]);
 
   useEffect(() => {
     const groups = state.current?.groups;
@@ -408,7 +502,7 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
 
   return (
     <div ref={host} role="img"
-      aria-label="Interactive 3D topic activity map. Drag to orbit, scroll to zoom. The topic list below provides keyboard selection."
+      aria-label="Interactive Kafka topic activity. Drag to orbit, scroll to zoom, double-click to focus. Use the topic list for keyboard access."
       className="w-full h-full min-h-[380px] cursor-grab active:cursor-grabbing">
       {webglFailed && <p role="status" className="p-6 text-sm text-on-surface">3D rendering unavailable. Use the accessible topic list below.</p>}
     </div>
