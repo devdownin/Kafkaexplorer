@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Agent Skills distribution and catalogue.** The five reviewed `SKILL.md` documents are
+  packaged from `.agents/skills` into the JAR and exposed as exact `skill://` resources,
+  with a `kex://skills` SHA-256 manifest. The MCP console lists, previews and copies
+  skills without executing or installing them. Resource and UI tests verify publication
+  and integrity. Full `skills/list`/`skills/get` negotiation remains explicitly
+  unadvertised until supported by the Java MCP SDK.
+
+
 - **MCP Resources, guided prompts and reusable Agent Skills.** The MCP server exposes scoped,
   bounded topic resources with the same tool-level permission, runtime disable, rate, DLP and
   output guards; six parameterized diagnostic prompts; and project-local incident, forecast,

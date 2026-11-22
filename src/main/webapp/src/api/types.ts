@@ -1442,6 +1442,22 @@ export interface McpSurfaceView {
   description: string | null;
 }
 
+/** Immutable Agent Skills shipped in KafkaExplorer's application package. */
+export interface McpSkillView {
+  name: string;
+  description: string;
+  uri: string;
+  digest: string;
+  size: number;
+  audience: 'KAFKA' | 'ENGINEERING';
+}
+
+/** Lazily fetched exact SKILL.md bytes and manifest metadata. */
+export interface McpSkillDetail {
+  skill: McpSkillView;
+  content: string;
+}
+
 /** @java McpCallView */
 export interface McpCallView {
   correlationId: string;

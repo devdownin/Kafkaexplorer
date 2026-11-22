@@ -7,7 +7,7 @@ KafkaExplorer exposes three distinct surfaces when `explorer.mcp.enabled=true`:
 | MCP **Tools** | `tools/list`, `tools/call` | Authoritative bounded measurements and diagnostics, with scope, coverage, DLP and audit |
 | MCP **Resources** | `resources/list`, `resources/templates/list`, `resources/read` | Read-only context snapshots. Every topic read reuses the existing scoped tool adapter and applies admission, DLP and output ceilings |
 | MCP **Prompts** | `prompts/list`, `prompts/get` | Parameterized *instructions*, not tool execution |
-| **Agent Skills** | Install a `SKILL.md` into a compatible agent | End-to-end process and acceptance criteria; orchestrates only exposed MCP tools |
+| **Agent Skills** | `kex://skills`, `skill://{name}/SKILL.md` and the UI catalogue | Versioned skills with SHA-256 manifests; host-controlled installation and activation |
 
 The MCP screen's Catalogue tab also shows **Resources and Prompts**, discovered from the
 actual Spring AI specifications. The read-only `GET /api/mcp/surfaces` endpoint returns their
@@ -26,6 +26,43 @@ The probe `mcp-probe.sh` checks each MCP discovery/read path over real streamabl
 The two topic resources invoke the *same* `TopicMcpTools` methods used by agents. They are additionally gated on the source tool's registration/visibility, runtime disable/quarantine, rate limit, DLP and maximum output bytes. A topic outside the configured scope is refused before the broker is read. Do not use a resource as a way around `kex_list_topics` or `kex_describe_topic` being unavailable.
 
 **Limits:** resource calls are not yet included in the `McpToolInterceptor` per-tool usage ring, and resources/templates do not supply paginated scans. For an auditable, potentially longer operation use an MCP Tool. The server returns resource text in the MCP JSON-RPC response; treat it as untrusted content.
+
+## Skills distribution (Lot E)
+
+The source of truth is `.agents/skills/<name>/SKILL.md`; the reviewed allowlist is
+[`catalog.txt`](../.agents/skills/catalog.txt). Maven copies only these five documents
+and the index into the executable JAR at `mcp-skills/`, without filtering or duplicating their
+contents. The server validates each name and the required YAML frontmatter at startup.
+It computes each file's SHA-256 digest over its exact UTF-8 bytes.
+
+For current Java MCP clients, the supported discovery/read flow is:
+
+1. `resources/read` on `kex://skills` returns a JSON list of skill entries containing
+   `uri`, `frontmatter`, and a complete file manifest (`uri`, `digest`, `size`).
+2. `resources/read` on e.g. `skill://kafka-incident-triage/SKILL.md` returns the
+   original markdown bytes, with no rewriting that would invalidate the digest.
+   The template is advertised by `resources/templates/list`.
+3. The MCP screen has a separate **Agent Skills** catalogue with name, audience,
+   description, URI, byte count, SHA-256 digest, lazy markdown preview and copy actions.
+   Its read-only API is `GET /api/mcp/skills` and `GET /api/mcp/skills/{name}`.
+   The REST catalogue is empty while MCP is disabled. Unknown names return HTTP 404.
+
+**Interoperability limit:** These resources deliberately **do not** declare
+`io.modelcontextprotocol/skills` in `server/discover` and do **not** implement
+`skills/list` or `skills/get`. This is a compatible Resources-based distribution,
+**not full SEP-2640 compliance**. The current Java MCP SDK does not yet offer native
+extension negotiation/handlers. Do not claim Skills are auto-installed or auto-activated.
+When native support is available, the existing manifest record is designed to back
+`skills/list` / `skills/get` without changing the source files.
+See [SEP-2640](https://modelcontextprotocol.io/seps/2640-skills-extension)
+and the [Java SDK status](https://github.com/modelcontextprotocol/java-sdk/issues/1140).
+
+The runtime source is an immutable reviewed classpath resource, never a path supplied by
+a request, an upload, or a Kafka payload. Only `SKILL.md` is packaged in this initial
+version; adding supporting files requires explicit manifest expansion, not silent
+publication. Resource read is **not** skill activation: the agent host must review and
+approve it in its own skill-loading workflow. The Kafka Skills still obey MCP Tool
+permissions when they run; this catalogue grants no additional tool rights.
 
 ## MCP prompts
 
@@ -54,7 +91,7 @@ Clients that discover project-local Agent Skills under `.agents/skills/` can loa
 
 ## Verification
 
-1. Run `./mvnw test -Dtest=McpServerBootTest,KafkaMcpResourcesTest`.
+1. Run `./mvnw test -Dtest=McpServerBootTest,KafkaMcpResourcesTest,McpSkillCatalogTest`.
 2. Run `sh mcp-probe.test.sh` to check the probe's success and failure cases.
 3. Start the [MCP Compose overlay](../compose/mcp.yml) with a non-default bearer token and probe it:
 

@@ -78,15 +78,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
             result = {"tools": [{"name": n, "inputSchema": {}} for n in names]}
         elif method == "resources/list":
             resources = [] if MODE == "no-resources" else [
-                {"uri": "kex://contract"}, {"uri": "kafka://topics"}]
+                {"uri": "kex://contract"}, {"uri": "kafka://topics"}] 
+            if MODE != "no-skills":
+                resources.append({"uri": "kex://skills"})
             result = {"resources": resources}
         elif method == "resources/templates/list":
             templates = [] if MODE == "no-templates" else [
                 {"uriTemplate": "kafka://topics/{topic}"}]
+            if MODE != "no-skill-template":
+                templates.append({"uriTemplate": "skill://{name}/SKILL.md"})
             result = {"resourceTemplates": templates}
         elif method == "resources/read":
-            contents = [] if MODE == "no-contract" else [
-                {"uri": "kex://contract", "text": "missing measurement is not zero"}]
+            uri = request.get("params", {}).get("uri")
+            if uri == "kex://contract":
+                contents = [] if MODE == "no-contract" else [
+                    {"uri": uri, "text": "missing measurement is not zero"}]
+            elif uri == "kex://skills":
+                contents = [] if MODE == "no-manifest" else [{
+                    "uri": uri, "text": json.dumps([{
+                        "uri": "skill://kafka-incident-triage/SKILL.md",
+                        "resources": [{"digest": "sha256:0123456789abcdef"}]
+                    }])}]
+            else:
+                contents = [] if MODE == "no-skill-content" else [{
+                    "uri": uri, "text": "---\\nname: kafka-incident-triage\\n---\\n"}]
             result = {"contents": contents}
         elif method == "prompts/list":
             names = [] if MODE == "no-prompts" else [
@@ -193,6 +208,10 @@ expect "a missing template fails"                  no-templates 1 "resources/tem
 expect "a missing contract fails"                  no-contract 1 "measurement contract"
 expect "a missing prompt fails"                    no-prompts 1 "prompts/list is missing"
 expect "a broken prompt fails"                     no-prompt-content 1 "prompts/get did not interpolate"
+expect "a missing Skills catalogue fails"           no-skills 1 "resources/list is missing kex://skills"
+expect "a missing Skill template fails"             no-skill-template 1 "missing the Agent Skill template"
+expect "a missing Skill manifest fails"             no-manifest 1 "skills catalogue does not list"
+expect "a missing Skill.md fails"                    no-skill-content 1 "skill resource did not return"
 
 # Nothing listening at all: the wait is bounded and says what it waited for.
 set +e
