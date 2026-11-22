@@ -20,12 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-- **Opt-in enterprise MCP OAuth JWT authentication (phase 1):** pinned HTTPS JWKS,
-  validated issuer/audience/time, scoped HTTP routes and stable principal fingerprints.
-  OAuth mode is restricted to read-only MCP until tool-level RBAC exists; the legacy
-  bearer-token mode remains the default. Adds optional audited per-tool JWT scope
-  checks before execution and approval consumption. Publishes RFC 9728 protected-
-  resource metadata and canonical OAuth discovery challenges. See `docs/mcp-enterprise-auth.md`.
+- **MCP guide usability pass.** Role-lens filtering without hiding intermediate nodes,
+  accessible mobile step list, graph zoom, arrow/Home/End keyboard traversal,
+  shareable scenario/step/focus URLs and portable Mermaid export. The public GitHub
+  Pages edition now uses a separate checked JavaScript asset and offers the same
+  filters, deep links, mobile presentation and focus controls, without live calls.
 
 - **Two additional reviewed Kafka Agent Skills:** `kafka-security-review` for bounded
   topic-policy and MCP deployment posture evidence, and `kafka-schema-evolution`
@@ -67,6 +66,17 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are regenerated in both schemes (`docs/img/<screen>.png` and `<screen>-dark.png`), and the Pages site
   follows the visitor's system with the same tokens. Rationale, pass by pass, in
   `docs/notes/spatial-light-theme.md`.
+
+- **Opt-in enterprise MCP OAuth JWT authentication (phase 1):** pinned HTTPS JWKS,
+  validated issuer/audience/time, scoped HTTP routes and stable principal fingerprints.
+  OAuth mode is restricted to read-only MCP until tool-level RBAC exists; the legacy
+  bearer-token mode remains the default. See `docs/mcp-enterprise-auth.md`.
+
+- **Enterprise MCP OAuth phase 2–3:** verified, request-local JWT scopes guard individual
+  read-only MCP tool calls before approvals are consumed. RFC 9728 protected-resource
+  metadata and canonical `WWW-Authenticate` discovery challenges expose the configured
+  issuer and resource URI without trusting request host headers. See
+  `docs/mcp-enterprise-auth.md`.
 
 ## [2.8.2] — 2026-11-21
 
