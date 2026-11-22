@@ -75,6 +75,46 @@ class McpToolInterceptorTest {
     }
 
     @Test
+    void oauth_scopes_fail_closed_before_any_tool_execution_including_write_tools() {
+        var oauth = properties.getOauth();
+        oauth.setEnabled(true);
+        oauth.setToolScopes(Map.of("kex_list_topics", "mcp:diagnose"));
+        McpCatalogService liveCatalogue = org.mockito.Mockito.mock(McpCatalogService.class);
+        var descriptor = new ToolDescriptor("kex_list_topics", ToolCategory.EXPLORATION,
+                "Read cluster topics", Visibility.exposed(), null, null, null, 1024);
+        org.mockito.Mockito.when(liveCatalogue.catalog()).thenReturn(List.of(descriptor));
+        DlpScrubber dlp = new DlpScrubber(properties);
+        interceptor = new McpToolInterceptor(properties, new ToolGuard(properties, dlp), dlp,
+                recorder, switches, new McpRateLimiter(properties), approvals, liveCatalogue);
+        java.util.concurrent.atomic.AtomicInteger executed = new java.util.concurrent.atomic.AtomicInteger();
+        BiFunction<McpSyncServerExchange, CallToolRequest, CallToolResult> callback = (ex, request) -> {
+            executed.incrementAndGet();
+            return structured(1L, StopReason.EXHAUSTED, false);
+        };
+        try {
+            McpCallerContext.set("oauth:123", java.util.Set.of("mcp:read"));
+            assertThatThrownBy(() -> invoke(callback, Map.of())).isInstanceOf(McpError.class);
+            assertThat(executed.get()).isZero();
+
+            McpCallerContext.set("oauth:123", java.util.Set.of("mcp:read", "mcp:diagnose"));
+            invoke(callback, Map.of());
+            assertThat(executed.get()).isEqualTo(1);
+
+            org.mockito.Mockito.when(liveCatalogue.catalog()).thenReturn(List.of(
+                    new ToolDescriptor("kex_list_topics", ToolCategory.WRITE,
+                            "A newly registered mutation", Visibility.exposed(), null, null, null, 1024)));
+            assertThatThrownBy(() -> invoke(callback, Map.of())).isInstanceOf(McpError.class);
+            assertThat(executed.get()).isEqualTo(1);
+
+            McpCallerContext.set("oauth:123", java.util.Set.of("mcp:read", "mcp:diagnose", "mcp:write"));
+            invoke(callback, Map.of());
+            assertThat(executed.get()).isEqualTo(2);
+        } finally {
+            McpCallerContext.clear();
+        }
+    }
+
+    @Test
     void a_successful_call_is_recorded_with_the_coverage_the_tool_reported() {
         // The envelope arrives as a Map, not as our ToolResult — Spring AI serialises the return
         // value and parses it back before this layer sees it. Reading it as a ToolResult would

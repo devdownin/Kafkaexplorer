@@ -115,6 +115,15 @@ plainly because it decides how the app must be deployed:
   keeps it in the tab's `sessionStorage`, never in `localStorage` and never in a URL, and never
   displays it again — but a bearer credential in a browser is a bearer credential in a browser, so
   it belongs on an operator's machine rather than on a shared one.
+- **Enterprise OAuth for MCP is opt-in.** With `explorer.mcp.oauth.enabled=true`, the
+  static bearer is replaced (never used as a fallback) by signature-verified RS256 JWT access
+  tokens from a trusted HTTPS JWKS, with exact issuer, expiry, subject and resource audience.
+  `/.well-known/oauth-protected-resource/mcp` advertises the configured issuer and scopes.
+  Under OAuth, even MCP console reads require `mcp:read`; mutations and audit replay
+  require `mcp:admin`; registered write tools require `mcp:write` and may require
+  extra exact-tool scopes. See [Enterprise MCP](docs/mcp-enterprise.md).
+  **This protects only MCP endpoints, not the rest of KafkaExplorer's REST/UI API.**
+  Place the complete application behind an authenticating reverse proxy on shared deployments.
 - Every bundled compose stack therefore publishes its ports on `${BIND_ADDR:-127.0.0.1}`,
   the loopback interface, rather than Docker's usual `0.0.0.0`.
 

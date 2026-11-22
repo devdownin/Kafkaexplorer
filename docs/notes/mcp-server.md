@@ -4,6 +4,11 @@ Copyright (C) 2026 Kafka Explorer Contributors
 -->
 # The MCP server — plan, and why each piece is shaped the way it is
 
+> **Enterprise addendum:** OAuth protected-resource JWT validation and caller scopes are
+> now optional as documented in [docs/mcp-enterprise.md](../mcp-enterprise.md).
+> Historical notes below still describe the preceding static-bearer phase.
+> Native MCP Tasks remain unavailable on the current Spring AI transport.
+
 `SPEC-MCP.md` at the root is the specification, and `SPECAGENT.md` beside it specifies the agent
 harness that would put its honesty contracts to the test — not yet built. This note is the
 *implementation* record: what

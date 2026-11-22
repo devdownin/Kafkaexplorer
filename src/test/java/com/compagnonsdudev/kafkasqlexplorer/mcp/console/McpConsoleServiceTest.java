@@ -75,8 +75,8 @@ class McpConsoleServiceTest {
         // Nothing is bound in a unit test, and null is the honest answer: falling back to the
         // configured port would print an address that may well not answer.
         assertThat(status.endpoint()).isNull();
-        // Phase 5 brings OAuth. Until then the banner has to say there is no caller authentication.
-        assertThat(status.authentication()).containsIgnoringCase("none");
+        // Default compatibility mode still requires the static bearer on the MCP endpoint.
+        assertThat(status.authentication()).contains("Static bearer");
         // And the page has to know the button would be refused, so it can hide it rather than
         // offer one that answers 403.
         assertThat(status.tryItEnabled()).isFalse();

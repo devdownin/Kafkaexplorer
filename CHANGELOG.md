@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **MCP Enterprise OAuth foundation (opt-in):** KafkaExplorer acts as an RFC 9728
+  OAuth protected resource with RS256/JWKS JWT verification, strict issuer/audience/
+  expiry/subject checks, read/write/admin scopes and per-tool scope admission. OAuth
+  replaces, never falls back to, the legacy static bearer. Protected MCP catalogue
+  reads and operator writes use scoped access tokens; UI accepts a short-lived token
+  in sessionStorage. Docs state the modern MCP Tasks extension remains unsupported
+  by the current Spring AI transport, rather than advertising fictional endpoints.
+
 - **Two additional reviewed Kafka Agent Skills:** `kafka-security-review` for bounded
   topic-policy and MCP deployment posture evidence, and `kafka-schema-evolution`
   for baseline-based drift assessment. Both are read-only, refuse invented security

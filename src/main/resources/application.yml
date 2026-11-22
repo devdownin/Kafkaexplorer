@@ -351,6 +351,25 @@ explorer:
     auth-token: ${EXPLORER_MCP_AUTH_TOKEN:}
     require-tls: true
 
+    # Enterprise OAuth protected-resource mode (opt-in). The IdP, not KafkaExplorer,
+    # implements authorization code + PKCE, refresh tokens and client registration.
+    # A verified RS256 JWT MUST contain iss, exp, sub, and this exact resource audience.
+    # When enabled, static EXPLORER_MCP_AUTH_TOKEN cannot be used as a fallback.
+    # The resource-uri is the public HTTPS URL of the root-path /mcp endpoint.
+    # Access tokens need mcp:read for /mcp and console reads, mcp:admin for
+    # privileged console actions, plus mcp:write for mutating MCP tools.
+    oauth:
+      enabled: ${EXPLORER_MCP_OAUTH_ENABLED:false}
+      issuer-uri: ${EXPLORER_MCP_OAUTH_ISSUER_URI:}
+      jwk-set-uri: ${EXPLORER_MCP_OAUTH_JWK_SET_URI:}
+      resource-uri: ${EXPLORER_MCP_OAUTH_RESOURCE_URI:}
+      read-scope: "mcp:read"
+      write-scope: "mcp:write"
+      admin-scope: "mcp:admin"
+      # Optional exact-name extra scopes, e.g. "[kex_run_audit]": "mcp:audit".
+      # Naming a nonexistent tool here provides no authorization for it.
+      tool-scopes: {}
+
     tools:
       # Enforced by absence, not by refusal: a tool these lists keep out is not in tools/list at
       # all, so it is never described to the model, chosen by it, and refused after a round trip.

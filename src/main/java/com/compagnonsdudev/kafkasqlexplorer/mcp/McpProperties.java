@@ -12,6 +12,8 @@ public class McpProperties {
     private boolean enabled = false;
     private boolean readonly = true;
     private String authToken;
+    /** OAuth 2.1 protected-resource profile; opt-in, with no fallback to the static bearer. */
+    private OAuth oauth = new OAuth();
     /** Production HTTP MCP requires TLS; local development may explicitly opt out. */
     private boolean requireTls = true;
     private Tools tools = new Tools();
@@ -80,6 +82,40 @@ public class McpProperties {
         public void setReplayRunbook(String replayRunbook) { this.replayRunbook = replayRunbook; }
     }
 
+    /**
+     * OAuth 2.1 authorization server is external. This process only verifies access tokens;
+     * no login page, token issuer, refresh endpoint or client registration is hosted here.
+     */
+    public static class OAuth {
+        private boolean enabled = false;
+        private String issuerUri = "";
+        private String jwkSetUri = "";
+        private String resourceUri = "";
+        private String readScope = "mcp:read";
+        private String writeScope = "mcp:write";
+        private String adminScope = "mcp:admin";
+        private java.util.Map<String, String> toolScopes = java.util.Map.of();
+
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getIssuerUri() { return issuerUri; }
+        public void setIssuerUri(String issuerUri) { this.issuerUri = issuerUri; }
+        public String getJwkSetUri() { return jwkSetUri; }
+        public void setJwkSetUri(String jwkSetUri) { this.jwkSetUri = jwkSetUri; }
+        public String getResourceUri() { return resourceUri; }
+        public void setResourceUri(String resourceUri) { this.resourceUri = resourceUri; }
+        public String getReadScope() { return readScope; }
+        public void setReadScope(String readScope) { this.readScope = readScope; }
+        public String getWriteScope() { return writeScope; }
+        public void setWriteScope(String writeScope) { this.writeScope = writeScope; }
+        public String getAdminScope() { return adminScope; }
+        public void setAdminScope(String adminScope) { this.adminScope = adminScope; }
+        public java.util.Map<String, String> getToolScopes() { return toolScopes; }
+        public void setToolScopes(java.util.Map<String, String> toolScopes) {
+            this.toolScopes = toolScopes == null ? java.util.Map.of() : java.util.Map.copyOf(toolScopes);
+        }
+    }
+
     public static class Tools {
         private String allowed = ANY;
         private String denied = "";
@@ -121,6 +157,8 @@ public class McpProperties {
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public boolean isReadonly() { return readonly; }
     public void setReadonly(boolean readonly) { this.readonly = readonly; }
+    public OAuth getOauth() { return oauth; }
+    public void setOauth(OAuth oauth) { this.oauth = oauth; }
     public String getAuthToken() { return authToken; }
     public void setAuthToken(String authToken) { this.authToken = authToken; }
     public boolean isRequireTls() { return requireTls; }

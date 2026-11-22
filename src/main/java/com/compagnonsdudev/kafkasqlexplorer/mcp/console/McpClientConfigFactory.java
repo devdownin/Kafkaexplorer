@@ -40,10 +40,15 @@ public final class McpClientConfigFactory {
                     + "Restrict the network, or keep explorer.mcp.enabled=false.";
 
     public static McpClientConfig forClient(String client, String endpoint) {
+        return forClient(client, endpoint, NO_AUTH_HINT);
+    }
+
+    /** The message is generated from the serving instance's actual auth mode, never a secret. */
+    public static McpClientConfig forClient(String client, String endpoint, String authHint) {
         String url = endpoint == null ? UNBOUND : endpoint;
         return switch (client == null ? "" : client.toLowerCase(java.util.Locale.ROOT)) {
             case "claude-code" -> new McpClientConfig("claude-code", "shell", """
-                    claude mcp add --transport http kafka-explorer %s""".formatted(url), NO_AUTH_HINT);
+                    claude mcp add --transport http kafka-explorer %s""".formatted(url), authHint);
             case "claude-desktop" -> new McpClientConfig("claude-desktop",
                     "claude_desktop_config.json", """
                     {
@@ -53,13 +58,13 @@ public final class McpClientConfigFactory {
                           "url": "%s"
                         }
                       }
-                    }""".formatted(url), NO_AUTH_HINT);
+                    }""".formatted(url), authHint);
             default -> new McpClientConfig("generic", "JSON", """
                     {
                       "name": "kafka-explorer",
                       "transport": "http",
                       "url": "%s"
-                    }""".formatted(url), NO_AUTH_HINT);
+                    }""".formatted(url), authHint);
         };
     }
 }

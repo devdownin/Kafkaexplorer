@@ -14,7 +14,10 @@ public class McpHttpSecurityConfiguration {
     @Bean
     FilterRegistrationBean<McpHttpAuthFilter> mcpHttpAuthFilter(McpProperties properties) {
         FilterRegistrationBean<McpHttpAuthFilter> registration = new FilterRegistrationBean<>();
-        registration.setFilter(new McpHttpAuthFilter(properties.getAuthToken(), properties.isRequireTls()));
+        McpOAuthAuthentication oauth = properties.getOauth().isEnabled()
+                ? new McpOAuthAuthentication(properties.getOauth()) : null;
+        registration.setFilter(new McpHttpAuthFilter(properties.getAuthToken(),
+                properties.isRequireTls(), oauth));
         registration.addUrlPatterns("/mcp", "/mcp/*", "/api/mcp/*");
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
         registration.setName("mcpHttpAuthFilter");

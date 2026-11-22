@@ -1,5 +1,8 @@
 # MCP Resources, prompts and Agent Skills
 
+**Enterprise MCP security:** [OAuth protected resource, per-tool scopes and Tasks compatibility](mcp-enterprise.md).
+The existing Skills catalogue stays a Resources-based distribution and does not enable Tasks.
+
 **New to Skills & MCP?** Start with the [illustrated interactive guide](mcp-guide.html)
 or its [text version with a Mermaid call graph](mcp-skills-services-guide.md).
 They show how Kex-anHarness orchestrates KafkaExplorer capabilities, without claiming

@@ -232,6 +232,12 @@ them (dead letters first, retries after), sorts by volume, and says so in their 
 ![The Dead Letter & Retry page: three failure queues with their arrivals and the share of their source topic that represents, one of them reporting an ambiguous source rather than guessing](img/dead-letter.png)
 
 ## 16. MCP Server (agent access) — off by default
+
+**Enterprise OAuth (opt-in):** JWT/RS256 validation through an external IdP, exact MCP audience,
+RFC 9728 discovery and read/write/admin scopes, with per-tool admission controls.
+The default static bearer remains available when OAuth is off. See [Enterprise MCP](mcp-enterprise.md).
+Native `io.modelcontextprotocol/tasks` is **not** implemented by this Spring AI 2.0.2 transport.
+
 The analysis layer of this application, exposed to an LLM agent over the Model Context Protocol.
 Not a tenth Kafka MCP server: the surface those expose is the `AdminClient` translated into
 JSON-RPC — `list_topics`, `consume`, `describe_consumer_group` — which answers none of the

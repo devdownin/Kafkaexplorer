@@ -174,9 +174,9 @@ public class McpServerConfiguration {
     McpToolInterceptor mcpToolInterceptor(McpProperties properties, ToolGuard guard,
                                           DlpScrubber dlp, McpCallRecorder recorder,
                                           McpRuntimeSwitches switches, McpRateLimiter rateLimiter,
-                                          McpApprovalStore approvals) {
+                                          McpApprovalStore approvals, McpCatalogService catalog) {
         return new McpToolInterceptor(properties, guard, dlp, recorder, switches, rateLimiter,
-                approvals);
+                approvals, catalog);
     }
 
     /**

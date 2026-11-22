@@ -7,6 +7,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.security.oauth2.jwt.JwtException;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -21,12 +22,19 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
     public static final String IDENTITY_ATTRIBUTE = McpHttpAuthFilter.class.getName() + ".identity";
     private final String configuredToken;
     private final boolean requireTls;
+    private final McpOAuthAuthentication oauth;
 
     public McpHttpAuthFilter(String configuredToken) { this(configuredToken, true); }
 
     public McpHttpAuthFilter(String configuredToken, boolean requireTls) {
+        this(configuredToken, requireTls, null);
+    }
+
+    /** A configured OAuth verifier replaces (never supplements) the legacy static token. */
+    public McpHttpAuthFilter(String configuredToken, boolean requireTls, McpOAuthAuthentication oauth) {
         this.configuredToken = configuredToken == null ? "" : configuredToken.trim();
         this.requireTls = requireTls;
+        this.oauth = oauth;
     }
 
     /**
@@ -53,6 +61,9 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
         if (context != null && !context.isEmpty() && path.startsWith(context)) path = path.substring(context.length());
         if ("/mcp".equals(path) || path.startsWith("/mcp/")) return false;
         if (!path.startsWith("/api/mcp/")) return true;
+        // In enterprise OAuth mode, catalogue and usage data are private too: the browser must
+        // present an access token. Legacy mode preserves the existing public console reads.
+        if (oauth != null) return false;
         if (!"GET".equalsIgnoreCase(request.getMethod())) return false;
         return !"/api/mcp/calls/replay".equals(path);
     }
@@ -64,6 +75,10 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
             response.setHeader("Upgrade", "TLS/1.2, TLS/1.3");
             response.setContentType("application/json");
             response.getWriter().write("{\"error\":\"mcp_tls_required\",\"message\":\"the MCP HTTP endpoint requires TLS\"}");
+            return;
+        }
+        if (oauth != null) {
+            filterOAuth(request, response, filterChain);
             return;
         }
         if (configuredToken.isEmpty()) {
@@ -86,6 +101,53 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
         McpCallerContext.set(identity);
         try { filterChain.doFilter(request, response); }
         finally { McpCallerContext.clear(); request.removeAttribute(IDENTITY_ATTRIBUTE); }
+    }
+
+    private void filterOAuth(HttpServletRequest request, HttpServletResponse response,
+                             FilterChain chain) throws ServletException, IOException {
+        String path = request.getRequestURI();
+        String context = request.getContextPath();
+        if (context != null && !context.isEmpty() && path.startsWith(context)) {
+            path = path.substring(context.length());
+        }
+        boolean admin = path.startsWith("/api/mcp/")
+                && (!"GET".equalsIgnoreCase(request.getMethod()) || "/api/mcp/calls/replay".equals(path));
+        String neededScope = admin ? oauth.adminScope() : oauth.readScope();
+        String bearer = bearerToken(request);
+        if (bearer == null) {
+            oauthRefusal(response, HttpServletResponse.SC_UNAUTHORIZED, "invalid_token",
+                    "mcp_unauthorized", neededScope);
+            return;
+        }
+        McpOAuthAuthentication.Caller caller;
+        try {
+            caller = oauth.authenticate(bearer);
+        } catch (JwtException | IllegalArgumentException e) {
+            oauthRefusal(response, HttpServletResponse.SC_UNAUTHORIZED, "invalid_token",
+                    "mcp_unauthorized", neededScope);
+            return;
+        }
+        if (!caller.scopes().contains(neededScope)) {
+            oauthRefusal(response, HttpServletResponse.SC_FORBIDDEN, "insufficient_scope",
+                    "mcp_insufficient_scope", neededScope);
+            return;
+        }
+        request.setAttribute(IDENTITY_ATTRIBUTE, caller.identity());
+        McpCallerContext.set(caller.identity(), caller.scopes());
+        try { chain.doFilter(request, response); }
+        finally { McpCallerContext.clear(); request.removeAttribute(IDENTITY_ATTRIBUTE); }
+    }
+
+    private void oauthRefusal(HttpServletResponse response, int status, String code, String message,
+                              String neededScope) throws IOException {
+        response.setStatus(status);
+        String challenge = "Bearer realm=" + '"' + "mcp" + '"'
+                + ", resource_metadata=" + '"' + oauth.metadataUrl() + '"'
+                + ", error=" + '"' + code + '"'
+                + ", scope=" + '"' + neededScope + '"';
+        response.setHeader("WWW-Authenticate", challenge);
+        response.setContentType("application/json");
+        response.getWriter().write("{" + '"' + "error" + '"' + ":" + '"' + message + '"' + "}");
     }
 
     static String bearerToken(HttpServletRequest request) {

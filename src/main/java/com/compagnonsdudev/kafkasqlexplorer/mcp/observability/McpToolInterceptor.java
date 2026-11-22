@@ -82,6 +82,7 @@ public class McpToolInterceptor {
     private final McpRuntimeSwitches switches;
     private final McpRateLimiter rateLimiter;
     private final McpApprovalStore approvals;
+    private final McpCatalogService catalog;
 
     /**
      * Its own mapper, deliberately: this one only measures and reports, so it must not inherit
@@ -92,6 +93,14 @@ public class McpToolInterceptor {
     public McpToolInterceptor(McpProperties properties, ToolGuard guard, DlpScrubber dlp,
                               McpCallRecorder recorder, McpRuntimeSwitches switches,
                               McpRateLimiter rateLimiter, McpApprovalStore approvals) {
+        this(properties, guard, dlp, recorder, switches, rateLimiter, approvals, null);
+    }
+
+    /** The production constructor receives the live introspected catalogue, never a tool-name list. */
+    public McpToolInterceptor(McpProperties properties, ToolGuard guard, DlpScrubber dlp,
+                              McpCallRecorder recorder, McpRuntimeSwitches switches,
+                              McpRateLimiter rateLimiter, McpApprovalStore approvals,
+                              McpCatalogService catalog) {
         this.properties = properties;
         this.guard = guard;
         this.dlp = dlp;
@@ -99,6 +108,7 @@ public class McpToolInterceptor {
         this.switches = switches;
         this.rateLimiter = rateLimiter;
         this.approvals = approvals;
+        this.catalog = catalog;
     }
 
     /** The same specification, with its call handler wrapped. */
@@ -134,6 +144,7 @@ public class McpToolInterceptor {
             // second ago.
             checkNotQuarantined(identity);
             checkNotDisabled(tool);
+            checkOauthToolScopes(tool);
             approvals.spend(tool, approvalToken(arguments), identity);
             rateLimiter.check(identity);
 
@@ -179,6 +190,38 @@ public class McpToolInterceptor {
                     Measured.of(0L));
             log.warn("MCP tool {} failed for correlationId={}", tool, correlationId, e);
             throw e;
+        }
+    }
+
+    /**
+     * RBAC is enforced at tools/call, not inferred from tools/list. The current SDK exposes one
+     * server-wide catalogue, not a per-principal catalogue, so scopes restrict execution even
+     * when the caller can discover a tool's name. This is deliberately fail-closed if metadata
+     * was not published; a new WRITE tool must not silently inherit read rights.
+     */
+    private void checkOauthToolScopes(String tool) {
+        if (!properties.getOauth().isEnabled()) return;
+        if (McpCallerContext.authenticated().isEmpty() || catalog == null) {
+            throw new McpToolException(McpErrorCode.POLICY_DENIED, McpGuard.DENY_LIST,
+                    "OAuth identity or tool catalogue is unavailable");
+        }
+        ToolDescriptor descriptor = catalog.catalog().stream()
+                .filter(d -> d.name().equals(tool)).findFirst()
+                .orElseThrow(() -> new McpToolException(McpErrorCode.POLICY_DENIED,
+                        McpGuard.DENY_LIST, "The requested tool is not in the published catalogue"));
+        if (!descriptor.visibility().visibleToAgents()) {
+            throw new McpToolException(McpErrorCode.POLICY_DENIED, McpGuard.DENY_LIST,
+                    "The requested tool is not exposed");
+        }
+        if (descriptor.category() == ToolCategory.WRITE
+                && !McpCallerContext.hasScope(properties.getOauth().getWriteScope())) {
+            throw new McpToolException(McpErrorCode.POLICY_DENIED, McpGuard.DENY_LIST,
+                    "A write scope is required for this MCP tool");
+        }
+        String extraScope = properties.getOauth().getToolScopes().get(tool);
+        if (extraScope != null && !McpCallerContext.hasScope(extraScope)) {
+            throw new McpToolException(McpErrorCode.POLICY_DENIED, McpGuard.DENY_LIST,
+                    "An additional configured scope is required for this MCP tool");
         }
     }
 

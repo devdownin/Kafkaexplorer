@@ -84,8 +84,9 @@ public class McpConsoleController {
     @GetMapping("/catalog/client-config")
     public McpClientConfig clientConfig(@RequestParam(value = "client", required = false) String client) {
         McpConsoleService service = console.getIfAvailable();
-        return McpClientConfigFactory.forClient(client,
-                service == null ? null : service.status().endpoint());
+        if (service == null) return McpClientConfigFactory.forClient(client, null);
+        McpStatusView status = service.status();
+        return McpClientConfigFactory.forClient(client, status.endpoint(), status.authentication());
     }
 
     @GetMapping("/calls")

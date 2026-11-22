@@ -75,6 +75,8 @@ const Mcp: FC = () => {
   const [overrides, setOverrides] = useState<McpOverrideView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [protectedReads, setProtectedReads] = useState(false);
+  const [oauthDraft, setOauthDraft] = useState('');
 
   /* Le flux se met en pause au survol : une table qui se réordonne sous le curseur pendant qu'on
      lit une ligne fait perdre la ligne, et c'est celle qu'on était en train d'examiner. */
@@ -96,18 +98,21 @@ const Mcp: FC = () => {
       const feed = new URLSearchParams({ limit: '200' });
       for (const [key, value] of Object.entries(filters)) if (value) feed.set(key, value);
 
+      // OAuth enterprise mode protects the catalogue itself, not only mutating gestures.
+      // Legacy mode keeps public console reads and never sends the pasted bearer on them.
+      const readOptions = protectedReads ? authHeaders(readCredential()) : {};
       const [statusRes, catalogRes, statsRes, callsRes, clientsRes, overridesRes, surfacesRes, skillsRes] =
         await Promise.all([
-          axios.get<McpStatusView>('/api/mcp/status'),
-          axios.get<McpCatalogView>(`/api/mcp/catalog?${query}`),
-          axios.get<McpStatsView>(`/api/mcp/stats?${query}`),
-          axios.get<McpCallView[]>(`/api/mcp/calls?${feed}`),
-          axios.get<McpClientRow[]>(`/api/mcp/clients?${query}`),
-          axios.get<McpOverrideView[]>('/api/mcp/overrides'),
-          axios.get<McpSurfaceView[]>('/api/mcp/surfaces'),
+          axios.get<McpStatusView>('/api/mcp/status', readOptions),
+          axios.get<McpCatalogView>(`/api/mcp/catalog?${query}`, readOptions),
+          axios.get<McpStatsView>(`/api/mcp/stats?${query}`, readOptions),
+          axios.get<McpCallView[]>(`/api/mcp/calls?${feed}`, readOptions),
+          axios.get<McpClientRow[]>(`/api/mcp/clients?${query}`, readOptions),
+          axios.get<McpOverrideView[]>('/api/mcp/overrides', readOptions),
+          axios.get<McpSurfaceView[]>('/api/mcp/surfaces', readOptions),
           // Older releases may not have the optional Skills catalogue. Its failure must not
           // make MCP supervision or the existing Tools/Resources inaccessible.
-          axios.get<McpSkillView[]>('/api/mcp/skills').then((res) => res.data).catch(() => null),
+          axios.get<McpSkillView[]>('/api/mcp/skills', readOptions).then((res) => res.data).catch(() => null),
         ]);
       setStatus(statusRes.data);
       setCatalog(catalogRes.data);
@@ -120,11 +125,16 @@ const Mcp: FC = () => {
       setOverrides(overridesRes.data);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'la console MCP est injoignable');
+      if (axios.isAxiosError(e) && (e.response?.status === 401 || e.response?.status === 403)) {
+        setProtectedReads(true);
+        setError('Cette console MCP exige un jeton OAuth valide avec le scope de lecture.');
+      } else {
+        setError(e instanceof Error ? e.message : 'la console MCP est injoignable');
+      }
     } finally {
       setLoading(false);
     }
-  }, [filters, window_]);
+  }, [filters, window_, protectedReads]);
 
   /*
    * Une seule boucle : le premier chargement et le rafraîchissement sont le même appel, et
@@ -155,6 +165,49 @@ const Mcp: FC = () => {
   }, [load, paused]);
 
   if (loading) return <div className="p-6 text-on-surface-variant">Chargement…</div>;
+  if (error && protectedReads) {
+    return (
+      <div className="space-y-5 max-w-xl">
+        <PageHeader kicker="Sécurité MCP" title="Accès OAuth requis"
+          description="Le catalogue, les ressources et les statistiques sont protégés.
+            Obtenez un access token auprès du fournisseur d'identité configuré et collez-le
+            dans cet onglet. Un scope de lecture MCP est nécessaire." />
+        <Card className="space-y-4 p-5">
+          <p role="alert" className="text-[12px] text-on-surface-variant">{error}</p>
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            if (!writeCredential(oauthDraft)) {
+              setError('Le navigateur a refusé la mémorisation temporaire du jeton.');
+              return;
+            }
+            setOauthDraft('');
+            setError(null);
+            setLoading(true);
+            void load();
+          }} className="space-y-3">
+            <Field label="Jeton OAuth (access token)">
+              {(field) => <PasswordInput {...field} value={oauthDraft} autoComplete="off"
+                placeholder="Jeton fourni par votre IdP"
+                onChange={(e) => setOauthDraft(e.target.value)} />}
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={!oauthDraft.trim()}>Accéder à la console</Button>
+              <Button variant="outline" type="button" onClick={() => { forgetCredential(); setOauthDraft(''); }}>
+                Effacer le jeton
+              </Button>
+            </div>
+          </form>
+          <p className="text-[11px] text-on-surface-variant">
+            Le jeton reste dans sessionStorage et n'est jamais placé dans l’URL.
+            Les outils de modification et le replay nécessitent un scope d’administration supplémentaire.
+          </p>
+          <Link to="/mcp/guide" className="text-[12px] font-medium text-primary hover:underline">
+            Guide Skills & MCP
+          </Link>
+        </Card>
+      </div>
+    );
+  }
   if (error) {
     return (
       <ErrorPanel
@@ -214,6 +267,7 @@ const Mcp: FC = () => {
           surfaces={surfaces}
           skills={skills}
           skillsUnavailable={skillsUnavailable}
+          readAuth={protectedReads}
           endpoint={status?.endpoint ?? null}
           tryItEnabled={status?.tryItEnabled ?? false}
           overrides={overrides}
@@ -587,13 +641,14 @@ const CatalogTab: FC<{
   surfaces: McpSurfaceView[];
   skills: McpSkillView[];
   skillsUnavailable: boolean;
+  readAuth: boolean;
   endpoint: string | null;
   tryItEnabled: boolean;
   overrides: McpOverrideView[];
   /* Pour l'approbation : lier un jeton à un appelant demande de savoir lesquels existent. */
   clients: McpClientRow[];
   onSwitched: () => void;
-}> = ({ catalog, surfaces, skills, skillsUnavailable, endpoint, tryItEnabled, overrides, clients, onSwitched }) => {
+}> = ({ catalog, surfaces, skills, skillsUnavailable, readAuth, endpoint, tryItEnabled, overrides, clients, onSwitched }) => {
   const [config, setConfig] = useState<McpClientConfig | null>(null);
   const [client, setClient] = useState('claude-code');
   /* Les outils coupés à chaud, tirés du bandeau plutôt que d'un second appel : la même vérité,
@@ -616,7 +671,8 @@ const CatalogTab: FC<{
     setSkillReadError(null);
     setLoadingSkill(name);
     try {
-      const response = await axios.get<McpSkillDetail>(`/api/mcp/skills/${encodeURIComponent(name)}`);
+      const response = await axios.get<McpSkillDetail>(`/api/mcp/skills/${encodeURIComponent(name)}`,
+        readAuth ? authHeaders(readCredential()) : {});
       setSelectedSkill(response.data);
     } catch {
       setSkillReadError(`Impossible de charger le SKILL.md : ${name}`);
@@ -630,10 +686,11 @@ const CatalogTab: FC<{
 
   useEffect(() => {
     void axios
-      .get<McpClientConfig>(`/api/mcp/catalog/client-config?client=${client}`)
+      .get<McpClientConfig>(`/api/mcp/catalog/client-config?client=${client}`,
+        readAuth ? authHeaders(readCredential()) : {})
       .then((res) => setConfig(res.data))
       .catch(() => setConfig(null));
-  }, [client, endpoint]);
+  }, [client, endpoint, readAuth]);
 
   if (!catalog) return null;
 
@@ -1156,7 +1213,8 @@ const CredentialCard: FC = () => {
       <p className="mb-3 text-xs text-on-surface-variant">
         Les gestes qui changent l’état — verrou lecture seule, extinction d’un outil, quarantaine,
         frappe d’approbation, replay — demandent <span className="font-mono">
-        explorer.mcp.auth-token</span>. Les lectures de cet écran n’en ont pas besoin. Le jeton est
+        explorer.mcp.auth-token</span> en mode classique, ou un access token de votre IdP en mode OAuth.
+        En mode OAuth, les lectures nécessitent aussi le scope MCP de lecture. Le jeton est
         retenu le temps de cet onglet et part avec lui ; il n’est jamais réaffiché.
       </p>
       {held === null ? (
@@ -1166,7 +1224,7 @@ const CredentialCard: FC = () => {
               <PasswordInput
                 {...field}
                 value={draft}
-                placeholder="le même que EXPLORER_MCP_AUTH_TOKEN"
+                placeholder="Jeton statique MCP ou jeton d'accès OAuth"
                 onChange={(e) => setDraft(e.target.value)}
               />
             )}

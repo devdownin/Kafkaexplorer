@@ -69,10 +69,13 @@ public class McpConsoleService {
                 !mutating.isEmpty(),
                 catalog.writeSurfaceExists(),
                 mutating,
-                // Named as the absence it is. Phase 5 brings OAuth 2.1; until then a deployment
-                // that exposes this endpoint beyond a trusted network has no caller authentication
-                // at all, and the banner is where an operator would find that out.
-                "none — anything that can reach the endpoint can call it (OAuth 2.1 is phase 5)",
+                properties.getOauth().isEnabled()
+                        ? "OAuth protected resource: issuer " + properties.getOauth().getIssuerUri()
+                                + ", audience " + properties.getOauth().getResourceUri()
+                                + ", scopes: " + properties.getOauth().getReadScope() + " (read), "
+                                + properties.getOauth().getWriteScope() + " (write), "
+                                + properties.getOauth().getAdminScope() + " (admin)"
+                        : "Static bearer: EXPLORER_MCP_AUTH_TOKEN (TLS required unless explicitly disabled)",
                 properties.getAllowedTopicPrefixes(),
                 properties.getAllowedGroupPrefixes(),
                 properties.getConsole().isAllowTryIt());

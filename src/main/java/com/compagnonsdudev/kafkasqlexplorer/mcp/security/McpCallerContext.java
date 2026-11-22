@@ -15,12 +15,24 @@ public final class McpCallerContext {
 
     private static final String LOCAL = "local";
     private static final ThreadLocal<String> CURRENT = new ThreadLocal<>();
+    private static final ThreadLocal<java.util.Set<String>> SCOPES = new ThreadLocal<>();
 
     private McpCallerContext() {
     }
 
     public static void set(String identity) {
+        set(identity, java.util.Set.of());
+    }
+
+    /** Scopes are sourced only from a verified OAuth access token, never from tool arguments. */
+    public static void set(String identity, java.util.Set<String> scopes) {
         CURRENT.set(identity == null || identity.isBlank() ? LOCAL : identity);
+        SCOPES.set(scopes == null ? java.util.Set.of() : java.util.Set.copyOf(scopes));
+    }
+
+    public static boolean hasScope(String scope) {
+        java.util.Set<String> scopes = SCOPES.get();
+        return scopes != null && scopes.contains(scope);
     }
 
     public static String identity() {
@@ -46,5 +58,6 @@ public final class McpCallerContext {
 
     public static void clear() {
         CURRENT.remove();
+        SCOPES.remove();
     }
 }
