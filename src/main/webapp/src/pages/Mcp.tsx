@@ -12,7 +12,8 @@ import {
 } from '../components/ui';
 import type {
   McpApprovalResult, McpCallView, McpCatalogView, McpClientConfig, McpClientRow, McpOverrideView,
-  McpReplay, McpStatsView, McpStatusView, McpSurfaceView, McpSwitchResult, McpToolRow, McpTryResult,
+  McpReplay, McpStatsView, McpStatusView, McpSurfaceView, McpSkillView, McpSkillDetail,
+  McpSwitchResult, McpToolRow, McpTryResult,
 } from '../api/types';
 import {
   DEFAULT_WINDOW, EMPTY_FILTERS, WINDOWS, callsToCsv, coverageLabel, deniedShare, filtersFromParams,
@@ -66,6 +67,8 @@ const Mcp: FC = () => {
   const [status, setStatus] = useState<McpStatusView | null>(null);
   const [catalog, setCatalog] = useState<McpCatalogView | null>(null);
   const [surfaces, setSurfaces] = useState<McpSurfaceView[]>([]);
+  const [skills, setSkills] = useState<McpSkillView[]>([]);
+  const [skillsUnavailable, setSkillsUnavailable] = useState(false);
   const [stats, setStats] = useState<McpStatsView | null>(null);
   const [calls, setCalls] = useState<McpCallView[]>([]);
   const [clients, setClients] = useState<McpClientRow[]>([]);
@@ -93,7 +96,7 @@ const Mcp: FC = () => {
       const feed = new URLSearchParams({ limit: '200' });
       for (const [key, value] of Object.entries(filters)) if (value) feed.set(key, value);
 
-      const [statusRes, catalogRes, statsRes, callsRes, clientsRes, overridesRes, surfacesRes] =
+      const [statusRes, catalogRes, statsRes, callsRes, clientsRes, overridesRes, surfacesRes, skillsRes] =
         await Promise.all([
           axios.get<McpStatusView>('/api/mcp/status'),
           axios.get<McpCatalogView>(`/api/mcp/catalog?${query}`),
@@ -102,10 +105,15 @@ const Mcp: FC = () => {
           axios.get<McpClientRow[]>(`/api/mcp/clients?${query}`),
           axios.get<McpOverrideView[]>('/api/mcp/overrides'),
           axios.get<McpSurfaceView[]>('/api/mcp/surfaces'),
+          // Older releases may not have the optional Skills catalogue. Its failure must not
+          // make MCP supervision or the existing Tools/Resources inaccessible.
+          axios.get<McpSkillView[]>('/api/mcp/skills').then((res) => res.data).catch(() => null),
         ]);
       setStatus(statusRes.data);
       setCatalog(catalogRes.data);
       setSurfaces(surfacesRes.data);
+      setSkills(skillsRes ?? []);
+      setSkillsUnavailable(skillsRes === null);
       setStats(statsRes.data);
       setCalls(callsRes.data);
       setClients(clientsRes.data);
@@ -200,6 +208,8 @@ const Mcp: FC = () => {
         <CatalogTab
           catalog={catalog}
           surfaces={surfaces}
+          skills={skills}
+          skillsUnavailable={skillsUnavailable}
           endpoint={status?.endpoint ?? null}
           tryItEnabled={status?.tryItEnabled ?? false}
           overrides={overrides}
@@ -571,13 +581,15 @@ const WindowNotice: FC<{ view: McpCatalogView | McpStatsView }> = ({ view }) => 
 const CatalogTab: FC<{
   catalog: McpCatalogView | null;
   surfaces: McpSurfaceView[];
+  skills: McpSkillView[];
+  skillsUnavailable: boolean;
   endpoint: string | null;
   tryItEnabled: boolean;
   overrides: McpOverrideView[];
   /* Pour l'approbation : lier un jeton à un appelant demande de savoir lesquels existent. */
   clients: McpClientRow[];
   onSwitched: () => void;
-}> = ({ catalog, surfaces, endpoint, tryItEnabled, overrides, clients, onSwitched }) => {
+}> = ({ catalog, surfaces, skills, skillsUnavailable, endpoint, tryItEnabled, overrides, clients, onSwitched }) => {
   const [config, setConfig] = useState<McpClientConfig | null>(null);
   const [client, setClient] = useState('claude-code');
   /* Les outils coupés à chaud, tirés du bandeau plutôt que d'un second appel : la même vérité,
@@ -588,6 +600,26 @@ const CatalogTab: FC<{
   );
   const [trying, setTrying] = useState<McpToolRow | null>(null);
   const [query, setQuery] = useState('');
+  const [selectedSkill, setSelectedSkill] = useState<McpSkillDetail | null>(null);
+  const [skillReadError, setSkillReadError] = useState<string | null>(null);
+  const [loadingSkill, setLoadingSkill] = useState<string | null>(null);
+  const inspectSkill = async (name: string) => {
+    if (selectedSkill?.skill.name === name) {
+      setSelectedSkill(null);
+      return;
+    }
+    setSelectedSkill(null);
+    setSkillReadError(null);
+    setLoadingSkill(name);
+    try {
+      const response = await axios.get<McpSkillDetail>(`/api/mcp/skills/${encodeURIComponent(name)}`);
+      setSelectedSkill(response.data);
+    } catch {
+      setSkillReadError(`Impossible de charger le SKILL.md : ${name}`);
+    } finally {
+      setLoadingSkill(null);
+    }
+  };
   /* Replié par défaut : ces descriptions sont écrites pour un modèle, qui les lit en entier.
      L'opérateur balaie d'abord des noms et des états. */
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -727,6 +759,69 @@ const CatalogTab: FC<{
             ))}
           </div>
         )}
+      </Card>
+
+      <Card className="p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Agent Skills</h3>
+          <p className="text-xs text-on-surface-variant">
+            Procédures versionnées, distribuées comme ressources MCP en lecture seule.
+            Les clients qui ne gèrent pas encore l'extension Skills peuvent récupérer
+            un SKILL.md depuis son URI ; la lecture ne l'active pas automatiquement.
+          </p>
+        </div>
+        {skillsUnavailable ? (
+          <p className="text-xs text-warning">Le catalogue de Skills est indisponible sur ce serveur.</p>
+        ) : skills.length === 0 ? (
+          <p className="text-xs text-on-surface-variant">Aucun skill publié.</p>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2">
+            {skills.map((skill) => (
+              <div key={skill.uri} className="rounded-lg border border-outline-variant p-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-xs font-semibold">{skill.name}</span>
+                  <Badge tone="neutral">
+                    {skill.audience === 'ENGINEERING' ? 'Engineering' : 'Kafka'}
+                  </Badge>
+                </div>
+                <p className="text-xs text-on-surface-variant">{skill.description}</p>
+                <p className="break-all font-mono text-xs text-on-surface-variant">{skill.uri}</p>
+                <p className="break-all font-mono text-[11px] text-on-surface-variant">
+                  {skill.digest} · {formatBytes(skill.size)}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => void inspectSkill(skill.name)}>
+                    {selectedSkill?.skill.name === skill.name ? 'Masquer' : 'Voir le SKILL.md'}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => void copyText(skill.uri)}>
+                    Copier l'URI
+                  </Button>
+                </div>
+                {loadingSkill === skill.name ? (
+                  <p className="text-xs text-on-surface-variant">Chargement du skill…</p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+        {skillReadError ? <p role="alert" className="text-xs text-error">{skillReadError}</p> : null}
+        {selectedSkill ? (
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="font-mono text-xs font-medium">{selectedSkill.skill.name}/SKILL.md</h4>
+              <Button size="sm" variant="outline" onClick={() => void copyText(selectedSkill.content)}>
+                Copier le contenu
+              </Button>
+            </div>
+            <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-container-high p-3 text-xs">
+              {selectedSkill.content}
+            </pre>
+            <p className="text-xs text-on-surface-variant">
+              Installez le fichier dans le répertoire de skills pris en charge par votre client.
+              L'empreinte SHA-256 ci-dessus permet de contrôler l'intégrité du contenu.
+            </p>
+          </div>
+        ) : null}
       </Card>
 
       <Card className="p-4 space-y-3">

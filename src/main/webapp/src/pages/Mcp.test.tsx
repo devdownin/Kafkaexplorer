@@ -128,6 +128,17 @@ function mockApi(
     if (url.startsWith('/api/mcp/calls')) return Promise.resolve({ data: CALLS });
     if (url.startsWith('/api/mcp/clients')) return Promise.resolve({ data: over.clients ?? [] });
     if (url.startsWith('/api/mcp/overrides')) return Promise.resolve({ data: over.overrides ?? [] });
+    if (url === '/api/mcp/skills') return Promise.resolve({ data: [{
+      name: 'kafka-incident-triage', description: 'Diagnose Kafka incidents.',
+      uri: 'skill://kafka-incident-triage/SKILL.md', digest: 'sha256:abc123',
+      size: 300, audience: 'KAFKA',
+    }] });
+    if (url === '/api/mcp/skills/kafka-incident-triage') return Promise.resolve({ data: {
+      skill: { name: 'kafka-incident-triage', description: 'Diagnose Kafka incidents.',
+        uri: 'skill://kafka-incident-triage/SKILL.md', digest: 'sha256:abc123',
+        size: 300, audience: 'KAFKA' },
+      content: '---\nname: kafka-incident-triage\n---\n# Triage',
+    } });
     if (url.startsWith('/api/mcp/surfaces')) return Promise.resolve({ data: [
       { kind: 'RESOURCE', name: 'KafkaExplorer measurement contract',
         uri: 'kex://contract', description: 'Measured values and Coverage.' },
@@ -154,6 +165,16 @@ beforeEach(() => {
 });
 
 describe("l'onglet Catalogue", () => {
+  it('présente un skill, son URI et son contenu sans activation automatique', async () => {
+    const user = userEvent.setup();
+    renderAt();
+    expect(await screen.findByText('kafka-incident-triage')).toBeInTheDocument();
+    expect(screen.getByText('skill://kafka-incident-triage/SKILL.md')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Voir le SKILL.md' }));
+    expect(await screen.findByText(/# Triage/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copier le contenu' })).toBeInTheDocument();
+  });
+
   it('affiche les Resources et Prompts réellement déclarés par le serveur', async () => {
     renderAt();
     expect(await screen.findByText('kex://contract')).toBeInTheDocument();

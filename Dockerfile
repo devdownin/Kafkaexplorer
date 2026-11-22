@@ -66,6 +66,8 @@ RUN mvn -B -Dmaven.repo.local=/app/.m2repo -P '!build-frontend' dependency:go-of
 # Copier les sources backend
 COPY src/main/java ./src/main/java
 COPY src/main/resources ./src/main/resources
+# Packaged skills are sourced from the same reviewed project Agent Skills.
+COPY .agents/skills ./.agents/skills
 
 # Récupérer les assets frontend construits dans l'étape précédente
 # L'application Spring Boot sert le contenu de src/main/resources/static
@@ -75,7 +77,9 @@ COPY --from=frontend-builder /app/dist ./src/main/resources/static
 # to clean, and it cannot help correctness. The frontend profile is off because the SPA
 # was already built in stage 1; leaving it on would download a second Node toolchain
 # and rebuild the very same bundle.
-RUN mvn -B -Dmaven.repo.local=/app/.m2repo package -P '!build-frontend' -DskipTests
+RUN mvn -B -Dmaven.repo.local=/app/.m2repo package -P '!build-frontend' -DskipTests \
+ && jar tf target/kafka-sql-explorer-*.jar | grep -q 'BOOT-INF/classes/mcp-skills/catalog.txt' \
+ && jar tf target/kafka-sql-explorer-*.jar | grep -q 'BOOT-INF/classes/mcp-skills/kafka-incident-triage/SKILL.md'
 
 # Split the fat JAR into Spring Boot's four standard layers, ordered from the most stable
 # to the least: `dependencies` (Flink, Kafka, Spring — hundreds of megabytes that move

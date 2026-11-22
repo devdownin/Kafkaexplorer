@@ -12,6 +12,8 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRateLimiter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRuntimeSwitches;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolFilter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.skills.McpSkillCatalog;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.skills.McpSkillResources;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.resources.KafkaMcpResources;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.prompts.KafkaMcpPrompts;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpAuditSink;
@@ -219,6 +221,20 @@ public class McpServerConfiguration {
                                        McpRuntimeSwitches switches, McpRateLimiter limiter,
                                        ToolGuard guard) {
         return new KafkaMcpResources(topics, catalog, switches, limiter, guard);
+    }
+
+    /**
+     * Skills are immutable packaged resources; they have no access to Kafka or credentials.
+     * MCP extension negotiation stays disabled until the Java SDK supports SEP-2640 methods.
+     */
+    @Bean
+    McpSkillCatalog mcpSkillCatalog() {
+        return new McpSkillCatalog();
+    }
+
+    @Bean
+    McpSkillResources mcpSkillResources(McpSkillCatalog skills, McpProperties properties) {
+        return new McpSkillResources(skills, properties);
     }
 
     @Bean

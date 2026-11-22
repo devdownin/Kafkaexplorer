@@ -1,0 +1,7 @@
+# Agent Skills packaged and published by KafkaExplorer, one exact directory name per line.
+# Adding a new SKILL.md requires an explicit review and entry here.
+kafka-incident-triage
+kafka-forecast-analyst
+kafka-data-architect
+kafkaexplorer-ci-repair
+kafkaexplorer-release

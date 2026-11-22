@@ -218,6 +218,22 @@
 		</dependency>
 	</dependencies>
 	<build>
+		<!-- Package the reviewed SKILL.md files from their single source in .agents/skills.
+		     No runtime filesystem mount and no second set of skill content to drift. -->
+		<resources>
+			<resource>
+				<directory>src/main/resources</directory>
+			</resource>
+			<resource>
+				<directory>.agents/skills</directory>
+				<targetPath>mcp-skills</targetPath>
+				<filtering>false</filtering>
+				<includes>
+					<include>catalog.txt</include>
+					<include>**/SKILL.md</include>
+				</includes>
+			</resource>
+		</resources>
 		<plugins>
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
