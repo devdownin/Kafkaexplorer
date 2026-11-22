@@ -45,20 +45,17 @@ export function topicEvidence(activity: TopicActivity | undefined, bucket: numbe
   };
 }
 
-export function topicMapPositions(items: readonly { name: string; layoutIndex: number }[]) {
-  const world = items.map(item => {
-    const radius = 3.4 * Math.sqrt(item.layoutIndex);
+export function topicMapPositions(items: readonly { name: string; layoutIndex: number }[],
+  totalTopics: number = items.length) {
+  // Use the full cluster extent even when the operator filters the visible
+  // topics. This keeps mini-map coordinates stable across filter changes.
+  const radius = Math.max(5, 3.4 * Math.sqrt(Math.max(1, totalTopics)));
+  return items.map(item => {
+    const distance = 3.4 * Math.sqrt(item.layoutIndex);
     const angle = item.layoutIndex * 2.399963229728653;
-    return { name: item.name, x: radius * Math.cos(angle), y: radius * Math.sin(angle) };
+    return { name: item.name, x: 120 + Math.cos(angle) * distance / radius * 104,
+      y: 82 + Math.sin(angle) * distance / radius * 66 };
   });
-  if (!world.length) return [];
-  const minX = Math.min(...world.map(p => p.x));
-  const maxX = Math.max(...world.map(p => p.x));
-  const minY = Math.min(...world.map(p => p.y));
-  const maxY = Math.max(...world.map(p => p.y));
-  const scale = Math.max(1, maxX - minX, maxY - minY);
-  return world.map(p => ({ name: p.name, x: 12 + (p.x - minX) / scale * 216,
-    y: 12 + (p.y - minY) / scale * 136 }));
 }
 
 export function activityHistogram(topics: readonly { activity?: TopicActivity }[], buckets: number) {
