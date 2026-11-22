@@ -20,6 +20,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Two additional reviewed Kafka Agent Skills:** `kafka-security-review` for bounded
+  topic-policy and MCP deployment posture evidence, and `kafka-schema-evolution`
+  for baseline-based drift assessment. Both are read-only, refuse invented security
+  or registry compatibility verdicts, and are distributed in the existing MCP
+  Skills catalogue with SHA-256 manifests.
+
 - **MCP Skills & Services pedagogical guide.** New in-app page `/mcp/guide`
   and public Pages guide `docs/mcp-guide.html`: four primitives explained through
   examples, actionable do/don't rules, and interactive incident, forecast and skill

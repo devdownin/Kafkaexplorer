@@ -10,3 +10,10 @@ authorized repository and its CI. No skill makes cluster writes by default.
 
 Use client-native discovery of `.agents/skills/` where supported; otherwise
 copy/symlink the selected skill folder to the client's supported skill directory.
+
+## Additional reviewed Kafka skills
+
+- `kafka-security-review` — evidence-based topic policy and MCP deployment posture review; it is not an ACL audit or security certification.
+- `kafka-schema-evolution` — compare observed schema samples to an operator-provided baseline; registry compatibility is unverified unless a real registry check is attached.
+
+Both are read-only and distributed through the same explicit MCP Skills manifest.
