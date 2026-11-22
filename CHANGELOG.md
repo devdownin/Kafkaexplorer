@@ -72,12 +72,6 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   OAuth mode is restricted to read-only MCP until tool-level RBAC exists; the legacy
   bearer-token mode remains the default. See `docs/mcp-enterprise-auth.md`.
 
-- **Enterprise MCP OAuth phase 2–3:** verified, request-local JWT scopes guard individual
-  read-only MCP tool calls before approvals are consumed. RFC 9728 protected-resource
-  metadata and canonical `WWW-Authenticate` discovery challenges expose the configured
-  issuer and resource URI without trusting request host headers. See
-  `docs/mcp-enterprise-auth.md`.
-
 ## [2.8.2] — 2026-11-21
 
 Released from `main` with no entry recorded here; see [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.8.2).
