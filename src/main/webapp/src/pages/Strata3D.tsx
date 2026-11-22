@@ -389,6 +389,18 @@ function StrataCanvas({ topics, selected, onSelect, onFocus, focused, partitionA
     current.positions = new Map(topics.map(topic => [topic.name, position(topic.layoutIndex)]));
     current.groups = topics.map((topic, index) => {
       const column = createTopic(topic, index, maxRate, dark);
+      if (focused && topic.name !== focused) {
+        // The focus context stays in sight but must not compete with the inspected topic.
+        column.traverse(object => {
+          if (!(object instanceof THREE.Mesh || object instanceof THREE.Sprite)) return;
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          for (const material of materials) {
+            if (material instanceof THREE.MeshBasicMaterial || material instanceof THREE.SpriteMaterial) {
+              material.setValues({ opacity: material.opacity * 0.22, transparent: true });
+            }
+          }
+        });
+      }
       current.content.add(column);
       return column;
     });
