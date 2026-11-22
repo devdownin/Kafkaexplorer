@@ -3,7 +3,12 @@
 **New to Skills & MCP?** Start with the [illustrated interactive guide](mcp-guide.html)
 or its [text version with a Mermaid call graph](mcp-skills-services-guide.md).
 They show how Kex-anHarness orchestrates KafkaExplorer capabilities, without claiming
-that an architectural diagram is a recorded trace.
+that an architectural diagram is a recorded trace. Both guides now offer a nine-step
+reference journey with explicit invocation/return phases, source-backed node details
+and role lenses. Desktop readers can jump between steps, zoom and share deep links;
+mobile/tablet readers get a complete vertical list. On GitHub Pages, the guide
+requires the adjacent `mcp-guide.js` file; `docs/check-mcp-guide.py` checks its
+HTML integration in PR preflight. Neither guide makes Kafka or MCP API calls.
 
 KafkaExplorer exposes three distinct surfaces when `explorer.mcp.enabled=true`:
 
