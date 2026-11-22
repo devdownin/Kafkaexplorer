@@ -144,6 +144,8 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
     controls: OrbitControls;
     content: THREE.Group;
     groups: THREE.Group[];
+    signature: string;
+    fit: (count: number) => void;
   } | null>(null);
   useEffect(() => {
     const element = host.current;
@@ -151,7 +153,7 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
     const scene = new THREE.Scene();
     const camera = new THREE.OrthographicCamera(-12, 12, 12, -12, 0.1, 500);
     const extent = 3.4 * Math.sqrt(Math.max(0, topics.length - 1)) + 4;
-    const halfHeight = Math.max(9, extent * 0.8);
+    let halfHeight = Math.max(9, extent * 0.8);
     const controlsTarget = new THREE.Vector3(0, 2.6, 0);
     camera.position.set(extent * 1.2, extent * 1.05, extent * 1.2);
     camera.lookAt(controlsTarget);
@@ -181,7 +183,11 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
     const ground = new THREE.GridHelper(Math.max(40, extent * 2.8), 24, 0x7794ab, 0xb1c1cf);
     ground.position.y = -0.12;
     scene.add(ground);
-    const current = { scene, camera, renderer, controls, content: contentGroup, groups: [] as THREE.Group[] };
+    const current = {
+      scene, camera, renderer, controls, content: contentGroup,
+      groups: [] as THREE.Group[], signature: topics.map(t => t.name).join('\\u0000'),
+      fit: (_count: number) => {},
+    };
     state.current = current;
 
     const pointer = new THREE.Vector2();
@@ -211,6 +217,15 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
       camera.updateProjectionMatrix();
       renderer.setSize(width, height, false);
       renderer.render(scene, camera);
+    };
+    current.fit = (count: number) => {
+      const width = 3.4 * Math.sqrt(Math.max(0, count - 1)) + 4;
+      halfHeight = Math.max(9, width * 0.8);
+      camera.position.set(width * 1.2, width * 1.05, width * 1.2);
+      controls.target.set(0, 2.6, 0);
+      camera.zoom = 1;
+      controls.update();
+      resize();
     };
     const observer = new ResizeObserver(resize);
     observer.observe(element);
@@ -254,6 +269,11 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
   useEffect(() => {
     const current = state.current;
     if (!current) return;
+    const signature = topics.map(t => t.name).join('\\u0000');
+    if (signature !== current.signature) {
+      current.signature = signature;
+      current.fit(topics.length);
+    }
     // Replace measured geometry without tearing down WebGL, orbit or pointer handlers.
     disposeGroup(current.content);
     current.content.clear();
