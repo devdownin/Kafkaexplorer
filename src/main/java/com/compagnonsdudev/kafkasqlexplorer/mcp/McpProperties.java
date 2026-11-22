@@ -12,6 +12,24 @@ public class McpProperties {
     private boolean enabled = false;
     private boolean readonly = true;
     private String authToken;
+    private String authMode = "bearer";
+    private Oauth2 oauth2 = new Oauth2();
+
+    public static class Oauth2 {
+        private String issuerUri;
+        private String jwkSetUri;
+        private String audience;
+        public String getIssuerUri() { return issuerUri; }
+        public void setIssuerUri(String issuerUri) { this.issuerUri = issuerUri; }
+        public String getJwkSetUri() { return jwkSetUri; }
+        public void setJwkSetUri(String jwkSetUri) { this.jwkSetUri = jwkSetUri; }
+        public String getAudience() { return audience; }
+        public void setAudience(String audience) { this.audience = audience; }
+    }
+    public String getAuthMode() { return authMode; }
+    public void setAuthMode(String authMode) { this.authMode = authMode; }
+    public Oauth2 getOauth2() { return oauth2; }
+    public void setOauth2(Oauth2 oauth2) { this.oauth2 = oauth2; }
     /** Production HTTP MCP requires TLS; local development may explicitly opt out. */
     private boolean requireTls = true;
     private Tools tools = new Tools();
@@ -80,6 +98,41 @@ public class McpProperties {
         public void setReplayRunbook(String replayRunbook) { this.replayRunbook = replayRunbook; }
     }
 
+    /** Explicitly configured JWT resource-server mode; never auto-discovers an untrusted issuer. */
+    public static class OAuth {
+        private boolean enabled = false;
+        private String issuerUri;
+        private String jwkSetUri;
+        private String audience;
+        /** Canonical public HTTPS URL of this protected MCP resource, including /mcp. */
+        private String resourceUri;
+        private String readScope = "mcp.read";
+        private String adminScope = "mcp.admin";
+        private String auditScope = "mcp.audit";
+        /** Optional exact tool-name -> additional verified JWT scope; no wildcard supported. */
+        private java.util.Map<String, String> toolScopes = java.util.Map.of();
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public String getIssuerUri() { return issuerUri; }
+        public void setIssuerUri(String issuerUri) { this.issuerUri = issuerUri; }
+        public String getJwkSetUri() { return jwkSetUri; }
+        public void setJwkSetUri(String jwkSetUri) { this.jwkSetUri = jwkSetUri; }
+        public String getResourceUri() { return resourceUri; }
+        public void setResourceUri(String resourceUri) { this.resourceUri = resourceUri; }
+        public String getAudience() { return audience; }
+        public void setAudience(String audience) { this.audience = audience; }
+        public String getReadScope() { return readScope; }
+        public void setReadScope(String readScope) { this.readScope = readScope; }
+        public String getAdminScope() { return adminScope; }
+        public void setAdminScope(String adminScope) { this.adminScope = adminScope; }
+        public java.util.Map<String, String> getToolScopes() { return toolScopes; }
+        public void setToolScopes(java.util.Map<String, String> toolScopes) {
+            this.toolScopes = toolScopes == null ? java.util.Map.of() : java.util.Map.copyOf(toolScopes);
+        }
+        public String getAuditScope() { return auditScope; }
+        public void setAuditScope(String auditScope) { this.auditScope = auditScope; }
+    }
+
     public static class Tools {
         private String allowed = ANY;
         private String denied = "";
@@ -121,6 +174,8 @@ public class McpProperties {
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
     public boolean isReadonly() { return readonly; }
     public void setReadonly(boolean readonly) { this.readonly = readonly; }
+    public OAuth getOauth() { return oauth; }
+    public void setOauth(OAuth oauth) { this.oauth = oauth; }
     public String getAuthToken() { return authToken; }
     public void setAuthToken(String authToken) { this.authToken = authToken; }
     public boolean isRequireTls() { return requireTls; }

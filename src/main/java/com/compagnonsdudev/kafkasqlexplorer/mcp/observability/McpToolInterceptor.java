@@ -13,6 +13,7 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRateLimiter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRuntimeSwitches;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.security.McpCallerContext;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.security.McpToolScopeAuthorizer;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
@@ -82,6 +83,7 @@ public class McpToolInterceptor {
     private final McpRuntimeSwitches switches;
     private final McpRateLimiter rateLimiter;
     private final McpApprovalStore approvals;
+    private final McpToolScopeAuthorizer toolAuthorizer;
 
     /**
      * Its own mapper, deliberately: this one only measures and reports, so it must not inherit
@@ -99,6 +101,7 @@ public class McpToolInterceptor {
         this.switches = switches;
         this.rateLimiter = rateLimiter;
         this.approvals = approvals;
+        this.toolAuthorizer = new McpToolScopeAuthorizer(properties);
     }
 
     /** The same specification, with its call handler wrapped. */
@@ -134,6 +137,8 @@ public class McpToolInterceptor {
             // second ago.
             checkNotQuarantined(identity);
             checkNotDisabled(tool);
+            // OAuth per-tool RBAC precedes the one-time approval spend and any delegate execution.
+            toolAuthorizer.requirePermission(tool);
             approvals.spend(tool, approvalToken(arguments), identity);
             rateLimiter.check(identity);
 

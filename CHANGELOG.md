@@ -20,6 +20,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Optional MCP OAuth JWT resource-server mode:** external issuer/JWK validation,
+  required audience and separate `mcp:invoke` / `mcp:admin` transport scopes.
+  Legacy shared-token mode remains the default; MCP Tasks and per-tool OAuth RBAC
+  remain explicitly unsupported pending separate implementation.
+- **Light-first application appearance.** First visits always render in light mode regardless of the OS, including the pre-paint background and browser chrome. The header now uses an accessible binary dark-mode switch instead of cycling System / Light / Dark. Dark mode persists per browser; switching back to light restores the default without a stored override.
+
 - **MCP guide usability pass.** Role-lens filtering without hiding intermediate nodes,
   accessible mobile step list, graph zoom, arrow/Home/End keyboard traversal,
   shareable scenario/step/focus URLs and portable Mermaid export. The public GitHub
@@ -66,6 +72,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are regenerated in both schemes (`docs/img/<screen>.png` and `<screen>-dark.png`), and the Pages site
   follows the visitor's system with the same tokens. Rationale, pass by pass, in
   `docs/notes/spatial-light-theme.md`.
+
+- **Opt-in enterprise MCP OAuth JWT authentication (phase 1):** pinned HTTPS JWKS,
+  validated issuer/audience/time, scoped HTTP routes and stable principal fingerprints.
+  OAuth mode is restricted to read-only MCP until tool-level RBAC exists; the legacy
+  bearer-token mode remains the default. See `docs/mcp-enterprise-auth.md`.
 
 - **MCP reference graph navigation and Pages parity.** The in-app guide gains a
   nine-step quick-navigation rail, separates invocation from evidence return,

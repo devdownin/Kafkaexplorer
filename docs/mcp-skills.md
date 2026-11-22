@@ -24,7 +24,7 @@ actual Spring AI specifications. The read-only `GET /api/mcp/surfaces` endpoint 
 kind, name, URI and description; it returns an empty list when MCP is disabled.
 
 The server is **off by default** and its read-only posture is the default when enabled.
-See [MCP specification](../SPEC-MCP.md) and [security notes](notes/mcp-security-p0.md).
+For optional OAuth JWT resource-server authentication and the explicit MCP Tasks roadmap, see [Enterprise MCP](mcp-enterprise.md).\nSee [MCP specification](../SPEC-MCP.md) and [security notes](notes/mcp-security-p0.md).
 The probe `mcp-probe.sh` checks each MCP discovery/read path over real streamable HTTP.
 
 ## MCP resources
@@ -114,3 +114,12 @@ Clients that discover project-local Agent Skills under `.agents/skills/` can loa
 4. Run `./mvnw verify` for the full backend/frontend gate and use the pull request's checks as the authoritative environment.
 
 When the stack uses the Compose demo's loopback-only HTTP mode, leave it inaccessible from untrusted networks. For shared deployments use TLS; never publish the development token.
+
+## Enterprise OAuth JWT mode (opt-in)
+
+For deployments with a trusted OAuth identity provider, KafkaExplorer can validate
+signed JWT access tokens with pinned JWKS, issuer, audience, route-level scopes and RFC 9728 protected-resource metadata.
+This mode is **read-only**. Additional verified OAuth scopes can be required for individual MCP tools; write-capable toolsets remain unavailable in OAuth mode. The existing static
+bearer-token configuration remains the default. See the
+[Enterprise MCP authentication guide](mcp-enterprise-auth.md) for configuration,
+security boundaries and unsupported OAuth/MCP Tasks capabilities.
