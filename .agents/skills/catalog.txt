@@ -5,3 +5,6 @@ kafka-forecast-analyst
 kafka-data-architect
 kafkaexplorer-ci-repair
 kafkaexplorer-release
+
+kafka-security-review
+kafka-schema-evolution
