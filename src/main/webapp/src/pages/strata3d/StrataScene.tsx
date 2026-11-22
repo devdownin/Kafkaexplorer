@@ -118,7 +118,8 @@ export default function StrataScene({ columns, selected, dark, motion, view, res
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'low-power' });
     } catch {
-      setUnsupported(true);
+      // Report unsupported WebGL after this effect, without a synchronous render cascade.
+      queueMicrotask(() => { if (host.isConnected) setUnsupported(true); });
       return;
     }
 
