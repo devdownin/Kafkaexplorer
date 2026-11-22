@@ -12,7 +12,7 @@ import {
 } from '../components/ui';
 import type {
   McpApprovalResult, McpCallView, McpCatalogView, McpClientConfig, McpClientRow, McpOverrideView,
-  McpReplay, McpStatsView, McpStatusView, McpSwitchResult, McpToolRow, McpTryResult,
+  McpReplay, McpStatsView, McpStatusView, McpSurfaceView, McpSwitchResult, McpToolRow, McpTryResult,
 } from '../api/types';
 import {
   DEFAULT_WINDOW, EMPTY_FILTERS, WINDOWS, callsToCsv, coverageLabel, deniedShare, filtersFromParams,
@@ -65,6 +65,7 @@ const Mcp: FC = () => {
 
   const [status, setStatus] = useState<McpStatusView | null>(null);
   const [catalog, setCatalog] = useState<McpCatalogView | null>(null);
+  const [surfaces, setSurfaces] = useState<McpSurfaceView[]>([]);
   const [stats, setStats] = useState<McpStatsView | null>(null);
   const [calls, setCalls] = useState<McpCallView[]>([]);
   const [clients, setClients] = useState<McpClientRow[]>([]);
@@ -92,7 +93,7 @@ const Mcp: FC = () => {
       const feed = new URLSearchParams({ limit: '200' });
       for (const [key, value] of Object.entries(filters)) if (value) feed.set(key, value);
 
-      const [statusRes, catalogRes, statsRes, callsRes, clientsRes, overridesRes] =
+      const [statusRes, catalogRes, statsRes, callsRes, clientsRes, overridesRes, surfacesRes] =
         await Promise.all([
           axios.get<McpStatusView>('/api/mcp/status'),
           axios.get<McpCatalogView>(`/api/mcp/catalog?${query}`),
@@ -100,9 +101,11 @@ const Mcp: FC = () => {
           axios.get<McpCallView[]>(`/api/mcp/calls?${feed}`),
           axios.get<McpClientRow[]>(`/api/mcp/clients?${query}`),
           axios.get<McpOverrideView[]>('/api/mcp/overrides'),
+          axios.get<McpSurfaceView[]>('/api/mcp/surfaces'),
         ]);
       setStatus(statusRes.data);
       setCatalog(catalogRes.data);
+      setSurfaces(surfacesRes.data);
       setStats(statsRes.data);
       setCalls(callsRes.data);
       setClients(clientsRes.data);
@@ -196,6 +199,7 @@ const Mcp: FC = () => {
       ) : tab === 'catalog' ? (
         <CatalogTab
           catalog={catalog}
+          surfaces={surfaces}
           endpoint={status?.endpoint ?? null}
           tryItEnabled={status?.tryItEnabled ?? false}
           overrides={overrides}
@@ -566,13 +570,14 @@ const WindowNotice: FC<{ view: McpCatalogView | McpStatsView }> = ({ view }) => 
 
 const CatalogTab: FC<{
   catalog: McpCatalogView | null;
+  surfaces: McpSurfaceView[];
   endpoint: string | null;
   tryItEnabled: boolean;
   overrides: McpOverrideView[];
   /* Pour l'approbation : lier un jeton à un appelant demande de savoir lesquels existent. */
   clients: McpClientRow[];
   onSwitched: () => void;
-}> = ({ catalog, endpoint, tryItEnabled, overrides, clients, onSwitched }) => {
+}> = ({ catalog, surfaces, endpoint, tryItEnabled, overrides, clients, onSwitched }) => {
   const [config, setConfig] = useState<McpClientConfig | null>(null);
   const [client, setClient] = useState('claude-code');
   /* Les outils coupés à chaud, tirés du bandeau plutôt que d'un second appel : la même vérité,
@@ -695,6 +700,33 @@ const CatalogTab: FC<{
             ))}
           </tbody>
         </table>
+      </Card>
+
+      <Card className="p-4 space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Resources et Prompts MCP</h3>
+          <p className="text-xs text-on-surface-variant">
+            Surface réellement enregistrée par Spring AI. Les Resources sont des instantanés
+            bornés ; les Prompts décrivent des procédures, sans exécuter eux-mêmes d'outils.
+          </p>
+        </div>
+        {surfaces.length === 0 ? (
+          <p className="text-xs text-on-surface-variant">Aucune Resource ou Prompt exposé.</p>
+        ) : (
+          <div className="grid gap-2 md:grid-cols-2">
+            {surfaces.map((surface) => (
+              <div key={`${surface.kind}:${surface.uri ?? surface.name}`}
+                className="rounded-lg border border-outline-variant p-3 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge>{surface.kind === 'RESOURCE_TEMPLATE' ? 'Template' :
+                    surface.kind === 'RESOURCE' ? 'Resource' : 'Prompt'}</Badge>
+                  <span className="font-mono text-xs break-all">{surface.uri ?? surface.name}</span>
+                </div>
+                <p className="text-xs text-on-surface-variant">{surface.description}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
 
       <Card className="p-4 space-y-3">
