@@ -6,6 +6,7 @@ import type { ConsumerGroupLag, DashboardResponse, PartitionActivityResponse, To
 import StrataConsumerPanel from './StrataConsumerPanel';
 import StrataTracePanel from './StrataTracePanel';
 import StrataForecastPanel from './StrataForecastPanel';
+import StrataDiagnosticPanel, { type DiagnosticMode } from './StrataDiagnosticPanel';
 import { createForecastCanopy, createPartitionRibbons } from './strataImmersive';
 import type { StrataProjection } from './strataForecast';
 import { consumerHealth } from './StrataConsumerPanel';
@@ -86,7 +87,8 @@ function topicLabel(name: string, dark: boolean): THREE.Sprite | null {
   return sprite;
 }
 
-function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean): THREE.Group {
+function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean,
+  highlight: 'primary' | 'comparison' | null): THREE.Group {
   const group = new THREE.Group();
   group.position.copy(position(topic.layoutIndex));
   group.userData.topic = topic.name;
@@ -140,15 +142,30 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
     glow.position.set(0, 0.3, 0);
     group.add(glow);
   }
+  if (highlight) {
+    const accent = highlight === 'primary' ? 0x0c9da9 : 0x9b76db;
+    for (const y of [0.12, height + 0.13]) {
+      const halo = new THREE.Mesh(
+        new THREE.TorusGeometry(1.15, 0.065, 8, 54),
+        new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.93, depthWrite: false }),
+      );
+      halo.rotation.x = Math.PI / 2;
+      halo.position.y = y;
+      group.add(halo);
+    }
+  }
   const label = topicLabel(topic.name, dark);
   if (label) group.add(label);
   return group;
 }
 
-function StrataCanvas({ topics, selected, onSelect, onFocus, focused, partitionActivity, forecast,
+function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect, onFocus,
+  focused, partitionActivity, forecast,
   motion, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable }: {
   topics: Topic[];
   selected: string | null;
+  compareWith: string | null;
+  diagnosticMode: DiagnosticMode;
   onSelect: (topic: string) => void;
   onFocus: (topic: string) => void;
   focused: string | null;
@@ -388,8 +405,13 @@ function StrataCanvas({ topics, selected, onSelect, onFocus, focused, partitionA
     const maxRate = Math.max(1, ...values);
     current.positions = new Map(topics.map(topic => [topic.name, position(topic.layoutIndex)]));
     current.groups = topics.map((topic, index) => {
-      const column = createTopic(topic, index, maxRate, dark);
-      if (focused && topic.name !== focused) {
+      const highlight = topic.name === selected ? 'primary' :
+        diagnosticMode === 'compare' && topic.name === compareWith ? 'comparison' : null;
+      const column = createTopic(topic, index, maxRate, dark, highlight);
+      const isNeighbor = diagnosticMode === 'investigate' && links.some(link =>
+        (link.from === selected && link.to === topic.name) ||
+        (link.to === selected && link.from === topic.name));
+      if (focused && topic.name !== focused && topic.name !== compareWith && !isNeighbor) {
         // The focus context stays in sight but must not compete with the inspected topic.
         column.traverse(object => {
           if (!(object instanceof THREE.Mesh || object instanceof THREE.Sprite)) return;
@@ -417,8 +439,12 @@ function StrataCanvas({ topics, selected, onSelect, onFocus, focused, partitionA
         new THREE.Vector3(end.x, 5.6, end.z),
       );
       const geometry = new THREE.BufferGeometry().setFromPoints(curve.getPoints(40));
+      const neighborhood = link.from === selected || link.to === selected;
       const line = new THREE.Line(geometry, new THREE.LineDashedMaterial({
-        color: dark ? 0x9db6db : 0x6d7fa2, transparent: true, opacity: 0.58, dashSize: 0.38, gapSize: 0.24,
+        color: neighborhood ? (dark ? 0x48c6cb : 0x118b9c) : (dark ? 0x9db6db : 0x6d7fa2),
+        transparent: true, opacity: diagnosticMode === 'investigate' && selected
+          ? (neighborhood ? 0.92 : 0.12) : 0.58,
+        dashSize: 0.38, gapSize: 0.24,
       }));
       line.computeLineDistances();
       current.content.add(line);
@@ -481,7 +507,7 @@ function StrataCanvas({ topics, selected, onSelect, onFocus, focused, partitionA
       if (center) current.content.add(createForecastCanopy(forecast, center, dark));
     }
     current.renderer.render(current.scene, current.camera);
-  }, [topics, links, selectedGroup, selected, focused, partitionActivity, forecast, themeRevision, trace]);
+  }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace]);
 
   const scopeKey = topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000');
   useEffect(() => { state.current?.focus(focused); }, [focused, scopeKey]);
@@ -530,6 +556,8 @@ export default function Strata3D() {
   const [lineageError, setLineageError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [diagnosticMode, setDiagnosticMode] = useState<DiagnosticMode>('investigate');
+  const [compareWith, setCompareWith] = useState<string | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<ConsumerGroupLag | null>(null);
   const [query, setQuery] = useState('');
   const [filteredQuery, setFilteredQuery] = useState('');
@@ -549,8 +577,9 @@ export default function Strata3D() {
   const onProjection = useCallback((projection: StrataProjection | null) => setForecastOverlay(projection), []);
   const chooseTopic = useCallback((name: string) => {
     if (selected !== name) setSelectedGroup(null);
+    if (compareWith === name) setCompareWith(null);
     setSelected(name);
-  }, [selected]);
+  }, [selected, compareWith]);
   const focusTopic = useCallback((name: string) => {
     chooseTopic(name);
     setFocused(name);
@@ -720,6 +749,8 @@ export default function Strata3D() {
   })), [scoped, dashboard, activity, layoutIndices]);
   const links = useMemo(() => lineage ? deriveStrataLinks(lineage, scoped) : [], [lineage, scoped]);
   const selectedTopic = topics.find(t => t.name === selected);
+  const activeCompareWith = diagnosticMode === 'compare' && compareWith !== selected &&
+    topics.some(t => t.name === compareWith) ? compareWith : null;
   const measured = topics.filter(t => t.activity?.available).length;
   const incomplete = topics.filter(t => t.activity?.available && (
     t.activity.partitionsMeasured < t.activity.partitionsTotal || t.activity.coveredFromMs !== null
@@ -814,7 +845,8 @@ export default function Strata3D() {
       <div className="relative overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-low"
         style={{ height: 'min(68vh, 680px)', minHeight: 410 }}>
         {topics.length > 0 ?
-          <StrataCanvas topics={topics} selected={selected} onSelect={chooseTopic} onFocus={focusTopic}
+          <StrataCanvas topics={topics} selected={selected} compareWith={activeCompareWith}
+            diagnosticMode={diagnosticMode} onSelect={chooseTopic} onFocus={focusTopic}
             focused={activeFocus} partitionActivity={partitionActivity} forecast={visibleForecast} motion={motion}
             links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
             selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
@@ -825,9 +857,32 @@ export default function Strata3D() {
           Dashes: declared Flink INSERT paths (not observed messages)<br />
           Coloured satellites: selected group's partition lag<br />
           Teal arcs: chronological key matches · amber rings: activity deviations<br />
-          Focus: measured partition ribbons · violet canopy: metric forecast
+          Focus: measured partition ribbons · violet canopy: metric forecast<br />
+          Cyan halo: topic A · purple halo: topic B (comparison, not a link)
         </div>
       </div>
+      <section className="rounded-2xl border border-outline-variant bg-surface-container-low p-3 sm:p-5 space-y-4"
+        aria-labelledby="strata-workspace-heading">
+        <header className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 id="strata-workspace-heading" className="text-lg font-semibold text-on-surface">Diagnostic workspace</h2>
+            <p className="text-xs text-on-surface-variant">
+              One selected topic, shared evidence, synced time cursor and a second topic when comparing.
+              These analyses are read-only.
+            </p>
+          </div>
+          <div className="inline-flex rounded-xl border border-outline-variant bg-surface p-1 gap-1"
+            role="tablist" aria-label="Diagnostic mode">
+            <button type="button" role="tab" aria-selected={diagnosticMode === 'investigate'}
+              className={`rounded-lg px-3 py-2 text-sm font-medium ${diagnosticMode === 'investigate'
+                ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+              onClick={() => setDiagnosticMode('investigate')}>Investigate</button>
+            <button type="button" role="tab" aria-selected={diagnosticMode === 'compare'}
+              className={`rounded-lg px-3 py-2 text-sm font-medium ${diagnosticMode === 'compare'
+                ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
+              onClick={() => setDiagnosticMode('compare')}>Compare</button>
+          </div>
+        </header>
       {activeFocus && <section className="rounded-xl border border-outline-variant bg-surface p-4 space-y-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -904,24 +959,11 @@ export default function Strata3D() {
                   onDoubleClick={() => focusTopic(topic.name)} title="Double-click to focus">{topic.name}</button>)}
             </div>
           </div>
-          <div className="border-t border-outline-variant pt-3">
-            <h3 className="text-sm font-semibold text-on-surface mb-2">Declared Flink INSERT links</h3>
-            <p className="text-xs text-on-surface-variant mb-2">
-              Paths derive from source-topic tables and running INSERT jobs. No link means no verifiable path in the retrieved lineage, not necessarily no data flow.
-            </p>
-            {links.length === 0 ?
-              <p className="text-sm text-on-surface-variant">No explicit topic-to-topic INSERT path in this view.</p> :
-              <ul className="max-h-44 overflow-auto space-y-1">
-                {links.slice(0, 40).map(link =>
-                  <li key={`${link.from}|${link.to}|${link.via}`}>
-                    <button className="w-full text-left text-xs text-on-surface hover:bg-surface-container-high px-2 py-1.5 rounded-lg"
-                      onClick={() => chooseTopic(link.from)} title={`Evidence: ${link.via}`}>
-                      <span className="font-medium">{link.from}</span> → {link.to}
-                      <span className="text-on-surface-variant"> · {link.via}</span>
-                    </button>
-                  </li>)}
-                {links.length > 40 && <li className="text-xs text-on-surface-variant">More links omitted from this list.</li>}
-              </ul>}
+          <div className="border-t border-outline-variant pt-4">
+            <StrataDiagnosticPanel mode={diagnosticMode} topic={selectedTopic?.name ?? null}
+              compareWith={activeCompareWith} topics={scoped} snapshot={activity} links={links}
+              trace={activeTrace} selectedBucket={selectedBucket}
+              onChooseTopic={chooseTopic} onCompareWith={setCompareWith} />
           </div>
         </section>
         <aside className="rounded-xl border border-outline-variant bg-surface p-4" aria-live="polite">
@@ -957,6 +999,7 @@ export default function Strata3D() {
           </> : <p className="text-sm text-on-surface-variant">Select a column or topic to see consumer and partition lag.</p>}
         </aside>
       </div>
+      </section>
     </div>
   );
 }
