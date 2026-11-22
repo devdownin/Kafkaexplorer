@@ -4,6 +4,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConsumerGroupLag, DashboardResponse, TopicActivity, TopicActivityResponse } from '../api/types';
 import StrataConsumerPanel from './StrataConsumerPanel';
+import StrataTracePanel from './StrataTracePanel';
+import { bucketInterval, bucketReading, detectActivityAnomaly } from './strataTime';
+import type { ParsedFlow } from './streamFlowLogic';
 import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strataLineage';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
@@ -98,6 +101,9 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
     );
     ring.rotation.x = Math.PI / 2;
     ring.position.y = 0.35 + i * 0.43;
+    ring.userData.bucketIndex = i;
+    ring.userData.baseOpacity = (ring.material as THREE.MeshBasicMaterial).opacity;
+    ring.userData.baseColor = (ring.material as THREE.MeshBasicMaterial).color.clone();
     group.add(ring);
   }
   const crown = new THREE.Mesh(
@@ -122,7 +128,7 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
   return group;
 }
 
-function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup, themeRevision }: {
+function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup, themeRevision, selectedBucket, trace }: {
   topics: Topic[];
   selected: string | null;
   onSelect: (topic: string) => void;
@@ -130,6 +136,8 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
   links: StrataLink[];
   selectedGroup: ConsumerGroupLag | null;
   themeRevision: number;
+  selectedBucket: number;
+  trace: ParsedFlow | null;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const onSelectRef = useRef(onSelect);
@@ -144,6 +152,7 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
     controls: OrbitControls;
     content: THREE.Group;
     groups: THREE.Group[];
+    lens: THREE.Mesh;
     signature: string;
     fit: (count: number) => void;
   } | null>(null);
@@ -180,12 +189,21 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
     controls.update();
     const contentGroup = new THREE.Group();
     scene.add(contentGroup);
+    // The horizontal time cursor is scene-owned and never reconstructed by polling.
+    const lens = new THREE.Mesh(
+      new THREE.PlaneGeometry(Math.max(28, extent * 2.65), Math.max(28, extent * 2.65)),
+      new THREE.MeshBasicMaterial({ color: 0x83b9d5, transparent: true, opacity: 0.085,
+        side: THREE.DoubleSide, depthWrite: false }),
+    );
+    lens.rotation.x = -Math.PI / 2;
+    lens.position.y = 0.35 + 11 * 0.43;
+    scene.add(lens);
     const ground = new THREE.GridHelper(Math.max(40, extent * 2.8), 24, 0x7794ab, 0xb1c1cf);
     ground.position.y = -0.12;
     scene.add(ground);
     const current = {
       scene, camera, renderer, controls, content: contentGroup,
-      groups: [] as THREE.Group[], signature: topics.map(t => t.name).join('\\u0000'),
+      groups: [] as THREE.Group[], lens, signature: topics.map(t => t.name).join('\\u0000'),
       fit: (_count: number) => {},
     };
     state.current = current;
@@ -256,6 +274,8 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       controls.dispose();
       disposeGroup(contentGroup);
+      lens.geometry.dispose();
+      (lens.material as THREE.Material).dispose();
       ground.geometry.dispose();
       (ground.material as THREE.Material).dispose();
       renderer.dispose();
@@ -279,6 +299,7 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
     current.content.clear();
     const dark = document.documentElement.classList.contains('dark') ||
       document.documentElement.getAttribute('data-theme') === 'dark';
+    (current.lens.material as THREE.MeshBasicMaterial).color.setHex(dark ? 0x83b9d5 : 0x5888af);
     const values = topics.flatMap(t => t.activity?.available ? t.activity.counts : []);
     const maxRate = Math.max(1, ...values);
     current.groups = topics.map((topic, index) => {
@@ -306,6 +327,35 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
       current.content.add(line);
     }
 
+    // Chronological key matches are distinct from dashed Flink lineage. The links
+    // express event order, not a guaranteed causal transfer.
+    if (trace) {
+      const visibleHits = trace.hits.filter(hit => lookup.has(hit.topic)).slice(0, 48);
+      for (let index = 0; index < visibleHits.length; index++) {
+        const start = lookup.get(visibleHits[index].topic)!;
+        const point = new THREE.Mesh(
+          new THREE.SphereGeometry(0.17, 14, 10),
+          new THREE.MeshBasicMaterial({ color: 0x1bafbd }),
+        );
+        point.position.set(start.x, 6.18, start.z);
+        current.content.add(point);
+        if (index === 0) continue;
+        const end = lookup.get(visibleHits[index - 1].topic)!;
+        const radius = start.distanceTo(end);
+        const curve = new THREE.CubicBezierCurve3(
+          new THREE.Vector3(end.x, 6.18, end.z),
+          new THREE.Vector3(end.x, 7.3 + radius * 0.09, end.z),
+          new THREE.Vector3(start.x, 7.3 + radius * 0.09, start.z),
+          new THREE.Vector3(start.x, 6.18, start.z),
+        );
+        const beam = new THREE.Mesh(
+          new THREE.TubeGeometry(curve, 24, 0.04, 6, false),
+          new THREE.MeshBasicMaterial({ color: 0x16afbd, transparent: true, opacity: 0.88 }),
+        );
+        current.content.add(beam);
+      }
+    }
+
     const selectedIndex = topics.findIndex(t => t.name === selected);
     if (selectedIndex >= 0 && selectedGroup) {
       const point = position(selectedIndex);
@@ -326,13 +376,32 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
       }
     }
     current.renderer.render(current.scene, current.camera);
-  }, [topics, links, selectedGroup, selected, themeRevision]);
+  }, [topics, links, selectedGroup, selected, themeRevision, trace]);
 
   useEffect(() => {
     const groups = state.current?.groups;
     if (!groups) return;
     for (const group of groups) group.scale.setScalar(group.userData.topic === selected ? 1.04 : 1);
   }, [selected, topics]);
+
+  useEffect(() => {
+    const current = state.current;
+    if (!current) return;
+    current.lens.position.y = 0.35 + selectedBucket * 0.43;
+    const measurements = new Map(topics.map(topic => [topic.name, topic.activity]));
+    for (const group of current.groups) {
+      const anomaly = detectActivityAnomaly(measurements.get(group.userData.topic as string), selectedBucket);
+      for (const object of group.children) {
+        if (!(object instanceof THREE.Mesh) || object.userData.bucketIndex === undefined) continue;
+        const material = object.material as THREE.MeshBasicMaterial;
+        const active = object.userData.bucketIndex === selectedBucket;
+        material.opacity = Math.min(1, (object.userData.baseOpacity as number) * (active ? 1.4 : 0.42));
+        material.color.copy(object.userData.baseColor as THREE.Color);
+        if (active && anomaly) material.color.setHex(0xe7a044);
+      }
+    }
+    current.renderer.render(current.scene, current.camera);
+  }, [selectedBucket, topics, links, trace, selectedGroup, selected, themeRevision]);
 
   return (
     <div ref={host} role="img"
