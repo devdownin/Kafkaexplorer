@@ -9,6 +9,10 @@ KafkaExplorer exposes three distinct surfaces when `explorer.mcp.enabled=true`:
 | MCP **Prompts** | `prompts/list`, `prompts/get` | Parameterized *instructions*, not tool execution |
 | **Agent Skills** | Install a `SKILL.md` into a compatible agent | End-to-end process and acceptance criteria; orchestrates only exposed MCP tools |
 
+The MCP screen's Catalogue tab also shows **Resources and Prompts**, discovered from the
+actual Spring AI specifications. The read-only `GET /api/mcp/surfaces` endpoint returns their
+kind, name, URI and description; it returns an empty list when MCP is disabled.
+
 The server is **off by default** and its read-only posture is the default when enabled.
 See [MCP specification](../SPEC-MCP.md) and [security notes](notes/mcp-security-p0.md).
 The probe `mcp-probe.sh` checks each MCP discovery/read path over real streamable HTTP.

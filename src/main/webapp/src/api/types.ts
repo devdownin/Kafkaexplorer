@@ -1434,6 +1434,14 @@ export interface McpCatalogView {
   observedWindow: ObservedWindow;
 }
 
+/** The live resource/prompt specification inventory, not a frontend-maintained list. */
+export interface McpSurfaceView {
+  kind: 'RESOURCE' | 'RESOURCE_TEMPLATE' | 'PROMPT';
+  name: string;
+  uri: string | null;
+  description: string | null;
+}
+
 /** @java McpCallView */
 export interface McpCallView {
   correlationId: string;
