@@ -47,9 +47,11 @@ class McpOAuthFilterTest {
                 reached.set(true);
                 assertEquals(McpHttpAuthFilter.identityOf("https://issuer.example.test:operator"),
                         McpCallerContext.identity());
+                assertFalse(McpCallerContext.verifiedScopes().isEmpty());
             }
         });
         assertEquals("local", McpCallerContext.identity());
+        assertTrue(McpCallerContext.verifiedScopes().isEmpty());
         return response.getStatus();
     }
 

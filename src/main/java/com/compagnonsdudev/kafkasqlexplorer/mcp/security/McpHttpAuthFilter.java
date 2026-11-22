@@ -131,7 +131,7 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
         // Bind to the verified issuer + subject rather than the rotating access-token bytes.
         String identity = identityOf(jwt.getIssuer().toString() + ":" + jwt.getSubject());
         request.setAttribute(IDENTITY_ATTRIBUTE, identity);
-        McpCallerContext.set(identity);
+        McpCallerContext.setVerified(identity, verifiedScopes(scope, scp));
         try { chain.doFilter(request, response); }
         finally { McpCallerContext.clear(); request.removeAttribute(IDENTITY_ATTRIBUTE); }
     }
@@ -145,6 +145,21 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
             return oauth.getAdminScope();
         }
         return oauth.getReadScope();
+    }
+
+    private static java.util.Set<String> verifiedScopes(Object scope, Object scp) {
+        java.util.Set<String> result = new java.util.HashSet<>();
+        addVerifiedScopes(result, scope);
+        addVerifiedScopes(result, scp);
+        return java.util.Set.copyOf(result);
+    }
+
+    private static void addVerifiedScopes(java.util.Set<String> scopes, Object value) {
+        if (value instanceof String text) {
+            for (String scope : text.split("\\s+")) if (!scope.isBlank()) scopes.add(scope);
+        } else if (value instanceof java.util.Collection<?> values) {
+            for (Object item : values) if (item instanceof String text && !text.isBlank()) scopes.add(text);
+        }
     }
 
     private static boolean containsScope(Object value, String expected) {

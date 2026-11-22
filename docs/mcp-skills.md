@@ -114,7 +114,7 @@ When the stack uses the Compose demo's loopback-only HTTP mode, leave it inacces
 
 For deployments with a trusted OAuth identity provider, KafkaExplorer can validate
 signed JWT access tokens with pinned JWKS, issuer, audience and route-level scopes.
-This mode is **read-only only** until tool-level RBAC exists. The existing static
+This mode is **read-only**. Additional verified OAuth scopes can be required for individual MCP tools; write-capable toolsets remain unavailable in OAuth mode. The existing static
 bearer-token configuration remains the default. See the
 [Enterprise MCP authentication guide](mcp-enterprise-auth.md) for configuration,
 security boundaries and unsupported OAuth/MCP Tasks capabilities.
