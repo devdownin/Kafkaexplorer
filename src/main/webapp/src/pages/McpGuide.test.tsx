@@ -13,7 +13,7 @@ describe('Guide pédagogique MCP', () => {
   it('explique les quatre primitives et présente le graphe comme une référence, pas une trace live', () => {
     renderGuide();
     for (const title of ['Skill', 'Tool', 'Resource', 'Prompt']) {
-      expect(screen.getByRole('heading', { name: title, exact: true })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
     }
     expect(screen.getByText('Référence, pas trace live')).toBeInTheDocument();
     expect(screen.getByText(/n'est pas calculé à partir d'un run/)).toBeInTheDocument();

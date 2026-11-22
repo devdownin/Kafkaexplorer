@@ -23,7 +23,7 @@ describe('Graphe de référence Kex-anHarness', () => {
   it('a un parcours orienté complet dont les retours restent explicitement distincts des appels', () => {
     expect(GRAPH_EDGES).toHaveLength(GRAPH_ORDER.length);
     expect(GRAPH_EDGES.map((edge) => edge[0])).toEqual(GRAPH_ORDER);
-    expect(GRAPH_EDGES.at(-1)).toEqual(['answer', 'request', 'return']);
+    expect(GRAPH_EDGES[GRAPH_EDGES.length - 1]).toEqual(['answer', 'request', 'return']);
     expect(GRAPH_EDGES.filter((edge) => edge[2] === 'call')).toHaveLength(6);
     expect(GRAPH_EDGES.filter((edge) => edge[2] === 'return')).toHaveLength(3);
   });
