@@ -18,10 +18,11 @@ class McpSkillCatalogTest {
 
     @Test
     void packaged_skills_preserve_frontmatter_and_exact_bytes() throws Exception {
-        assertThat(catalogue.summaries()).hasSize(5);
+        assertThat(catalogue.summaries()).hasSize(7);
         assertThat(catalogue.summaries()).extracting(McpSkillCatalog.Summary::name)
                 .contains("kafka-incident-triage", "kafka-forecast-analyst",
-                        "kafka-data-architect", "kafkaexplorer-ci-repair", "kafkaexplorer-release");
+                        "kafka-data-architect", "kafkaexplorer-ci-repair", "kafkaexplorer-release",
+                        "kafka-security-review", "kafka-schema-evolution");
         var resources = new McpSkillResources(catalogue, new McpProperties());
 
         for (var entry : catalogue.entries()) {

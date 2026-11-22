@@ -35,7 +35,7 @@ The two topic resources invoke the *same* `TopicMcpTools` methods used by agents
 ## Skills distribution (Lot E)
 
 The source of truth is `.agents/skills/<name>/SKILL.md`; the reviewed allowlist is
-[`catalog.txt`](../.agents/skills/catalog.txt). Maven copies only these five documents
+[`catalog.txt`](../.agents/skills/catalog.txt). Maven copies only the explicitly indexed documents
 and the index into the executable JAR at `mcp-skills/`, without filtering or duplicating their
 contents. The server validates each name and the required YAML frontmatter at startup.
 It computes each file's SHA-256 digest over its exact UTF-8 bytes.
@@ -89,6 +89,8 @@ The source skills live in [`.agents/skills/`](../.agents/skills/README.md). Each
 - `kafka-incident-triage` — diagnosis and before/after coverage
 - `kafka-forecast-analyst` — model-quality and threshold forecasting
 - `kafka-data-architect` — schema inference, relation evidence and Flink joins
+- `kafka-security-review` — bounded topic policy and MCP posture review; no ACL certification
+- `kafka-schema-evolution` — baseline-based drift review; no implied registry compatibility
 - `kafkaexplorer-ci-repair` — PR build failure analysis and minimal repair
 - `kafkaexplorer-release` — changelog, documentation and publication readiness
 
