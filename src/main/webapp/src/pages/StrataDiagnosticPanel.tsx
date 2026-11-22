@@ -199,7 +199,7 @@ export default function StrataDiagnosticPanel({ mode, topic, compareWith, topics
             or none of the exploratory shifts reached r ≥ 0.65.
           </p>}
           <div className="grid gap-2 sm:grid-cols-2">
-            {([topic, selectedPeer] as const).map((name, index) => {
+            {([comparison.first, comparison.second] as const).map((name, index) => {
               const a = snapshot?.topics[name];
               const warning = detectActivityAnomaly(a, selectedBucket);
               return <div key={name} className="rounded-lg border border-outline-variant p-3 text-xs text-on-surface-variant">
