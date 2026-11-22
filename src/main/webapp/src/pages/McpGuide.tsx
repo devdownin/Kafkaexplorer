@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { useRef, useState, type FC, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FC, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { copyText } from '../clipboard';
 import { Badge, Button, Card, PageHeader } from '../components/ui';
@@ -100,10 +100,20 @@ const ProcessGraph: FC<{
 }> = ({ scenario, selected, lens, onScenarioChange, onStepChange, onLensChange }) => {
   const [zoom, setZoom] = useState(1);
   const nodeRefs = useRef<Partial<Record<GraphNodeId, HTMLButtonElement | null>>>({});
+  const graphViewportRef = useRef<HTMLDivElement | null>(null);
+
+  // Keep deep-linked and keyboard-selected nodes visible without scrolling the entire page.
+  useEffect(() => {
+    const viewport = graphViewportRef.current;
+    if (!viewport || !viewport.clientWidth) return;
+    const nodeCenter = (POSITION[selected].x + WIDTH / 2) * zoom;
+    const maxScroll = Math.max(0, 1390 * zoom - viewport.clientWidth);
+    const left = Math.max(0, Math.min(maxScroll, nodeCenter - viewport.clientWidth / 2));
+    viewport.scrollTo?.({ left, behavior: 'smooth' });
+  }, [scenario, selected, zoom]);
   const focusStep = (step: GraphNodeId) => {
     onStepChange(step);
-    nodeRefs.current[step]?.focus();
-    nodeRefs.current[step]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    nodeRefs.current[step]?.focus({ preventScroll: true });
   };
   const current = SCENARIOS[scenario];
   const node = current.nodes.find((item) => item.id === selected) ?? current.nodes[0];
@@ -149,7 +159,7 @@ const ProcessGraph: FC<{
             ))}
           </div>
           <div className="flex flex-wrap gap-1.5 items-center">
-            <div className="hidden md:flex items-center gap-1" role="group" aria-label="Zoom du graphe">
+            <div className="hidden lg:flex items-center gap-1" role="group" aria-label="Zoom du graphe">
               <button type="button" aria-label="Zoom arrière" title="Zoom arrière" disabled={zoom <= 0.75}
                 onClick={() => setZoom((value) => Math.max(0.75, value - 0.25))}
                 className="rounded-md border border-outline-variant px-2 py-1.5 text-[12px] disabled:opacity-40 hover:bg-surface-container-high">−</button>
@@ -180,7 +190,33 @@ const ProcessGraph: FC<{
           )}
         </div>
 
-        <ol className="md:hidden grid gap-2 p-3" aria-label="Parcours accessible sur mobile">
+        <div className="hidden lg:block px-4 sm:px-6 py-3 border-b border-outline-variant/60 bg-surface-container-low"
+          aria-label="Repères du parcours de référence">
+          <div className="flex items-center justify-between gap-2 mb-2 text-[11px] text-on-surface-variant">
+            <span>Navigation rapide · étapes de référence, sans état d’exécution</span>
+            <span className="font-mono tabular-nums">Position {String(selectedIndex + 1).padStart(2, '0')} / 09</span>
+          </div>
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1" role="group" aria-label="Accès rapide aux étapes">
+            {current.nodes.map((item, index) => (
+              <div key={item.id} className="flex shrink-0 items-center gap-1.5">
+                {index === 7 && (
+                  <span className="text-[10px] text-on-surface-variant px-1" aria-hidden="true">↩ Retour</span>
+                )}
+                <button type="button" aria-current={item.id === selected ? 'step' : undefined}
+                  title={item.label} onClick={() => onStepChange(item.id)}
+                  className={`inline-flex min-h-8 items-center gap-1.5 rounded-lg border px-2 text-[11px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary
+                    ${item.id === selected
+                      ? 'border-primary bg-primary/12 text-primary'
+                      : 'border-outline-variant bg-surface text-on-surface-variant hover:border-primary/40 hover:text-on-surface'}`}>
+                  <span className="font-mono tabular-nums">{String(index + 1).padStart(2, '0')}</span>
+                  <span className="max-w-[90px] truncate">{item.label}</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <ol className="lg:hidden grid gap-2 p-3" aria-label="Parcours accessible sur mobile et tablette">
           {current.nodes.map((item, index) => {
             const active = selected === item.id;
             const highlighted = lens === 'all' || lens === item.kind || active;
@@ -202,7 +238,7 @@ const ProcessGraph: FC<{
           })}
         </ol>
 
-        <div className="hidden md:block relative overflow-x-auto overscroll-x-contain p-3 sm:p-5"
+        <div ref={graphViewportRef} className="hidden lg:block relative overflow-x-auto overscroll-x-contain p-3 sm:p-5"
           aria-label="Graphe d'appel défilable horizontalement">
           <div style={{ width: 1390 * zoom, height: 495 * zoom }} className="relative">
           <div className="relative rounded-xl border border-outline-variant/40"
@@ -300,7 +336,9 @@ const ProcessGraph: FC<{
 
         <div className="px-4 sm:px-6 py-4 bg-surface-container/60 border-t border-outline-variant/70 grid gap-5 lg:grid-cols-[1.4fr_1fr]">
           <div aria-live="polite" aria-atomic="true" className="space-y-2">
-            <p className="text-[10px] uppercase tracking-[.13em] text-primary font-semibold">Étape {selectedIndex + 1} / {GRAPH_ORDER.length}</p>
+            <p className="text-[10px] uppercase tracking-[.13em] text-primary font-semibold">
+              Étape {selectedIndex + 1} / {GRAPH_ORDER.length} · {selectedIndex < 7 ? 'Demande et invocation' : 'Retour et restitution'}
+            </p>
             <h3 className="text-[18px] font-semibold text-on-surface">{node.label}</h3>
             <p className="text-[13px] text-on-surface-variant leading-relaxed">{node.description}</p>
             <a href={node.source} target="_blank" rel="noreferrer"
