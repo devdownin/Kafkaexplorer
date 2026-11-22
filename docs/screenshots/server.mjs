@@ -35,6 +35,7 @@ const API = [
   // Reçoit l'URL : la colonne d'activité ne mesure que les topics affichés, donc la réponse
   // dépend de la requête — les autres routes ignorent simplement l'argument.
   [m => m === '/api/dashboard/activity', url => F.topicActivity(url)],
+  [m => m === '/api/dashboard/partition-activity', url => F.partitionActivity(url)],
   [m => m === '/api/config', () => F.config],
   [m => m === '/api/cluster', () => F.cluster],
   [m => m === '/api/cluster/configs', () => ({ configs: {} })],
