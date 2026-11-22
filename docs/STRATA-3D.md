@@ -155,7 +155,7 @@ than a continuation of Kafka-produced-offset rings.
 Frontend: `cd src/main/webapp && npm ci && npm run build && npm run lint && npm test`.
 
 The focused `strataTime.test.ts`, `strataForecast.test.ts`,
-`strataImmersive.test.ts` \, `strataLineage.test.ts` and `strataDiagnostics.test.ts` tests verify
+`strataImmersive.test.ts`, `strataLineage.test.ts` and `strataDiagnostics.test.ts` tests verify
 bucket coverage, conservative anomaly detection, declared-only topic paths,
 complete versus partial comparison and non-causal correlation.
 Runtime checks should additionally verify orbit, selection, light/dark modes,
