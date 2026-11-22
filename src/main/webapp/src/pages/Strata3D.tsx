@@ -711,6 +711,9 @@ export default function Strata3D() {
       mode: diagnosticMode, topic: selected, peer: compareWith, focus: focused,
       filter: query, bucket: selectedBucket, quality,
     }).toString();
+    // The fragment may contain an unrelated route state or a legacy token.
+    // Never propagate it into a link intended to share just the Strata view.
+    url.hash = '';
     const link = url.toString();
     const copied = await copyText(link);
     setShareLink(copied ? null : link);
