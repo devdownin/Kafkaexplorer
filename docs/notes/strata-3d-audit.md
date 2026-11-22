@@ -66,7 +66,7 @@ Les séries de production représentent des **différences d'offsets**, pas le n
 | Contrats de données et raccourcis | `strataWorkspace.test.ts`, `strataTime.test.ts`, `strataShortcuts.test.ts` | Séries incomplètes rejetées ; bornes et raccourcis vérifiés |
 | Diagnostics et projection | `strataDiagnostics.test.ts`, `strataForecast.test.ts`, `strataImmersive.test.ts` | Pas de fabrication de volume, de causalité ou de projection |
 | Frontend | `bin/pr-preflight.sh` | TypeScript, Vite, ESLint et Vitest réussis |
-| Backend | CI Maven/JDK 25 | Compilation et tests d'intégration réussis |
+| Backend | CI Maven/JDK 25, `KafkaAdminServiceActivityTest` (budget focus) | Compilation, tests d'intégration et budget d'offsets corrigé |
 | WebGL réel | `docs/screenshots/strata-webgl-probe.mjs`, Chromium + SwiftShader | Contexte WebGL2, OrbitControls, partage d'URL, focus, clavier, couches et mobile |
 | Intégration | CI Docker/Kafka/Forecast, sécurité et documentation | Aucun échec au dernier commit de la PR |
 
