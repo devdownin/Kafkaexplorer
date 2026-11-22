@@ -12,14 +12,14 @@ ROOT = Path(__file__).resolve().parent
 html = (ROOT / "mcp-guide.html").read_text(encoding="utf-8")
 js = (ROOT / "mcp-guide.js").read_text(encoding="utf-8")
 
-script_tags = re.findall(r"<script\\b[^>]*>", html, re.IGNORECASE)
-external = [tag for tag in script_tags if re.search(r'\\bsrc=["\\\']mcp-guide\\.js["\\\']', tag)]
+script_tags = re.findall(r"<script\b[^>]*>", html, re.IGNORECASE)
+external = [tag for tag in script_tags if re.search(r'\bsrc=["\']mcp-guide\.js["\']', tag)]
 assert len(external) == 1, "mcp-guide.html must load mcp-guide.js exactly once"
 assert len(script_tags) == 1, "mcp-guide.html still has an obsolete inline graph controller"
 
-html_ids = re.findall(r'\\bid="([^"]+)"', html)
+html_ids = re.findall(r'\bid="([^"]+)"', html)
 assert len(html_ids) == len(set(html_ids)), "Duplicate HTML ids in MCP guide"
-required_ids = set(re.findall(r'getElementById\\(["\\\']([^"\\\']+)["\\\']\\)', js))
+required_ids = set(re.findall(r'getElementById\(["\']([^"\']+)["\']\)', js))
 missing = required_ids.difference(html_ids)
 assert not missing, f"Missing DOM targets required by mcp-guide.js: {sorted(missing)}"
 
