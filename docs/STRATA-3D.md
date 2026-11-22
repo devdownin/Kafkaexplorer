@@ -17,6 +17,8 @@ and Topic Explorer.
 | Dashed line | Flink INSERT dependency **declared** by Lineage | `GET /api/lineage` |
 | Teal arc | Chronological matches for a searched Kafka key, **not proven causal transfer** | `POST /api/stream-flow/stream` |
 | Coloured satellites | Lag per partition of the **selected consumer group** | `GET /api/topic/{name}/consumers` |
+| Partition ribbons in focus | Per-partition offset-production for each 2.5-minute interval; ribbon width follows each partition's **own measured** rate | `GET /api/dashboard/partition-activity?topic=...` |
+| Forecast canopy (solid teal / violet / translucent band) | Measured metric history, projected q50, and model q10–q90 for a **single explicitly scoped** topic | `GET /api/forecasts` and `GET /api/forecasts/{seriesId}` |
 | Neutral rings, unknown readings | Missing/incomplete data, **not zero traffic** | Availability and coverage metadata |
 
 Flink edges are only drawn when explicit source-topic table → read edge → INSERT
@@ -49,6 +51,21 @@ shown. No link is not evidence of absent activity.
    baseline. These are **visual leads**, not health incidents or automatic
    alerts. Comparisons use **offset production**, not Kafka record payloads.
 
+## Immersive exploration — P1
+
+- **Focus:** double-click a topic column or a topic in the list, or activate **Focus partitions and forecast** in the inspector. The camera smoothly approaches that topic and reveals its partition ribbons. Use **Return to overview** to restore the whole cluster. Camera easing follows the motion preference; with motion disabled, the transition snaps directly into place.
+- **Stable placement:** columns are laid out using each topic's position in the complete, sorted cluster list. Filtering does not reshuffle the remaining topics. Changing which topics are visible re-fits the camera around their world-space bounds.
+- **Partition production:** only the focused topic triggers the bounded partition API. Each ribbon's width is proportional to a logarithm of the offsets produced by that **partition**, in that time bucket. An absent reading or a bucket preceding the partition's retention boundary has **no segment**. A missing ribbon does not mean an idle partition. The scope is capped at 24 partitions and the configured global offset-lookup budget; omissions and failed partitions are declared by the endpoint. The partition detail is refreshed while the tab is visible, not collected for all topics.
+- **Replay history:** the **Replay history** control advances the time lens through the existing measured 12-bucket window. Speeds of 0.5×, 1×, 2× and 4× are available. This replay uses the latest snapshot only and does not read individual Kafka records. A new broker sample may replace the displayed window between steps; this is a live replay, **not a historical persisted recording**.
+
+## Forecast spatial projection — P3 extension
+
+- **Provenance:** the forecast-status endpoint exposes `topics` and `groups` from the **explicitly operator-approved** series configuration, not guessed from a metric title or SQL expression. A series with multiple topics is deliberately not attached to a single topic. This is a read-only extension of `ForecastController.SeriesView`.
+- **Eligibility:** only real `TIMESFM` results in `READY` state with a compatible metric output unit, sufficient non-imputed observations and points later than the forecast's history endpoint are rendered. Expired, degraded, missing or ambiguous series display a reason rather than an invented future. A shadow series is labelled **not approved**.
+- **Geometry:** the separate teal observed curve and violet predicted-median curve appear next to the focused topic on an **independent metric axis**. The translucent canopy is the q10–q90 range returned by the model. Neither the metric's values nor this band are recast as Kafka offset counts, and q10–q90 is not an empirically guaranteed coverage interval.
+- **Inspection:** the companion chart and legend display actual time coordinates, value units, model ID, visibility and forecast horizon. The **Metrics** page remains the source for model quality and the observed-versus-predicted evaluation.
+- **Resource cost:** the view fetches forecast status periodically only while mounted for a focused topic; one detailed series is retrieved on demand. Forecasting is never triggered by simply opening Strata 3D.
+
 ## Behaviour under constraints
 
 - Cluster metadata refreshes every 60 seconds and Lineage every 120 seconds.
@@ -73,15 +90,16 @@ Kafka does not expose proof that any two topic messages were directly transferre
 between topics without trace evidence or an operational lineage source.
 The visualization intentionally distinguishes declared Flink paths, observed key
 matches, statistical activity and unknown states. It does not create a Kafka
-consumer for visual particle animation. Forecast overlays are not part of this
-initial P3: they require explicit mapping between forecast metrics, topic names
-and sample intervals.
+consumer for visual particle animation. Forecast projections require an explicit one-topic mapping, a verified
+metric unit and real model quantiles; they remain an independent measure rather
+than a continuation of Kafka-produced-offset rings.
 
 ## Validation
 
 Frontend: `cd src/main/webapp && npm ci && npm run build && npm run lint && npm test`.
 
-The focused `strataTime.test.ts` and `strataLineage.test.ts` tests verify
+The focused `strataTime.test.ts`, `strataForecast.test.ts`,
+`strataImmersive.test.ts` and `strataLineage.test.ts` tests verify
 bucket coverage, conservative anomaly detection and declared-only topic paths.
 Runtime checks should additionally verify orbit, selection, light/dark modes,
 WebGL fallback, trace cancel, and missing/partial Kafka metadata.
