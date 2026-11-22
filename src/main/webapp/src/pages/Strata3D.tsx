@@ -398,7 +398,7 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
         if (!(object instanceof THREE.Mesh) || object.userData.bucketIndex === undefined) continue;
         const material = object.material as THREE.MeshBasicMaterial;
         const active = object.userData.bucketIndex === selectedBucket;
-        material.opacity = Math.min(1, (object.userData.baseOpacity as number) * (active ? 1.4 : 0.42));
+        material.setValues({ opacity: Math.min(1, (object.userData.baseOpacity as number) * (active ? 1.4 : 0.42)) });
         material.color.copy(object.userData.baseColor as THREE.Color);
         if (active && anomaly) material.color.setHex(0xe7a044);
       }
