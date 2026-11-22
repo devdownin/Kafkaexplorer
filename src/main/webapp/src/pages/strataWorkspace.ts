@@ -61,7 +61,7 @@ export function topicMapPositions(items: readonly { name: string; layoutIndex: n
 export function activityHistogram(topics: readonly { activity?: TopicActivity }[], buckets: number) {
   return Array.from({ length: buckets }, (_, index) => {
     const readings = topics.map(topic => bucketReading(topic.activity, index));
-    return { index, value: readings.reduce((sum, value) => sum + (value ?? 0), 0),
+    return { index, value: readings.reduce<number>((sum, value) => sum + (value ?? 0), 0),
       measured: readings.filter(value => value !== null).length, total: topics.length };
   });
 }
