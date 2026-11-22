@@ -90,6 +90,8 @@ public class McpProperties {
         private String readScope = "mcp.read";
         private String adminScope = "mcp.admin";
         private String auditScope = "mcp.audit";
+        /** Optional exact tool-name -> additional verified JWT scope; no wildcard supported. */
+        private java.util.Map<String, String> toolScopes = java.util.Map.of();
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
         public String getIssuerUri() { return issuerUri; }
@@ -102,6 +104,10 @@ public class McpProperties {
         public void setReadScope(String readScope) { this.readScope = readScope; }
         public String getAdminScope() { return adminScope; }
         public void setAdminScope(String adminScope) { this.adminScope = adminScope; }
+        public java.util.Map<String, String> getToolScopes() { return toolScopes; }
+        public void setToolScopes(java.util.Map<String, String> toolScopes) {
+            this.toolScopes = toolScopes == null ? java.util.Map.of() : java.util.Map.copyOf(toolScopes);
+        }
         public String getAuditScope() { return auditScope; }
         public void setAuditScope(String auditScope) { this.auditScope = auditScope; }
     }

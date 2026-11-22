@@ -45,6 +45,14 @@ public class McpHttpSecurityConfiguration {
                     || blank(oauth.getAdminScope()) || blank(oauth.getAuditScope())) {
                 throw new IllegalStateException("MCP OAuth requires audience and all three scope names");
             }
+            // Reject ambiguous wildcard tool policies and configuration typos at startup.
+            for (var rule : oauth.getToolScopes().entrySet()) {
+                if (blank(rule.getKey()) || "*".equals(rule.getKey()) || blank(rule.getValue())
+                        || !rule.getKey().matches("[A-Za-z0-9_.-]+")
+                        || !rule.getValue().matches("[A-Za-z0-9:._/-]+")) {
+                    throw new IllegalStateException("MCP OAuth tool-scopes needs exact tool names and scope strings");
+                }
+            }
             NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(oauth.getJwkSetUri()).build();
             OAuth2TokenValidator<Jwt> issuer = JwtValidators.createDefaultWithIssuer(oauth.getIssuerUri());
             decoder.setJwtValidator(jwt -> {

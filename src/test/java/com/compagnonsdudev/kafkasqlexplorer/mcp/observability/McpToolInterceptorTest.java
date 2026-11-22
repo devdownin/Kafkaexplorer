@@ -436,4 +436,53 @@ class McpToolInterceptorTest {
 
         assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
     }
+
+    @Test
+    void oauth_scope_denial_is_audited_and_does_not_consume_an_approval() {
+        properties.getOauth().setEnabled(true);
+        properties.getOauth().setToolScopes(Map.of("kex_list_topics", "mcp.topics.inspect"));
+        properties.setApprovalRequiredTools(java.util.Set.of("kex_list_topics"));
+        String approval = approvals.mint("kex_list_topics", "alice", "bearer:operator");
+        java.util.concurrent.atomic.AtomicBoolean executed = new java.util.concurrent.atomic.AtomicBoolean();
+
+        try {
+            McpCallerContext.setVerified("bearer:operator", java.util.Set.of("mcp.read"));
+            assertThatThrownBy(() -> invoke((exchange, request) -> {
+                executed.set(true);
+                return structured(1L, StopReason.EXHAUSTED, false);
+            }, Map.of(McpToolInterceptor.APPROVAL_ARGUMENT, approval)))
+                    .isInstanceOf(McpError.class)
+                    .satisfies(error -> assertThat(((McpError) error).getJsonRpcError().code())
+                            .isEqualTo(-32044));
+            assertThat(executed.get()).isFalse();
+            assertThat(approvals.outstandingCount()).isEqualTo(1);
+            assertThat(recorder.recent(McpCallFilter.all(), 10)).singleElement()
+                    .satisfies(call -> {
+                        assertThat(call.deniedByGuard()).isEqualTo(McpGuard.POLICY);
+                        assertThat(call.redactedParams()).doesNotContainKey(McpToolInterceptor.APPROVAL_ARGUMENT);
+                    });
+
+            McpCallerContext.setVerified("bearer:operator",
+                    java.util.Set.of("mcp.read", "mcp.topics.inspect"));
+            CallToolResult result = invoke((exchange, request) -> {
+                executed.set(true);
+                return structured(1L, StopReason.EXHAUSTED, false);
+            }, Map.of(McpToolInterceptor.APPROVAL_ARGUMENT, approval));
+            assertThat(result.isError()).isNotEqualTo(Boolean.TRUE);
+            assertThat(executed.get()).isTrue();
+            assertThat(approvals.outstandingCount()).isZero();
+        } finally {
+            McpCallerContext.clear();
+        }
+    }
+
+    @Test
+    void oauth_missing_verified_identity_fails_closed_in_mcp_interceptor() {
+        properties.getOauth().setEnabled(true);
+        assertThatThrownBy(() -> invoke((exchange, request) ->
+                structured(1L, StopReason.EXHAUSTED, false), Map.of()))
+                .isInstanceOf(McpError.class)
+                .satisfies(error -> assertThat(((McpError) error).getJsonRpcError().code())
+                        .isEqualTo(-32044));
+    }
 }
