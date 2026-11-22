@@ -128,6 +128,14 @@ function mockApi(
     if (url.startsWith('/api/mcp/calls')) return Promise.resolve({ data: CALLS });
     if (url.startsWith('/api/mcp/clients')) return Promise.resolve({ data: over.clients ?? [] });
     if (url.startsWith('/api/mcp/overrides')) return Promise.resolve({ data: over.overrides ?? [] });
+    if (url.startsWith('/api/mcp/surfaces')) return Promise.resolve({ data: [
+      { kind: 'RESOURCE', name: 'KafkaExplorer measurement contract',
+        uri: 'kex://contract', description: 'Measured values and Coverage.' },
+      { kind: 'RESOURCE_TEMPLATE', name: 'Kafka topic details',
+        uri: 'kafka://topics/{topic}', description: 'One scoped topic.' },
+      { kind: 'PROMPT', name: 'kex_incident_triage', uri: null,
+        description: 'Kafka incident triage.' },
+    ] });
     return Promise.reject(new Error(`unexpected ${url}`));
   });
 }
@@ -146,6 +154,13 @@ beforeEach(() => {
 });
 
 describe("l'onglet Catalogue", () => {
+  it('affiche les Resources et Prompts réellement déclarés par le serveur', async () => {
+    renderAt();
+    expect(await screen.findByText('kex://contract')).toBeInTheDocument();
+    expect(screen.getByText('kafka://topics/{topic}')).toBeInTheDocument();
+    expect(screen.getByText('kex_incident_triage')).toBeInTheDocument();
+  });
+
   it('affiche un outil masqué avec son motif, jamais absent de la table', async () => {
     // Sans la ligne, un opérateur qui cherche pourquoi son agent ne voit pas l'outil n'a aucune
     // piste et va lire le YAML.
