@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import { readStrataView, writeStrataView, strataRenderBudget } from './strataView';
+import { readStrataView, shareStrataUrl, writeStrataView, strataRenderBudget } from './strataView';
 
 describe('Kafka Strata shareable views', () => {
   it('round-trips a focus/compare view without affecting unrelated query parameters', () => {
@@ -10,6 +10,18 @@ describe('Kafka Strata shareable views', () => {
     expect(url.get('from')).toBe('explorer');
     expect(readStrataView(url)).toEqual(view);
     expect([...url.keys()].filter(key => key === 'sv.topic')).toHaveLength(1);
+  });
+
+  it('strips unrelated query parameters and URL fragments from shared links', () => {
+    const link = shareStrataUrl('https://example.test/strata?messageKey=secret&token=abc#oauth-fragment', {
+      mode: 'compare', topic: 'orders', peer: 'invoices', focus: null,
+      filter: '', bucket: 11, quality: 'auto',
+    });
+    expect(link).toContain('sv.topic=orders');
+    expect(link).toContain('sv.peer=invoices');
+    expect(link).not.toContain('secret');
+    expect(link).not.toContain('token');
+    expect(link).not.toContain('#');
   });
 
   it('rejects invalid links and does not restore mismatched focus or same-topic peers', () => {
