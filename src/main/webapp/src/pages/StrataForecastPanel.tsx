@@ -77,15 +77,16 @@ export default function StrataForecastPanel({ topic, onProjection }: {
   ), [status, topic]);
   const selected = candidates.find(series => series.seriesId === chosenId) ?? candidates[0] ?? null;
 
+  const selectedSeriesId = selected?.seriesId ?? null;
   useEffect(() => {
-    if (!selected) return;
+    if (!selectedSeriesId) return;
     const controller = new AbortController();
     let active = true;
     const load = async () => {
       if (document.visibilityState === 'hidden') return;
       try {
         const { data } = await axios.get<ForecastSeriesView>(
-          `/api/forecasts/${encodeURIComponent(selected.seriesId)}`,
+          `/api/forecasts/${encodeURIComponent(selectedSeriesId)}`,
           { signal: controller.signal, timeout: 10000 },
         );
         if (active) { setDetail(data); setDetailError(null); }
@@ -101,7 +102,7 @@ export default function StrataForecastPanel({ topic, onProjection }: {
       active = false; controller.abort(); window.clearInterval(timer);
       document.removeEventListener('visibilitychange', visible);
     };
-  }, [selected?.seriesId]);
+  }, [selectedSeriesId]);
 
   const resolved = detail?.seriesId === selected?.seriesId ? detail : selected;
   const projection = useMemo(() => resolved ? spatialProjection(resolved, topic) : null, [resolved, topic]);
