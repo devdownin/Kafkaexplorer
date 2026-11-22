@@ -16,6 +16,10 @@ import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strata
 import { Link } from 'react-router-dom';
 import { readStrataView, strataRenderBudget, writeStrataView, type StrataQuality } from './strataView';
 import { copyText } from '../clipboard';
+import { DEFAULT_STRATA_LAYERS, topicEvidence, type StrataLayer } from './strataWorkspace';
+import {
+  StrataHoverCard, StrataLayerMenu, StrataMiniMap, StrataResizeHandle, StrataTimelineDock,
+} from './StrataWorkspaceUI';
 import axios from 'axios';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -90,12 +94,12 @@ function topicLabel(name: string, dark: boolean): THREE.Sprite | null {
 }
 
 function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean,
-  highlight: 'primary' | 'comparison' | null, ringSegments: number): THREE.Group {
+  highlight: 'primary' | 'comparison' | null, ringSegments: number, showActivity: boolean): THREE.Group {
   const group = new THREE.Group();
   group.position.copy(position(topic.layoutIndex));
   group.userData.topic = topic.name;
   const counts = Array.from({ length: BUCKETS }, (_, bucket) => bucketReading(topic.activity, bucket));
-  const hasData = counts.some(value => value !== null);
+  const hasData = showActivity && counts.some(value => value !== null);
   const hue = (index * 0.137508) % 1;
   const color = new THREE.Color().setHSL(hue * 0.25 + 0.48, dark ? 0.7 : 0.64, dark ? 0.68 : 0.45);
   const base = new THREE.Mesh(
@@ -111,7 +115,7 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
   );
   shell.position.y = height / 2 + 0.12;
   group.add(shell);
-  for (let i = 0; i < BUCKETS; i++) {
+  if (showActivity) for (let i = 0; i < BUCKETS; i++) {
     const value = counts[i];
     const measured = value !== null;
     const normalized = measured ? Math.log1p(value) / Math.log1p(Math.max(1, maxRate)) : 0;
@@ -163,7 +167,7 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
 
 function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect, onFocus,
   focused, partitionActivity, forecast,
-  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable }: {
+  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, onHover }: {
   topics: Topic[];
   selected: string | null;
   compareWith: string | null;
@@ -181,16 +185,20 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   selectedBucket: number;
   trace: ParsedFlow | null;
   lensAvailable: boolean;
+  layers: typeof DEFAULT_STRATA_LAYERS;
+  onHover: (hover: { name: string; x: number; y: number } | null) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const onSelectRef = useRef(onSelect);
   const onFocusRef = useRef(onFocus);
+  const onHoverRef = useRef(onHover);
   const motionRef = useRef(motion);
   const budget = useMemo(() => strataRenderBudget(quality, topics.length, window.devicePixelRatio || 1), [quality, topics.length]);
   const budgetRef = useRef(budget);
   const [webglFailed, setWebglFailed] = useState(false);
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
   useEffect(() => { onFocusRef.current = onFocus; }, [onFocus]);
+  useEffect(() => { onHoverRef.current = onHover; }, [onHover]);
   const state = useRef<{
     scene: THREE.Scene;
     camera: THREE.OrthographicCamera;
@@ -299,17 +307,37 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       return typeof item?.userData.topic === 'string' ? item.userData.topic as string : null;
     };
     const onPointerUp = (event: PointerEvent) => {
-      if (!down || Math.hypot(down.x - event.clientX, down.y - event.clientY) > 5) return;
+      const start = down;
+      down = null;
+      if (!start || Math.hypot(start.x - event.clientX, start.y - event.clientY) > 5) return;
       const topic = pickedTopic(event);
       if (topic) onSelectRef.current(topic);
     };
+    let lastHoverAt = 0;
+    const onPointerMove = (event: PointerEvent) => {
+      if (event.buttons || event.timeStamp - lastHoverAt < 50) {
+        if (event.buttons) onHoverRef.current(null);
+        return;
+      }
+      lastHoverAt = event.timeStamp;
+      const topic = pickedTopic(event);
+      const rect = renderer.domElement.getBoundingClientRect();
+      onHoverRef.current(topic ? {
+        name: topic,
+        x: Math.min(Math.max(8, rect.width - 236), Math.max(8, event.clientX - rect.left + 12)),
+        y: Math.min(Math.max(8, rect.height - 192), Math.max(8, event.clientY - rect.top + 10)),
+      } : null);
+    };
+    const onPointerLeave = () => { down = null; onHoverRef.current(null); };
     const onDoubleClick = (event: MouseEvent) => {
       const topic = pickedTopic(event);
-      if (topic) { onSelectRef.current(topic); onFocusRef.current(topic); }
+      if (topic) { onHoverRef.current(null); onSelectRef.current(topic); onFocusRef.current(topic); }
     };
     renderer.domElement.addEventListener('dblclick', onDoubleClick);
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
+    renderer.domElement.addEventListener('pointerleave', onPointerLeave);
     const resize = () => {
       const width = Math.max(1, element.clientWidth);
       const height = Math.max(1, element.clientHeight);
@@ -428,6 +456,8 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
       controls.dispose();
       disposeGroup(contentGroup);
       lens.geometry.dispose();
@@ -456,19 +486,22 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     const dark = document.documentElement.classList.contains('dark') ||
       document.documentElement.getAttribute('data-theme') === 'dark';
     (current.lens.material as THREE.MeshBasicMaterial).color.setHex(dark ? 0x83b9d5 : 0x5888af);
-    const values = topics.flatMap(t => Array.from({ length: BUCKETS }, (_, bucket) => bucketReading(t.activity, bucket))
-      .filter((n): n is number => n !== null));
+    const values = layers.activity ? topics.flatMap(t => Array.from({ length: BUCKETS }, (_, bucket) => bucketReading(t.activity, bucket))
+      .filter((n): n is number => n !== null)) : [];
     const maxRate = Math.max(1, ...values);
     current.positions = new Map(topics.map(topic => [topic.name, position(topic.layoutIndex)]));
     current.groups = topics.map((topic, index) => {
       const highlight = topic.name === selected ? 'primary' :
         diagnosticMode === 'compare' && topic.name === compareWith ? 'comparison' : null;
-      const column = createTopic(topic, index, maxRate, dark, highlight, budget.ringSegments);
-      const isNeighbor = diagnosticMode === 'investigate' && links.some(link =>
-        (link.from === selected && link.to === topic.name) ||
-        (link.to === selected && link.from === topic.name));
-      const dimmed = Boolean(focused && topic.name !== focused && topic.name !== compareWith && !isNeighbor);
-      column.userData.dimFactor = dimmed ? 0.22 : 1;
+      const column = createTopic(topic, index, maxRate, dark, highlight, budget.ringSegments, layers.activity);
+      const contextTopic = focused ?? (diagnosticMode === 'investigate' && layers.lineage &&
+        links.some(link => link.from === selected || link.to === selected) ? selected : null);
+      const isNeighbor = layers.lineage && links.some(link =>
+        (link.from === contextTopic && link.to === topic.name) ||
+        (link.to === contextTopic && link.from === topic.name));
+      const dimmed = Boolean(contextTopic && topic.name !== contextTopic && topic.name !== compareWith && !isNeighbor);
+      const dimFactor = focused ? 0.22 : 0.50;
+      column.userData.dimFactor = dimmed ? dimFactor : 1;
       if (dimmed) {
         // The focus context stays in sight but must not compete with the inspected topic.
         column.traverse(object => {
@@ -476,7 +509,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
           const materials = Array.isArray(object.material) ? object.material : [object.material];
           for (const material of materials) {
             if (material instanceof THREE.MeshBasicMaterial || material instanceof THREE.SpriteMaterial) {
-              material.setValues({ opacity: material.opacity * 0.22, transparent: true });
+              material.setValues({ opacity: material.opacity * dimFactor, transparent: true });
             }
           }
         });
@@ -485,7 +518,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       return column;
     });
     const lookup = current.positions;
-    for (const link of links) {
+    for (const link of layers.lineage ? links : []) {
       const start = lookup.get(link.from);
       const end = lookup.get(link.to);
       if (!start || !end) continue;
@@ -510,7 +543,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
 
     // Chronological key matches are distinct from dashed Flink lineage. The links
     // express event order, not a guaranteed causal transfer.
-    if (trace) {
+    if (layers.traces && trace) {
       const visibleHits = trace.hits.filter(hit => lookup.has(hit.topic)).slice(0, 48);
       for (let index = 0; index < visibleHits.length; index++) {
         const start = lookup.get(visibleHits[index].topic)!;
@@ -538,7 +571,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     }
 
     const selectedIndex = topics.findIndex(t => t.name === selected);
-    if (selectedIndex >= 0 && selectedGroup) {
+    if (layers.consumers && selectedIndex >= 0 && selectedGroup) {
       const point = position(topics[selectedIndex].layoutIndex);
       const partitions = selectedGroup.partitions.slice(0, 64);
       const healthColor = selectedGroup.error ? 0x8592a1 : selectedGroup.totalLag > 0 && selectedGroup.membersKnown && selectedGroup.assignedMembers === 0
@@ -556,16 +589,16 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
         current.content.add(marker);
       }
     }
-    if (focused && partitionActivity?.topic === focused && partitionActivity.partitionsMeasured > 0) {
+    if (layers.activity && focused && partitionActivity?.topic === focused && partitionActivity.partitionsMeasured > 0) {
       const center = lookup.get(focused);
       if (center) current.content.add(createPartitionRibbons(partitionActivity, center, dark));
     }
-    if (forecast && focused === forecast.topic) {
+    if (layers.forecast && forecast && focused === forecast.topic) {
       const center = lookup.get(forecast.topic);
       if (center) current.content.add(createForecastCanopy(forecast, center, dark));
     }
     current.invalidate();
-  }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments]);
+  }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments, layers]);
 
   const scopeKey = topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000');
   useEffect(() => { state.current?.focus(focused); }, [focused, scopeKey]);
@@ -581,10 +614,10 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     const current = state.current;
     if (!current) return;
     current.lens.position.y = 0.35 + selectedBucket * 0.43;
-    current.lens.visible = lensAvailable;
+    current.lens.visible = lensAvailable && layers.activity;
     const measurements = new Map(topics.map(topic => [topic.name, topic.activity]));
     for (const group of current.groups) {
-      const anomaly = detectActivityAnomaly(measurements.get(group.userData.topic as string), selectedBucket);
+      const anomaly = layers.anomalies ? detectActivityAnomaly(measurements.get(group.userData.topic as string), selectedBucket) : null;
       for (const object of group.children) {
         if (!(object instanceof THREE.Mesh) || object.userData.bucketIndex === undefined) continue;
         const material = object.material as THREE.MeshBasicMaterial;
@@ -596,7 +629,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       }
     }
     current.invalidate();
-  }, [selectedBucket, topics, links, trace, selectedGroup, selected, compareWith, diagnosticMode, focused, themeRevision, lensAvailable]);
+  }, [selectedBucket, topics, links, trace, selectedGroup, selected, compareWith, diagnosticMode, focused, themeRevision, lensAvailable, layers]);
 
   return (
     <div ref={host} role="img"
@@ -636,6 +669,12 @@ export default function Strata3D() {
   const [partitionError, setPartitionError] = useState<string | null>(null);
   const [forecastOverlay, setForecastOverlay] = useState<StrataProjection | null>(null);
   const [traced, setTraced] = useState<{ scope: string; flow: ParsedFlow } | null>(null);
+  const [layers, setLayers] = useState(DEFAULT_STRATA_LAYERS);
+  const [hovered, setHovered] = useState<{ name: string; x: number; y: number } | null>(null);
+  const [navigatorOpen, setNavigatorOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [navigatorWidth, setNavigatorWidth] = useState(246);
+  const [inspectorWidth, setInspectorWidth] = useState(350);
 
   // Share only the operator's view choices; never put Kafka keys, trace records
   // or forecast payloads in URLs. Replacements avoid polluting browser history.
@@ -843,6 +882,13 @@ export default function Strata3D() {
   })), [scoped, dashboard, activity, layoutIndices]);
   const links = useMemo(() => lineage ? deriveStrataLinks(lineage, scoped) : [], [lineage, scoped]);
   const selectedTopic = topics.find(t => t.name === selected);
+  const selectedEvidence = topicEvidence(selectedTopic?.activity, selectedBucket,
+    activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null);
+  const hoveredTopic = hovered && topics.find(t => t.name === hovered.name);
+  const setLayer = useCallback((layer: StrataLayer, enabled: boolean) => {
+    setLayers(current => ({ ...current, [layer]: enabled }));
+  }, []);
+  const selectBucket = useCallback((bucket: number) => { setReplaying(false); setSelectedBucket(bucket); }, []);
   const activeCompareWith = diagnosticMode === 'compare' && compareWith !== selected &&
     topics.some(t => t.name === compareWith) ? compareWith : null;
   const measured = topics.filter(t => t.activity?.available).length;
