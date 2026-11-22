@@ -1560,6 +1560,7 @@ jobs:
           # capture.mjs exits non-zero if any screen fails — seven of eight would mean the
           # eighth silently disappears from the documentation.
           NODE_PATH="$(npm root -g)" node docs/screenshots/capture.mjs http://127.0.0.1:4173 fresh
+          NODE_PATH="$(npm root -g)" node docs/screenshots/capture.mjs http://127.0.0.1:4173 fresh dark
 
       # W6 from MOBILE-LAYOUT-SCOPE.md. Every figure in that document was a reading from
       # whenever someone last remembered to take one; this makes a regression fail a build
