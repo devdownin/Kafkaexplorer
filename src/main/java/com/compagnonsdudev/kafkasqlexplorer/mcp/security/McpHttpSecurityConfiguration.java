@@ -45,6 +45,14 @@ public class McpHttpSecurityConfiguration {
                     || blank(oauth.getAdminScope()) || blank(oauth.getAuditScope())) {
                 throw new IllegalStateException("MCP OAuth requires audience and all three scope names");
             }
+            // RFC 9728 resource identifier is immutable and cannot follow request Host headers.
+            new McpOAuthProtectedResourceMetadata(oauth);
+            for (String scope : java.util.List.of(oauth.getReadScope(), oauth.getAdminScope(),
+                    oauth.getAuditScope())) {
+                if (!scope.matches("[A-Za-z0-9:._/-]+")) {
+                    throw new IllegalStateException("MCP OAuth scope must be a safe token");
+                }
+            }
             // Reject ambiguous wildcard tool policies and configuration typos at startup.
             for (var rule : oauth.getToolScopes().entrySet()) {
                 if (blank(rule.getKey()) || "*".equals(rule.getKey()) || blank(rule.getValue())

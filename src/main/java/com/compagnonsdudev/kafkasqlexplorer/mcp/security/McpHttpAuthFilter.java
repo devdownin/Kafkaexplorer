@@ -27,6 +27,7 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
     private final boolean requireTls;
     private final JwtDecoder jwtDecoder;
     private final McpProperties.OAuth oauth;
+    private final McpOAuthProtectedResourceMetadata metadata;
 
     public McpHttpAuthFilter(String configuredToken) { this(configuredToken, true); }
 
@@ -35,6 +36,7 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
         this.requireTls = requireTls;
         this.jwtDecoder = null;
         this.oauth = null;
+        this.metadata = null;
     }
 
     /** OAuth mode is exclusive: static bearer credentials cannot bypass JWT validation. */
@@ -43,6 +45,7 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
         this.requireTls = requireTls;
         this.jwtDecoder = java.util.Objects.requireNonNull(jwtDecoder);
         this.oauth = java.util.Objects.requireNonNull(oauth);
+        this.metadata = new McpOAuthProtectedResourceMetadata(oauth);
     }
 
     /**
@@ -111,23 +114,23 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
     private void authenticateJwt(HttpServletRequest request, HttpServletResponse response,
                                  FilterChain chain) throws IOException, ServletException {
         String supplied = bearerToken(request);
-        if (supplied == null) { deny(response, 401, "mcp_unauthorized"); return; }
+        if (supplied == null) { deny(response, 401, "mcp_unauthorized", null); return; }
         Jwt jwt;
         try {
             jwt = jwtDecoder.decode(supplied);
         } catch (JwtException exception) {
-            deny(response, 401, "mcp_unauthorized");
+            deny(response, 401, "mcp_unauthorized", null);
             return;
         }
         if (jwt.getSubject() == null || jwt.getSubject().isBlank()) {
-            deny(response, 401, "mcp_unauthorized");
+            deny(response, 401, "mcp_unauthorized", null);
             return;
         }
         String required = requiredScope(request);
         Object scope = jwt.getClaims().get("scope");
         Object scp = jwt.getClaims().get("scp");
         boolean allowed = containsScope(scope, required) || containsScope(scp, required);
-        if (!allowed) { deny(response, 403, "mcp_insufficient_scope"); return; }
+        if (!allowed) { deny(response, 403, "mcp_insufficient_scope", required); return; }
         // Bind to the verified issuer + subject rather than the rotating access-token bytes.
         String identity = identityOf(jwt.getIssuer().toString() + ":" + jwt.getSubject());
         request.setAttribute(IDENTITY_ATTRIBUTE, identity);
@@ -168,9 +171,14 @@ public final class McpHttpAuthFilter extends OncePerRequestFilter {
         return false;
     }
 
-    private static void deny(HttpServletResponse response, int status, String code) throws IOException {
+    private void deny(HttpServletResponse response, int status, String code, String requiredScope)
+            throws IOException {
         response.setStatus(status);
-        response.setHeader("WWW-Authenticate", "Bearer realm=\"mcp\"");
+        String challenge = "Bearer realm=\"mcp\", resource_metadata=\"" + metadata.metadataUrl() + "\"";
+        if (requiredScope != null) {
+            challenge += ", error=\"insufficient_scope\", scope=\"" + requiredScope + "\"";
+        }
+        response.setHeader("WWW-Authenticate", challenge);
         response.setContentType("application/json");
         response.getWriter().write("{\"error\":\"" + code + "\"}");
     }

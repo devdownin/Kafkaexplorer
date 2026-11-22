@@ -24,7 +24,8 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   validated issuer/audience/time, scoped HTTP routes and stable principal fingerprints.
   OAuth mode is restricted to read-only MCP until tool-level RBAC exists; the legacy
   bearer-token mode remains the default. Adds optional audited per-tool JWT scope
-  checks before execution and approval consumption. See `docs/mcp-enterprise-auth.md`.
+  checks before execution and approval consumption. Publishes RFC 9728 protected-
+  resource metadata and canonical OAuth discovery challenges. See `docs/mcp-enterprise-auth.md`.
 
 - **Two additional reviewed Kafka Agent Skills:** `kafka-security-review` for bounded
   topic-policy and MCP deployment posture evidence, and `kafka-schema-evolution`

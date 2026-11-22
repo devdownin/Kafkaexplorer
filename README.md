@@ -282,6 +282,6 @@ Run **`mvn verify`** before opening a pull request: it is the complete gate — 
 ### Enterprise MCP authentication (opt-in)
 
 A trusted OAuth identity provider can supply JWT access tokens validated against a
-pinned HTTPS JWKS endpoint, issuer, audience and route-level scopes. OAuth mode is
+pinned HTTPS JWKS endpoint, issuer, audience and route-level scopes, with RFC 9728 discovery. OAuth mode is
 currently **read-only**; optional per-tool OAuth scopes restrict read tools, while write-tool authorization and MCP Tasks are not yet available.
 See [Enterprise MCP authentication](docs/mcp-enterprise-auth.md).

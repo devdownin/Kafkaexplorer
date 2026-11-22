@@ -287,7 +287,7 @@ Lancez **`mvn verify`** avant d'ouvrir une pull request : c'est la porte complè
 ### Authentification MCP Enterprise (optionnelle)
 
 Un fournisseur d'identité OAuth de confiance peut émettre des jetons JWT validés contre
-une URL JWKS HTTPS configurée, avec contrôle de l'émetteur, de l'audience et des permissions
+une URL JWKS HTTPS configurée, avec découverte RFC 9728 et contrôle de l'émetteur, de l'audience et des permissions
 par route. Le mode OAuth est actuellement limité à la **lecture seule** ; les permissions
 supplémentaires OAuth permettent de limiter chaque outil en lecture, mais les outils
 d'écriture et MCP Tasks ne sont pas encore disponibles.
