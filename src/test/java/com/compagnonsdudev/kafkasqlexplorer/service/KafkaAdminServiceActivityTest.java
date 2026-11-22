@@ -5,6 +5,7 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicActivity;
 import com.compagnonsdudev.kafkasqlexplorer.domain.TopicActivityResponse;
+import com.compagnonsdudev.kafkasqlexplorer.domain.PartitionActivityResponse;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.DescribeTopicsResult;
 import org.apache.kafka.clients.admin.ListOffsetsResult;
@@ -348,6 +349,35 @@ class KafkaAdminServiceActivityTest {
         assertTrue(response.available());
         assertTrue(response.topics().isEmpty());
         org.mockito.Mockito.verify(admin, org.mockito.Mockito.never()).describeTopics(any(Collection.class));
+    }
+
+    /** Each measured partition costs earliest, latest and thirteen timestamp lookups. */
+    @Test
+    void partitionsObeyTheCompleteOffsetLookupBudget() {
+        long bucket = 150_000L;
+        long end = (System.currentTimeMillis() / bucket) * bucket;
+        long start = end - 12 * bucket;
+        partition(0, 0, start + 60_000L);
+        partition(1, 0, start + 120_000L);
+        partition(2, 0, start + 180_000L);
+        topicsExist(TOPIC);
+
+        // 14 requests cannot cover even one partition: 12 buckets + 1
+        // boundary endpoint + earliest + latest = 15 offset lookups.
+        PartitionActivityResponse tooSmall = service.getPartitionActivity(TOPIC, 30 * 60_000L, 12, 14);
+        assertEquals(3, tooSmall.partitionsTotal());
+        assertEquals(0, tooSmall.partitionsMeasured());
+        assertEquals(0, tooSmall.partitions().size());
+        assertTrue(tooSmall.truncated());
+        assertTrue(tooSmall.warnings().stream().anyMatch(w -> w.contains("budget")));
+
+        // 30 lookups cover exactly two partitions, never the third.
+        PartitionActivityResponse scoped = service.getPartitionActivity(TOPIC, 30 * 60_000L, 12, 30);
+        assertEquals(3, scoped.partitionsTotal());
+        assertEquals(2, scoped.partitionsMeasured());
+        assertEquals(2, scoped.partitions().size());
+        assertTrue(scoped.truncated());
+        assertEquals(12, scoped.partitions().get(0).counts().size());
     }
 
     // ── produced offsets: a forecast covariate's source ───────────────────────
