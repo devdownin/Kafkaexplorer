@@ -722,10 +722,14 @@ export default function Strata3D() {
   const onGroupSelect = useCallback((group: ConsumerGroupLag | null) => setSelectedGroup(group), []);
   const onProjection = useCallback((projection: StrataProjection | null) => setForecastOverlay(projection), []);
   const chooseTopic = useCallback((name: string) => {
-    if (selected !== name) setSelectedGroup(null);
+    if (selected !== name) {
+      setSelectedGroup(null);
+      // A newly selected topic must not leave the camera focused on a different topic.
+      if (focused) setFocused(null);
+    }
     if (compareWith === name) setCompareWith(null);
     setSelected(name);
-  }, [selected, compareWith]);
+  }, [selected, compareWith, focused]);
   const focusTopic = useCallback((name: string) => {
     chooseTopic(name);
     setFocused(name);
