@@ -7,6 +7,9 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCatalogService;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpToolSpecificationPostProcessor;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.ToolDescriptor;
 import io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification;
+import io.modelcontextprotocol.server.McpServerFeatures.SyncResourceSpecification;
+import io.modelcontextprotocol.server.McpServerFeatures.SyncResourceTemplateSpecification;
+import io.modelcontextprotocol.server.McpServerFeatures.SyncPromptSpecification;
 import io.modelcontextprotocol.spec.McpSchema.Tool;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -83,8 +86,23 @@ class McpServerBootTest {
     }
 
     @Autowired List<SyncToolSpecification> toolSpecs;
+    @Autowired List<SyncResourceSpecification> resourceSpecs;
+    @Autowired List<SyncResourceTemplateSpecification> resourceTemplateSpecs;
+    @Autowired List<SyncPromptSpecification> promptSpecs;
     @Autowired McpCatalogService catalog;
     @Autowired McpToolSpecificationPostProcessor postProcessor;
+
+    @Test
+    void spring_ai_registers_resources_and_prompt_workflows() {
+        // The scanner must generate the actual MCP specifications, not only retain annotations.
+        assertThat(resourceSpecs).extracting(s -> s.resource().uri())
+                .contains("kex://contract", "kafka://topics");
+        assertThat(resourceTemplateSpecs).extracting(s -> s.resourceTemplate().uriTemplate())
+                .contains("kafka://topics/{topic}");
+        assertThat(promptSpecs).extracting(s -> s.prompt().name())
+                .contains("kex_incident_triage", "kex_dlq_postmortem", "kex_onboard_domain",
+                        "kex_schema_drift_check", "kex_flow_health", "kex_forecast_analysis");
+    }
 
     @Test
     void spring_ai_registers_every_tool_this_server_declares() {

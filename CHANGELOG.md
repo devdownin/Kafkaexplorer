@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **MCP Resources, guided prompts and reusable Agent Skills.** The MCP server exposes scoped,
+  bounded topic resources with the same tool-level permission, runtime disable, rate, DLP and
+  output guards; six parameterized diagnostic prompts; and project-local incident, forecast,
+  architecture, CI repair and release skills. The transport probe and its failure cases cover
+  resource and prompt discovery/read, with registration and admission tests. See
+  `docs/mcp-skills.md`.
+
 - **A spatial interface, light or dark.** The application follows the system appearance — or a choice made
   from the header: System, Light, Dark — and the choice no longer freezes the first time it is read. Floating
   navigation (sidebar, header, palette, dialogs, tooltips, toasts) is glass; tables, charts and the SQL editor

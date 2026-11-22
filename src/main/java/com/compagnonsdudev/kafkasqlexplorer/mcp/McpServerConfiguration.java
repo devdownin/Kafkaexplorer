@@ -12,6 +12,8 @@ import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRateLimiter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpRuntimeSwitches;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.McpToolFilter;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.guard.ToolGuard;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.resources.KafkaMcpResources;
+import com.compagnonsdudev.kafkasqlexplorer.mcp.prompts.KafkaMcpPrompts;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpAuditSink;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.KafkaMcpAuditSink;
 import com.compagnonsdudev.kafkasqlexplorer.mcp.observability.McpCallRecorder;
@@ -206,6 +208,22 @@ public class McpServerConfiguration {
     McpToolInvoker mcpToolInvoker(
             ObjectProvider<java.util.List<io.modelcontextprotocol.server.McpServerFeatures.SyncToolSpecification>> toolSpecs) {
         return new McpToolInvoker(toolSpecs);
+    }
+
+    /**
+     * Resources and prompts are optional along with the MCP transport. Resource reads go through
+     * the same scoped topic adapters and explicitly repeat the tool interception guards.
+     */
+    @Bean
+    KafkaMcpResources kafkaMcpResources(TopicMcpTools topics, McpCatalogService catalog,
+                                       McpRuntimeSwitches switches, McpRateLimiter limiter,
+                                       ToolGuard guard) {
+        return new KafkaMcpResources(topics, catalog, switches, limiter, guard);
+    }
+
+    @Bean
+    KafkaMcpPrompts kafkaMcpPrompts() {
+        return new KafkaMcpPrompts();
     }
 
     @Bean
