@@ -190,20 +190,6 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   const [webglFailed, setWebglFailed] = useState(false);
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
   useEffect(() => { onFocusRef.current = onFocus; }, [onFocus]);
-  useEffect(() => {
-    motionRef.current = motion;
-    if (state.current) {
-      state.current.controls.enableDamping = motion;
-      state.current.invalidate();
-    }
-  }, [motion]);
-  useEffect(() => {
-    budgetRef.current = budget;
-    if (state.current) {
-      state.current.renderer.setPixelRatio(budget.pixelRatio);
-      state.current.invalidate();
-    }
-  }, [budget]);
   const state = useRef<{
     scene: THREE.Scene;
     camera: THREE.OrthographicCamera;
@@ -219,6 +205,20 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     positions: Map<string, THREE.Vector3>;
     overview: { position: THREE.Vector3; target: THREE.Vector3; zoom: number };
   } | null>(null);
+  useEffect(() => {
+    motionRef.current = motion;
+    if (state.current) {
+      state.current.controls.enableDamping = motion;
+      state.current.invalidate();
+    }
+  }, [motion]);
+  useEffect(() => {
+    budgetRef.current = budget;
+    if (state.current) {
+      state.current.renderer.setPixelRatio(budget.pixelRatio);
+      state.current.invalidate();
+    }
+  }, [budget]);
   useEffect(() => {
     const element = host.current;
     if (!element) return;
@@ -353,11 +353,13 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
         fromTarget: controls.target.clone(), toTarget: target,
         fromZoom: camera.zoom, toZoom: targetZoom,
       };
+      current.invalidate();
     };
     let frame = 0;
     let last = 0;
+    let contextLost = false;
     const requestRender = () => {
-      if (!frame && document.visibilityState === 'visible') frame = requestAnimationFrame(render);
+      if (!contextLost && !frame && document.visibilityState === 'visible') frame = requestAnimationFrame(render);
     };
     const render = (time: number) => {
       frame = 0;
@@ -401,8 +403,14 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       else { cancelAnimationFrame(frame); frame = 0; }
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
-    const onContextLost = (event: Event) => { event.preventDefault(); setWebglFailed(true); };
-    const onContextRestored = () => { setWebglFailed(false); requestRender(); };
+    const onContextLost = (event: Event) => {
+      event.preventDefault();
+      contextLost = true;
+      cancelAnimationFrame(frame);
+      frame = 0;
+      setWebglFailed(true);
+    };
+    const onContextRestored = () => { contextLost = false; setWebglFailed(false); requestRender(); };
     renderer.domElement.addEventListener('webglcontextlost', onContextLost);
     renderer.domElement.addEventListener('webglcontextrestored', onContextRestored);
     const observer = new ResizeObserver(resize);
@@ -565,6 +573,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     const groups = state.current?.groups;
     if (!groups) return;
     for (const group of groups) group.scale.setScalar(group.userData.topic === selected ? 1.04 : 1);
+    state.current?.invalidate();
   }, [selected, topics]);
 
   useEffect(() => {
@@ -887,7 +896,7 @@ export default function Strata3D() {
           onClick={() => { setFocused(null); setCompareWith(null); setDiagnosticMode('investigate'); }}
           className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">Overview</button>
         <button type="button" aria-pressed={Boolean(activeFocus) && diagnosticMode === 'investigate'}
-          disabled={!selected && scoped.length === 0}
+          disabled={scoped.length === 0}
           onClick={() => {
             const target = selected && scoped.includes(selected) ? selected : scoped[0];
             if (target) { focusTopic(target); setDiagnosticMode('investigate'); }
