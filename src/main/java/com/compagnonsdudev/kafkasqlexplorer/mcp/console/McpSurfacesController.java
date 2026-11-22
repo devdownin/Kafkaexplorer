@@ -22,6 +22,8 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/api/mcp/surfaces")
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+        prefix = "explorer.mcp.console", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class McpSurfacesController {
     public record Surface(String kind, String name, String uri, String description) {}
 
