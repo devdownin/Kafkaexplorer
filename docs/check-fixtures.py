@@ -75,6 +75,7 @@ CONTRACTS = {
     "dataModelLimits": "DataModelLimits",
     "ddlPreview": "DdlPreviewResponse",
     "topicActivity": "TopicActivityResponse",
+    "partitionActivity": "PartitionActivityResponse",
     "topicConsumers": "TopicConsumers",
 }
 
