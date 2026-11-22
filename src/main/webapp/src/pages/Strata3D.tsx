@@ -872,12 +872,12 @@ export default function Strata3D() {
             </p>
           </div>
           <div className="inline-flex rounded-xl border border-outline-variant bg-surface p-1 gap-1"
-            role="tablist" aria-label="Diagnostic mode">
-            <button type="button" role="tab" aria-selected={diagnosticMode === 'investigate'}
+            role="group" aria-label="Diagnostic mode">
+            <button type="button" aria-pressed={diagnosticMode === 'investigate'}
               className={`rounded-lg px-3 py-2 text-sm font-medium ${diagnosticMode === 'investigate'
                 ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
               onClick={() => setDiagnosticMode('investigate')}>Investigate</button>
-            <button type="button" role="tab" aria-selected={diagnosticMode === 'compare'}
+            <button type="button" aria-pressed={diagnosticMode === 'compare'}
               className={`rounded-lg px-3 py-2 text-sm font-medium ${diagnosticMode === 'compare'
                 ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
               onClick={() => setDiagnosticMode('compare')}>Compare</button>
