@@ -7,7 +7,7 @@ import { about, forecastStage, forecastTimeline } from './forecastStage';
 const filling: ForecastActivationReadiness = { eligible: false, reason: 'The first quality block holds 40 of 180 realised points',
   blockPoints: 40, blockPointsRequired: 180, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 };
 function series(result: Partial<ForecastRecord> | null, activation: Partial<ForecastActivationReadiness> = {}): ForecastSeriesView {
-  return { seriesId: 'a'.repeat(64), metricId: 'lag', environment: 'local', stepMillis: 60000, minimumContextPoints: 128,
+  return { seriesId: 'a'.repeat(64), metricId: 'lag', environment: 'local', topics: ['orders'], groups: [], stepMillis: 60000, minimumContextPoints: 128,
     withdrawable: true, thresholdConfigured: false, activation: { ...filling, ...activation },
     result: result && { state: 'READY', strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'ready', forecast: { points: [] },
       context: { status: 'READY', observedPoints: 512 }, ...result } as ForecastRecord };
@@ -95,7 +95,7 @@ describe('forecastTimeline', () => {
 // METRICS-FORECAST-UX-AUDIT.md B2: a series the server could not read is named, not "waiting".
 describe('an unreadable series', () => {
   it('is blocked with the reason, on the card and on the timeline', () => {
-    const view = { seriesId: 's', metricId: 'm', environment: 'e', result: null, stepMillis: 60000, minimumContextPoints: 32,
+    const view = { seriesId: 's', metricId: 'm', environment: 'e', topics: ['orders'], groups: [], result: null, stepMillis: 60000, minimumContextPoints: 32,
       withdrawable: false, thresholdConfigured: false, error: 'could not be read',
       activation: { eligible: false, reason: null, blockPoints: 0, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 } };
     expect(forecastStage(view)).toMatchObject({ stage: 'BLOCKED', label: 'Unreadable', detail: 'could not be read' });
