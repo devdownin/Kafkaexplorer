@@ -27,11 +27,43 @@ function position(index: number): THREE.Vector3 {
 
 function disposeGroup(group: THREE.Group) {
   group.traverse(object => {
+    if (object instanceof THREE.Sprite) {
+      object.material.map?.dispose();
+      object.material.dispose();
+    }
     if (!(object instanceof THREE.Mesh || object instanceof THREE.Line)) return;
     object.geometry.dispose();
     const materials = Array.isArray(object.material) ? object.material : [object.material];
     materials.forEach(material => material.dispose());
   });
+}
+
+/** One billboard per topic, readable from every orbit angle. Canvas textures never leave the browser. */
+function topicLabel(name: string, dark: boolean): THREE.Sprite | null {
+  const canvas = document.createElement('canvas');
+  canvas.width = 384;
+  canvas.height = 72;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  context.fillStyle = dark ? 'rgba(14, 30, 48, .94)' : 'rgba(249, 252, 255, .96)';
+  context.fillRect(2, 2, 380, 68);
+  context.strokeStyle = dark ? 'rgba(155, 197, 235, .5)' : 'rgba(102, 128, 154, .38)';
+  context.lineWidth = 2;
+  context.strokeRect(2, 2, 380, 68);
+  context.font = '600 28px system-ui, sans-serif';
+  context.fillStyle = dark ? '#F0F6FE' : '#1D334B';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  const label = name.length > 24 ? name.slice(0, 23) + '…' : name;
+  context.fillText(label, 192, 36, 362);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture, transparent: true, depthTest: false, depthWrite: false,
+  }));
+  sprite.scale.set(3.2, 0.6, 1);
+  sprite.position.y = 6.44;
+  return sprite;
 }
 
 function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean): THREE.Group {
@@ -85,6 +117,8 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
     glow.position.set(0, 0.3, 0);
     group.add(glow);
   }
+  const label = topicLabel(topic.name, dark);
+  if (label) group.add(label);
   return group;
 }
 
