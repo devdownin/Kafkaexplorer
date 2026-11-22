@@ -20,6 +20,8 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Light-first application appearance.** First visits always render in light mode regardless of the OS, including the pre-paint background and browser chrome. The header now uses an accessible binary dark-mode switch instead of cycling System / Light / Dark. Dark mode persists per browser; switching back to light restores the default without a stored override.
+
 - **MCP guide usability pass.** Role-lens filtering without hiding intermediate nodes,
   accessible mobile step list, graph zoom, arrow/Home/End keyboard traversal,
   shareable scenario/step/focus URLs and portable Mermaid export. The public GitHub
