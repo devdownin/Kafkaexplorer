@@ -137,7 +137,7 @@ export default function StrataDiagnosticPanel({ mode, topic, compareWith, topics
     };
   }, [mode, selectedPeer, groupId]);
 
-  const peerData = peerConsumers?.topic === selectedPeer && peerConsumers.groupId === groupId
+  const peerData = peerConsumers !== null && peerConsumers.topic === selectedPeer && peerConsumers.groupId === groupId
     ? peerConsumers.data : null;
   const peerGroup = peerData?.groups.find(group => group.groupId === groupId) ?? null;
   const firstLag = completeLag(selectedGroup);
@@ -238,7 +238,7 @@ export default function StrataDiagnosticPanel({ mode, topic, compareWith, topics
               {rateDelta === null ? 'Unknown (incomplete coverage)' :
                 `${rateDelta.absolute >= 0 ? '+' : ''}${rateDelta.absolute.toLocaleString(undefined, { maximumFractionDigits: 1 })} offsets/min`}
             </p>
-            <p>{rateDelta?.percent === null || rateDelta === null ? 'Relative difference unavailable' :
+            <p>{rateDelta === null || rateDelta.percent === null ? 'Relative difference unavailable' :
               `${rateDelta.percent >= 0 ? '+' : ''}${rateDelta.percent.toFixed(1)}% against B`}</p>
           </div>
           <ComparisonChart comparison={comparison} selectedBucket={selectedBucket} />
