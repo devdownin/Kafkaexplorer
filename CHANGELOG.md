@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **MCP guide usability pass.** Role-lens filtering without hiding intermediate nodes,
+  accessible mobile step list, graph zoom, arrow/Home/End keyboard traversal,
+  shareable scenario/step/focus URLs and portable Mermaid export. The public GitHub
+  Pages edition now uses a separate checked JavaScript asset and offers the same
+  filters, deep links, mobile presentation and focus controls, without live calls.
+
+
 - **MCP Skills & Services pedagogical guide.** New in-app page `/mcp/guide`
   and public Pages guide `docs/mcp-guide.html`: four primitives explained through
   examples, actionable do/don't rules, and interactive incident, forecast and skill

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { useState, type FC, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { useRef, useState, type FC, type ReactNode } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { copyText } from '../clipboard';
 import { Badge, Button, Card, PageHeader } from '../components/ui';
 import {
-  EXPLORER_MCP, EXPLORER_SKILLS, GRAPH_EDGES, GRAPH_ORDER,
+  EXPLORER_MCP, EXPLORER_SKILLS, GRAPH_EDGES, GRAPH_ORDER, GRAPH_LENSES,
   HARNESS_ARCHITECTURE, HARNESS_CONTROLS, HARNESS_SKILLS,
-  SCENARIOS,
-  type GraphNodeId, type GraphNodeKind, type ScenarioId,
+  SCENARIOS, parseGuideSelection, serializeGuideSelection, scenarioMermaid,
+  type GraphLens, type GraphNodeId, type GraphNodeKind, type GuideSelection, type ScenarioId,
 } from './mcp/mcpGuideGraph';
 
 /** No runtime API and no simulated Kafka calls: a documented, cited architecture explorer. */
@@ -90,10 +90,21 @@ const Token: FC<{ children: ReactNode }> = ({ children }) => (
   <code className="rounded-md px-1.5 py-1 bg-surface-container-high font-mono text-[11px] text-on-surface break-all">{children}</code>
 );
 
-const ProcessGraph: FC<{ scenario: ScenarioId; onScenarioChange: (scenario: ScenarioId) => void }> = ({
-  scenario, onScenarioChange,
-}) => {
-  const [selected, setSelected] = useState<GraphNodeId>('server');
+const ProcessGraph: FC<{
+  scenario: ScenarioId;
+  selected: GraphNodeId;
+  lens: GraphLens;
+  onScenarioChange: (scenario: ScenarioId) => void;
+  onStepChange: (step: GraphNodeId) => void;
+  onLensChange: (lens: GraphLens) => void;
+}> = ({ scenario, selected, lens, onScenarioChange, onStepChange, onLensChange }) => {
+  const [zoom, setZoom] = useState(1);
+  const nodeRefs = useRef<Partial<Record<GraphNodeId, HTMLButtonElement | null>>>({});
+  const focusStep = (step: GraphNodeId) => {
+    onStepChange(step);
+    nodeRefs.current[step]?.focus();
+    nodeRefs.current[step]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  };
   const current = SCENARIOS[scenario];
   const node = current.nodes.find((item) => item.id === selected) ?? current.nodes[0];
   const selectedIndex = GRAPH_ORDER.indexOf(selected);
@@ -120,17 +131,86 @@ const ProcessGraph: FC<{ scenario: ScenarioId; onScenarioChange: (scenario: Scen
                 className={`rounded-full px-3.5 py-2 text-[12px] font-medium border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${scenario === key
                   ? 'border-primary/45 bg-primary/12 text-primary'
                   : 'border-outline-variant bg-surface text-on-surface-variant hover:text-on-surface hover:border-primary/35'}`}
-                onClick={() => { onScenarioChange(key); setSelected('server'); }}
+                onClick={() => onScenarioChange(key)}
               >{SCENARIOS[key].title}</button>
             ))}
           </div>
           <p className="text-[12px] text-on-surface-variant">{current.intro}</p>
         </div>
 
-        <div className="relative overflow-x-auto overscroll-x-contain p-3 sm:p-5"
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-3 border-b border-outline-variant/60">
+          <div role="group" aria-label="Filtrer les responsabilités" className="flex flex-wrap gap-1.5">
+            {GRAPH_LENSES.map(({ id, label }) => (
+              <button key={id} type="button" aria-pressed={lens === id}
+                onClick={() => onLensChange(id)}
+                className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary
+                  ${lens === id ? 'bg-primary/12 border-primary/40 text-primary' : 'bg-surface-container border-outline-variant/60 text-on-surface-variant hover:text-on-surface'}`}
+              >{label}</button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1.5 items-center">
+            <div className="hidden md:flex items-center gap-1" role="group" aria-label="Zoom du graphe">
+              <button type="button" aria-label="Zoom arrière" title="Zoom arrière" disabled={zoom <= 0.75}
+                onClick={() => setZoom((value) => Math.max(0.75, value - 0.25))}
+                className="rounded-md border border-outline-variant px-2 py-1.5 text-[12px] disabled:opacity-40 hover:bg-surface-container-high">−</button>
+              <output className="w-12 text-center text-[11px] font-mono text-on-surface-variant" aria-label="Zoom actuel">
+                {Math.round(zoom * 100)}%
+              </output>
+              <button type="button" aria-label="Zoom avant" title="Zoom avant" disabled={zoom >= 1.25}
+                onClick={() => setZoom((value) => Math.min(1.25, value + 0.25))}
+                className="rounded-md border border-outline-variant px-2 py-1.5 text-[12px] disabled:opacity-40 hover:bg-surface-container-high">+</button>
+              <button type="button" aria-label="Réinitialiser le zoom" title="Taille initiale"
+                onClick={() => setZoom(1)}
+                className="rounded-md border border-outline-variant px-2 py-1.5 text-[11px] hover:bg-surface-container-high">100%</button>
+            </div>
+            <button type="button" onClick={() => void copyText(scenarioMermaid(scenario))}
+              className="rounded-lg border border-outline-variant px-3 py-1.5 text-[11px] font-medium text-on-surface hover:bg-surface-container-high">
+              Copier Mermaid
+            </button>
+            <button type="button" onClick={() => void copyText(window.location.href)}
+              className="rounded-lg border border-outline-variant px-3 py-1.5 text-[11px] font-medium text-on-surface hover:bg-surface-container-high">
+              Copier ce parcours
+            </button>
+          </div>
+          {lens !== 'all' && (
+            <p className="basis-full text-[11px] text-on-surface-variant" role="status">
+              Focus {GRAPH_LENSES.find((item) => item.id === lens)?.label} :
+              les autres étapes restent visibles pour préserver les relations d’appel.
+            </p>
+          )}
+        </div>
+
+        <ol className="md:hidden grid gap-2 p-3" aria-label="Parcours accessible sur mobile">
+          {current.nodes.map((item, index) => {
+            const active = selected === item.id;
+            const highlighted = lens === 'all' || lens === item.kind || active;
+            return (
+              <li key={item.id}>
+                <button type="button" aria-pressed={active} onClick={() => onStepChange(item.id)}
+                  className={`w-full flex items-center gap-3 rounded-xl border p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary
+                    ${active ? 'border-primary bg-primary/10' : 'border-outline-variant bg-surface-container'} ${!highlighted ? 'opacity-55' : ''}`}
+                  aria-label={`Choisir le point ${index + 1} : ${item.label}`}>
+                  <span className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary font-mono text-xs shrink-0">{index + 1}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-semibold text-on-surface">{item.label}</span>
+                    <span className="block text-[11px] text-on-surface-variant">{item.subtitle}</span>
+                  </span>
+                  <span aria-hidden="true" className="material-symbols-outlined text-[17px] text-on-surface-variant">chevron_right</span>
+                </button>
+              </li>
+            );
+          })}
+        </ol>
+
+        <div className="hidden md:block relative overflow-x-auto overscroll-x-contain p-3 sm:p-5"
           aria-label="Graphe d'appel défilable horizontalement">
-          <div className="relative min-w-[1390px] h-[495px] rounded-xl border border-outline-variant/40"
-            style={{ background: 'radial-gradient(ellipse at 50% 8%, rgb(var(--p) / 0.09), transparent 58%)' }}>
+          <div style={{ width: 1390 * zoom, height: 495 * zoom }} className="relative">
+          <div className="relative rounded-xl border border-outline-variant/40"
+            style={{
+              width: 1390, height: 495, transform: `scale(${zoom})`,
+              transformOrigin: 'top left',
+              background: 'radial-gradient(ellipse at 50% 8%, rgb(var(--p) / 0.09), transparent 58%)',
+            }}>
             <div className="absolute inset-0 opacity-[0.13] pointer-events-none"
               style={{ backgroundImage: 'radial-gradient(currentColor 0.65px, transparent 0.65px)', backgroundSize: '18px 18px' }} />
             <div className="absolute left-7 top-7 right-7 flex justify-between text-[10px] font-semibold tracking-[.12em] uppercase text-on-surface-variant">
@@ -152,7 +232,9 @@ const ProcessGraph: FC<{ scenario: ScenarioId; onScenarioChange: (scenario: Scen
                 </marker>
               </defs>
               {GRAPH_EDGES.map(([from, to, kind]) => {
-                const focus = from === selected || to === selected;
+                const focus = from === selected || to === selected ||
+                  (lens !== 'all' && current.nodes.some((entry) =>
+                    (entry.id === from || entry.id === to) && entry.kind === lens));
                 return (
                   <path key={`${from}-${to}`} d={PATHS[`${from}-${to}`]} fill="none"
                     stroke="currentColor" strokeWidth={focus ? 2.6 : 1.5}
@@ -167,13 +249,32 @@ const ProcessGraph: FC<{ scenario: ScenarioId; onScenarioChange: (scenario: Scen
               const { x, y } = POSITION[item.id];
               const style = NODE_VISUALS[item.kind];
               const active = selected === item.id;
+              const dimmed = lens !== 'all' && item.kind !== lens && !active;
               return (
                 <button key={item.id} type="button" aria-pressed={active}
+                  ref={(element) => { nodeRefs.current[item.id] = element; }}
                   style={{ left: x, top: y, width: WIDTH, height: HEIGHT }}
-                  onClick={() => setSelected(item.id)}
+                  onClick={() => onStepChange(item.id)}
+                  onKeyDown={(event) => {
+                    const at = GRAPH_ORDER.indexOf(item.id);
+                    let target: GraphNodeId | undefined;
+                    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+                      target = GRAPH_ORDER[(at + 1) % GRAPH_ORDER.length];
+                    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+                      target = GRAPH_ORDER[(at + GRAPH_ORDER.length - 1) % GRAPH_ORDER.length];
+                    } else if (event.key === 'Home') {
+                      target = GRAPH_ORDER[0];
+                    } else if (event.key === 'End') {
+                      target = GRAPH_ORDER[GRAPH_ORDER.length - 1];
+                    }
+                    if (target) {
+                      event.preventDefault();
+                      focusStep(target);
+                    }
+                  }}
                   className={`absolute z-10 text-left rounded-xl border p-3 shadow-sm transition-all duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary
                     ${active ? 'border-primary bg-primary/10 ring-2 ring-primary/20 -translate-y-1 shadow-md' :
-                      `bg-surface-container-high/95 hover:bg-surface-container-high hover:-translate-y-0.5 ${style.border}`}`}
+                      `bg-surface-container-high/95 hover:bg-surface-container-high hover:-translate-y-0.5 ${style.border} ${dimmed ? 'opacity-40' : ''}`}`}
                   aria-label={`Étape ${index + 1} : ${item.label}. ${item.subtitle}`}
                 >
                   <span className="flex items-center justify-between gap-2 text-[10px] text-on-surface-variant">
@@ -192,7 +293,8 @@ const ProcessGraph: FC<{ scenario: ScenarioId; onScenarioChange: (scenario: Scen
               <span className="flex items-center gap-1.5"><span className="w-5 border-t-2 border-primary" /> Appel</span>
               <span className="flex items-center gap-1.5"><span className="w-5 border-t-2 border-dashed border-on-surface-variant/50" /> Retour</span>
             </div>
-            <div className="absolute bottom-5 left-7 text-[10px] text-on-surface-variant">Sélectionner un bloc pour inspecter son contrat</div>
+            <div className="absolute bottom-5 left-7 text-[10px] text-on-surface-variant">Sélectionner un bloc pour inspecter son contrat · flèches, Début/Fin au clavier</div>
+          </div>
           </div>
         </div>
 
@@ -213,10 +315,10 @@ const ProcessGraph: FC<{ scenario: ScenarioId; onScenarioChange: (scenario: Scen
             </div>
             <p className="text-[12px] text-on-surface-variant leading-relaxed">{node.guardrail}</p>
             <div className="flex gap-2 pt-1">
-              <Button size="sm" variant="outline" onClick={() => setSelected(GRAPH_ORDER[(selectedIndex + GRAPH_ORDER.length - 1) % GRAPH_ORDER.length])}>
+              <Button size="sm" variant="outline" onClick={() => onStepChange(GRAPH_ORDER[(selectedIndex + GRAPH_ORDER.length - 1) % GRAPH_ORDER.length])}>
                 Précédent
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setSelected(GRAPH_ORDER[(selectedIndex + 1) % GRAPH_ORDER.length])}>
+              <Button size="sm" variant="outline" onClick={() => onStepChange(GRAPH_ORDER[(selectedIndex + 1) % GRAPH_ORDER.length])}>
                 Suivant
               </Button>
             </div>
@@ -265,7 +367,12 @@ const FAQ = [
 ];
 
 const McpGuide: FC = () => {
-  const [scenario, setScenario] = useState<ScenarioId>('incident');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selection = parseGuideSelection(searchParams.toString());
+  const { scenario, step, lens } = selection;
+  const updateSelection = (change: Partial<GuideSelection>) => {
+    setSearchParams(serializeGuideSelection({ ...selection, ...change }), { replace: true });
+  };
   return (
   <div className="space-y-10 pb-12">
     <nav aria-label="Fil d'Ariane" className="flex items-center gap-2 text-[12px] text-on-surface-variant">
@@ -368,7 +475,13 @@ const McpGuide: FC = () => {
       </div>
     </section>
 
-    <ProcessGraph scenario={scenario} onScenarioChange={setScenario} />
+    <ProcessGraph scenario={scenario} selected={step} lens={lens}
+      onScenarioChange={(id) => updateSelection({ scenario: id, step: 'server' })}
+      onStepChange={(id) => updateSelection({ step: id })}
+      onLensChange={(id) => {
+        const firstMatching = SCENARIOS[scenario].nodes.find((item) => item.kind === id);
+        updateSelection({ lens: id, step: id === 'all' ? step : firstMatching?.id ?? step });
+      }} />
 
     <section className="space-y-5" aria-labelledby="ateliers">
       <SectionHeading id="ateliers" eyebrow="03 / Mise en pratique"
@@ -415,7 +528,7 @@ const McpGuide: FC = () => {
               ))}
             </ol>
             <p className="text-[12px] text-on-surface leading-relaxed">{item.outcome}</p>
-            <a href="#graphe" onClick={() => setScenario(item.id)}
+            <a href="#graphe" onClick={() => updateSelection({ scenario: item.id, step: 'server' })}
               className="text-[12px] font-medium text-primary hover:underline">
               Parcourir le graphe correspondant
             </a>
