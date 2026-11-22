@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { useState, useEffect, useRef, type PointerEvent as ReactPointerEvent, type KeyboardEvent } from 'react';
+import { useState, useEffect, useRef, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { TopicActivity, TopicActivityResponse } from '../api/types';
 import { bucketInterval } from './strataTime';
 import {
@@ -208,7 +208,7 @@ export function StrataResizeHandle({ side, value, onChange }: {
   const pointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (drag.current) onChange(clamp(drag.current.width + (event.clientX - drag.current.x) * delta));
   };
-  const keys = (event: KeyboardEvent<HTMLDivElement>) => {
+  const keys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
       onChange(clamp(value + (event.key === 'ArrowRight' ? 1 : -1) * delta * 12));
