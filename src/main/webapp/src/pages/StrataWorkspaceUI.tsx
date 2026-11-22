@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { useState, useRef, type PointerEvent as ReactPointerEvent, type KeyboardEvent } from 'react';
+import { useState, useEffect, useRef, type PointerEvent as ReactPointerEvent, type KeyboardEvent } from 'react';
 import type { TopicActivity, TopicActivityResponse } from '../api/types';
 import { bucketInterval } from './strataTime';
 import {
@@ -24,15 +24,37 @@ export function StrataLayerMenu({ layers, onChange }: {
   layers: StrataLayers; onChange: (layer: StrataLayer, enabled: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const enabled = Object.values(layers).filter(Boolean).length;
-  return <div className="relative">
-    <button type="button" aria-expanded={open} aria-controls="strata-layer-options"
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('pointerdown', closeOutside);
+    return () => {
+      document.removeEventListener('keydown', closeOnEscape);
+      document.removeEventListener('pointerdown', closeOutside);
+    };
+  }, [open]);
+  return <div ref={menuRef} className="relative">
+    <button type="button" ref={triggerRef} aria-expanded={open} aria-controls="strata-layer-options"
       onClick={() => setOpen(value => !value)}
-      className="rounded-xl border border-outline-variant bg-surface/95 backdrop-blur-lg px-3 py-2 text-xs font-semibold text-on-surface shadow-sm">
+      className="strata-glass rounded-xl border border-outline-variant bg-surface/95 backdrop-blur-lg px-3 py-2 text-xs font-semibold text-on-surface shadow-sm focus-visible:outline-2 focus-visible:outline-primary">
       Layers · {enabled}/6
     </button>
     {open && <div id="strata-layer-options"
-      className="absolute right-0 top-full mt-2 z-30 w-64 max-w-[calc(100vw-3rem)] rounded-xl border border-outline-variant bg-surface/95 backdrop-blur-xl shadow-xl p-3 space-y-2"
+      className="strata-glass absolute right-0 top-full mt-2 z-30 w-64 max-w-[calc(100vw-3rem)] rounded-xl border border-outline-variant bg-surface/95 backdrop-blur-xl shadow-xl p-3 space-y-2"
       role="group" aria-label="3D visible layers">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-xs font-semibold text-on-surface">Visible evidence</h3>
@@ -79,10 +101,14 @@ export function StrataMiniMap({ items, totalTopics, selected, peer, onSelect, on
       <span className="sr-only">Position of visible topics in the full cluster.</span>
       {positions.map(p => <button type="button" key={p.name} title={p.name}
         aria-label={`Select ${p.name} on the topic map`}
-        className="absolute rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+        aria-pressed={p.name === selected}
+        className="absolute rounded-full focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-primary"
         style={{ left: `${p.x / 240 * 100}%`, top: `${p.y / 164 * 100}%`,
-          width: 15, height: 15, transform: 'translate(-50%, -50%)' }}
-        onClick={() => onSelect(p.name)} onDoubleClick={() => onFocus(p.name)} />)}
+          width: 24, height: 24, transform: 'translate(-50%, -50%)' }}
+        onClick={() => onSelect(p.name)} onDoubleClick={() => onFocus(p.name)}
+        onKeyDown={event => { if (event.key === 'Enter' && event.shiftKey) {
+          event.preventDefault(); onFocus(p.name);
+        } }} />)}
     </div>
     <p className="mt-2 text-[11px] text-on-surface-variant">
       Select a point to inspect; double-click to focus. Cyan: selected. Violet: comparison.
@@ -105,7 +131,7 @@ export function StrataTimelineDock({ snapshot, topics, selectedBucket, onBucket,
     startMs: snapshot.windowStartMs, endMs: snapshot.windowEndMs,
     bucketMs: snapshot.bucketMs, count: snapshot.buckets,
   }, selectedBucket) : null;
-  return <section aria-label="Temporal lens" className="rounded-2xl border border-outline-variant bg-surface/95 backdrop-blur-xl shadow-lg p-3 space-y-2">
+  return <section aria-label="Temporal lens" className="strata-glass rounded-2xl border border-outline-variant bg-surface/95 backdrop-blur-xl shadow-lg p-3 space-y-2">
     <div className="flex items-center flex-wrap justify-between gap-2">
       <div className="flex items-center gap-2">
         <button type="button" onClick={onReplay} disabled={!snapshot?.available}
@@ -162,7 +188,7 @@ export function StrataHoverCard({ name, activity, bucket, receivedAt, x, y }: {
   bucket: number; receivedAt: number | null; x: number; y: number;
 }) {
   const evidence = topicEvidence(activity, bucket, receivedAt);
-  return <div role="status" className="pointer-events-none absolute z-20 w-56 max-w-[70vw] rounded-xl border border-outline-variant bg-surface/95 backdrop-blur-xl shadow-xl p-3 text-xs text-on-surface"
+  return <div role="tooltip" className="strata-glass pointer-events-none absolute z-20 w-56 max-w-[70vw] rounded-xl border border-outline-variant bg-surface/95 backdrop-blur-xl shadow-xl p-3 text-xs text-on-surface"
     style={{ left: x, top: y }}>
     <p className="font-semibold break-all">{name}</p>
     <p className="mt-1 capitalize text-on-surface-variant">Coverage: {evidence.status} · {evidence.measuredBuckets}/{evidence.totalBuckets} intervals</p>
@@ -199,6 +225,6 @@ export function StrataResizeHandle({ side, value, onChange }: {
     onPointerMove={pointerMove}
     onPointerUp={event => { drag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
     onPointerCancel={() => { drag.current = null; }}
-    className={`hidden lg:block absolute top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/15 focus-visible:bg-primary/20 focus-visible:outline-primary z-10 ${side === 'left' ? 'right-0' : 'left-0'}`}
+    className={`hidden 2xl:block absolute top-0 bottom-0 w-2 cursor-col-resize hover:bg-primary/15 focus-visible:bg-primary/20 focus-visible:outline-primary z-10 ${side === 'left' ? 'right-0' : 'left-0'}`}
   />;
 }
