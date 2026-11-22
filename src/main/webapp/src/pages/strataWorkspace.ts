@@ -25,21 +25,30 @@ export interface TopicEvidence {
 /** Every displayed production figure follows the same coverage rule as the spatial rings. */
 export function topicEvidence(activity: TopicActivity | undefined, bucket: number,
   receivedAt: number | null = null, now: number = Date.now()): TopicEvidence {
-  const readings = activity?.counts.map((_, index) => bucketReading(activity, index)) ?? [];
+  const duration = activity ? activity.windowEndMs - activity.windowStartMs : 0;
+  const expectedBuckets = activity && Number.isFinite(duration) && Number.isFinite(activity.bucketMs)
+    && duration > 0 && activity.bucketMs > 0 && duration % activity.bucketMs === 0
+    ? duration / activity.bucketMs : 0;
+  const structurallyValid = Boolean(activity && Number.isInteger(expectedBuckets)
+    && expectedBuckets > 0 && expectedBuckets <= 48
+    && activity.counts.length === expectedBuckets
+    && activity.partitionsTotal > 0 && activity.partitionsMeasured <= activity.partitionsTotal);
+  const readings = structurallyValid && activity
+    ? activity.counts.map((_, index) => bucketReading(activity, index)) : [];
   const measuredBuckets = readings.filter(value => value !== null).length;
-  const allComplete = Boolean(activity?.available && readings.length > 0
-    && measuredBuckets === readings.length);
+  const allComplete = Boolean(structurallyValid && activity?.available
+    && measuredBuckets === expectedBuckets);
   const latest = readings[readings.length - 1] ?? null;
   const stale = receivedAt !== null && now - receivedAt > 90_000;
   return {
-    status: !activity?.available ? 'unavailable' : stale ? 'stale' :
+    status: !activity?.available || !structurallyValid ? 'unavailable' : stale ? 'stale' :
       allComplete ? 'measured' : 'partial',
-    selected: bucketReading(activity, bucket),
+    selected: structurallyValid ? bucketReading(activity, bucket) : null,
     latestRate: latest !== null && activity?.bucketMs && activity.bucketMs > 0
       ? latest * 60000 / activity.bucketMs : null,
     total: allComplete ? readings.reduce<number>((sum, n) => sum + (n ?? 0), 0) : null,
     measuredBuckets,
-    totalBuckets: readings.length,
+    totalBuckets: expectedBuckets || 0,
     partitionsMeasured: activity?.partitionsMeasured ?? 0,
     partitionsTotal: activity?.partitionsTotal ?? 0,
   };
