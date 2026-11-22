@@ -122,6 +122,54 @@ Calculations are local and do not add backend write operations.
 - **Inspection:** the companion chart and legend display actual time coordinates, value units, model ID, visibility and forecast horizon. The **Metrics** page remains the source for model quality and the observed-versus-predicted evaluation.
 - **Resource cost:** the view fetches forecast status periodically only while mounted for a focused topic; one detailed series is retrieved on demand. Forecasting is never triggered by simply opening Strata 3D.
 
+## Performance and data-integrity guardrails — P0
+
+- **Measured means complete:** a topic ring uses the same `bucketReading`
+  validation as Compare and anomaly detection. Incomplete partition coverage,
+  unavailable activity and buckets preceding a retention boundary render as
+  **neutral unknown**, not as a positive measured ring or a synthetic zero.
+  The normalizing scale also excludes unknown buckets.
+- **Demand-driven frames:** the renderer schedules a new frame for OrbitControls
+  movement, selection, focus transitions, resize, a time-lens change or data
+  updates. With motion paused, no perpetual `requestAnimationFrame` loop
+  runs. A real positive, fully measured activity series can animate a pulse,
+  subject to a bounded frame rate. Hidden tabs do not render.
+- **GPU budget:** the **Render quality** selector supports Auto, Detail and
+  Economy. Auto reduces device-pixel ratio, ring tessellation and animation
+  frequency when 16+ or 32+ topics are visible. Detail permits up to 2×
+  device-pixel ratio; Economy caps it at 1× and uses fewer polygon segments.
+  The choice does not change Kafka sampling, metrics or projection geometry.
+- **Context handling:** when WebGL cannot initialize or the browser loses
+  its context, the page displays a text fallback and the topic list remains
+  accessible. The renderer, materials, handlers and scene are disposed on
+  unmount; context recovery requests a fresh frame.
+
+## Presets and shareable views — P3
+
+- **Overview** resets camera focus and comparison mode while preserving the
+  selected topic and shared time cursor. **Focus selected** centers the
+  visible topic with partition ribbons and eligible forecast. **Compare**
+  enters the synchronized two-topic workspace.
+- **Copy view link** includes topic A, topic B, focused topic, filter text,
+  diagnostic mode, selected time bucket and render-quality preference. Opening
+  the URL restores those choices within the current cluster's visible scope.
+  Values are validated and bounded; a topic not present in the cluster does
+  not magically appear. Other URL parameters are preserved.
+- A shareable link contains **no Kafka message keys, traces, record content,
+  forecast payload or credentials**. This is a URL bookmark, not an
+  account-synced preset store, and does not persist a broker history snapshot.
+  The operator sees newly sampled data after reopening the same view.
+
+### Browser validation
+
+The PR screenshot workflow executes `docs/screenshots/strata-webgl-probe.mjs`
+against the **built JAR's SPA** in headless Chromium with software WebGL.
+The probe asserts a live WebGL2 context, an actual OrbitControls image change,
+URL restoration, partition focus and a return to overview. The fixture server
+uses a deterministically bounded per-partition offset distribution aligned to
+the topic-activity response. This is a regression gate, not a substitute for
+manual visual review across devices and GPU drivers.
+
 ## Behaviour under constraints
 
 - Cluster metadata refreshes every 60 seconds and Lineage every 120 seconds.
