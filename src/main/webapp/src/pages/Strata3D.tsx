@@ -14,7 +14,7 @@ import { bucketReading, detectActivityAnomaly } from './strataTime';
 import type { ParsedFlow } from './streamFlowLogic';
 import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strataLineage';
 import { Link } from 'react-router-dom';
-import { readStrataView, strataRenderBudget, writeStrataView, type StrataQuality } from './strataView';
+import { readStrataView, shareStrataUrl, strataRenderBudget, writeStrataView, type StrataQuality } from './strataView';
 import { copyText } from '../clipboard';
 import { DEFAULT_STRATA_LAYERS, partitionFrameMatches, topicEvidence, type StrataLayer } from './strataWorkspace';
 import {
@@ -705,16 +705,10 @@ export default function Strata3D() {
   }, [diagnosticMode, selected, compareWith, focused, query, selectedBucket, quality]);
 
   const copyViewLink = async () => {
-    const url = new URL(window.location.href);
-    // Sharing deliberately drops unrelated query parameters (which may be sensitive).
-    url.search = writeStrataView(new URLSearchParams(), {
+    const link = shareStrataUrl(window.location.href, {
       mode: diagnosticMode, topic: selected, peer: compareWith, focus: focused,
       filter: query, bucket: selectedBucket, quality,
-    }).toString();
-    // The fragment may contain an unrelated route state or a legacy token.
-    // Never propagate it into a link intended to share just the Strata view.
-    url.hash = '';
-    const link = url.toString();
+    });
     const copied = await copyText(link);
     setShareLink(copied ? null : link);
     setShareNotice(copied
