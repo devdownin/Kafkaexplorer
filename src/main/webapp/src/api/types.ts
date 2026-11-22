@@ -220,15 +220,6 @@ export interface TopicActivityResponse {
   warnings: string[];
 }
 
-/**
- * Où en est un groupe de consommateurs sur une partition.
- *
- * `committedOffset` et `lag` sont nullables à dessein : un groupe qui n'a jamais commité sur une
- * partition n'y a pas de position, et rendre ça par `0` se lirait « à jour au tout début » —
- * l'exact contraire de « personne ne lit cette partition ».
- *
- * @java PartitionLag
- */
 /** @java PartitionActivity */
 export interface PartitionActivity {
   partition: number;
@@ -252,6 +243,15 @@ export interface PartitionActivityResponse {
   warnings: string[];
 }
 
+/**
+ * Où en est un groupe de consommateurs sur une partition.
+ *
+ * `committedOffset` et `lag` sont nullables à dessein : un groupe qui n'a jamais commité sur une
+ * partition n'y a pas de position, et rendre ça par `0` se lirait « à jour au tout début » —
+ * l'exact contraire de « personne ne lit cette partition ».
+ *
+ * @java PartitionLag
+ */
 export interface PartitionLag {
   partition: number;
   committedOffset: number | null;
