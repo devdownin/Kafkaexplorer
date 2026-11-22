@@ -598,6 +598,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
 }
 
 export default function Strata3D() {
+  const [initialView] = useState(() => readStrataView(new URLSearchParams(window.location.search)));
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [activitySnapshot, setActivitySnapshot] = useState<{
     scope: string; data: ActivityResponse; receivedAt: number;
@@ -605,23 +606,59 @@ export default function Strata3D() {
   const [lineage, setLineage] = useState<StrataLineage | null>(null);
   const [lineageError, setLineageError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [diagnosticMode, setDiagnosticMode] = useState<DiagnosticMode>('investigate');
-  const [compareWith, setCompareWith] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialView.topic);
+  const [diagnosticMode, setDiagnosticMode] = useState<DiagnosticMode>(initialView.mode);
+  const [compareWith, setCompareWith] = useState<string | null>(initialView.peer);
   const [selectedGroup, setSelectedGroup] = useState<ConsumerGroupLag | null>(null);
-  const [query, setQuery] = useState('');
-  const [filteredQuery, setFilteredQuery] = useState('');
+  const [query, setQuery] = useState(initialView.filter);
+  const [filteredQuery, setFilteredQuery] = useState(initialView.filter);
+  const [quality, setQuality] = useState<StrataQuality>(initialView.quality);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
+  const [shareLink, setShareLink] = useState<string | null>(null);
   const [motion, setMotion] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [refresh, setRefresh] = useState(0);
   const [themeRevision, setThemeRevision] = useState(0);
-  const [selectedBucket, setSelectedBucket] = useState(BUCKETS - 1);
+  const [selectedBucket, setSelectedBucket] = useState(initialView.bucket);
   const [replaying, setReplaying] = useState(false);
   const [replaySpeed, setReplaySpeed] = useState(1);
-  const [focused, setFocused] = useState<string | null>(null);
+  const [focused, setFocused] = useState<string | null>(initialView.focus);
   const [partitionSnapshot, setPartitionSnapshot] = useState<{ topic: string; data: PartitionActivityResponse } | null>(null);
   const [partitionError, setPartitionError] = useState<string | null>(null);
   const [forecastOverlay, setForecastOverlay] = useState<StrataProjection | null>(null);
   const [traced, setTraced] = useState<{ scope: string; flow: ParsedFlow } | null>(null);
+
+  // Share only the operator's view choices; never put Kafka keys, trace records
+  // or forecast payloads in URLs. Replacements avoid polluting browser history.
+  useEffect(() => {
+    const existing = new URLSearchParams(window.location.search);
+    const next = writeStrataView(existing, {
+      mode: diagnosticMode, topic: selected, peer: compareWith, focus: focused,
+      filter: query, bucket: selectedBucket, quality,
+    });
+    if (existing.toString() !== next.toString()) {
+      const suffix = next.toString();
+      window.history.replaceState(window.history.state, '',
+        window.location.pathname + (suffix ? '?' + suffix : '') + window.location.hash);
+    }
+  }, [diagnosticMode, selected, compareWith, focused, query, selectedBucket, quality]);
+
+  const copyViewLink = async () => {
+    const url = new URL(window.location.href);
+    url.search = writeStrataView(url.searchParams, {
+      mode: diagnosticMode, topic: selected, peer: compareWith, focus: focused,
+      filter: query, bucket: selectedBucket, quality,
+    }).toString();
+    const link = url.toString();
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(link);
+      setShareLink(null);
+      setShareNotice('View link copied. It contains no traced message keys.');
+    } catch {
+      setShareLink(link);
+      setShareNotice('Copy this link manually. It contains no traced message keys.');
+    }
+  };
 
   const onGroupSelect = useCallback((group: ConsumerGroupLag | null) => setSelectedGroup(group), []);
   const onProjection = useCallback((projection: StrataProjection | null) => setForecastOverlay(projection), []);
@@ -827,12 +864,45 @@ export default function Strata3D() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-xs text-on-surface-variant">
+            Render quality
+            <select aria-label="3D render quality" value={quality}
+              onChange={event => setQuality(event.target.value as StrataQuality)}
+              className="rounded-lg border border-outline-variant bg-surface px-2 py-2 text-sm text-on-surface">
+              <option value="auto">Auto</option>
+              <option value="detail">Detail</option>
+              <option value="economy">Economy</option>
+            </select>
+          </label>
           <button className="px-3 py-2 rounded-lg border border-outline-variant text-sm text-on-surface"
             onClick={() => setMotion(v => !v)} aria-pressed={motion}>{motion ? 'Pause motion' : 'Enable motion'}</button>
           <button className="px-3 py-2 rounded-lg border border-outline-variant text-sm text-on-surface"
             onClick={() => setRefresh(v => v + 1)}>Refresh</button>
         </div>
       </div>
+      <section className="flex flex-wrap items-center gap-2 rounded-xl border border-outline-variant bg-surface px-3 py-2"
+        aria-label="Spatial view presets">
+        <span className="text-xs font-semibold text-on-surface-variant mr-1">View presets</span>
+        <button type="button" aria-pressed={diagnosticMode === 'investigate' && !activeFocus}
+          onClick={() => { setFocused(null); setCompareWith(null); setDiagnosticMode('investigate'); }}
+          className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">Overview</button>
+        <button type="button" aria-pressed={Boolean(activeFocus) && diagnosticMode === 'investigate'}
+          disabled={!selected && scoped.length === 0}
+          onClick={() => {
+            const target = selected && scoped.includes(selected) ? selected : scoped[0];
+            if (target) { focusTopic(target); setDiagnosticMode('investigate'); }
+          }}
+          className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface disabled:opacity-45">Focus selected</button>
+        <button type="button" aria-pressed={diagnosticMode === 'compare'}
+          onClick={() => { setFocused(null); setDiagnosticMode('compare'); }}
+          className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">Compare</button>
+        <button type="button" onClick={() => { void copyViewLink(); }}
+          className="rounded-lg bg-primary-container text-on-primary-container px-3 py-1.5 text-xs font-medium">Copy view link</button>
+        {shareNotice && <span role="status" className="text-xs text-on-surface-variant">{shareNotice}</span>}
+        {shareLink && <input aria-label="Shareable view URL" readOnly value={shareLink}
+          onFocus={event => event.currentTarget.select()}
+          className="w-full rounded-lg border border-outline-variant bg-surface px-2 py-1 text-xs text-on-surface" />}
+      </section>
       {error && <p role="alert" className="rounded-lg p-3 bg-error-container text-on-error-container">{error}</p>}
       <div className="flex flex-wrap items-center gap-3 text-sm text-on-surface-variant">
         <label className="flex items-center gap-2">Filter topics
@@ -897,7 +967,7 @@ export default function Strata3D() {
         {topics.length > 0 ?
           <StrataCanvas topics={topics} selected={selected} compareWith={activeCompareWith}
             diagnosticMode={diagnosticMode} onSelect={chooseTopic} onFocus={focusTopic}
-            focused={activeFocus} partitionActivity={partitionActivity} forecast={visibleForecast} motion={motion}
+            focused={activeFocus} partitionActivity={partitionActivity} forecast={visibleForecast} motion={motion} quality={quality}
             links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
             selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
           <div className="p-8 text-on-surface-variant">{dashboard ? 'No matching topics.' : 'Loading cluster…'}</div>}
