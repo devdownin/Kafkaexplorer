@@ -76,8 +76,43 @@ try {
   if (await page.getByText(/Focused exploration · demo.orders.1.received/).count()) {
     throw new Error('Overview did not clear the focused view');
   }
+  // Lot C regression: keyboard-only navigation, layer menu and narrow viewport.
+  // The application-wide Ctrl/⌘+K palette remains owned by Layout.
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+  });
+  await page.keyboard.press('?');
+  await page.getByRole('dialog', { name: 'Keyboard navigation' }).waitFor();
+  await page.keyboard.press('Escape');
+  if (await page.getByRole('dialog', { name: 'Keyboard navigation' }).count()) {
+    throw new Error('Keyboard help did not close on Escape');
+  }
+  await page.keyboard.press('/');
+  const filter = page.getByRole('textbox', { name: 'Filter topics' });
+  if (!await filter.evaluate(element => element === document.activeElement)) {
+    throw new Error('Topic search did not receive focus from the / shortcut');
+  }
+  await filter.fill('');
+  await page.getByRole('button', { name: /Layers ·/ }).click();
+  const layerMenu = page.locator('#strata-layer-options');
+  await layerMenu.waitFor();
+  await layerMenu.getByRole('checkbox', { name: /Lineage/ }).uncheck();
+  if (await layerMenu.getByRole('checkbox', { name: /Lineage/ }).isChecked()) {
+    throw new Error('Declared-lineage layer could not be disabled');
+  }
+  await page.keyboard.press('Escape');
+  if (await layerMenu.count()) throw new Error('Layer menu did not close on Escape');
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const bounds = await page.locator('[data-testid="strata-workspace"]').boundingBox();
+  if (!bounds || bounds.width > 390 + 3) {
+    throw new Error('Spatial workspace overflows the mobile viewport');
+  }
+  await page.getByRole('region', { name: 'Temporal lens' }).waitFor();
+  await page.getByRole('button', { name: 'Show inspector' }).click();
+  await page.getByRole('region', { name: 'Topic inspector and comparison' }).waitFor();
   if (pageErrors.length) throw new Error('Uncaught browser errors: ' + pageErrors.join('; '));
-  console.log('Strata WebGL: context, orbit, URL round-trip, partitions and overview passed.');
+  console.log('Strata WebGL: context, orbit, URL round-trip, partitions, keyboard, layers and mobile layout passed.');
 } catch (error) {
   failure = error;
 } finally {
