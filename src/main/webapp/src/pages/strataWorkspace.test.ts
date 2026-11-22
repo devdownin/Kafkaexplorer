@@ -35,6 +35,19 @@ describe('Strata workspace evidence', () => {
     expect(topicEvidence(retention, 4).selected).toBe(20);
   });
 
+  it('rejects truncated or inconsistent samples before showing a total', () => {
+    expect(topicEvidence({ ...topic(), counts: [10, 20, 30] }, 1)).toMatchObject({
+      status: 'unavailable', total: null, latestRate: null, selected: null,
+      totalBuckets: 12,
+    });
+    expect(topicEvidence({ ...topic(), bucketMs: 0 }, 1)).toMatchObject({
+      status: 'unavailable', total: null, latestRate: null,
+    });
+    expect(topicEvidence({ ...topic(), partitionsMeasured: 4 }, 1)).toMatchObject({
+      status: 'unavailable', total: null, latestRate: null,
+    });
+  });
+
   it('distinguishes stale readings from unavailable readings and retains the timestamp', () => {
     expect(topicEvidence(topic(), 2, 1_000, 100_000).status).toBe('stale');
     expect(topicEvidence(undefined, 2, null).status).toBe('unavailable');
