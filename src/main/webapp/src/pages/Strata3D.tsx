@@ -908,154 +908,208 @@ export default function Strata3D() {
 
   return (
     <div className="space-y-4 pb-8">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-medium tracking-widest uppercase text-primary">Spatial observability</p>
           <h1 className="text-2xl font-semibold text-on-surface">Kafka Strata 3D</h1>
           <p className="text-sm text-on-surface-variant">
-            Topic activity over time · declared Flink lineage · consumer positions. Height is time, not retained size.
+            Measured offset production · declared Flink paths · consumer positions. Height represents time.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2 text-xs text-on-surface-variant">
             Render quality
             <select aria-label="3D render quality" value={quality}
               onChange={event => setQuality(event.target.value as StrataQuality)}
               className="rounded-lg border border-outline-variant bg-surface px-2 py-2 text-sm text-on-surface">
-              <option value="auto">Auto</option>
-              <option value="detail">Detail</option>
-              <option value="economy">Economy</option>
+              <option value="auto">Auto</option><option value="detail">Detail</option><option value="economy">Economy</option>
             </select>
           </label>
-          <button className="px-3 py-2 rounded-lg border border-outline-variant text-sm text-on-surface"
-            onClick={() => setMotion(v => !v)} aria-pressed={motion}>{motion ? 'Pause motion' : 'Enable motion'}</button>
-          <button className="px-3 py-2 rounded-lg border border-outline-variant text-sm text-on-surface"
-            onClick={() => setRefresh(v => v + 1)}>Refresh</button>
+          <button type="button" className="rounded-lg border border-outline-variant px-3 py-2 text-xs text-on-surface"
+            aria-pressed={motion} onClick={() => setMotion(value => !value)}>
+            {motion ? 'Pause motion' : 'Enable motion'}
+          </button>
+          <button type="button" className="rounded-lg border border-outline-variant px-3 py-2 text-xs text-on-surface"
+            onClick={() => setRefresh(value => value + 1)}>Refresh</button>
+        </div>
+      </header>
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-outline-variant bg-surface px-3 py-2">
+        <div role="group" aria-label="Spatial view presets" className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-xs font-semibold text-on-surface-variant">Workspace</span>
+          <button type="button" aria-pressed={diagnosticMode === 'investigate' && !activeFocus}
+            onClick={() => { setFocused(null); setCompareWith(null); setDiagnosticMode('investigate'); }}
+            className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">Overview</button>
+          <button type="button" aria-pressed={Boolean(activeFocus) && diagnosticMode === 'investigate'}
+            disabled={!scoped.length}
+            onClick={() => {
+              const target = selected && scoped.includes(selected) ? selected : scoped[0];
+              if (target) { focusTopic(target); setDiagnosticMode('investigate'); }
+            }}
+            className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface disabled:opacity-45">Focus selected</button>
+          <button type="button" aria-pressed={diagnosticMode === 'compare'}
+            onClick={() => { setFocused(null); setDiagnosticMode('compare'); }}
+            className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">Compare</button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" aria-expanded={navigatorOpen}
+            className="rounded-lg border border-outline-variant px-2.5 py-1.5 text-xs text-on-surface"
+            onClick={() => setNavigatorOpen(value => !value)}>{navigatorOpen ? 'Hide topics' : 'Show topics'}</button>
+          <button type="button" aria-expanded={inspectorOpen}
+            className="rounded-lg border border-outline-variant px-2.5 py-1.5 text-xs text-on-surface"
+            onClick={() => setInspectorOpen(value => !value)}>{inspectorOpen ? 'Hide inspector' : 'Show inspector'}</button>
+          <button type="button" onClick={() => { void copyViewLink(); }}
+            className="rounded-lg bg-primary-container px-3 py-1.5 text-xs font-medium text-on-primary-container">
+            Copy view link
+          </button>
         </div>
       </div>
-      <section className="flex flex-wrap items-center gap-2 rounded-xl border border-outline-variant bg-surface px-3 py-2"
-        aria-label="Spatial view presets">
-        <span className="text-xs font-semibold text-on-surface-variant mr-1">View presets</span>
-        <button type="button" aria-pressed={diagnosticMode === 'investigate' && !activeFocus}
-          onClick={() => { setFocused(null); setCompareWith(null); setDiagnosticMode('investigate'); }}
-          className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">Overview</button>
-        <button type="button" aria-pressed={Boolean(activeFocus) && diagnosticMode === 'investigate'}
-          disabled={scoped.length === 0}
-          onClick={() => {
-            const target = selected && scoped.includes(selected) ? selected : scoped[0];
-            if (target) { focusTopic(target); setDiagnosticMode('investigate'); }
-          }}
-          className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface disabled:opacity-45">Focus selected</button>
-        <button type="button" aria-pressed={diagnosticMode === 'compare'}
-          onClick={() => { setFocused(null); setDiagnosticMode('compare'); }}
-          className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">Compare</button>
-        <button type="button" onClick={() => { void copyViewLink(); }}
-          className="rounded-lg bg-primary-container text-on-primary-container px-3 py-1.5 text-xs font-medium">Copy view link</button>
-        {shareNotice && <span role="status" className="text-xs text-on-surface-variant">{shareNotice}</span>}
+      {(shareNotice || shareLink) && <div className="text-xs text-on-surface-variant" role="status">
+        {shareNotice}
         {shareLink && <input aria-label="Shareable view URL" readOnly value={shareLink}
           onFocus={event => event.currentTarget.select()}
-          className="w-full rounded-lg border border-outline-variant bg-surface px-2 py-1 text-xs text-on-surface" />}
-      </section>
-      {error && <p role="alert" className="rounded-lg p-3 bg-error-container text-on-error-container">{error}</p>}
-      <div className="flex flex-wrap items-center gap-3 text-sm text-on-surface-variant">
-        <label className="flex items-center gap-2">Filter topics
-          <input aria-label="Filter topics" className="rounded-lg border border-outline-variant bg-surface px-3 py-2 text-on-surface"
-            value={query} onChange={e => setQuery(e.target.value)} maxLength={160} placeholder="Topic name" />
-        </label>
-        <span>{topics.length} / {names.length} topics shown</span>
-        <span>{measured} / {topics.length} activity series measured</span>
-        {incomplete > 0 && <span>{incomplete} partial series</span>}
-        <span>{links.length} declared lineage links</span>
-        {anomalies.length > 0 && <span className="text-amber-700 dark:text-amber-300">{anomalies.length} activity deviations in slice</span>}
-        {activitySnapshot?.scope === scope && <span>Activity sampled {new Date(activitySnapshot.receivedAt).toLocaleTimeString()}</span>}
+          className="mt-2 w-full rounded-lg border border-outline-variant bg-surface px-2 py-1 text-xs text-on-surface" />}
+      </div>}
+      {error && <p role="alert" className="rounded-lg bg-error-container p-3 text-on-error-container">{error}</p>}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-on-surface-variant" role="status">
+        <span>{topics.length}/{names.length} visible topics</span>
+        <span>{measured} with readings · {incomplete} partial</span>
+        <span>{links.length} declared lineage paths</span>
+        {anomalies.length > 0 && <span className="text-amber-700 dark:text-amber-300">{anomalies.length} deviations in slice</span>}
+        <span>{activitySnapshot?.scope === scope
+          ? 'Sampled ' + new Date(activitySnapshot.receivedAt).toLocaleTimeString()
+          : 'Activity not measured yet'}</span>
       </div>
       {names.length > MAX_TOPICS && <p className="text-xs text-on-surface-variant">
-        Rendering the first {MAX_TOPICS} matching topics. Filter to reach others. Measurement is bounded by server limits.
+        The view is limited to {MAX_TOPICS} topics. Filter by name to reach the others.
       </p>}
-      <section className="rounded-xl border border-outline-variant bg-surface p-4 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[var(--strata-nav)_minmax(0,1fr)_var(--strata-inspector)]"
+        style={{ '--strata-nav': navigatorOpen ? navigatorWidth + 'px' : '0px',
+          '--strata-inspector': inspectorOpen ? inspectorWidth + 'px' : '0px' } as React.CSSProperties}>
+        {navigatorOpen && <aside className="relative order-2 lg:order-1 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-low p-3 space-y-4 lg:max-h-[min(75vh,760px)] lg:overflow-y-auto">
+          <StrataResizeHandle side="left" value={navigatorWidth} onChange={setNavigatorWidth} />
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-on-surface">Topic navigator</h2>
+            <span className="text-[11px] text-on-surface-variant">{topics.length} visible</span>
+          </div>
+          <label className="block space-y-1 text-xs text-on-surface-variant">
+            <span>Filter topics</span>
+            <input aria-label="Filter topics" value={query} onChange={event => setQuery(event.target.value)}
+              maxLength={160} placeholder="Topic name"
+              className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface" />
+          </label>
+          <StrataMiniMap items={topics} selected={selected} peer={activeCompareWith}
+            onSelect={chooseTopic} onFocus={focusTopic} />
           <div>
-            <h2 className="text-sm font-semibold text-on-surface">Temporal lens</h2>
-            <p className="text-xs text-on-surface-variant">
-              Slice all topics at one shared time interval. The horizontal plane follows your selection.
+            <h3 className="mb-2 text-xs font-semibold text-on-surface">Topics in view</h3>
+            <div className="max-h-72 space-y-1 overflow-y-auto" role="group" aria-label="Topics in view">
+              {topics.map(topic => {
+                const evidence = topicEvidence(topic.activity, selectedBucket,
+                  activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null);
+                return <button key={topic.name} type="button" title="Select; double-click to focus"
+                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs ${selected === topic.name ?
+                    'bg-primary-container text-on-primary-container' : 'text-on-surface hover:bg-surface-container-high'}`}
+                  onClick={() => chooseTopic(topic.name)} onDoubleClick={() => focusTopic(topic.name)}>
+                  <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${evidence.status === 'measured' ? 'bg-emerald-500' :
+                    evidence.status === 'partial' ? 'bg-amber-500' : 'bg-outline-variant'}`} />
+                  <span className="min-w-0 flex-1 truncate">{topic.name}</span>
+                  <span className="shrink-0 tabular-nums opacity-65">{evidence.selected?.toLocaleString() ?? '—'}</span>
+                </button>;
+              })}
+              {topics.length === 0 && <p className="text-xs text-on-surface-variant">No matching topics.</p>}
+            </div>
+          </div>
+        </aside>}
+        <main className="order-1 lg:order-2 min-w-0">
+          <div className="relative overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-low"
+            style={{ height: 'min(75vh, 760px)', minHeight: 510 }}>
+            {topics.length > 0 ?
+              <StrataCanvas topics={topics} selected={selected} compareWith={activeCompareWith}
+                diagnosticMode={diagnosticMode} onSelect={chooseTopic} onFocus={focusTopic}
+                focused={activeFocus} partitionActivity={partitionActivity} forecast={visibleForecast} motion={motion}
+                quality={quality} layers={layers} onHover={setHovered}
+                links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
+                selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
+              <p className="p-8 text-sm text-on-surface-variant">{dashboard ? 'No matching topics.' : 'Loading cluster…'}</p>}
+            {hovered && hoveredTopic && <StrataHoverCard name={hoveredTopic.name} activity={hoveredTopic.activity}
+              bucket={selectedBucket} receivedAt={activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null}
+              x={hovered.x} y={hovered.y} />}
+            <div className="absolute right-3 top-3 z-20"><StrataLayerMenu layers={layers} onChange={setLayer} /></div>
+            <p className="pointer-events-none absolute left-3 top-3 max-w-[60%] rounded-lg bg-surface/85 px-2.5 py-1.5 text-[11px] text-on-surface-variant backdrop-blur-md">
+              Drag to orbit · Scroll to zoom · Double-click to focus
             </p>
+            <div className="absolute bottom-3 left-3 right-3 z-10">
+              <StrataTimelineDock snapshot={activity} topics={topics} selectedBucket={selectedBucket}
+                onBucket={selectBucket} replaying={replaying}
+                onReplay={() => {
+                  if (replaying) setReplaying(false);
+                  else { setSelectedBucket(0); setReplaying(true); }
+                }}
+                replaySpeed={replaySpeed} onSpeed={setReplaySpeed}
+                onLatest={() => { setReplaying(false); setSelectedBucket(BUCKETS - 1); }} />
+            </div>
           </div>
-          <div className="flex items-center flex-wrap gap-2">
-            <button type="button" className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface"
-              disabled={!activity?.available} aria-pressed={replaying}
-              onClick={() => {
-                if (replaying) setReplaying(false);
-                else { setSelectedBucket(0); setReplaying(true); }
-              }}>{replaying ? 'Pause replay' : 'Replay history'}</button>
-            <label htmlFor="strata-replay-speed" className="text-xs text-on-surface-variant">Replay speed</label>
-            <select id="strata-replay-speed" className="rounded-lg border border-outline-variant bg-surface px-2 py-1.5 text-xs text-on-surface"
-              value={replaySpeed} onChange={event => setReplaySpeed(Number(event.target.value))}>
-              <option value={0.5}>0.5×</option><option value={1}>1×</option>
-              <option value={2}>2×</option><option value={4}>4×</option>
-            </select>
-            <button type="button" className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface"
-              onClick={() => { setReplaying(false); setSelectedBucket(BUCKETS - 1); }}
-              disabled={selectedBucket === BUCKETS - 1 && !replaying}>Most recent</button>
+        </main>
+        {inspectorOpen && <aside className="relative order-3 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-low p-3 space-y-3 lg:max-h-[min(75vh,760px)] lg:overflow-y-auto"
+          aria-label="Topic inspector and comparison">
+          <StrataResizeHandle side="right" value={inspectorWidth} onChange={setInspectorWidth} />
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-on-surface">Diagnostic inspector</h2>
+            <div role="group" aria-label="Diagnostic mode" className="flex rounded-lg border border-outline-variant bg-surface p-0.5">
+              <button type="button" aria-pressed={diagnosticMode === 'investigate'}
+                className={`rounded-md px-2 py-1 text-xs ${diagnosticMode === 'investigate' ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant'}`}
+                onClick={() => setDiagnosticMode('investigate')}>Investigate</button>
+              <button type="button" aria-pressed={diagnosticMode === 'compare'}
+                className={`rounded-md px-2 py-1 text-xs ${diagnosticMode === 'compare' ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant'}`}
+                onClick={() => setDiagnosticMode('compare')}>Compare</button>
+            </div>
           </div>
-        </div>
-        <label className="block text-xs font-medium text-on-surface-variant" htmlFor="strata-time-lens">
-          Selected interval: {interval ? `${new Date(interval.startMs).toLocaleString()} – ${new Date(interval.endMs).toLocaleTimeString()}` :
-            'Activity not measured yet'}
-        </label>
-        <input type="range" id="strata-time-lens" min={0} max={BUCKETS - 1} step={1}
-          value={selectedBucket} onChange={event => { setReplaying(false); setSelectedBucket(Number(event.target.value)); }}
-          disabled={!activity?.available}
-          aria-valuetext={interval ? `${new Date(interval.startMs).toLocaleString()} to ${new Date(interval.endMs).toLocaleTimeString()}` : 'Unavailable'}
-          className="w-full accent-primary" />
-        <div className="flex justify-between text-xs text-on-surface-variant">
-          <span>Oldest</span><span>Bucket {selectedBucket + 1}/{BUCKETS}</span><span>Most recent</span>
-        </div>
-        <p className="text-xs text-on-surface-variant">
-          Measurements are offset-based, not samples of individual messages.
-          Missing and partially covered buckets are explicitly excluded from anomaly detection.
-        </p>
-      </section>
-      <div className="relative overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-low"
-        style={{ height: 'min(68vh, 680px)', minHeight: 410 }}>
-        {topics.length > 0 ?
-          <StrataCanvas topics={topics} selected={selected} compareWith={activeCompareWith}
-            diagnosticMode={diagnosticMode} onSelect={chooseTopic} onFocus={focusTopic}
-            focused={activeFocus} partitionActivity={partitionActivity} forecast={visibleForecast} motion={motion} quality={quality}
-            links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
-            selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
-          <div className="p-8 text-on-surface-variant">{dashboard ? 'No matching topics.' : 'Loading cluster…'}</div>}
-        <div className="absolute bottom-3 left-3 pointer-events-none rounded-lg bg-surface/95 px-3 py-2 text-xs text-on-surface-variant shadow-sm">
-          Drag to orbit · Scroll to zoom · Double-click a topic to focus<br />
-          12 × 2.5-minute rings · newest at top · logarithmic scale<br />
-          Dashes: declared Flink INSERT paths (not observed messages)<br />
-          Coloured satellites: selected group's partition lag<br />
-          Teal arcs: chronological key matches · amber rings: activity deviations<br />
-          Focus: measured partition ribbons · violet canopy: metric forecast<br />
-          Cyan halo: topic A · purple halo: topic B (comparison, not a link)
-        </div>
+          <StrataDiagnosticPanel mode={diagnosticMode} topic={selectedTopic?.name ?? null}
+            compareWith={activeCompareWith} topics={scoped} snapshot={activity} links={links}
+            trace={activeTrace} selectedBucket={selectedBucket} selectedGroup={selectedGroup}
+            onChooseTopic={chooseTopic} onCompareWith={setCompareWith} />
+        <aside className="rounded-xl border border-outline-variant bg-surface p-4" aria-live="polite">
+          <h2 className="font-semibold text-on-surface mb-3">Topic inspector</h2>
+          {selectedTopic ? <>
+            <p className="break-all font-medium text-on-surface">{selectedTopic.name}</p>
+            <button type="button" onClick={() => activeFocus === selectedTopic.name ? setFocused(null) : focusTopic(selectedTopic.name)}
+              className="mt-2 rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">
+              {activeFocus === selectedTopic.name ? 'Return to overview' : 'Focus partitions and forecast'}
+            </button>
+            <p className="mt-3 text-xs text-on-surface-variant" role="status">
+              Evidence: <strong className="text-on-surface capitalize">{selectedEvidence.status}</strong> ·
+              {selectedEvidence.measuredBuckets}/{selectedEvidence.totalBuckets} complete intervals
+            </p>
+            <dl className="text-sm text-on-surface-variant mt-3 space-y-2">
+              <div className="flex justify-between gap-2"><dt>Estimated retained offsets</dt>
+                <dd className="tabular-nums text-on-surface">{selectedTopic.size.toLocaleString()}</dd></div>
+              <div className="flex justify-between gap-2"><dt>Selected time slice</dt>
+                <dd className="tabular-nums text-on-surface">{bucketReading(selectedTopic.activity, selectedBucket)?.toLocaleString() ?? 'Unknown'}</dd></div>
+              <div className="flex justify-between gap-2"><dt>30-minute produced offsets</dt>
+                <dd className="tabular-nums text-on-surface">{selectedEvidence.total?.toLocaleString() ?? 'Unknown (partial or missing)'}</dd></div>
+              <div className="flex justify-between gap-2"><dt>Latest bucket (offsets/min)</dt>
+                <dd className="tabular-nums text-on-surface">{selectedEvidence.latestRate === null ? 'Unknown' : Math.round(selectedEvidence.latestRate).toLocaleString()}</dd></div>
+              <div className="flex justify-between gap-2"><dt>Partitions measured</dt>
+                <dd className="text-on-surface">{selectedTopic.activity?.available ?
+                  `${selectedTopic.activity.partitionsMeasured}/${selectedTopic.activity.partitionsTotal}` : 'Unknown'}</dd></div>
+            </dl>
+            {selectedTopic.activity?.note && <p className="mt-2 text-xs text-on-surface-variant">{selectedTopic.activity.note}</p>}
+            {selectedTopic.activity?.coveredFromMs !== null && selectedTopic.activity?.available &&
+              <p className="mt-2 text-xs text-on-surface-variant">Historical activity before retention coverage is a lower bound.</p>}
+            <StrataConsumerPanel key={selectedTopic.name} topic={selectedTopic.name} onGroupSelect={onGroupSelect} />
+            <Link className="mt-4 inline-block text-sm font-medium text-primary hover:underline"
+              to={`/topic/${encodeURIComponent(selectedTopic.name)}`}>Open Topic Explorer →</Link>
+          </> : <p className="text-sm text-on-surface-variant">Select a column or topic to see consumer and partition lag.</p>}
+        </aside>
+        </aside>}
       </div>
-      <section className="rounded-2xl border border-outline-variant bg-surface-container-low p-3 sm:p-5 space-y-4"
-        aria-labelledby="strata-workspace-heading">
-        <header className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 id="strata-workspace-heading" className="text-lg font-semibold text-on-surface">Diagnostic workspace</h2>
-            <p className="text-xs text-on-surface-variant">
-              One selected topic, shared evidence, synced time cursor and a second topic when comparing.
-              These analyses are read-only.
-            </p>
-          </div>
-          <div className="inline-flex rounded-xl border border-outline-variant bg-surface p-1 gap-1"
-            role="group" aria-label="Diagnostic mode">
-            <button type="button" aria-pressed={diagnosticMode === 'investigate'}
-              className={`rounded-lg px-3 py-2 text-sm font-medium ${diagnosticMode === 'investigate'
-                ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
-              onClick={() => setDiagnosticMode('investigate')}>Investigate</button>
-            <button type="button" aria-pressed={diagnosticMode === 'compare'}
-              className={`rounded-lg px-3 py-2 text-sm font-medium ${diagnosticMode === 'compare'
-                ? 'bg-primary-container text-on-primary-container' : 'text-on-surface-variant hover:bg-surface-container-high'}`}
-              onClick={() => setDiagnosticMode('compare')}>Compare</button>
-          </div>
-        </header>
+      <section className="space-y-4 rounded-2xl border border-outline-variant bg-surface-container-low p-3 sm:p-5"
+        aria-label="Detailed evidence and traces">
+        <div>
+          <h2 className="text-base font-semibold text-on-surface">Evidence details</h2>
+          <p className="text-xs text-on-surface-variant">
+            Partition measurements, forecast and operator-initiated key tracing. These operations are read-only.
+          </p>
+        </div>
       {activeFocus && <section className="rounded-xl border border-outline-variant bg-surface p-4 space-y-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -1083,13 +1137,17 @@ export default function Strata3D() {
               <li key={partition.partition} className="rounded-lg bg-surface-container-low px-2 py-1.5 text-xs text-on-surface">
                 <span className="font-semibold">P{partition.partition}</span>
                 <span className="block text-on-surface-variant">
-                  {partition.available ? partition.counts.reduce((sum, n) => sum + n, 0).toLocaleString() + ' offsets / 30 min' : 'Unavailable'}
+                  {partition.available && partition.coveredFromMs === null &&
+                    partition.counts.every(n => Number.isFinite(n) && n >= 0)
+                    ? partition.counts.reduce((sum, n) => sum + n, 0).toLocaleString() + ' offsets / 30 min'
+                    : 'Partial or unavailable'}
                   {partition.coveredFromMs !== null ? ' · partial retention' : ''}
                 </span>
               </li>)}
           </ul>
         </>}
       </section>}
+
       {activeFocus && <StrataForecastPanel key={activeFocus} topic={activeFocus} onProjection={onProjection} />}
       <StrataTracePanel key={scope} topics={scoped} onTrace={onTrace} onSelect={chooseTopic} />
       {anomalies.length > 0 && <section className="rounded-xl border border-amber-400/40 bg-surface p-4 space-y-2">
@@ -1120,58 +1178,7 @@ export default function Strata3D() {
       {lineage?.warnings?.length ? <p role="status" className="text-xs text-on-surface-variant">
         Lineage has inferred or incomplete dependencies: {lineage.warnings.join(' ')}
       </p> : null}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
-        <section className="rounded-xl border border-outline-variant bg-surface p-4 space-y-4">
-          <div>
-            <h2 className="font-semibold text-on-surface mb-3">Topics in view</h2>
-            <div className="max-h-64 overflow-auto grid sm:grid-cols-2 gap-1">
-              {topics.map(topic =>
-                <button key={topic.name} className={`text-left rounded-lg px-3 py-2 text-sm truncate ${selected === topic.name ?
-                  'bg-primary-container text-on-primary-container' : 'hover:bg-surface-container-high text-on-surface'}`}
-                  onClick={() => chooseTopic(topic.name)}
-                  onDoubleClick={() => focusTopic(topic.name)} title="Double-click to focus">{topic.name}</button>)}
-            </div>
-          </div>
-          <div className="border-t border-outline-variant pt-4">
-            <StrataDiagnosticPanel mode={diagnosticMode} topic={selectedTopic?.name ?? null}
-              compareWith={activeCompareWith} topics={scoped} snapshot={activity} links={links}
-              trace={activeTrace} selectedBucket={selectedBucket}
-              onChooseTopic={chooseTopic} onCompareWith={setCompareWith} />
-          </div>
-        </section>
-        <aside className="rounded-xl border border-outline-variant bg-surface p-4" aria-live="polite">
-          <h2 className="font-semibold text-on-surface mb-3">Topic inspector</h2>
-          {selectedTopic ? <>
-            <p className="break-all font-medium text-on-surface">{selectedTopic.name}</p>
-            <button type="button" onClick={() => activeFocus === selectedTopic.name ? setFocused(null) : focusTopic(selectedTopic.name)}
-              className="mt-2 rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">
-              {activeFocus === selectedTopic.name ? 'Return to overview' : 'Focus partitions and forecast'}
-            </button>
-            <dl className="text-sm text-on-surface-variant mt-3 space-y-2">
-              <div className="flex justify-between gap-2"><dt>Estimated retained offsets</dt>
-                <dd className="tabular-nums text-on-surface">{selectedTopic.size.toLocaleString()}</dd></div>
-              <div className="flex justify-between gap-2"><dt>Selected time slice</dt>
-                <dd className="tabular-nums text-on-surface">{bucketReading(selectedTopic.activity, selectedBucket)?.toLocaleString() ?? 'Unknown'}</dd></div>
-              <div className="flex justify-between gap-2"><dt>30-minute produced offsets</dt>
-                <dd className="tabular-nums text-on-surface">{selectedTopic.activity?.available ?
-                  selectedTopic.activity.total.toLocaleString() : 'Unavailable'}</dd></div>
-              <div className="flex justify-between gap-2"><dt>Latest bucket (offsets/min)</dt>
-                <dd className="tabular-nums text-on-surface">{selectedTopic.activity?.available && selectedTopic.activity.counts.length ?
-                  Math.round(selectedTopic.activity.counts[selectedTopic.activity.counts.length - 1] * 60000 / selectedTopic.activity.bucketMs).toLocaleString() :
-                  'Unavailable'}</dd></div>
-              <div className="flex justify-between gap-2"><dt>Partitions measured</dt>
-                <dd className="text-on-surface">{selectedTopic.activity?.available ?
-                  `${selectedTopic.activity.partitionsMeasured}/${selectedTopic.activity.partitionsTotal}` : 'Unknown'}</dd></div>
-            </dl>
-            {selectedTopic.activity?.note && <p className="mt-2 text-xs text-on-surface-variant">{selectedTopic.activity.note}</p>}
-            {selectedTopic.activity?.coveredFromMs !== null && selectedTopic.activity?.available &&
-              <p className="mt-2 text-xs text-on-surface-variant">Historical activity before retention coverage is a lower bound.</p>}
-            <StrataConsumerPanel key={selectedTopic.name} topic={selectedTopic.name} onGroupSelect={onGroupSelect} />
-            <Link className="mt-4 inline-block text-sm font-medium text-primary hover:underline"
-              to={`/topic/${encodeURIComponent(selectedTopic.name)}`}>Open Topic Explorer →</Link>
-          </> : <p className="text-sm text-on-surface-variant">Select a column or topic to see consumer and partition lag.</p>}
-        </aside>
-      </div>
+
       </section>
     </div>
   );
