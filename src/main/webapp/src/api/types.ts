@@ -1673,6 +1673,8 @@ export interface ForecastSeriesView {
   seriesId: string;
   metricId: string;
   environment: string;
+  topics: string[];
+  groups: string[];
   result: ForecastRecord | null;
   activation: ForecastActivationReadiness;
   stepMillis: number;
