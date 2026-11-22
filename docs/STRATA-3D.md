@@ -19,6 +19,7 @@ and Topic Explorer.
 | Coloured satellites | Lag per partition of the **selected consumer group** | `GET /api/topic/{name}/consumers` |
 | Partition ribbons in focus | Per-partition offset-production for each 2.5-minute interval; ribbon width follows each partition's **own measured** rate | `GET /api/dashboard/partition-activity?topic=...` |
 | Forecast canopy (solid teal / violet / translucent band) | Measured metric history, projected q50, and model q10–q90 for a **single explicitly scoped** topic | `GET /api/forecasts` and `GET /api/forecasts/{seriesId}` |
+| Cyan and violet column halos | Topic A and topic B in comparison; highlights, **not a connection** | Shared topic list and selection |
 | Neutral rings, unknown readings | Missing/incomplete data, **not zero traffic** | Availability and coverage metadata |
 
 Flink edges are only drawn when explicit source-topic table → read edge → INSERT
@@ -57,6 +58,61 @@ shown. No link is not evidence of absent activity.
 - **Stable placement:** columns are laid out using each topic's position in the complete, sorted cluster list. Filtering does not reshuffle the remaining topics. Changing which topics are visible re-fits the camera around their world-space bounds.
 - **Partition production:** only the focused topic triggers the bounded partition API. Each ribbon's width is proportional to a logarithm of the offsets produced by that **partition**, in that time bucket. An absent reading or a bucket preceding the partition's retention boundary has **no segment**. A missing ribbon does not mean an idle partition. The scope is capped at 24 partitions and the configured global offset-lookup budget; omissions and failed partitions are declared by the endpoint. The partition detail is refreshed while the tab is visible, not collected for all topics.
 - **Replay history:** the **Replay history** control advances the time lens through the existing measured 12-bucket window. Speeds of 0.5×, 1×, 2× and 4× are available. This replay uses the latest snapshot only and does not read individual Kafka records. A new broker sample may replace the displayed window between steps; this is a live replay, **not a historical persisted recording**.
+
+
+## Advanced diagnostic workspace — P2
+
+The panel under the spatial scene keeps the **selected topic**, its existing consumer
+inspector, focus details, forecast and key-trace evidence in one read-only diagnostic
+workspace. The mode toggle changes the analysis, without resetting the time lens.
+
+### Investigate
+
+- **Select a topic** by clicking its column or its name in the accessible list.
+  Select **Investigate** to see inbound and outbound dependencies from **explicit Flink
+  INSERT paths** in the currently displayed graph. Paths touching the selected topic
+  are brighter; other declared paths remain dim. Each dependency identifies its Flink
+  job. Nearby geometry alone never creates an edge. The list can be restricted to
+  the selected topic's visible neighborhood.
+- **Trace a message key** remains an operator-initiated, bounded scan with explicit
+  coverage. When a trace is available, the workspace reports the selected topic's
+  matched occurrence count and first timestamp. A capped count is labelled a
+  *lower bound*; a partial trace does not imply that other topics have no records.
+  Key matches establish chronology, **not proven causal transfers**.
+- **Lag and anomalies** come from the existing topic inspector and selected group's
+  committed offsets, plus conservative anomaly candidates for the selected
+  time slice. These are separate evidence categories and are not combined into a
+  fabricated health score.
+
+### Compare
+
+- Choose **Compare**, select topic **A** in the topic list or 3D scene, then choose
+  a distinct visible topic **B**. Cyan and violet halos distinguish both columns.
+  No line between them is invented simply because comparison is active.
+- Both curves use **the same `GET /api/dashboard/activity` snapshot**, window,
+  bucket boundaries and the one shared time-lens cursor. The readout compares
+  produced offsets in the selected bucket and average offsets/minute only when
+  all twelve bucket values have complete partition and retention coverage.
+  Unknown readings remain gaps; partial totals are not presented as reliable
+  throughput. No additional message scan or offset query is triggered by Compare.
+- A short-lag correlation uses **Pearson r** for the 12 complete, aligned offset
+  delta buckets, testing only 0, ±1 or ±2 bucket shifts (up to ±5 minutes).
+  At least eight aligned points, non-constant series and r ≥ 0.65 are required
+  before presenting an *exploratory temporal association*. Incomplete coverage,
+  mismatched windows or flat series produce no association. A leading offset
+  curve does **not** prove message processing order, a transfer, causality,
+  statistical significance or an operational incident.
+- The panel also shows each topic's measurement coverage and any
+  conservative local deviation in the selected slice.
+
+### Limits and accessibility
+
+The workspace uses the existing 48-topic visible limit; correlations apply
+only to topics included in that bounded snapshot. Filtering that hides a topic
+invalidates its displayed comparison rather than silently reusing stale readings.
+The investigation and comparison modes are standard accessible toggle buttons;
+the topic list, selects, legends and summaries are usable without WebGL.
+Calculations are local and do not add backend write operations.
 
 ## Forecast spatial projection — P3 extension
 
@@ -99,7 +155,8 @@ than a continuation of Kafka-produced-offset rings.
 Frontend: `cd src/main/webapp && npm ci && npm run build && npm run lint && npm test`.
 
 The focused `strataTime.test.ts`, `strataForecast.test.ts`,
-`strataImmersive.test.ts` and `strataLineage.test.ts` tests verify
-bucket coverage, conservative anomaly detection and declared-only topic paths.
+`strataImmersive.test.ts` \, `strataLineage.test.ts` and `strataDiagnostics.test.ts` tests verify
+bucket coverage, conservative anomaly detection, declared-only topic paths,
+complete versus partial comparison and non-causal correlation.
 Runtime checks should additionally verify orbit, selection, light/dark modes,
 WebGL fallback, trace cancel, and missing/partial Kafka metadata.
