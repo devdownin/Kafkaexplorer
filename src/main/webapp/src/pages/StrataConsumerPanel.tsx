@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import type { ConsumerGroupLag, PartitionLag, TopicConsumers } from '../api/types';
 
@@ -37,6 +37,7 @@ export default function StrataConsumerPanel({ topic, onGroupSelect }: {
   const [data, setData] = useState<TopicConsumers | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [groupId, setGroupId] = useState<string | null>(null);
+  const groupIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -50,11 +51,11 @@ export default function StrataConsumerPanel({ topic, onGroupSelect }: {
         if (!active) return;
         setData(response.data);
         setError(null);
-        setGroupId(previous => {
-          const current = response.data.groups.find(g => g.groupId === previous) ?? response.data.groups[0] ?? null;
-          onGroupSelect(current);
-          return current?.groupId ?? null;
-        });
+        const current = response.data.groups.find(g => g.groupId === groupIdRef.current)
+          ?? response.data.groups[0] ?? null;
+        groupIdRef.current = current?.groupId ?? null;
+        setGroupId(groupIdRef.current);
+        onGroupSelect(current);
       } catch (failure) {
         if (!active || axios.isCancel(failure)) return;
         setData(null);
@@ -99,7 +100,8 @@ export default function StrataConsumerPanel({ topic, onGroupSelect }: {
             value={current?.groupId ?? ''}
             onChange={event => {
               const group = data.groups.find(g => g.groupId === event.target.value) ?? null;
-              setGroupId(group?.groupId ?? null);
+              groupIdRef.current = group?.groupId ?? null;
+              setGroupId(groupIdRef.current);
               onGroupSelect(group);
             }}
           >
