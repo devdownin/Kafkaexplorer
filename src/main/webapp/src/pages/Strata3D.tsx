@@ -27,7 +27,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 type Dashboard = DashboardResponse;
 type Activity = TopicActivity;
 type ActivityResponse = TopicActivityResponse;
-type Topic = { name: string; size: number; activity?: Activity; layoutIndex: number };
+type Topic = { name: string; size: number | null; activity?: Activity; layoutIndex: number };
 const MAX_TOPICS = 48;
 const BUCKETS = 12;
 const WINDOW_MS = 30 * 60 * 1000;
@@ -877,7 +877,7 @@ export default function Strata3D() {
     setTraced(flow ? { scope, flow } : null);
   }, [scope]);
   const topics = useMemo(() => scoped.map(name => ({
-    name, size: dashboard?.topicSizes[name] ?? 0, activity: activity?.topics[name],
+    name, size: dashboard?.topicSizes[name] ?? null, activity: activity?.topics[name],
     layoutIndex: layoutIndices.get(name) ?? 0,
   })), [scoped, dashboard, activity, layoutIndices]);
   const links = useMemo(() => lineage ? deriveStrataLinks(lineage, scoped) : [], [lineage, scoped]);
@@ -996,6 +996,12 @@ export default function Strata3D() {
             onSelect={chooseTopic} onFocus={focusTopic} />
           <div>
             <h3 className="mb-2 text-xs font-semibold text-on-surface">Topics in view</h3>
+            <p className="mb-2 text-[11px] text-on-surface-variant">
+              <span className="text-emerald-600 dark:text-emerald-400">●</span> Complete ·
+              <span className="text-amber-600 dark:text-amber-400"> ●</span> Partial ·
+              <span className="text-sky-600 dark:text-sky-400"> ●</span> Stale ·
+              <span className="text-on-surface-variant"> ●</span> Unavailable
+            </p>
             <div className="max-h-72 space-y-1 overflow-y-auto" role="group" aria-label="Topics in view">
               {topics.map(topic => {
                 const evidence = topicEvidence(topic.activity, selectedBucket,
@@ -1005,7 +1011,8 @@ export default function Strata3D() {
                     'bg-primary-container text-on-primary-container' : 'text-on-surface hover:bg-surface-container-high'}`}
                   onClick={() => chooseTopic(topic.name)} onDoubleClick={() => focusTopic(topic.name)}>
                   <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${evidence.status === 'measured' ? 'bg-emerald-500' :
-                    evidence.status === 'partial' ? 'bg-amber-500' : 'bg-outline-variant'}`} />
+                    evidence.status === 'partial' ? 'bg-amber-500' :
+                    evidence.status === 'stale' ? 'bg-sky-500' : 'bg-outline-variant'}`} />
                   <span className="min-w-0 flex-1 truncate">{topic.name}</span>
                   <span className="shrink-0 tabular-nums opacity-65">{evidence.selected?.toLocaleString() ?? '—'}</span>
                 </button>;
@@ -1076,7 +1083,7 @@ export default function Strata3D() {
             </p>
             <dl className="text-sm text-on-surface-variant mt-3 space-y-2">
               <div className="flex justify-between gap-2"><dt>Estimated retained offsets</dt>
-                <dd className="tabular-nums text-on-surface">{selectedTopic.size.toLocaleString()}</dd></div>
+                <dd className="tabular-nums text-on-surface">{selectedTopic.size?.toLocaleString() ?? 'Unknown'}</dd></div>
               <div className="flex justify-between gap-2"><dt>Selected time slice</dt>
                 <dd className="tabular-nums text-on-surface">{bucketReading(selectedTopic.activity, selectedBucket)?.toLocaleString() ?? 'Unknown'}</dd></div>
               <div className="flex justify-between gap-2"><dt>30-minute produced offsets</dt>
