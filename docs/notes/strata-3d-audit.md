@@ -36,6 +36,7 @@ Les séries de production représentent des **différences d'offsets**, pas le n
 | S3D-09 | P2 | Les mouvements du pointeur provoquaient des rendus React redondants même pour le même topic. | **Atténué** : déduplication par topic et déplacement minimal du curseur ; performances GPU à mesurer en conditions réelles |
 | S3D-10 | P2 | L'ancienne implémentation « une heure » (`strata3d/`) subsistait alors que `/strata` utilisait le nouveau module. | **Corrigé** : suppression des composants et tests orphelins ; guide historique conservé comme archive |
 | S3D-11 | P2 | Changer le topic sélectionné laissait parfois la caméra focalisée sur l'ancien topic. | **Corrigé** : retour au contexte général lors de la sélection d'un autre topic |
+| S3D-12 | P1 | Le lien de partage pouvait transmettre un fragment d'URL sans rapport, potentiellement sensible. | **Corrigé** : `shareStrataUrl` ne conserve que les paramètres Strata autorisés ; test de non-divulgation de requête et fragment |
 
 ## 3. Sécurité, confidentialité et maîtrise des ressources
 
