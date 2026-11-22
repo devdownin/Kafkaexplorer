@@ -11,6 +11,27 @@
 Cette page est indépendante de l’activation du serveur MCP : on peut apprendre
 le protocole sans ouvrir un accès au cluster.
 
+### Explorer et partager un parcours
+
+Dans l’application comme sur le site public, le graphe propose les filtres de rôles
+**Utilisateur, Agent, Gouvernance, Transport, Services, Preuves**. Les nœuds non
+sélectionnés sont atténués, **jamais retirés**, pour préserver les intermédiaires
+de la chaîne d’appel. Le graphe accepte les flèches et les touches Début/Fin.
+Le zoom est proposé sur grand écran ; sur mobile, une liste verticale conserve
+les neuf étapes et leur détail sans imposer un panoramique horizontal.
+
+Les paramètres `?scenario=incident|forecast|skill&step=<identifiant>&focus=<rôle>`
+permettent de partager une vue précise. Par exemple :
+
+`/mcp/guide?scenario=forecast&step=evidence&focus=evidence`
+
+L’option **Copier Mermaid** exporte la version textuelle du scénario affiché
+avec les flèches d’appel et de retour. Ce code décrit toujours une architecture
+de référence : **aucune télémétrie d’exécution n’est fabriquée**.
+
+La page GitHub Pages charge son script local `mcp-guide.js` sans service
+externe ; le pré-contrôle PR valide la syntaxe JavaScript avec `node --check`.
+
 ## 1. Quel concept employer ?
 
 | Primitive | Responsabilité | Exemple KafkaExplorer | Quand |

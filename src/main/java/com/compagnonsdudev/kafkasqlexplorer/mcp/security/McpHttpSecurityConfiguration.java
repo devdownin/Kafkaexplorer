@@ -7,10 +7,28 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
+import org.springframework.security.oauth2.core.OAuth2Error;
+import org.springframework.security.oauth2.jwt.Jwt;
+import java.net.URI;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(prefix="explorer.mcp",name="enabled",havingValue="true")
 public class McpHttpSecurityConfiguration {
+    private static boolean blank(String value) { return value == null || value.isBlank(); }
+    private static void requireHttps(String value, String name) {
+        if (blank(value)) throw new IllegalStateException("MCP OAuth requires " + name);
+        URI uri = URI.create(value);
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null
+                || uri.getUserInfo() != null || uri.getFragment() != null) {
+            throw new IllegalStateException("MCP OAuth " + name + " must be an HTTPS URL");
+        }
+    }
+
     @Bean
     FilterRegistrationBean<McpHttpAuthFilter> mcpHttpAuthFilter(McpProperties properties) {
         FilterRegistrationBean<McpHttpAuthFilter> registration = new FilterRegistrationBean<>();

@@ -4,10 +4,20 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import McpGuide from './McpGuide';
 
-const renderGuide = () => render(<MemoryRouter><McpGuide /></MemoryRouter>);
+const LocationProbe = () => {
+  const location = useLocation();
+  return <output data-testid="guide-url">{location.search}</output>;
+};
+
+const renderGuide = (url = '/mcp/guide') => render(
+  <MemoryRouter initialEntries={[url]}>
+    <McpGuide />
+    <LocationProbe />
+  </MemoryRouter>,
+);
 
 describe('Guide pédagogique MCP', () => {
   it('explique les quatre primitives et présente le graphe comme une référence, pas une trace live', () => {
@@ -42,5 +52,34 @@ describe('Guide pédagogique MCP', () => {
     expect(screen.getByText(/Les skills Kex PENDING ne sont pas injectés/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /Étape 6 : kex:\/\/skills/ }));
     expect(screen.getByText(/n’annonce pas l’extension native skills\/list/)).toBeInTheDocument();
+  });
+  it('restaure un parcours partagé, son nœud et un focus depuis les paramètres URL', async () => {
+    const user = userEvent.setup();
+    renderGuide('/mcp/guide?scenario=skill&step=evidence&focus=evidence');
+    expect(screen.getByRole('button', { name: 'Découverte d’un Skill' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /Étape 8 : Manifeste vérifié/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Preuves' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'Gouvernance' }));
+    expect(screen.getByRole('button', { name: /Étape 4 : Revue & droits/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('guide-url')).toHaveTextContent('focus=guard');
+    expect(screen.getByTestId('guide-url')).toHaveTextContent('step=policy');
+  });
+
+  it('reste lisible en liste sur mobile et navigable au clavier sur le graphe', async () => {
+    const user = userEvent.setup();
+    renderGuide();
+    await user.click(screen.getByRole('button', { name: /Choisir le point 7 : Trace & Kafka/ }));
+    expect(screen.getByRole('button', { name: /Étape 7 : Trace & Kafka/ })).toHaveAttribute('aria-pressed', 'true');
+
+    const server = screen.getByRole('button', { name: /Étape 6 : kex_trace_key/ });
+    server.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('button', { name: /Étape 7 : Trace & Kafka/ })).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(screen.getByRole('button', { name: /Étape 1 : Question métier/ })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Zoom arrière' }));
+    expect(screen.getByLabelText('Zoom actuel')).toHaveTextContent('75%');
+    await user.click(screen.getByRole('button', { name: 'Réinitialiser le zoom' }));
+    expect(screen.getByLabelText('Zoom actuel')).toHaveTextContent('100%');
   });
 });

@@ -15,12 +15,27 @@ public final class McpCallerContext {
 
     private static final String LOCAL = "local";
     private static final ThreadLocal<String> CURRENT = new ThreadLocal<>();
+    // Only the validated OAuth JWT decoder populates these claims.
+    private static final ThreadLocal<java.util.Set<String>> VERIFIED_SCOPES = new ThreadLocal<>();
 
     private McpCallerContext() {
     }
 
     public static void set(String identity) {
         CURRENT.set(identity == null || identity.isBlank() ? LOCAL : identity);
+        VERIFIED_SCOPES.remove();
+    }
+
+    /** Used exclusively by the JWT verification boundary, never for unverified headers. */
+    public static void setVerified(String identity, java.util.Set<String> verifiedScopes) {
+        set(identity);
+        VERIFIED_SCOPES.set(java.util.Set.copyOf(verifiedScopes));
+    }
+
+    /** Empty is not proof of JWT authentication; callers cannot invent these scopes. */
+    public static java.util.Set<String> verifiedScopes() {
+        java.util.Set<String> value = VERIFIED_SCOPES.get();
+        return value == null ? java.util.Set.of() : value;
     }
 
     public static String identity() {
@@ -46,5 +61,6 @@ public final class McpCallerContext {
 
     public static void clear() {
         CURRENT.remove();
+        VERIFIED_SCOPES.remove();
     }
 }
