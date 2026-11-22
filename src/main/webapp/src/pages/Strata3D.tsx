@@ -15,6 +15,7 @@ import type { ParsedFlow } from './streamFlowLogic';
 import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strataLineage';
 import { Link } from 'react-router-dom';
 import { readStrataView, strataRenderBudget, writeStrataView, type StrataQuality } from './strataView';
+import { copyText } from '../clipboard';
 import axios from 'axios';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -659,15 +660,11 @@ export default function Strata3D() {
       filter: query, bucket: selectedBucket, quality,
     }).toString();
     const link = url.toString();
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
-      await navigator.clipboard.writeText(link);
-      setShareLink(null);
-      setShareNotice('View link copied. It contains no traced message keys.');
-    } catch {
-      setShareLink(link);
-      setShareNotice('Copy this link manually. It contains no traced message keys.');
-    }
+    const copied = await copyText(link);
+    setShareLink(copied ? null : link);
+    setShareNotice(copied
+      ? 'View link copied. It contains no traced message keys.'
+      : 'Copy this link manually. It contains no traced message keys.');
   };
 
   const onGroupSelect = useCallback((group: ConsumerGroupLag | null) => setSelectedGroup(group), []);

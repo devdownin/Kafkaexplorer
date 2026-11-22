@@ -20,7 +20,8 @@ const MAX_FILTER = 160;
 const DEFAULT_BUCKET = 11;
 
 function safeString(raw: string | null, limit: number): string | null {
-  if (!raw || raw.length > limit || /[\u0000-\u001f\u007f]/.test(raw)) return null;
+  if (!raw || raw.length > limit ||
+      Array.from(raw).some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return null;
   return raw;
 }
 
