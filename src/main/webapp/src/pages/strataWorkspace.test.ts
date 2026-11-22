@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
-import type { TopicActivity } from '../api/types';
-import { activityHistogram, comparisonDelta, topicEvidence, topicMapPositions } from './strataWorkspace';
+import type { PartitionActivityResponse, TopicActivity, TopicActivityResponse } from '../api/types';
+import { activityHistogram, comparisonDelta, partitionFrameMatches, topicEvidence, topicMapPositions } from './strataWorkspace';
 
 const topic = (counts = Array(12).fill(20), coveredFromMs: number | null = null): TopicActivity => ({
   topic: 'orders',
@@ -78,4 +78,25 @@ describe('Strata workspace evidence', () => {
     expect(comparisonDelta(12, 8)).toEqual({ absolute: 4, percent: 50 });
     expect(comparisonDelta(8, 0)).toEqual({ absolute: 8, percent: null });
   });
+  it('hides partition ribbons when a refresh crosses the shared time window', () => {
+    const snapshot: TopicActivityResponse = {
+      topics: { orders: topic() }, windowStartMs: 0, windowEndMs: 120_000,
+      bucketMs: 10_000, buckets: 12, available: true, warnings: [],
+    };
+    const partition: PartitionActivityResponse = {
+      topic: 'orders', windowStartMs: 0, windowEndMs: 120_000,
+      bucketMs: 10_000, buckets: 12, partitionsTotal: 1,
+      partitionsMeasured: 1, truncated: false, warnings: [],
+      partitions: [{ partition: 0, counts: Array(12).fill(1), coveredFromMs: null,
+        available: true, note: null }],
+    };
+    expect(partitionFrameMatches(partition, snapshot)).toBe(true);
+    expect(partitionFrameMatches({ ...partition, windowStartMs: 10_000 }, snapshot)).toBe(false);
+    expect(partitionFrameMatches({ ...partition, windowEndMs: 130_000 }, snapshot)).toBe(false);
+    expect(partitionFrameMatches({ ...partition, partitions: [
+      { ...partition.partitions[0], counts: [1, 2] },
+    ] }, snapshot)).toBe(false);
+    expect(partitionFrameMatches(null, snapshot)).toBe(false);
+  });
+
 });
