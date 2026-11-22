@@ -306,11 +306,9 @@ export default function Strata3D() {
 
   const onGroupSelect = useCallback((group: ConsumerGroupLag | null) => setSelectedGroup(group), []);
   const chooseTopic = useCallback((name: string) => {
-    setSelected(previous => {
-      if (previous !== name) setSelectedGroup(null);
-      return name;
-    });
-  }, []);
+    if (selected !== name) setSelectedGroup(null);
+    setSelected(name);
+  }, [selected]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setFilteredQuery(query), 280);
