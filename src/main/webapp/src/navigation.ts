@@ -25,6 +25,7 @@ export const NAV_ITEMS: NavItem[] = [
   { name: 'Compare',        icon: 'compare_arrows',  path: '/compare',        group: 'Explore' },
   { name: 'Stream Flow',    icon: 'waves',           path: '/stream-flow',    group: 'Explore' },
 
+  { name: 'Strata 3D',      icon: 'view_in_ar',      path: '/strata',          group: 'Observe' },
   { name: 'Metrics',        icon: 'monitoring',      path: '/metrics',        group: 'Observe' },
   { name: 'Audit',          icon: 'fact_check',      path: '/audit',          group: 'Observe' },
   { name: 'Dead Letter',    icon: 'report',          path: '/dead-letter',    group: 'Observe' },

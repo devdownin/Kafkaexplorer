@@ -14,7 +14,7 @@
 [![Flink 2.3](https://img.shields.io/badge/Flink-2.3-E6526F?logo=apacheflink&logoColor=white)](https://flink.apache.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-[Website](https://devdownin.github.io/Kafkaexplorer/) · [Feature Tour](docs/FEATURES.md) · [Quick Start](#-quick-start) · [Ecosystem](#-ecosystem) · [Contributing](CONTRIBUTING.md) · [🇫🇷 Français](README.fr.md)
+[Website](https://devdownin.github.io/Kafkaexplorer/) · [Feature Tour](docs/FEATURES.md) · [Strata 3D](docs/strata-3d.md) · [Quick Start](#-quick-start) · [Ecosystem](#-ecosystem) · [Contributing](CONTRIBUTING.md) · [🇫🇷 Français](README.fr.md)
 
 </div>
 
