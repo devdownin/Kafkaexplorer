@@ -653,7 +653,8 @@ export default function Strata3D() {
 
   const copyViewLink = async () => {
     const url = new URL(window.location.href);
-    url.search = writeStrataView(url.searchParams, {
+    // Sharing deliberately drops unrelated query parameters (which may be sensitive).
+    url.search = writeStrataView(new URLSearchParams(), {
       mode: diagnosticMode, topic: selected, peer: compareWith, focus: focused,
       filter: query, bucket: selectedBucket, quality,
     }).toString();
@@ -916,7 +917,7 @@ export default function Strata3D() {
       <div className="flex flex-wrap items-center gap-3 text-sm text-on-surface-variant">
         <label className="flex items-center gap-2">Filter topics
           <input aria-label="Filter topics" className="rounded-lg border border-outline-variant bg-surface px-3 py-2 text-on-surface"
-            value={query} onChange={e => setQuery(e.target.value)} placeholder="Topic name" />
+            value={query} onChange={e => setQuery(e.target.value)} maxLength={160} placeholder="Topic name" />
         </label>
         <span>{topics.length} / {names.length} topics shown</span>
         <span>{measured} / {topics.length} activity series measured</span>
