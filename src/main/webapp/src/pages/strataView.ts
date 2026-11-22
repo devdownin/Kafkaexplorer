@@ -62,6 +62,15 @@ export function writeStrataView(params: URLSearchParams, view: StrataView): URLS
   return next;
 }
 
+/** Build an intentional view-only URL. Unrelated query parameters and hash
+ * fragments can contain sensitive application state and must never be shared. */
+export function shareStrataUrl(currentUrl: string, view: StrataView): string {
+  const url = new URL(currentUrl);
+  url.search = writeStrataView(new URLSearchParams(), view).toString();
+  url.hash = '';
+  return url.toString();
+}
+
 export interface StrataRenderBudget {
   pixelRatio: number;
   frameIntervalMs: number;
