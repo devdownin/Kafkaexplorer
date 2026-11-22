@@ -19,7 +19,9 @@ import { copyText } from '../clipboard';
 import { DEFAULT_STRATA_LAYERS, partitionFrameMatches, topicEvidence, type StrataLayer } from './strataWorkspace';
 import {
   StrataHoverCard, StrataLayerMenu, StrataMiniMap, StrataResizeHandle, StrataTimelineDock,
-} from './StrataWorkspaceUI';
+ } from './StrataWorkspaceUI';
+import StrataShortcutDialog from './StrataShortcutDialog';
+import { strataShortcut } from './strataShortcuts';
 import axios from 'axios';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -636,6 +638,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       aria-label="Interactive Kafka topic activity. Drag to orbit, scroll to zoom, double-click to focus. Use the topic list for keyboard access."
       className="w-full h-full min-h-[380px] cursor-grab active:cursor-grabbing">
       {webglFailed && <p role="status" className="p-6 text-sm text-on-surface">3D rendering unavailable or context lost. Use the accessible topic list below.</p>}
+      {shortcutsOpen && <StrataShortcutDialog onClose={closeShortcuts} />}
     </div>
   );
 }
@@ -670,6 +673,9 @@ export default function Strata3D() {
   const [forecastOverlay, setForecastOverlay] = useState<StrataProjection | null>(null);
   const [traced, setTraced] = useState<{ scope: string; flow: ParsedFlow } | null>(null);
   const [layers, setLayers] = useState(DEFAULT_STRATA_LAYERS);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const topicFilterRef = useRef<HTMLInputElement>(null);
+  const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
   const [hovered, setHovered] = useState<{ name: string; x: number; y: number } | null>(null);
   const [navigatorOpen, setNavigatorOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
@@ -902,6 +908,48 @@ export default function Strata3D() {
   const stalledGroup = selectedGroup && consumerHealth(selectedGroup) === 'STALLED'
     ? selectedGroup : null;
 
+  // Ctrl/⌘+K belongs to Layout's global command palette. Local Strata
+  // shortcuts act only when an interactive control is not handling the key.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (shortcutsOpen) return;
+      const target = event.target;
+      const insideControl = target instanceof Element && Boolean(
+        target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="dialog"]'));
+      const action = strataShortcut(event, insideControl);
+      if (!action) return;
+      if (action === 'replay' && !activity?.available) return;
+      if (action === 'focus' && (!selected || !scoped.includes(selected))) return;
+      event.preventDefault();
+      switch (action) {
+        case 'help': setShortcutsOpen(true); break;
+        case 'search':
+          setNavigatorOpen(true);
+          window.requestAnimationFrame(() => topicFilterRef.current?.focus());
+          break;
+        case 'overview':
+          setFocused(null); setCompareWith(null); setDiagnosticMode('investigate');
+          break;
+        case 'focus':
+          if (selected) focusTopic(selected);
+          break;
+        case 'compare':
+          setFocused(null); setDiagnosticMode('compare');
+          break;
+        case 'replay':
+          if (replaying) setReplaying(false);
+          else { setSelectedBucket(0); setReplaying(true); }
+          break;
+        case 'escape':
+          setHovered(null);
+          if (focused) setFocused(null);
+          break;
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [shortcutsOpen, activity?.available, selected, scoped, focusTopic, replaying, focused]);
+
   return (
     <div className="space-y-4 pb-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -957,6 +1005,11 @@ export default function Strata3D() {
             className="rounded-lg bg-primary-container px-3 py-1.5 text-xs font-medium text-on-primary-container">
             Copy view link
           </button>
+          <button type="button" onClick={() => setShortcutsOpen(true)}
+            className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface"
+            aria-label="Keyboard shortcuts and accessibility help">
+            Shortcuts <kbd aria-hidden="true">?</kbd>
+          </button>
         </div>
       </div>
       {(shareNotice || shareLink) && <div className="text-xs text-on-surface-variant" role="status">
@@ -978,10 +1031,10 @@ export default function Strata3D() {
       {names.length > MAX_TOPICS && <p className="text-xs text-on-surface-variant">
         The view is limited to {MAX_TOPICS} topics. Filter by name to reach the others.
       </p>}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[var(--strata-nav)_minmax(0,1fr)_var(--strata-inspector)]"
+      <div className="grid grid-cols-1 gap-3 2xl:grid-cols-[var(--strata-nav)_minmax(0,1fr)_var(--strata-inspector)]"
         style={{ '--strata-nav': navigatorOpen ? navigatorWidth + 'px' : '0px',
           '--strata-inspector': inspectorOpen ? inspectorWidth + 'px' : '0px' } as CSSProperties}>
-        {navigatorOpen && <aside className="relative order-2 lg:order-1 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-low p-3 space-y-4 lg:max-h-[min(75vh,760px)] lg:overflow-y-auto">
+        {navigatorOpen && <aside className="relative order-2 2xl:order-1 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-low p-3 space-y-4 2xl:max-h-[min(75vh,760px)] 2xl:overflow-y-auto">
           <StrataResizeHandle side="left" value={navigatorWidth} onChange={setNavigatorWidth} />
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-on-surface">Topic navigator</h2>
@@ -989,7 +1042,7 @@ export default function Strata3D() {
           </div>
           <label className="block space-y-1 text-xs text-on-surface-variant">
             <span>Filter topics</span>
-            <input aria-label="Filter topics" value={query} onChange={event => setQuery(event.target.value)}
+            <input ref={topicFilterRef} aria-label="Filter topics" value={query} onChange={event => setQuery(event.target.value)}
               maxLength={160} placeholder="Topic name"
               className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface" />
           </label>
@@ -1010,7 +1063,10 @@ export default function Strata3D() {
                 return <button key={topic.name} type="button" title="Select; double-click to focus"
                   className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs ${selected === topic.name ?
                     'bg-primary-container text-on-primary-container' : 'text-on-surface hover:bg-surface-container-high'}`}
-                  onClick={() => chooseTopic(topic.name)} onDoubleClick={() => focusTopic(topic.name)}>
+                  onClick={() => chooseTopic(topic.name)} onDoubleClick={() => focusTopic(topic.name)}
+                  onKeyDown={event => { if (event.key === 'Enter' && event.shiftKey) {
+                    event.preventDefault(); focusTopic(topic.name);
+                  } }}>
                   <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${evidence.status === 'measured' ? 'bg-emerald-500' :
                     evidence.status === 'partial' ? 'bg-amber-500' :
                     evidence.status === 'stale' ? 'bg-sky-500' : 'bg-outline-variant'}`} />
@@ -1022,7 +1078,7 @@ export default function Strata3D() {
             </div>
           </div>
         </aside>}
-        <main className="order-1 lg:order-2 min-w-0">
+        <section aria-label="3D topic visualization" className="order-1 2xl:order-2 min-w-0">
           <div className="relative overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-low"
             style={{ height: 'min(75vh, 760px)', minHeight: 510 }}>
             {topics.length > 0 ?
@@ -1051,8 +1107,8 @@ export default function Strata3D() {
                 onLatest={() => { setReplaying(false); setSelectedBucket(BUCKETS - 1); }} />
             </div>
           </div>
-        </main>
-        {inspectorOpen && <aside className="relative order-3 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-low p-3 space-y-3 lg:max-h-[min(75vh,760px)] lg:overflow-y-auto"
+        </section>
+        {inspectorOpen && <aside className="relative order-3 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-low p-3 space-y-3 2xl:max-h-[min(75vh,760px)] 2xl:overflow-y-auto"
           aria-label="Topic inspector and comparison">
           <StrataResizeHandle side="right" value={inspectorWidth} onChange={setInspectorWidth} />
           <div className="flex items-center justify-between gap-2">
