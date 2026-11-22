@@ -676,6 +676,14 @@ export default function Strata3D() {
   const topicFilterRef = useRef<HTMLInputElement>(null);
   const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
   const [hovered, setHovered] = useState<{ name: string; x: number; y: number } | null>(null);
+  const updateHovered = useCallback((next: { name: string; x: number; y: number } | null) => {
+    setHovered(previous => {
+      if (!next && !previous) return previous;
+      if (next && previous && previous.name === next.name &&
+        Math.abs(previous.x - next.x) < 12 && Math.abs(previous.y - next.y) < 12) return previous;
+      return next;
+    });
+  }, []);
   const [navigatorOpen, setNavigatorOpen] = useState(true);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [navigatorWidth, setNavigatorWidth] = useState(246);
@@ -950,7 +958,7 @@ export default function Strata3D() {
   }, [shortcutsOpen, activity?.available, selected, scoped, focusTopic, replaying, focused]);
 
   return (
-    <div className="space-y-4 pb-8">
+    <div data-testid="strata-workspace" className="space-y-4 pb-8">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-medium tracking-widest uppercase text-primary">Spatial observability</p>
@@ -1084,7 +1092,7 @@ export default function Strata3D() {
               <StrataCanvas topics={topics} selected={selected} compareWith={activeCompareWith}
                 diagnosticMode={diagnosticMode} onSelect={chooseTopic} onFocus={focusTopic}
                 focused={activeFocus} partitionActivity={alignedPartitionActivity} forecast={visibleForecast} motion={motion}
-                quality={quality} layers={layers} onHover={setHovered}
+                quality={quality} layers={layers} onHover={updateHovered}
                 links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
                 selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
               <p className="p-8 text-sm text-on-surface-variant">{dashboard ? 'No matching topics.' : 'Loading cluster…'}</p>}
