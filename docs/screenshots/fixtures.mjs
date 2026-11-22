@@ -147,6 +147,29 @@ export function topicActivity(url) {
   return { topics, windowStartMs: start, windowEndMs: end, bucketMs, buckets, available: true, warnings: [] };
 }
 
+/** Same deterministic activity window as the topic rings, distributed over three partitions. */
+export function partitionActivity(url) {
+  const topic = url.searchParams.get('topic') ?? '';
+  const scoped = new URL(url);
+  scoped.searchParams.set('topics', topic);
+  const response = topicActivity(scoped);
+  const measured = response.topics[topic];
+  const counts = measured?.counts ?? Array(response.buckets).fill(0);
+  const partitions = Array.from({ length: 3 }, (_, partition) => ({
+    partition,
+    counts: counts.map(value => Math.floor(value / 3) + (partition < value % 3 ? 1 : 0)),
+    coveredFromMs: null,
+    available: true,
+    note: null,
+  }));
+  return {
+    topic, windowStartMs: response.windowStartMs, windowEndMs: response.windowEndMs,
+    bucketMs: response.bucketMs, buckets: response.buckets,
+    partitionsTotal: 3, partitionsMeasured: 3, truncated: false, partitions,
+    warnings: [],
+  };
+}
+
 // ── Topic Explorer ───────────────────────────────────────────────────────────────────
 const orderPayload = (id, status, cents, customer) => JSON.stringify({
   order_id: id,
