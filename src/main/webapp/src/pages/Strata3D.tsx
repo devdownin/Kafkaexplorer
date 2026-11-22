@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConsumerGroupLag, DashboardResponse, TopicActivity, TopicActivityResponse } from '../api/types';
 import StrataConsumerPanel from './StrataConsumerPanel';
 import StrataTracePanel from './StrataTracePanel';
+import { consumerHealth } from './StrataConsumerPanel';
 import { bucketInterval, bucketReading, detectActivityAnomaly } from './strataTime';
 import type { ParsedFlow } from './streamFlowLogic';
 import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strataLineage';
@@ -128,7 +129,7 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
   return group;
 }
 
-function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup, themeRevision, selectedBucket, trace }: {
+function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable }: {
   topics: Topic[];
   selected: string | null;
   onSelect: (topic: string) => void;
@@ -138,6 +139,7 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
   themeRevision: number;
   selectedBucket: number;
   trace: ParsedFlow | null;
+  lensAvailable: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const onSelectRef = useRef(onSelect);
@@ -388,6 +390,7 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
     const current = state.current;
     if (!current) return;
     current.lens.position.y = 0.35 + selectedBucket * 0.43;
+    current.lens.visible = lensAvailable;
     const measurements = new Map(topics.map(topic => [topic.name, topic.activity]));
     for (const group of current.groups) {
       const anomaly = detectActivityAnomaly(measurements.get(group.userData.topic as string), selectedBucket);
@@ -401,7 +404,7 @@ function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup
       }
     }
     current.renderer.render(current.scene, current.camera);
-  }, [selectedBucket, topics, links, trace, selectedGroup, selected, themeRevision]);
+  }, [selectedBucket, topics, links, trace, selectedGroup, selected, themeRevision, lensAvailable]);
 
   return (
     <div ref={host} role="img"
@@ -427,6 +430,8 @@ export default function Strata3D() {
   const [motion, setMotion] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [refresh, setRefresh] = useState(0);
   const [themeRevision, setThemeRevision] = useState(0);
+  const [selectedBucket, setSelectedBucket] = useState(BUCKETS - 1);
+  const [traced, setTraced] = useState<{ scope: string; flow: ParsedFlow } | null>(null);
 
   const onGroupSelect = useCallback((group: ConsumerGroupLag | null) => setSelectedGroup(group), []);
   const chooseTopic = useCallback((name: string) => {
@@ -545,6 +550,10 @@ export default function Strata3D() {
   }, [refresh]);
 
   const activity = activitySnapshot?.scope === scope ? activitySnapshot.data : null;
+  const activeTrace = traced?.scope === scope ? traced.flow : null;
+  const onTrace = useCallback((flow: ParsedFlow | null) => {
+    setTraced(flow ? { scope, flow } : null);
+  }, [scope]);
   const topics = useMemo(() => scoped.map(name => ({
     name, size: dashboard?.topicSizes[name] ?? 0, activity: activity?.topics[name],
   })), [scoped, dashboard, activity]);
@@ -554,6 +563,16 @@ export default function Strata3D() {
   const incomplete = topics.filter(t => t.activity?.available && (
     t.activity.partitionsMeasured < t.activity.partitionsTotal || t.activity.coveredFromMs !== null
   )).length;
+  const interval = activity ? bucketInterval({
+    startMs: activity.windowStartMs, endMs: activity.windowEndMs,
+    bucketMs: activity.bucketMs, count: activity.buckets,
+  }, selectedBucket) : null;
+  const anomalies = topics.flatMap(topic => {
+    const candidate = detectActivityAnomaly(topic.activity, selectedBucket);
+    return candidate ? [{ name: topic.name, ...candidate }] : [];
+  });
+  const stalledGroup = selectedGroup && consumerHealth(selectedGroup) === 'STALLED'
+    ? selectedGroup : null;
 
   return (
     <div className="space-y-4 pb-8">
@@ -582,24 +601,78 @@ export default function Strata3D() {
         <span>{measured} / {topics.length} activity series measured</span>
         {incomplete > 0 && <span>{incomplete} partial series</span>}
         <span>{links.length} declared lineage links</span>
+        {anomalies.length > 0 && <span className="text-amber-700 dark:text-amber-300">{anomalies.length} activity deviations in slice</span>}
         {activitySnapshot?.scope === scope && <span>Activity sampled {new Date(activitySnapshot.receivedAt).toLocaleTimeString()}</span>}
       </div>
       {names.length > MAX_TOPICS && <p className="text-xs text-on-surface-variant">
         Rendering the first {MAX_TOPICS} matching topics. Filter to reach others. Measurement is bounded by server limits.
       </p>}
+      <section className="rounded-xl border border-outline-variant bg-surface p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-on-surface">Temporal lens</h2>
+            <p className="text-xs text-on-surface-variant">
+              Slice all topics at one shared time interval. The horizontal plane follows your selection.
+            </p>
+          </div>
+          <button type="button" className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface"
+            onClick={() => setSelectedBucket(BUCKETS - 1)} disabled={selectedBucket === BUCKETS - 1}>Most recent</button>
+        </div>
+        <label className="block text-xs font-medium text-on-surface-variant" htmlFor="strata-time-lens">
+          Selected interval: {interval ? `${new Date(interval.startMs).toLocaleString()} – ${new Date(interval.endMs).toLocaleTimeString()}` :
+            'Activity not measured yet'}
+        </label>
+        <input type="range" id="strata-time-lens" min={0} max={BUCKETS - 1} step={1}
+          value={selectedBucket} onChange={event => setSelectedBucket(Number(event.target.value))}
+          disabled={!activity?.available}
+          aria-valuetext={interval ? `${new Date(interval.startMs).toLocaleString()} to ${new Date(interval.endMs).toLocaleTimeString()}` : 'Unavailable'}
+          className="w-full accent-primary" />
+        <div className="flex justify-between text-xs text-on-surface-variant">
+          <span>Oldest</span><span>Bucket {selectedBucket + 1}/{BUCKETS}</span><span>Most recent</span>
+        </div>
+        <p className="text-xs text-on-surface-variant">
+          Measurements are offset-based, not samples of individual messages.
+          Missing and partially covered buckets are explicitly excluded from anomaly detection.
+        </p>
+      </section>
       <div className="relative overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-low"
         style={{ height: 'min(68vh, 680px)', minHeight: 410 }}>
         {topics.length > 0 ?
           <StrataCanvas topics={topics} selected={selected} onSelect={chooseTopic} motion={motion}
-            links={links} selectedGroup={selectedGroup} themeRevision={themeRevision} /> :
+            links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
+            selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
           <div className="p-8 text-on-surface-variant">{dashboard ? 'No matching topics.' : 'Loading cluster…'}</div>}
         <div className="absolute bottom-3 left-3 pointer-events-none rounded-lg bg-surface/95 px-3 py-2 text-xs text-on-surface-variant shadow-sm">
           Drag to orbit · Scroll to zoom · Click a topic<br />
           12 × 2.5-minute rings · newest at top · logarithmic scale<br />
           Dashes: declared Flink INSERT paths (not observed messages)<br />
-          Coloured satellites: selected group's partition lag
+          Coloured satellites: selected group's partition lag<br />
+          Teal arcs: chronological key matches · amber rings: activity deviations
         </div>
       </div>
+      <StrataTracePanel key={scope} topics={scoped} onTrace={onTrace} onSelect={chooseTopic} />
+      {anomalies.length > 0 && <section className="rounded-xl border border-amber-400/40 bg-surface p-4 space-y-2">
+        <h2 className="text-sm font-semibold text-on-surface">Unusual activity in this time slice</h2>
+        <p className="text-xs text-on-surface-variant">
+          Candidates only: relative to each topic's four preceding complete buckets, not a broker alert.
+        </p>
+        <ul className="grid gap-1 sm:grid-cols-2">
+          {anomalies.map(item => <li key={item.name}>
+            <button onClick={() => chooseTopic(item.name)}
+              className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-surface-container-high text-sm text-on-surface">
+              <span className="font-medium">{item.name}</span>
+              <span className="text-xs text-on-surface-variant block">
+                {item.kind === 'spike' ? 'Spike' : 'Drop'} · {item.value.toLocaleString()} offsets / bucket
+                · baseline {Math.round(item.baseline).toLocaleString()}
+              </span>
+            </button>
+          </li>)}
+        </ul>
+      </section>}
+      {stalledGroup && <p role="status" className="rounded-xl border border-error/40 bg-surface p-3 text-sm text-on-surface">
+        Group <strong>{stalledGroup.groupId}</strong> is stalled on the selected topic:
+        backlog exists but no members are assigned. This is the selected consumer group, not a cluster-wide conclusion.
+      </p>}
       {activity?.warnings?.length ? <p className="text-xs text-on-surface-variant" role="status">{activity.warnings.join(' ')}</p> : null}
       {activity && !activity.available && <p className="text-sm text-on-surface-variant">Activity unavailable; neutral rings indicate unknown readings, not zero traffic.</p>}
       {lineageError && <p role="status" className="text-xs text-on-surface-variant">{lineageError}</p>}
@@ -644,6 +717,8 @@ export default function Strata3D() {
             <dl className="text-sm text-on-surface-variant mt-3 space-y-2">
               <div className="flex justify-between gap-2"><dt>Estimated retained offsets</dt>
                 <dd className="tabular-nums text-on-surface">{selectedTopic.size.toLocaleString()}</dd></div>
+              <div className="flex justify-between gap-2"><dt>Selected time slice</dt>
+                <dd className="tabular-nums text-on-surface">{bucketReading(selectedTopic.activity, selectedBucket)?.toLocaleString() ?? 'Unknown'}</dd></div>
               <div className="flex justify-between gap-2"><dt>30-minute produced offsets</dt>
                 <dd className="tabular-nums text-on-surface">{selectedTopic.activity?.available ?
                   selectedTopic.activity.total.toLocaleString() : 'Unavailable'}</dd></div>
