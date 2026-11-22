@@ -189,3 +189,60 @@ export const GRAPH_EDGES: readonly [GraphNodeId, GraphNodeId, 'call' | 'return']
   ['backend', 'evidence', 'return'], ['evidence', 'answer', 'return'],
   ['answer', 'request', 'return'],
 ];
+
+/**
+ * Optional lenses highlight a responsibility without hiding intermediate edges. Hiding
+ * nodes would otherwise misrepresent a call path as a direct invocation.
+ */
+export type GraphLens = 'all' | GraphNodeKind;
+export const GRAPH_LENSES: ReadonlyArray<{ id: GraphLens; label: string }> = [
+  { id: 'all', label: 'Tous' },
+  { id: 'human', label: 'Utilisateur' },
+  { id: 'agent', label: 'Agent' },
+  { id: 'guard', label: 'Gouvernance' },
+  { id: 'transport', label: 'Transport' },
+  { id: 'service', label: 'Services' },
+  { id: 'evidence', label: 'Preuves' },
+];
+
+export interface GuideSelection {
+  scenario: ScenarioId;
+  step: GraphNodeId;
+  lens: GraphLens;
+}
+
+export function parseGuideSelection(search: string): GuideSelection {
+  const query = new URLSearchParams(search);
+  const rawScenario = query.get('scenario');
+  const rawStep = query.get('step');
+  const rawLens = query.get('focus');
+  return {
+    scenario: rawScenario && Object.prototype.hasOwnProperty.call(SCENARIOS, rawScenario)
+      ? rawScenario as ScenarioId : 'incident',
+    step: rawStep && GRAPH_ORDER.some((id) => id === rawStep)
+      ? rawStep as GraphNodeId : 'server',
+    lens: GRAPH_LENSES.some(({ id }) => id === rawLens)
+      ? rawLens as GraphLens : 'all',
+  };
+}
+
+export function serializeGuideSelection({ scenario, step, lens }: GuideSelection): string {
+  const query = new URLSearchParams();
+  query.set('scenario', scenario);
+  query.set('step', step);
+  if (lens !== 'all') query.set('focus', lens);
+  return query.toString();
+}
+
+/** Portable copy-as-code output from the exact authored graph, not a runtime trace. */
+export function scenarioMermaid(scenario: ScenarioId): string {
+  const lines = [
+    'flowchart LR',
+    '%% Architecture documentée : exemple, pas trace d’exécution',
+    ...SCENARIOS[scenario].nodes.map(({ id, label }) =>
+      `  ${id}["${label.replace(/"/g, "'")}"]`),
+    ...GRAPH_EDGES.map(([from, to, kind]) =>
+      `  ${from} ${kind === 'call' ? '-->' : '-.->'} ${to}`),
+  ];
+  return lines.join('\n');
+}

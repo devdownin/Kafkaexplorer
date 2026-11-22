@@ -20,6 +20,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **MCP guide usability pass.** Role-lens filtering without hiding intermediate nodes,
+  accessible mobile step list, graph zoom, arrow/Home/End keyboard traversal,
+  shareable scenario/step/focus URLs and portable Mermaid export. The public GitHub
+  Pages edition now uses a separate checked JavaScript asset and offers the same
+  filters, deep links, mobile presentation and focus controls, without live calls.
+
 - **Two additional reviewed Kafka Agent Skills:** `kafka-security-review` for bounded
   topic-policy and MCP deployment posture evidence, and `kafka-schema-evolution`
   for baseline-based drift assessment. Both are read-only, refuse invented security
