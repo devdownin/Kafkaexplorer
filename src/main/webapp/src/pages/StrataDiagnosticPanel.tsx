@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Kafka Explorer Contributors
 
-import { useMemo, useState } from 'react';
-import type { TopicActivityResponse } from '../api/types';
+import { useEffect, useMemo, useState } from 'react';
+import axios from 'axios';
+import type { ConsumerGroupLag, TopicActivityResponse, TopicConsumers } from '../api/types';
 import type { ParsedFlow } from './streamFlowLogic';
 import type { StrataLink } from './strataLineage';
 import { compareTopicActivity, investigateTopic, temporalAssociation, type TopicComparison } from './strataDiagnostics';
 import { detectActivityAnomaly } from './strataTime';
+import { comparisonDelta } from './strataWorkspace';
 
 export type DiagnosticMode = 'investigate' | 'compare';
 
@@ -67,8 +69,14 @@ function Readout({ label, value, suffix = '' }: { label: string; value: number |
   </div>;
 }
 
+function completeLag(group: ConsumerGroupLag | null | undefined): number | null {
+  if (!group || group.error || group.partitions.length === 0 || group.partitionsWithoutCommit > 0 ||
+    group.partitions.some(partition => partition.lag === null) || !Number.isFinite(group.totalLag)) return null;
+  return group.totalLag;
+}
+
 export default function StrataDiagnosticPanel({ mode, topic, compareWith, topics, snapshot, links, trace,
-  selectedBucket, onChooseTopic, onCompareWith }: {
+  selectedBucket, selectedGroup, onChooseTopic, onCompareWith }: {
   mode: DiagnosticMode;
   topic: string | null;
   compareWith: string | null;
@@ -77,6 +85,7 @@ export default function StrataDiagnosticPanel({ mode, topic, compareWith, topics
   links: StrataLink[];
   trace: ParsedFlow | null;
   selectedBucket: number;
+  selectedGroup: ConsumerGroupLag | null;
   onChooseTopic: (topic: string) => void;
   onCompareWith: (topic: string | null) => void;
 }) {
@@ -89,6 +98,52 @@ export default function StrataDiagnosticPanel({ mode, topic, compareWith, topics
   [snapshot, topic, selectedPeer, selectedBucket]);
   const association = useMemo(() => comparison ? temporalAssociation(comparison) : null, [comparison]);
   const relevant = links.filter(link => !onlyNeighbors || link.from === topic || link.to === topic);
+  const [peerConsumers, setPeerConsumers] = useState<{ topic: string; groupId: string; data: TopicConsumers } | null>(null);
+  const [peerLagError, setPeerLagError] = useState<string | null>(null);
+  const groupId = selectedGroup?.groupId ?? null;
+
+  // Compare lag only for the SAME explicitly selected consumer group. Fetch the
+  // second topic on demand; absence in a bounded group scan is not zero lag.
+  useEffect(() => {
+    if (mode !== 'compare' || !selectedPeer || !groupId) return;
+    const controller = new AbortController();
+    let active = true;
+    let busy = false;
+    const poll = async () => {
+      if (document.visibilityState === 'hidden' || busy) return;
+      busy = true;
+      try {
+        const response = await axios.get<TopicConsumers>(
+          `/api/topic/${encodeURIComponent(selectedPeer)}/consumers`,
+          { signal: controller.signal, timeout: 15000 });
+        if (active) {
+          setPeerConsumers({ topic: selectedPeer, groupId, data: response.data });
+          setPeerLagError(null);
+        }
+      } catch (failure) {
+        if (active && !axios.isCancel(failure)) {
+          setPeerLagError('Peer consumer positions could not be measured.');
+          setPeerConsumers(null);
+        }
+      } finally { busy = false; }
+    };
+    void poll();
+    const interval = window.setInterval(() => { void poll(); }, 30000);
+    const visible = () => { if (document.visibilityState === 'visible') void poll(); };
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      active = false; controller.abort(); window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [mode, selectedPeer, groupId]);
+
+  const peerData = peerConsumers?.topic === selectedPeer && peerConsumers.groupId === groupId
+    ? peerConsumers.data : null;
+  const peerGroup = peerData?.groups.find(group => group.groupId === groupId) ?? null;
+  const firstLag = completeLag(selectedGroup);
+  const secondLag = peerData?.available ? completeLag(peerGroup) : null;
+  const rateDelta = comparison ? comparisonDelta(comparison.firstRate, comparison.secondRate) : null;
+  const lagDelta = firstLag !== null && secondLag !== null ? firstLag - secondLag : null;
 
   return <div className="space-y-4" aria-live="polite">
     {mode === 'investigate' && <>
@@ -171,11 +226,20 @@ export default function StrataDiagnosticPanel({ mode, topic, compareWith, topics
           Comparison unavailable: one topic has no sample in the current scope, or their time windows differ.
         </p>}
         {comparison && <>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <Readout label="A · current bucket" value={comparison.firstSlice} />
             <Readout label="B · current bucket" value={comparison.secondSlice} />
             <Readout label="A · offsets/min" value={comparison.firstRate} />
             <Readout label="B · offsets/min" value={comparison.secondRate} />
+          </div>
+          <div className="rounded-xl border border-outline-variant bg-surface-container-low p-3 text-xs text-on-surface-variant">
+            <p className="font-semibold text-on-surface">Production-rate difference · A − B</p>
+            <p className="mt-1 text-base font-semibold tabular-nums text-on-surface">
+              {rateDelta === null ? 'Unknown (incomplete coverage)' :
+                `${rateDelta.absolute >= 0 ? '+' : ''}${rateDelta.absolute.toLocaleString(undefined, { maximumFractionDigits: 1 })} offsets/min`}
+            </p>
+            <p>{rateDelta?.percent === null || rateDelta === null ? 'Relative difference unavailable' :
+              `${rateDelta.percent >= 0 ? '+' : ''}${rateDelta.percent.toFixed(1)}% against B`}</p>
           </div>
           <ComparisonChart comparison={comparison} selectedBucket={selectedBucket} />
           <div className="flex flex-wrap gap-3 text-xs text-on-surface-variant">
@@ -198,6 +262,28 @@ export default function StrataDiagnosticPanel({ mode, topic, compareWith, topics
             No defensible temporal association: coverage is incomplete, a series is constant,
             or none of the exploratory shifts reached r ≥ 0.65.
           </p>}
+          <div className="rounded-xl border border-outline-variant p-3 space-y-2">
+            <h4 className="text-xs font-semibold text-on-surface">Consumer lag · same group on A and B</h4>
+            <p className="text-xs text-on-surface-variant">
+              {groupId ? `Group: ${groupId}` : 'Choose a group on topic A in the consumer inspector to enable lag comparison.'}
+              {' '}Lag is scoped to this group, never the topic as a whole.
+            </p>
+            {groupId && <>
+              <div className="grid grid-cols-2 gap-2">
+                <Readout label="A · committed lag" value={firstLag} />
+                <Readout label="B · committed lag" value={secondLag} />
+              </div>
+              <p className="text-xs text-on-surface-variant">
+                Difference A − B: {lagDelta === null ? 'Unknown (missing group, commits or coverage)' :
+                  lagDelta.toLocaleString() + ' offsets'}
+              </p>
+              {peerLagError && <p role="status" className="text-xs text-error">{peerLagError}</p>}
+              {!peerData && !peerLagError && <p className="text-xs text-on-surface-variant">Loading peer consumer positions…</p>}
+              {peerData?.truncated && <p className="text-xs text-on-surface-variant">
+                Peer group discovery is bounded; omitted groups remain unknown.
+              </p>}
+            </>}
+          </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {([comparison.first, comparison.second] as const).map((name, index) => {
               const a = snapshot?.topics[name];
