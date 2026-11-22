@@ -87,7 +87,7 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [2.8.3] — 2026-11-22
 
-Published release: [v2.8.3](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.8.3).
+See [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.8.3).
 
 ## [2.8.2] — 2026-11-21
 

@@ -1,6 +1,6 @@
 # Kafka Strata 3D — spatial observability
 
-Kafka Strata 3D is an optional, read-only Three.js view at **/strata** (Analyze → Kafka Strata 3D).
+Kafka Strata 3D is an optional, read-only Three.js view at **/strata** (Observe → Strata 3D).
 It provides a time-oriented view of topics and deliberate connections, complementary to
 [Stream Flow](../src/main/webapp/src/pages/StreamFlow.tsx), [Lineage](../src/main/webapp/src/pages/Lineage.tsx)
 and Topic Explorer.
@@ -29,7 +29,7 @@ shown. No link is not evidence of absent activity.
 
 ## Using the view
 
-1. Open **Analyze → Kafka Strata 3D**. Use the search box to limit to at most 48
+1. Open **Observe → Strata 3D**. Use the search box to limit to at most 48
    visible topics. Camera movement uses OrbitControls: drag to orbit, wheel to
    zoom, and pointer dragging to pan; keyboard-only selection is available in
    the adjacent topic navigator and its accessible mini-map controls.

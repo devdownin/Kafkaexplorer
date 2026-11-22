@@ -25,6 +25,7 @@ export const NAV_ITEMS: NavItem[] = [
   { name: 'Compare',        icon: 'compare_arrows',  path: '/compare',        group: 'Explore' },
   { name: 'Stream Flow',    icon: 'waves',           path: '/stream-flow',    group: 'Explore' },
 
+  { name: 'Strata 3D',      icon: 'view_in_ar',      path: '/strata',          group: 'Observe' },
   { name: 'Metrics',        icon: 'monitoring',      path: '/metrics',        group: 'Observe' },
   { name: 'Audit',          icon: 'fact_check',      path: '/audit',          group: 'Observe' },
   { name: 'Dead Letter',    icon: 'report',          path: '/dead-letter',    group: 'Observe' },
@@ -33,7 +34,6 @@ export const NAV_ITEMS: NavItem[] = [
   { name: 'MCP Guide',      icon: 'menu_book',      path: '/mcp/guide',      group: 'Observe' },
 
   { name: 'Lineage',        icon: 'account_tree',    path: '/lineage',        group: 'Analyze' },
-  { name: 'Kafka Strata 3D', icon: 'view_in_ar', path: '/strata', group: 'Analyze' },
   { name: 'Data Model',     icon: 'schema',          path: '/data-model',     group: 'Analyze' },
   { name: 'Process Mining', icon: 'query_stats',     path: '/process-mining', group: 'Analyze' },
 ];
