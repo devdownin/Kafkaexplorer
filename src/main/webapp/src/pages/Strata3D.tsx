@@ -16,7 +16,7 @@ import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strata
 import { Link } from 'react-router-dom';
 import { readStrataView, strataRenderBudget, writeStrataView, type StrataQuality } from './strataView';
 import { copyText } from '../clipboard';
-import { DEFAULT_STRATA_LAYERS, topicEvidence, type StrataLayer } from './strataWorkspace';
+import { DEFAULT_STRATA_LAYERS, partitionFrameMatches, topicEvidence, type StrataLayer } from './strataWorkspace';
 import {
   StrataHoverCard, StrataLayerMenu, StrataMiniMap, StrataResizeHandle, StrataTimelineDock,
 } from './StrataWorkspaceUI';
@@ -872,6 +872,7 @@ export default function Strata3D() {
   const partitionActivity = partitionSnapshot?.topic === activeFocus ? partitionSnapshot.data : null;
   const visibleForecast = forecastOverlay?.topic === activeFocus ? forecastOverlay : null;
   const activity = activitySnapshot?.scope === scope ? activitySnapshot.data : null;
+  const alignedPartitionActivity = partitionFrameMatches(partitionActivity, activity) ? partitionActivity : null;
   const activeTrace = traced?.scope === scope ? traced.flow : null;
   const onTrace = useCallback((flow: ParsedFlow | null) => {
     setTraced(flow ? { scope, flow } : null);
@@ -1027,7 +1028,7 @@ export default function Strata3D() {
             {topics.length > 0 ?
               <StrataCanvas topics={topics} selected={selected} compareWith={activeCompareWith}
                 diagnosticMode={diagnosticMode} onSelect={chooseTopic} onFocus={focusTopic}
-                focused={activeFocus} partitionActivity={partitionActivity} forecast={visibleForecast} motion={motion}
+                focused={activeFocus} partitionActivity={alignedPartitionActivity} forecast={visibleForecast} motion={motion}
                 quality={quality} layers={layers} onHover={setHovered}
                 links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
                 selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
@@ -1128,6 +1129,9 @@ export default function Strata3D() {
         </div>
         {partitionError && <p role="alert" className="text-xs text-error">{partitionError}</p>}
         {!partitionActivity && !partitionError && <p className="text-xs text-on-surface-variant">Measuring partition activity…</p>}
+        {partitionActivity && !alignedPartitionActivity && <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
+          Partition sample and cluster time lens use different windows; 3D ribbons are hidden until both align.
+        </p>}
         {partitionActivity && <>
           <p className="text-xs text-on-surface-variant" role="status">
             {partitionActivity.partitionsMeasured}/{partitionActivity.partitionsTotal} partitions measured
