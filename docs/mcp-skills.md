@@ -38,7 +38,7 @@ Prompts do not start server-side jobs. In particular, `kex_forecast_analysis` do
 
 ## Project skills (packages)
 
-The source skills live in [`.agents/skills/`](../.agents/skills/). Each directory has a `SKILL.md` frontmatter (`name`, `description`), a procedure, safety gates and measurable acceptance checks.
+The source skills live in [`.agents/skills/`](../.agents/skills/README.md). Each directory has a `SKILL.md` frontmatter (`name`, `description`), a procedure, safety gates and measurable acceptance checks.
 
 - `kafka-incident-triage` — diagnosis and before/after coverage
 - `kafka-forecast-analyst` — model-quality and threshold forecasting
