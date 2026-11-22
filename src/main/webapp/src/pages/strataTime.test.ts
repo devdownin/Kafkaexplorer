@@ -21,6 +21,12 @@ describe('strata temporal slice', () => {
     expect(bucketReading({ ...sample, coveredFromMs: 5500 }, 4)).toBeNull();
     expect(bucketReading({ ...sample, coveredFromMs: 5000 }, 4)).toBe(280);
   });
+  it('does not render counts from malformed or shortened snapshot windows', () => {
+    expect(bucketReading({ ...sample, counts: [10, 20] }, 0)).toBeNull();
+    expect(bucketReading({ ...sample, windowEndMs: 12_000 }, 0)).toBeNull();
+    expect(bucketReading({ ...sample, bucketMs: 0 }, 0)).toBeNull();
+    expect(bucketReading({ ...sample, partitionsTotal: 0, partitionsMeasured: 0 }, 0)).toBeNull();
+  });
   it('flags a strong spike against four preceding complete measurements', () => {
     expect(detectActivityAnomaly(sample, 4)?.kind).toBe('spike');
     expect(detectActivityAnomaly(sample, 9)?.kind).toBe('drop');
