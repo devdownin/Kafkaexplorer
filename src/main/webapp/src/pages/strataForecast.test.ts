@@ -21,7 +21,7 @@ const series = {
       ],
     },
   },
-} as ForecastSeriesView;
+} as unknown as ForecastSeriesView;
 describe('Kafka Strata forecast evidence', () => {
   it('projects measured and forecast intervals on distinct time axes', () => {
     const v = spatialProjection(series, 'orders', 11500);
