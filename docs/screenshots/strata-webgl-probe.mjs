@@ -109,8 +109,9 @@ try {
     throw new Error('Spatial workspace overflows the mobile viewport');
   }
   await page.getByRole('region', { name: 'Temporal lens' }).waitFor();
+  await page.getByRole('button', { name: 'Hide inspector' }).click();
   await page.getByRole('button', { name: 'Show inspector' }).click();
-  await page.getByRole('region', { name: 'Topic inspector and comparison' }).waitFor();
+  await page.locator('aside[aria-label="Topic inspector and comparison"]').waitFor();
   if (pageErrors.length) throw new Error('Uncaught browser errors: ' + pageErrors.join('; '));
   console.log('Strata WebGL: context, orbit, URL round-trip, partitions, keyboard, layers and mobile layout passed.');
 } catch (error) {
