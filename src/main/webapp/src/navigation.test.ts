@@ -10,6 +10,7 @@ describe('resolvePageName', () => {
     expect(resolvePageName('/query')).toBe('SQL Editor');
     expect(resolvePageName('/topics/hierarchy')).toBe('Topic hierarchy');
     expect(resolvePageName('/config')).toBe('Settings');
+    expect(resolvePageName('/mcp/guide')).toBe('MCP Guide');
   });
 
   it('resolves dynamic routes', () => {

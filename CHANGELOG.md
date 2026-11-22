@@ -20,6 +20,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **MCP Skills & Services pedagogical guide.** New in-app page `/mcp/guide`
+  and public Pages guide `docs/mcp-guide.html`: four primitives explained through
+  examples, actionable do/don't rules, and interactive incident, forecast and skill
+  discovery call graphs based on Kex-anHarness's published architecture. Each graph
+  node identifies its source and safety contract; it is explicitly not a live trace.
+  Help, MCP catalogue, README, Features and the public site link to the guide.
+  The text/accessible Mermaid companion is `docs/mcp-skills-services-guide.md`.
+
+
 - **Agent Skills distribution and catalogue.** The five reviewed `SKILL.md` documents are
   packaged from `.agents/skills` into the JAR and exposed as exact `skill://` resources,
   with a `kex://skills` SHA-256 manifest. The MCP console lists, previews and copies

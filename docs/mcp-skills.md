@@ -1,5 +1,10 @@
 # MCP Resources, prompts and Agent Skills
 
+**New to Skills & MCP?** Start with the [illustrated interactive guide](mcp-guide.html)
+or its [text version with a Mermaid call graph](mcp-skills-services-guide.md).
+They show how Kex-anHarness orchestrates KafkaExplorer capabilities, without claiming
+that an architectural diagram is a recorded trace.
+
 KafkaExplorer exposes three distinct surfaces when `explorer.mcp.enabled=true`:
 
 | Surface | How to use it | Operational contract |

@@ -3,7 +3,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import type { FC } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { copyText } from '../clipboard';
 import {
@@ -175,7 +175,11 @@ const Mcp: FC = () => {
         title="MCP"
         description="Ce que ce serveur offre à un agent, et ce que les agents en ont fait."
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Link to="/mcp/guide" className="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-[12px] font-semibold text-primary hover:bg-primary/15">
+              <span className="material-symbols-outlined text-[17px]" aria-hidden="true">menu_book</span>
+              Guide Skills & MCP
+            </Link>
             <Button variant={tab === 'catalog' ? 'primary' : 'outline'} onClick={() => setUrl({ tab: 'catalog' })}>
               Catalogue
             </Button>
