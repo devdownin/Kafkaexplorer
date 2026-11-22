@@ -15,8 +15,7 @@
 something you can *see and query*: browse topics, click on a message field, and get a
 runnable Flink SQL query — no DDL to write, no schema to guess, no CLI gymnastics.
 
-One container, one URL, no broker-side installation. The interface follows your system —
-light or dark — with six accent colours and a compact density for dense screens.
+One container, one URL, no broker-side installation. The interface starts in light mode, with a persistent dark-mode switch and six accent colours and a compact density for dense screens.
 
 ![The dashboard: every topic, its message count, its state and when it last received something](https://devdownin.github.io/Kafkaexplorer/img/dashboard.png)
 

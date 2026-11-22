@@ -21,16 +21,20 @@ describe('Header connection pill', () => {
     render(<RouterProvider router={createMemoryRouter([{
       path: '/', element: <Header theme="light" onThemeToggle={onThemeToggle} isHealthy={null} clusterName="" />,
     }], { initialEntries: ['/'] })} />);
-    const switchButton = screen.getByRole('button', { name: 'Appearance: light. Switch to dark' });
+    const switchButton = screen.getByRole('switch', { name: 'Dark mode' });
+    expect(switchButton).toHaveAttribute('aria-checked', 'false');
+    expect(switchButton.closest('[title]')).toHaveAttribute('title', 'Switch to dark mode');
     switchButton.click();
     expect(onThemeToggle).toHaveBeenCalledOnce();
   });
 
-  it('names the resolved scheme while following the system', () => {
+  it('exposes dark mode as the checked state with an explicit light-mode hint', () => {
     render(<RouterProvider router={createMemoryRouter([{
-      path: '/', element: <Header theme="dark" themePreference="system" onThemeToggle={() => {}} isHealthy={null} clusterName="" />,
+      path: '/', element: <Header theme="dark" onThemeToggle={() => {}} isHealthy={null} clusterName="" />,
     }], { initialEntries: ['/'] })} />);
-    expect(screen.getByRole('button', { name: 'Appearance: system (dark). Switch to light' })).toBeInTheDocument();
+    const switchButton = screen.getByRole('switch', { name: 'Dark mode' });
+    expect(switchButton).toHaveAttribute('aria-checked', 'true');
+    expect(switchButton.closest('[title]')).toHaveAttribute('title', 'Switch to light mode');
   });
 
   it('shows the deployment name and the effective bootstrap address on hover', () => {

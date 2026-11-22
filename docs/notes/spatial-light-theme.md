@@ -1,6 +1,6 @@
 # Spatial light and dark themes
 
-Kafka Explorer uses two application-wide color schemes and three appearance preferences — **System**, Light, Dark — cycled from the floating header (`src/theme.ts`). Only an explicit choice is persisted under `kse.theme`; System removes the key and follows `prefers-color-scheme` live. An inline head script applies the scheme and the `theme-color` meta before the first paint.
+Kafka Explorer uses two application-wide color schemes. **Light is the initial default**, regardless of the operating-system preference. The floating header has an accessible **Dark mode** switch (`src/theme.ts`) that changes to dark immediately and back to light without cycling through an intermediate system mode. Only the dark override is persisted under `kse.theme`; switching back to light clears the key. An inline head script applies the selected scheme and the `theme-color` meta before the first paint.
 
 ## Architecture
 
@@ -163,8 +163,7 @@ What the audit of the fourth pass found, and what closed it:
 - **Dark-only literals.** `FlowMetricDrawer` wrote its error/risk/success lines in
   `#f58c8c` / `#f5c264` / `#8fd6a3` (1.6–2.3:1 on white); they use `text-error` / `-warning` /
   `-success`. The black and white alpha fills on Metrics and Process Mining went to surface tokens.
-- **System appearance froze on first visit.** The effect persisted the OS default on mount, so
-  a later OS change was never followed. Three states now; System is never written.
+- **Former system appearance behavior.** An earlier version persisted the OS default on mount and froze it. The intermediate three-state selector subsequently followed the OS live; it has since been replaced by a simpler light-default, two-state switch.
 - **Input borders at ≥ 3:1** (WCAG 1.4.11): `--glass-input-border` is 3.3:1 in both schemes.
   The header search capsule keeps the lighter `--glass-control-border` — it is labelled by its
   text and icon. Card borders were raised (1.16 → ~1.3:1) but deliberately not to 3:1: a card is
@@ -180,7 +179,7 @@ What the audit of the fourth pass found, and what closed it:
   scroll; `main` does) were dropped. Light `.nav-active` now takes the
   `--glass-selected-*` tokens its own override used to shadow.
 
-`theme-probe.mjs` finds the switch by its `Appearance: …` label. It still checks layout, not
+`theme-probe.mjs` finds the switch by its accessible `Dark mode` label. It still checks layout, not
 contrast: the ratios above are computed from the tokens.
 
 ## Sixth pass — material and motion

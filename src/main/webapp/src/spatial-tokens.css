@@ -1,5 +1,4 @@
 /* Spatial material tokens. RGB channels power Tailwind opacity modifiers. */
-:root,
 :root[data-theme="dark"] {
   color-scheme: dark;
   --kse-background: 11 13 16;
@@ -132,6 +131,7 @@
   --viz-tooltip-text: #e8eaf0;
   --viz-table-bg: #191d24;
 }
+:root,
 :root[data-theme="light"] {
   color-scheme: light;
   --kse-background: 243 246 251;
