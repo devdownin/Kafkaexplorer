@@ -283,6 +283,10 @@ Released from `main` with no entry recorded here; see [the release notes](https:
   Found by the Convergence suite's forecast bench; the test reads the summary the refresh writes
   rather than one written for it.
 
+## [2.5.0]
+
+See [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.5.0).
+
 ## [0.3.0] — 2026-11-15
 
 - **A count-delta or transit-latency forecast finds its history.** A `TOPIC_COUNT_DELTA` refresh row
