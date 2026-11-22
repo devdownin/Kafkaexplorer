@@ -33,6 +33,7 @@ export const NAV_ITEMS: NavItem[] = [
   { name: 'MCP Guide',      icon: 'menu_book',      path: '/mcp/guide',      group: 'Observe' },
 
   { name: 'Lineage',        icon: 'account_tree',    path: '/lineage',        group: 'Analyze' },
+  { name: 'Kafka Strata 3D', icon: 'view_in_ar', path: '/strata', group: 'Analyze' },
   { name: 'Data Model',     icon: 'schema',          path: '/data-model',     group: 'Analyze' },
   { name: 'Process Mining', icon: 'query_stats',     path: '/process-mining', group: 'Analyze' },
 ];
