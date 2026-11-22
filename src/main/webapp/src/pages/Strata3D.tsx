@@ -19,7 +19,7 @@ import { copyText } from '../clipboard';
 import { DEFAULT_STRATA_LAYERS, partitionFrameMatches, topicEvidence, type StrataLayer } from './strataWorkspace';
 import {
   StrataHoverCard, StrataLayerMenu, StrataMiniMap, StrataResizeHandle, StrataTimelineDock,
- } from './StrataWorkspaceUI';
+} from './StrataWorkspaceUI';
 import StrataShortcutDialog from './StrataShortcutDialog';
 import { strataShortcut } from './strataShortcuts';
 import axios from 'axios';
@@ -638,7 +638,6 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       aria-label="Interactive Kafka topic activity. Drag to orbit, scroll to zoom, double-click to focus. Use the topic list for keyboard access."
       className="w-full h-full min-h-[380px] cursor-grab active:cursor-grabbing">
       {webglFailed && <p role="status" className="p-6 text-sm text-on-surface">3D rendering unavailable or context lost. Use the accessible topic list below.</p>}
-      {shortcutsOpen && <StrataShortcutDialog onClose={closeShortcuts} />}
     </div>
   );
 }
@@ -1242,6 +1241,7 @@ export default function Strata3D() {
       </p> : null}
 
       </section>
+      {shortcutsOpen && <StrataShortcutDialog onClose={closeShortcuts} />}
     </div>
   );
 }
