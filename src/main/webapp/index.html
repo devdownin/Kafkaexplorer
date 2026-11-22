@@ -4,15 +4,15 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0b0d10" />
+    <meta name="theme-color" content="#f3f6fb" />
     <meta name="color-scheme" content="light dark" />
     <title>Kafka Explorer</title>
     <style>
       /* Polices auto-hébergées via @fontsource / material-symbols (voir
          src/fonts.css) — aucune dépendance au CDN Google Fonts. */
-      /* Fond immédiat pour éviter le flash blanc avant l'hydratation React. */
-      html, body { background-color: #0b0d10; }
-      html[data-theme="light"], html[data-theme="light"] body { background-color: #f3f6fb; }
+      /* Fond clair immédiat avant l'hydratation React. */
+      html, body { background-color: #f3f6fb; }
+      html[data-theme="dark"], html[data-theme="dark"] body { background-color: #0b0d10; }
       .material-symbols-outlined {
         font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0;
       }
@@ -22,9 +22,8 @@
       (() => {
         let theme;
         try { theme = localStorage.getItem('kse.theme'); } catch { /* restricted storage */ }
-        if (theme !== 'light' && theme !== 'dark') {
-          theme = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-        }
+        // A new browser session is light even if the OS is in dark mode.
+        if (theme !== 'dark') theme = 'light';
         document.documentElement.dataset.theme = theme;
         document.documentElement.classList.toggle('dark', theme === 'dark');
         try {
