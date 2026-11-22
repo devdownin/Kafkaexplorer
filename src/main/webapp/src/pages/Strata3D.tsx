@@ -525,13 +525,32 @@ export default function Strata3D() {
   const [refresh, setRefresh] = useState(0);
   const [themeRevision, setThemeRevision] = useState(0);
   const [selectedBucket, setSelectedBucket] = useState(BUCKETS - 1);
+  const [replaying, setReplaying] = useState(false);
+  const [replaySpeed, setReplaySpeed] = useState(1);
+  const [focused, setFocused] = useState<string | null>(null);
+  const [partitionSnapshot, setPartitionSnapshot] = useState<{ topic: string; data: PartitionActivityResponse } | null>(null);
+  const [partitionError, setPartitionError] = useState<string | null>(null);
+  const [forecastOverlay, setForecastOverlay] = useState<StrataProjection | null>(null);
   const [traced, setTraced] = useState<{ scope: string; flow: ParsedFlow } | null>(null);
 
   const onGroupSelect = useCallback((group: ConsumerGroupLag | null) => setSelectedGroup(group), []);
+  const onProjection = useCallback((projection: StrataProjection | null) => setForecastOverlay(projection), []);
   const chooseTopic = useCallback((name: string) => {
     if (selected !== name) setSelectedGroup(null);
     setSelected(name);
   }, [selected]);
+  const focusTopic = useCallback((name: string) => {
+    chooseTopic(name);
+    setFocused(name);
+  }, [chooseTopic]);
+
+  useEffect(() => {
+    if (!replaying) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') setSelectedBucket(bucket => (bucket + 1) % BUCKETS);
+    }, 1100 / replaySpeed);
+    return () => window.clearInterval(timer);
+  }, [replaying, replaySpeed]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setFilteredQuery(query), 280);
@@ -574,6 +593,8 @@ export default function Strata3D() {
 
   const names = useMemo(() => (dashboard?.topics ?? []).slice().sort((a, b) => a.localeCompare(b)), [dashboard]);
   const scoped = useMemo(() => names.filter(name => name.toLocaleLowerCase().includes(filteredQuery.toLocaleLowerCase())).slice(0, MAX_TOPICS), [names, filteredQuery]);
+  const layoutIndices = useMemo(() => new Map(names.map((name, index) => [name, index])), [names]);
+  const activeFocus = focused && scoped.includes(focused) ? focused : null;
   const scope = scoped.join(',');
 
   useEffect(() => {
@@ -643,6 +664,39 @@ export default function Strata3D() {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    if (!activeFocus) return;
+    const controller = new AbortController();
+    let active = true;
+    let busy = false;
+    const poll = async () => {
+      if (document.visibilityState === 'hidden' || busy) return;
+      busy = true;
+      try {
+        const { data } = await axios.get<PartitionActivityResponse>('/api/dashboard/partition-activity', {
+          params: { topic: activeFocus, windowMs: WINDOW_MS, buckets: BUCKETS },
+          signal: controller.signal, timeout: 20000,
+        });
+        if (active) { setPartitionSnapshot({ topic: activeFocus, data }); setPartitionError(null); }
+      } catch (reason) {
+        if (active && !axios.isCancel(reason)) {
+          setPartitionSnapshot(null);
+          setPartitionError('Partition-level activity is unavailable.');
+        }
+      } finally { busy = false; }
+    };
+    void poll();
+    const timer = window.setInterval(() => { void poll(); }, 30000);
+    const onVisible = () => { if (document.visibilityState === 'visible') void poll(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      active = false; controller.abort(); window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [activeFocus, refresh]);
+
+  const partitionActivity = partitionSnapshot?.topic === activeFocus ? partitionSnapshot.data : null;
+  const visibleForecast = forecastOverlay?.topic === activeFocus ? forecastOverlay : null;
   const activity = activitySnapshot?.scope === scope ? activitySnapshot.data : null;
   const activeTrace = traced?.scope === scope ? traced.flow : null;
   const onTrace = useCallback((flow: ParsedFlow | null) => {
@@ -650,7 +704,8 @@ export default function Strata3D() {
   }, [scope]);
   const topics = useMemo(() => scoped.map(name => ({
     name, size: dashboard?.topicSizes[name] ?? 0, activity: activity?.topics[name],
-  })), [scoped, dashboard, activity]);
+    layoutIndex: layoutIndices.get(name) ?? 0,
+  })), [scoped, dashboard, activity, layoutIndices]);
   const links = useMemo(() => lineage ? deriveStrataLinks(lineage, scoped) : [], [lineage, scoped]);
   const selectedTopic = topics.find(t => t.name === selected);
   const measured = topics.filter(t => t.activity?.available).length;
@@ -709,15 +764,30 @@ export default function Strata3D() {
               Slice all topics at one shared time interval. The horizontal plane follows your selection.
             </p>
           </div>
-          <button type="button" className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface"
-            onClick={() => setSelectedBucket(BUCKETS - 1)} disabled={selectedBucket === BUCKETS - 1}>Most recent</button>
+          <div className="flex items-center flex-wrap gap-2">
+            <button type="button" className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface"
+              disabled={!activity?.available} aria-pressed={replaying}
+              onClick={() => {
+                if (replaying) setReplaying(false);
+                else { setSelectedBucket(0); setReplaying(true); }
+              }}>{replaying ? 'Pause replay' : 'Replay history'}</button>
+            <label htmlFor="strata-replay-speed" className="text-xs text-on-surface-variant">Replay speed</label>
+            <select id="strata-replay-speed" className="rounded-lg border border-outline-variant bg-surface px-2 py-1.5 text-xs text-on-surface"
+              value={replaySpeed} onChange={event => setReplaySpeed(Number(event.target.value))}>
+              <option value={0.5}>0.5×</option><option value={1}>1×</option>
+              <option value={2}>2×</option><option value={4}>4×</option>
+            </select>
+            <button type="button" className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface"
+              onClick={() => { setReplaying(false); setSelectedBucket(BUCKETS - 1); }}
+              disabled={selectedBucket === BUCKETS - 1 && !replaying}>Most recent</button>
+          </div>
         </div>
         <label className="block text-xs font-medium text-on-surface-variant" htmlFor="strata-time-lens">
           Selected interval: {interval ? `${new Date(interval.startMs).toLocaleString()} – ${new Date(interval.endMs).toLocaleTimeString()}` :
             'Activity not measured yet'}
         </label>
         <input type="range" id="strata-time-lens" min={0} max={BUCKETS - 1} step={1}
-          value={selectedBucket} onChange={event => setSelectedBucket(Number(event.target.value))}
+          value={selectedBucket} onChange={event => { setReplaying(false); setSelectedBucket(Number(event.target.value)); }}
           disabled={!activity?.available}
           aria-valuetext={interval ? `${new Date(interval.startMs).toLocaleString()} to ${new Date(interval.endMs).toLocaleTimeString()}` : 'Unavailable'}
           className="w-full accent-primary" />
@@ -732,18 +802,55 @@ export default function Strata3D() {
       <div className="relative overflow-hidden rounded-2xl border border-outline-variant bg-surface-container-low"
         style={{ height: 'min(68vh, 680px)', minHeight: 410 }}>
         {topics.length > 0 ?
-          <StrataCanvas topics={topics} selected={selected} onSelect={chooseTopic} motion={motion}
+          <StrataCanvas topics={topics} selected={selected} onSelect={chooseTopic} onFocus={focusTopic}
+            focused={activeFocus} partitionActivity={partitionActivity} forecast={visibleForecast} motion={motion}
             links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
             selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
           <div className="p-8 text-on-surface-variant">{dashboard ? 'No matching topics.' : 'Loading cluster…'}</div>}
         <div className="absolute bottom-3 left-3 pointer-events-none rounded-lg bg-surface/95 px-3 py-2 text-xs text-on-surface-variant shadow-sm">
-          Drag to orbit · Scroll to zoom · Click a topic<br />
+          Drag to orbit · Scroll to zoom · Double-click a topic to focus<br />
           12 × 2.5-minute rings · newest at top · logarithmic scale<br />
           Dashes: declared Flink INSERT paths (not observed messages)<br />
           Coloured satellites: selected group's partition lag<br />
-          Teal arcs: chronological key matches · amber rings: activity deviations
+          Teal arcs: chronological key matches · amber rings: activity deviations<br />
+          Focus: measured partition ribbons · violet canopy: metric forecast
         </div>
       </div>
+      {activeFocus && <section className="rounded-xl border border-outline-variant bg-surface p-4 space-y-2">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="font-semibold text-on-surface">Focused exploration · {activeFocus}</h2>
+            <p className="text-xs text-on-surface-variant">
+              Radial ribbons show measured offsets produced per partition and per 2.5-minute bucket.
+              Width follows each partition's own measured rate; missing or retention-truncated buckets have no ribbon.
+            </p>
+          </div>
+          <button type="button" onClick={() => setFocused(null)}
+            className="rounded-lg border border-outline-variant px-3 py-2 text-xs text-on-surface">
+            Return to overview
+          </button>
+        </div>
+        {partitionError && <p role="alert" className="text-xs text-error">{partitionError}</p>}
+        {!partitionActivity && !partitionError && <p className="text-xs text-on-surface-variant">Measuring partition activity…</p>}
+        {partitionActivity && <>
+          <p className="text-xs text-on-surface-variant" role="status">
+            {partitionActivity.partitionsMeasured}/{partitionActivity.partitionsTotal} partitions measured
+            {partitionActivity.truncated ? ' · bounded scope, not all partitions shown' : ''}
+          </p>
+          {partitionActivity.warnings.length > 0 && <p className="text-xs text-on-surface-variant">{partitionActivity.warnings.join(' ')}</p>}
+          <ul className="grid gap-1 sm:grid-cols-3 lg:grid-cols-6 max-h-36 overflow-auto">
+            {partitionActivity.partitions.map(partition =>
+              <li key={partition.partition} className="rounded-lg bg-surface-container-low px-2 py-1.5 text-xs text-on-surface">
+                <span className="font-semibold">P{partition.partition}</span>
+                <span className="block text-on-surface-variant">
+                  {partition.available ? partition.counts.reduce((sum, n) => sum + n, 0).toLocaleString() + ' offsets / 30 min' : 'Unavailable'}
+                  {partition.coveredFromMs !== null ? ' · partial retention' : ''}
+                </span>
+              </li>)}
+          </ul>
+        </>}
+      </section>}
+      {activeFocus && <StrataForecastPanel key={activeFocus} topic={activeFocus} onProjection={onProjection} />}
       <StrataTracePanel key={scope} topics={scoped} onTrace={onTrace} onSelect={chooseTopic} />
       {anomalies.length > 0 && <section className="rounded-xl border border-amber-400/40 bg-surface p-4 space-y-2">
         <h2 className="text-sm font-semibold text-on-surface">Unusual activity in this time slice</h2>
@@ -781,7 +888,8 @@ export default function Strata3D() {
               {topics.map(topic =>
                 <button key={topic.name} className={`text-left rounded-lg px-3 py-2 text-sm truncate ${selected === topic.name ?
                   'bg-primary-container text-on-primary-container' : 'hover:bg-surface-container-high text-on-surface'}`}
-                  onClick={() => chooseTopic(topic.name)}>{topic.name}</button>)}
+                  onClick={() => chooseTopic(topic.name)}
+                  onDoubleClick={() => focusTopic(topic.name)} title="Double-click to focus">{topic.name}</button>)}
             </div>
           </div>
           <div className="border-t border-outline-variant pt-3">
@@ -808,6 +916,10 @@ export default function Strata3D() {
           <h2 className="font-semibold text-on-surface mb-3">Topic inspector</h2>
           {selectedTopic ? <>
             <p className="break-all font-medium text-on-surface">{selectedTopic.name}</p>
+            <button type="button" onClick={() => activeFocus === selectedTopic.name ? setFocused(null) : focusTopic(selectedTopic.name)}
+              className="mt-2 rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">
+              {activeFocus === selectedTopic.name ? 'Return to overview' : 'Focus partitions and forecast'}
+            </button>
             <dl className="text-sm text-on-surface-variant mt-3 space-y-2">
               <div className="flex justify-between gap-2"><dt>Estimated retained offsets</dt>
                 <dd className="tabular-nums text-on-surface">{selectedTopic.size.toLocaleString()}</dd></div>
