@@ -33,8 +33,6 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
-const number = (value: number) => new Intl.NumberFormat('en', { maximumFractionDigits: 0 }).format(value);
-
 export default function Strata3D() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
