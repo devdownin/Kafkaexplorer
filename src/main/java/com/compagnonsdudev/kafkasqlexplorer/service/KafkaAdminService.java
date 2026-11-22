@@ -1799,7 +1799,9 @@ public class KafkaAdminService {
             return new com.compagnonsdudev.kafkasqlexplorer.domain.PartitionActivityResponse(
                     topicName, start, end, bucketMs, bucketCount, 0, 0, false, List.of(), warnings);
         }
-        int limit = Math.min(24, Math.max(0, maxLookups / (bucketCount + 1)));
+        // Each partition costs earliest + latest + (bucketCount + 1) timestamp lookups.
+        // Counting only timestamp requests could exceed the caller's global budget.
+        int limit = Math.min(24, Math.max(0, maxLookups / (bucketCount + 3)));
         boolean truncated = all.size() > limit;
         if (truncated) warnings.add("Only " + limit + " of " + all.size()
                 + " partitions could be measured within the spatial view budget.");
