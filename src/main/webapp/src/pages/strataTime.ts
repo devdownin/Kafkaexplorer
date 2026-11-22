@@ -19,7 +19,10 @@ export function bucketInterval(window: TimeWindow, index: number) {
 
 /** An unavailable or retention-truncated interval cannot truthfully be treated as quiet. */
 export function bucketReading(activity: TopicActivity | undefined, index: number): number | null {
-  if (!activity?.available || activity.partitionsMeasured !== activity.partitionsTotal) return null;
+  if (!activity?.available || activity.partitionsMeasured !== activity.partitionsTotal
+    || activity.partitionsTotal <= 0 || !Number.isFinite(activity.bucketMs) || activity.bucketMs <= 0) return null;
+  const buckets = (activity.windowEndMs - activity.windowStartMs) / activity.bucketMs;
+  if (!Number.isInteger(buckets) || buckets <= 0 || buckets > 48 || activity.counts.length !== buckets) return null;
   if (index < 0 || index >= activity.counts.length) return null;
   const startMs = activity.windowStartMs + index * activity.bucketMs;
   const endMs = startMs + activity.bucketMs;
