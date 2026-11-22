@@ -278,3 +278,10 @@ Run **`mvn verify`** before opening a pull request: it is the complete gate — 
 [AGPL v3](LICENSE) — free to use, study, share and improve.
 
 ---
+
+### Enterprise MCP authentication (opt-in)
+
+A trusted OAuth identity provider can supply JWT access tokens validated against a
+pinned HTTPS JWKS endpoint, issuer, audience and route-level scopes. OAuth mode is
+currently **read-only**; full MCP tool-level RBAC and MCP Tasks are not yet available.
+See [Enterprise MCP authentication](docs/mcp-enterprise-auth.md).

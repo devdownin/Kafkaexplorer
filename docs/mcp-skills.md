@@ -109,3 +109,12 @@ Clients that discover project-local Agent Skills under `.agents/skills/` can loa
 4. Run `./mvnw verify` for the full backend/frontend gate and use the pull request's checks as the authoritative environment.
 
 When the stack uses the Compose demo's loopback-only HTTP mode, leave it inaccessible from untrusted networks. For shared deployments use TLS; never publish the development token.
+
+## Enterprise OAuth JWT mode (opt-in)
+
+For deployments with a trusted OAuth identity provider, KafkaExplorer can validate
+signed JWT access tokens with pinned JWKS, issuer, audience and route-level scopes.
+This mode is **read-only only** until tool-level RBAC exists. The existing static
+bearer-token configuration remains the default. See the
+[Enterprise MCP authentication guide](mcp-enterprise-auth.md) for configuration,
+security boundaries and unsupported OAuth/MCP Tasks capabilities.

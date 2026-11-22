@@ -67,6 +67,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   follows the visitor's system with the same tokens. Rationale, pass by pass, in
   `docs/notes/spatial-light-theme.md`.
 
+- **Opt-in enterprise MCP OAuth JWT authentication (phase 1):** pinned HTTPS JWKS,
+  validated issuer/audience/time, scoped HTTP routes and stable principal fingerprints.
+  OAuth mode is restricted to read-only MCP until tool-level RBAC exists; the legacy
+  bearer-token mode remains the default. See `docs/mcp-enterprise-auth.md`.
+
 ## [2.8.2] — 2026-11-21
 
 Released from `main` with no entry recorded here; see [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.8.2).

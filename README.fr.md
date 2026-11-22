@@ -283,3 +283,11 @@ Lancez **`mvn verify`** avant d'ouvrir une pull request : c'est la porte complè
 [AGPL v3](LICENSE) — libre d'utiliser, d'étudier, de partager et d'améliorer.
 
 ---
+
+### Authentification MCP Enterprise (optionnelle)
+
+Un fournisseur d'identité OAuth de confiance peut émettre des jetons JWT validés contre
+une URL JWKS HTTPS configurée, avec contrôle de l'émetteur, de l'audience et des permissions
+par route. Le mode OAuth est actuellement limité à la **lecture seule** ; les permissions
+par outil MCP et MCP Tasks ne sont pas encore disponibles.
+Consultez la [documentation de l'authentification MCP Enterprise](docs/mcp-enterprise-auth.md).
