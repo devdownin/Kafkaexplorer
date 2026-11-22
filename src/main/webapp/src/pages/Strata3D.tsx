@@ -2,14 +2,17 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ConsumerGroupLag, DashboardResponse, TopicActivity, TopicActivityResponse } from '../api/types';
+import StrataConsumerPanel from './StrataConsumerPanel';
+import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strataLineage';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-type Dashboard = { topics: string[]; topicSizes: Record<string, number>; health: boolean };
-type Activity = { counts: number[]; available: boolean; partitionsMeasured: number; partitionsTotal: number; note?: string | null };
-type ActivityResponse = { topics: Record<string, Activity>; available: boolean; warnings: string[]; windowStartMs: number; windowEndMs: number; bucketMs: number };
+type Dashboard = DashboardResponse;
+type Activity = TopicActivity;
+type ActivityResponse = TopicActivityResponse;
 type Topic = { name: string; size: number; activity?: Activity };
 const MAX_TOPICS = 48;
 const BUCKETS = 12;
@@ -85,34 +88,43 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
   return group;
 }
 
-function StrataCanvas({ topics, selected, onSelect, motion }: {
-  topics: Topic[]; selected: string | null; onSelect: (topic: string) => void; motion: boolean;
+function StrataCanvas({ topics, selected, onSelect, motion, links, selectedGroup }: {
+  topics: Topic[];
+  selected: string | null;
+  onSelect: (topic: string) => void;
+  motion: boolean;
+  links: StrataLink[];
+  selectedGroup: ConsumerGroupLag | null;
 }) {
   const host = useRef<HTMLDivElement>(null);
-  const selectRef = useRef(onSelect);
-  selectRef.current = onSelect;
-  const selectedRef = useRef(selected);
-  selectedRef.current = selected;
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const motionRef = useRef(motion);
+  motionRef.current = motion;
+  const [webglFailed, setWebglFailed] = useState(false);
+  const state = useRef<{
+    scene: THREE.Scene;
+    camera: THREE.OrthographicCamera;
+    renderer: THREE.WebGLRenderer;
+    controls: OrbitControls;
+    content: THREE.Group;
+    groups: THREE.Group[];
+  } | null>(null);
   useEffect(() => {
     const element = host.current;
     if (!element) return;
     const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-14, 14, 9, -9, 0.1, 500);
+    const camera = new THREE.OrthographicCamera(-12, 12, 12, -12, 0.1, 500);
     const extent = 3.4 * Math.sqrt(Math.max(0, topics.length - 1)) + 4;
-    const halfHeight = Math.max(9, extent * 0.78);
+    const halfHeight = Math.max(9, extent * 0.8);
     const controlsTarget = new THREE.Vector3(0, 2.6, 0);
     camera.position.set(extent * 1.2, extent * 1.05, extent * 1.2);
-    camera.left = -halfHeight;
-    camera.right = halfHeight;
-    camera.top = halfHeight;
-    camera.bottom = -halfHeight;
-    camera.updateProjectionMatrix();
     camera.lookAt(controlsTarget);
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'low-power' });
     } catch {
-      element.dataset.webglUnavailable = 'true';
+      setWebglFailed(true);
       return;
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -120,45 +132,39 @@ function StrataCanvas({ topics, selected, onSelect, motion }: {
     element.appendChild(renderer.domElement);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.copy(controlsTarget);
-    controls.enableDamping = motion;
-    controls.dampingFactor = 0.09;
-    controls.minPolarAngle = 0.14;
+    controls.enableDamping = motionRef.current;
+    controls.dampingFactor = 0.08;
+    controls.minPolarAngle = 0.15;
     controls.maxPolarAngle = Math.PI / 2.12;
     controls.minZoom = 0.5;
     controls.maxZoom = 5;
     controls.enablePan = true;
     controls.update();
-    const dark = document.documentElement.classList.contains('dark') ||
-      document.documentElement.getAttribute('data-theme') === 'dark';
-    const ground = new THREE.GridHelper(Math.max(40, extent * 2.8), 24, dark ? 0x54718c : 0x96b0c1, dark ? 0x324a60 : 0xc7d4df);
-    ground.position.y = -0.1;
+    const contentGroup = new THREE.Group();
+    scene.add(contentGroup);
+    const ground = new THREE.GridHelper(Math.max(40, extent * 2.8), 24, 0x7794ab, 0xb1c1cf);
+    ground.position.y = -0.12;
     scene.add(ground);
-    const values = topics.flatMap(t => t.activity?.available ? t.activity.counts : []);
-    const maxRate = Math.max(1, ...values);
-    const groups = topics.map((topic, index) => {
-      const group = createTopic(topic, index, maxRate, dark);
-      scene.add(group);
-      return group;
-    });
-    const raycaster = new THREE.Raycaster();
+    const current = { scene, camera, renderer, controls, content: contentGroup, groups: [] as THREE.Group[] };
+    state.current = current;
+
     const pointer = new THREE.Vector2();
-    let start: { x: number; y: number } | null = null;
-    const onDown = (event: PointerEvent) => { start = { x: event.clientX, y: event.clientY }; };
-    const onUp = (event: PointerEvent) => {
-      if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5) return;
-      const rect = renderer.domElement.getBoundingClientRect();
-      pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);
+    const raycaster = new THREE.Raycaster();
+    let down: { x: number; y: number } | null = null;
+    const onPointerDown = (event: PointerEvent) => { down = { x: event.clientX, y: event.clientY }; };
+    const onPointerUp = (event: PointerEvent) => {
+      if (!down || Math.hypot(down.x - event.clientX, down.y - event.clientY) > 5) return;
+      const bounds = renderer.domElement.getBoundingClientRect();
+      if (!bounds.width || !bounds.height) return;
+      pointer.set((event.clientX - bounds.left) / bounds.width * 2 - 1, 1 - (event.clientY - bounds.top) / bounds.height * 2);
       raycaster.setFromCamera(pointer, camera);
-      const intersections = raycaster.intersectObjects(groups, true);
-      const hit = intersections[0]?.object;
-      if (hit) {
-        let parent: THREE.Object3D | null = hit;
-        while (parent && !parent.userData.topic) parent = parent.parent;
-        if (parent?.userData.topic) selectRef.current(parent.userData.topic as string);
-      }
+      const picked = raycaster.intersectObjects(current.groups, true)[0]?.object;
+      let item: THREE.Object3D | null = picked ?? null;
+      while (item && !item.userData.topic) item = item.parent;
+      if (item?.userData.topic) onSelectRef.current(item.userData.topic as string);
     };
-    renderer.domElement.addEventListener('pointerdown', onDown);
-    renderer.domElement.addEventListener('pointerup', onUp);
+    renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointerup', onPointerUp);
     const resize = () => {
       const width = Math.max(1, element.clientWidth);
       const height = Math.max(1, element.clientHeight);
@@ -177,20 +183,16 @@ function StrataCanvas({ topics, selected, onSelect, motion }: {
     let last = 0;
     const render = (time: number) => {
       frame = requestAnimationFrame(render);
-      if (time - last < (motion ? 33 : 100)) return;
+      if (time - last < (motionRef.current ? 33 : 100)) return;
       last = time;
+      controls.enableDamping = motionRef.current;
       controls.update();
-      for (const group of groups) {
-        const active = group.userData.topic === selectedRef.current;
+      for (const group of current.groups) {
         for (const object of group.children) {
-          if (!(object instanceof THREE.Mesh)) continue;
-          if (object.userData.pulse !== undefined) {
-            object.position.y = motion ? 0.3 + ((time * 0.00035 + object.userData.pulse) % 1) * 5.2 : 5.45;
-          }
-          if (object.geometry instanceof THREE.TorusGeometry) {
-            const material = object.material as THREE.MeshBasicMaterial;
-            material.opacity = active ? Math.min(1, material.opacity + (1 - material.opacity) * 0.12) : material.opacity;
-          }
+          if (!(object instanceof THREE.Mesh) || object.userData.pulse === undefined) continue;
+          object.position.y = motionRef.current
+            ? 0.3 + ((time * 0.00035 + (object.userData.pulse as number)) % 1) * 5.2
+            : 5.45;
         }
       }
       renderer.render(scene, camera);
@@ -199,17 +201,90 @@ function StrataCanvas({ topics, selected, onSelect, motion }: {
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
-      renderer.domElement.removeEventListener('pointerdown', onDown);
-      renderer.domElement.removeEventListener('pointerup', onUp);
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('pointerup', onPointerUp);
       controls.dispose();
-      groups.forEach(disposeGroup);
+      disposeGroup(contentGroup);
       ground.geometry.dispose();
       (ground.material as THREE.Material).dispose();
       renderer.dispose();
       renderer.domElement.remove();
+      state.current = null;
     };
-  }, [topics, motion]);
-  return <div ref={host} role="img" aria-label="Interactive 3D map of Kafka topics. Drag to orbit, scroll to zoom, click a topic to inspect." className="w-full h-full min-h-[380px] cursor-grab active:cursor-grabbing" />;
+  // Camera lifetime is independent of metric polling: never reset orbit on refresh.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const current = state.current;
+    if (!current) return;
+    // Replace measured geometry without tearing down WebGL, orbit or pointer handlers.
+    disposeGroup(current.content);
+    current.content.clear();
+    const dark = document.documentElement.classList.contains('dark') ||
+      document.documentElement.getAttribute('data-theme') === 'dark';
+    const values = topics.flatMap(t => t.activity?.available ? t.activity.counts : []);
+    const maxRate = Math.max(1, ...values);
+    current.groups = topics.map((topic, index) => {
+      const column = createTopic(topic, index, maxRate, dark);
+      current.content.add(column);
+      return column;
+    });
+    const lookup = new Map(topics.map((t, index) => [t.name, position(index)]));
+    for (const link of links) {
+      const start = lookup.get(link.from);
+      const end = lookup.get(link.to);
+      if (!start || !end) continue;
+      const span = start.distanceTo(end);
+      const curve = new THREE.CubicBezierCurve3(
+        new THREE.Vector3(start.x, 5.6, start.z),
+        new THREE.Vector3(start.x, 6.5 + span * 0.12, start.z),
+        new THREE.Vector3(end.x, 6.5 + span * 0.12, end.z),
+        new THREE.Vector3(end.x, 5.6, end.z),
+      );
+      const geometry = new THREE.BufferGeometry().setFromPoints(curve.getPoints(40));
+      const line = new THREE.Line(geometry, new THREE.LineDashedMaterial({
+        color: dark ? 0x9db6db : 0x6d7fa2, transparent: true, opacity: 0.58, dashSize: 0.38, gapSize: 0.24,
+      }));
+      line.computeLineDistances();
+      current.content.add(line);
+    }
+
+    const selectedIndex = topics.findIndex(t => t.name === selected);
+    if (selectedIndex >= 0 && selectedGroup) {
+      const point = position(selectedIndex);
+      const partitions = selectedGroup.partitions.slice(0, 64);
+      const healthColor = selectedGroup.error ? 0x8592a1 : selectedGroup.totalLag > 0 && selectedGroup.membersKnown && selectedGroup.assignedMembers === 0
+        ? 0xdd5b59 : 0xe4a757;
+      for (let index = 0; index < partitions.length; index++) {
+        const partition = partitions[index];
+        const angle = index * Math.PI * 2 / Math.max(1, partitions.length);
+        const color = partition.lag === null ? 0x8d9ba8
+          : partition.lag < 0 ? 0xd95b64 : partition.lag === 0 ? 0x4aaf99 : healthColor;
+        const marker = new THREE.Mesh(
+          new THREE.SphereGeometry(0.12, 10, 8),
+          new THREE.MeshBasicMaterial({ color }),
+        );
+        marker.position.set(point.x + Math.cos(angle) * 1.45, 0.42, point.z + Math.sin(angle) * 1.45);
+        current.content.add(marker);
+      }
+    }
+    current.renderer.render(current.scene, current.camera);
+  }, [topics, links, selectedGroup, selected]);
+
+  useEffect(() => {
+    const groups = state.current?.groups;
+    if (!groups) return;
+    for (const group of groups) group.scale.setScalar(group.userData.topic === selected ? 1.04 : 1);
+  }, [selected, topics]);
+
+  return (
+    <div ref={host} role="img"
+      aria-label="Interactive 3D topic activity map. Drag to orbit, scroll to zoom. The topic list below provides keyboard selection."
+      className="w-full h-full min-h-[380px] cursor-grab active:cursor-grabbing">
+      {webglFailed && <p role="status" className="p-6 text-sm text-on-surface">3D rendering unavailable. Use the accessible topic list below.</p>}
+    </div>
+  );
 }
 
 export default function Strata3D() {
