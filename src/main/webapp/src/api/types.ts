@@ -229,6 +229,29 @@ export interface TopicActivityResponse {
  *
  * @java PartitionLag
  */
+/** @java PartitionActivity */
+export interface PartitionActivity {
+  partition: number;
+  counts: number[];
+  coveredFromMs: number | null;
+  available: boolean;
+  note: string | null;
+}
+
+/** @java PartitionActivityResponse */
+export interface PartitionActivityResponse {
+  topic: string;
+  windowStartMs: number;
+  windowEndMs: number;
+  bucketMs: number;
+  buckets: number;
+  partitionsTotal: number;
+  partitionsMeasured: number;
+  truncated: boolean;
+  partitions: PartitionActivity[];
+  warnings: string[];
+}
+
 export interface PartitionLag {
   partition: number;
   committedOffset: number | null;
