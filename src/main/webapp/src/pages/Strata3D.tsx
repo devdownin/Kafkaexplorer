@@ -14,6 +14,7 @@ import { bucketInterval, bucketReading, detectActivityAnomaly } from './strataTi
 import type { ParsedFlow } from './streamFlowLogic';
 import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strataLineage';
 import { Link } from 'react-router-dom';
+import { readStrataView, strataRenderBudget, writeStrataView, type StrataQuality } from './strataView';
 import axios from 'axios';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -88,12 +89,12 @@ function topicLabel(name: string, dark: boolean): THREE.Sprite | null {
 }
 
 function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean,
-  highlight: 'primary' | 'comparison' | null): THREE.Group {
+  highlight: 'primary' | 'comparison' | null, ringSegments: number): THREE.Group {
   const group = new THREE.Group();
   group.position.copy(position(topic.layoutIndex));
   group.userData.topic = topic.name;
-  const counts = topic.activity?.available ? topic.activity.counts.slice(-BUCKETS) : [];
-  const hasData = counts.length > 0;
+  const counts = Array.from({ length: BUCKETS }, (_, bucket) => bucketReading(topic.activity, bucket));
+  const hasData = counts.some(value => value !== null);
   const hue = (index * 0.137508) % 1;
   const color = new THREE.Color().setHSL(hue * 0.25 + 0.48, dark ? 0.7 : 0.64, dark ? 0.68 : 0.45);
   const base = new THREE.Mesh(
@@ -111,11 +112,11 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
   group.add(shell);
   for (let i = 0; i < BUCKETS; i++) {
     const value = counts[i];
-    const measured = Number.isFinite(value) && value >= 0;
+    const measured = value !== null;
     const normalized = measured ? Math.log1p(value) / Math.log1p(Math.max(1, maxRate)) : 0;
     const radius = measured ? 0.38 + 0.56 * normalized : 0.43;
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(radius, measured ? 0.025 + normalized * 0.035 : 0.014, 6, 48),
+      new THREE.TorusGeometry(radius, measured ? 0.025 + normalized * 0.035 : 0.014, 6, ringSegments),
       new THREE.MeshBasicMaterial({ color: measured ? color : 0x8b9aaa, transparent: true, opacity: measured ? 0.4 + normalized * 0.48 : 0.22, depthWrite: false }),
     );
     ring.rotation.x = Math.PI / 2;
@@ -133,7 +134,7 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
   crown.position.y = height + 0.12;
   group.add(crown);
   // A real activity series is required before rendering any moving activity indicator.
-  if (hasData && counts.some(n => n > 0)) {
+  if (hasData && counts.some(n => n !== null && n > 0)) {
     const glow = new THREE.Mesh(
       new THREE.SphereGeometry(0.10, 10, 8),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 }),
@@ -161,7 +162,7 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
 
 function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect, onFocus,
   focused, partitionActivity, forecast,
-  motion, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable }: {
+  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable }: {
   topics: Topic[];
   selected: string | null;
   compareWith: string | null;
@@ -172,6 +173,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   partitionActivity: PartitionActivityResponse | null;
   forecast: StrataProjection | null;
   motion: boolean;
+  quality: StrataQuality;
   links: StrataLink[];
   selectedGroup: ConsumerGroupLag | null;
   themeRevision: number;
@@ -183,10 +185,25 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   const onSelectRef = useRef(onSelect);
   const onFocusRef = useRef(onFocus);
   const motionRef = useRef(motion);
+  const budget = useMemo(() => strataRenderBudget(quality, topics.length, window.devicePixelRatio || 1), [quality, topics.length]);
+  const budgetRef = useRef(budget);
   const [webglFailed, setWebglFailed] = useState(false);
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
   useEffect(() => { onFocusRef.current = onFocus; }, [onFocus]);
-  useEffect(() => { motionRef.current = motion; }, [motion]);
+  useEffect(() => {
+    motionRef.current = motion;
+    if (state.current) {
+      state.current.controls.enableDamping = motion;
+      state.current.invalidate();
+    }
+  }, [motion]);
+  useEffect(() => {
+    budgetRef.current = budget;
+    if (state.current) {
+      state.current.renderer.setPixelRatio(budget.pixelRatio);
+      state.current.invalidate();
+    }
+  }, [budget]);
   const state = useRef<{
     scene: THREE.Scene;
     camera: THREE.OrthographicCamera;
@@ -196,6 +213,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     groups: THREE.Group[];
     lens: THREE.Mesh;
     signature: string;
+    invalidate: () => void;
     fit: (items: Topic[]) => void;
     focus: (topic: string | null) => void;
     positions: Map<string, THREE.Vector3>;
@@ -221,7 +239,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       const fallback = window.setTimeout(() => setWebglFailed(true), 0);
       return () => window.clearTimeout(fallback);
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(budgetRef.current.pixelRatio);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     element.appendChild(renderer.domElement);
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -254,6 +272,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       groups: [] as THREE.Group[], lens, signature: topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000'),
       positions: new Map<string, THREE.Vector3>(),
       overview: { position: camera.position.clone(), target: controlsTarget.clone(), zoom: 1 },
+      invalidate: () => {},
       fit: (_items: Topic[]) => {},
       focus: (_topic: string | null) => {},
     };
@@ -335,14 +354,21 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
         fromZoom: camera.zoom, toZoom: targetZoom,
       };
     };
-    const observer = new ResizeObserver(resize);
-    observer.observe(element);
-    resize();
     let frame = 0;
     let last = 0;
+    const requestRender = () => {
+      if (!frame && document.visibilityState === 'visible') frame = requestAnimationFrame(render);
+    };
     const render = (time: number) => {
-      frame = requestAnimationFrame(render);
-      if (time - last < (motionRef.current ? 33 : 100)) return;
+      frame = 0;
+      const moving = motionRef.current && current.groups.some(group =>
+        group.children.some(object => object.userData.pulse !== undefined));
+      // Static frames do not consume a permanent RAF loop. Dense scenes throttle
+      // only continuous animation; camera movement and focus still render promptly.
+      if (moving && time - last < budgetRef.current.frameIntervalMs) {
+        requestRender();
+        return;
+      }
       last = time;
       controls.enableDamping = motionRef.current;
       if (transition) {
@@ -355,21 +381,41 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
         camera.updateProjectionMatrix();
         if (t >= 1) transition = null;
       }
-      controls.update();
+      const cameraChanged = controls.update();
       for (const group of current.groups) {
         for (const object of group.children) {
           if (!(object instanceof THREE.Mesh) || object.userData.pulse === undefined) continue;
-          object.position.y = motionRef.current
+          object.position.y = moving
             ? 0.3 + ((time * 0.00035 + (object.userData.pulse as number)) % 1) * 5.2
             : 5.45;
         }
       }
       renderer.render(scene, camera);
+      if (transition || moving || cameraChanged) requestRender();
     };
-    frame = requestAnimationFrame(render);
+    current.invalidate = requestRender;
+    const onOrbitChange = () => requestRender();
+    controls.addEventListener('change', onOrbitChange);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') requestRender();
+      else { cancelAnimationFrame(frame); frame = 0; }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const onContextLost = (event: Event) => { event.preventDefault(); setWebglFailed(true); };
+    const onContextRestored = () => { setWebglFailed(false); requestRender(); };
+    renderer.domElement.addEventListener('webglcontextlost', onContextLost);
+    renderer.domElement.addEventListener('webglcontextrestored', onContextRestored);
+    const observer = new ResizeObserver(resize);
+    observer.observe(element);
+    resize();
+    requestRender();
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      controls.removeEventListener('change', onOrbitChange);
+      renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
+      renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
@@ -401,13 +447,14 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     const dark = document.documentElement.classList.contains('dark') ||
       document.documentElement.getAttribute('data-theme') === 'dark';
     (current.lens.material as THREE.MeshBasicMaterial).color.setHex(dark ? 0x83b9d5 : 0x5888af);
-    const values = topics.flatMap(t => t.activity?.available ? t.activity.counts : []);
+    const values = topics.flatMap(t => Array.from({ length: BUCKETS }, (_, bucket) => bucketReading(t.activity, bucket))
+      .filter((n): n is number => n !== null));
     const maxRate = Math.max(1, ...values);
     current.positions = new Map(topics.map(topic => [topic.name, position(topic.layoutIndex)]));
     current.groups = topics.map((topic, index) => {
       const highlight = topic.name === selected ? 'primary' :
         diagnosticMode === 'compare' && topic.name === compareWith ? 'comparison' : null;
-      const column = createTopic(topic, index, maxRate, dark, highlight);
+      const column = createTopic(topic, index, maxRate, dark, highlight, budget.ringSegments);
       const isNeighbor = diagnosticMode === 'investigate' && links.some(link =>
         (link.from === selected && link.to === topic.name) ||
         (link.to === selected && link.from === topic.name));
@@ -508,8 +555,8 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       const center = lookup.get(forecast.topic);
       if (center) current.content.add(createForecastCanopy(forecast, center, dark));
     }
-    current.renderer.render(current.scene, current.camera);
-  }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace]);
+    current.invalidate();
+  }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments]);
 
   const scopeKey = topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000');
   useEffect(() => { state.current?.focus(focused); }, [focused, scopeKey]);
@@ -538,14 +585,14 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
         if (active && anomaly) material.color.setHex(0xe7a044);
       }
     }
-    current.renderer.render(current.scene, current.camera);
+    current.invalidate();
   }, [selectedBucket, topics, links, trace, selectedGroup, selected, compareWith, diagnosticMode, focused, themeRevision, lensAvailable]);
 
   return (
     <div ref={host} role="img"
       aria-label="Interactive Kafka topic activity. Drag to orbit, scroll to zoom, double-click to focus. Use the topic list for keyboard access."
       className="w-full h-full min-h-[380px] cursor-grab active:cursor-grabbing">
-      {webglFailed && <p role="status" className="p-6 text-sm text-on-surface">3D rendering unavailable. Use the accessible topic list below.</p>}
+      {webglFailed && <p role="status" className="p-6 text-sm text-on-surface">3D rendering unavailable or context lost. Use the accessible topic list below.</p>}
     </div>
   );
 }
