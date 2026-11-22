@@ -238,6 +238,10 @@ JSON-RPC — `list_topics`, `consume`, `describe_consumer_group` — which answe
 questions an engineer actually asks. What is exposed here is SQL over vanilla Kafka, schema
 inference, and the correlation tools; the Kafka control plane is deliberately delegated elsewhere.
 
+For an interactive, source-backed walkthrough of Skills, Tools, Resources, Prompts and
+the Kex-anHarness → KafkaExplorer call graph, open **MCP → MCP Guide** in the app,
+or read the [public illustrated guide](mcp-guide.html).
+
 Full specification: [`SPEC-MCP.md`](../SPEC-MCP.md). What has been built of it, and why:
 [`docs/notes/mcp-server.md`](notes/mcp-server.md).
 

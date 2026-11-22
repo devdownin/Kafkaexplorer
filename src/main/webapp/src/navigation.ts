@@ -30,6 +30,7 @@ export const NAV_ITEMS: NavItem[] = [
   { name: 'Dead Letter',    icon: 'report',          path: '/dead-letter',    group: 'Observe' },
   { name: 'Cluster',        icon: 'hub',             path: '/cluster',        group: 'Observe' },
   { name: 'MCP',            icon: 'smart_toy',       path: '/mcp',            group: 'Observe' },
+  { name: 'MCP Guide',      icon: 'menu_book',      path: '/mcp/guide',      group: 'Observe' },
 
   { name: 'Lineage',        icon: 'account_tree',    path: '/lineage',        group: 'Analyze' },
   { name: 'Data Model',     icon: 'schema',          path: '/data-model',     group: 'Analyze' },
