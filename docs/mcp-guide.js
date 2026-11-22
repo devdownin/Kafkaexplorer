@@ -76,13 +76,18 @@
       }
       function updateUrl() { window.history.replaceState(null, "", permalink()); }
       function focusStep(id, focusButton=false) {
+        // Both lists are rebuilt when a scenario changes. Restore focus for
+        // keyboard and switch users rather than leaving it on <body>.
+        const fromMobile=mobileList.contains(document.activeElement);
+        const fromRail=rail.contains(document.activeElement);
         selectedId=id;
         updateUrl();
         render();
         revealStep(id);
-        if(focusButton) {
-          const target=buttons.find((btn)=>btn.dataset.node===id);
-          target?.focus({preventScroll:true});
+        if(fromMobile) mobileList.querySelector('[data-step="'+id+'"]')?.focus({preventScroll:true});
+        else if(fromRail) rail.querySelector('[data-step="'+id+'"]')?.focus({preventScroll:true});
+        else if(focusButton) {
+          buttons.find((btn)=>btn.dataset.node===id)?.focus({preventScroll:true});
         }
       }
       function zoomTo(value) {
@@ -128,6 +133,7 @@
           }
           const jump=document.createElement("button");
           jump.type="button";
+          jump.dataset.step=id;
           jump.textContent=String(i+1).padStart(2,"0")+" · "+row[0];
           jump.title=row[1];
           if(id===selectedId)jump.setAttribute("aria-current","step");
@@ -138,6 +144,7 @@
           const id=ids[i], row=entries[i];
           const li=document.createElement("li");
           const button=document.createElement("button"); button.type="button";
+          button.dataset.step=id;
           button.setAttribute("aria-label","Choisir le point "+(i+1)+" : "+row[0]);
           button.setAttribute("aria-pressed",String(id===selectedId));
           if(selectedLens!=="all"&&selectedLens!==kinds[id]&&id!==selectedId)button.classList.add("role-muted");
