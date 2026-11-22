@@ -87,6 +87,8 @@ public class McpProperties {
         private String issuerUri;
         private String jwkSetUri;
         private String audience;
+        /** Canonical public HTTPS URL of this protected MCP resource, including /mcp. */
+        private String resourceUri;
         private String readScope = "mcp.read";
         private String adminScope = "mcp.admin";
         private String auditScope = "mcp.audit";
@@ -98,6 +100,8 @@ public class McpProperties {
         public void setIssuerUri(String issuerUri) { this.issuerUri = issuerUri; }
         public String getJwkSetUri() { return jwkSetUri; }
         public void setJwkSetUri(String jwkSetUri) { this.jwkSetUri = jwkSetUri; }
+        public String getResourceUri() { return resourceUri; }
+        public void setResourceUri(String resourceUri) { this.resourceUri = resourceUri; }
         public String getAudience() { return audience; }
         public void setAudience(String audience) { this.audience = audience; }
         public String getReadScope() { return readScope; }

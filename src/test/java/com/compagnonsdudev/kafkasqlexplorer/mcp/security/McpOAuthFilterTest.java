@@ -20,6 +20,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class McpOAuthFilterTest {
     private final McpProperties.OAuth oauth = new McpProperties.OAuth();
+    {
+        oauth.setIssuerUri("https://issuer.example.test");
+        oauth.setResourceUri("https://kafka.example.test/mcp");
+    }
 
     private McpHttpAuthFilter filter(String scopes) {
         JwtDecoder decoder = token -> {
@@ -76,6 +80,16 @@ class McpOAuthFilterTest {
         assertEquals(401, call(filter("mcp.read"), "/mcp", "POST", null, reached));
         assertEquals(401, call(filter("mcp.read"), "/mcp", "POST", "invalid", reached));
         assertFalse(reached.get());
+    }
+
+    @Test void unauthorizedRequestsAdvertiseCanonicalProtectedResourceMetadata() throws Exception {
+        MockHttpServletRequest request = new MockHttpServletRequest("POST", "/mcp");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        filter("mcp.read").doFilter(request, response, new MockFilterChain());
+        assertEquals(401, response.getStatus());
+        assertEquals("Bearer realm=\"mcp\", resource_metadata=\"https://kafka.example.test/.well-known/oauth-protected-resource/mcp\"",
+                response.getHeader("WWW-Authenticate"));
+        assertTrue(McpCallerContext.verifiedScopes().isEmpty());
     }
 
     @Test void staticTokenCannotBypassOAuthMode() throws Exception {
