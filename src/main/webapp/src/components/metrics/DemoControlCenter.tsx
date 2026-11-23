@@ -40,6 +40,30 @@ export function DemoControlCenter({ metricCount, forecasts }: {
   if (!state?.enabled) return null;
   const ready = forecasts?.series.filter(s => s.result?.state === 'READY').length ?? 0;
   const seriesCount = forecasts?.series.length ?? 0;
+  function exportReport() {
+    // Deliberately export only the on-screen summary, not tokens, config or raw Kafka data.
+    const report = {
+      kind: 'kafkaexplorer-forecast-demo',
+      exportedAt: new Date().toISOString(),
+      scenario: state?.scenario,
+      metrics: { active: metricCount, expected: 5 },
+      forecasts: {
+        total: seriesCount, ready,
+        series: (forecasts?.series ?? []).map(series => ({
+          metricId: series.metricId,
+          state: series.result?.state ?? 'UNAVAILABLE',
+          strategy: series.result?.strategy ?? null,
+          generatedAt: series.result?.generatedAt ?? null,
+          quality: series.result?.quality ?? null,
+        })),
+      },
+    };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url; link.download = 'kafkaexplorer-forecast-demo-report.json';
+    document.body.appendChild(link); link.click(); link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
   async function choose(scenario: Scenario) {
     if (busy || scenario === state?.scenario) return;
     setBusy(true); setError('');
@@ -59,11 +83,17 @@ export function DemoControlCenter({ metricCount, forecasts }: {
         <div><h2 className="text-base font-semibold text-on-surface">Forecast Demo Control Center</h2>
           <p className="text-xs text-on-surface-variant">Local demo · Live Kafka traffic · Changes apply on the next generator tick</p></div>
       </div>
+      <div className="flex items-center gap-2">
+      <button type="button" onClick={exportReport}
+        className="rounded-lg border border-outline-variant px-3 py-2 text-sm text-on-surface hover:bg-primary/10">
+        <span className="material-symbols-outlined text-base align-middle mr-1" aria-hidden="true">download</span>
+        Export report
+      </button>
       <button type="button" onClick={() => setExpanded(v => !v)} aria-expanded={expanded}
         className="rounded-lg border border-outline-variant px-3 py-2 text-sm text-on-surface hover:bg-primary/10">
         {expanded ? 'Hide controls' : 'Manage scenarios'}
         <span className="material-symbols-outlined text-base align-middle ml-1" aria-hidden="true">{expanded ? 'expand_less' : 'expand_more'}</span>
-      </button>
+      </button></div>
     </div>
     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 px-4 pb-4 md:px-5 text-sm">
       <div className="rounded-xl bg-surface-container/70 p-3"><p className="text-xs text-on-surface-variant">Metrics</p><strong>{metricCount} / 5</strong></div>
