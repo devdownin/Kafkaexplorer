@@ -21,7 +21,7 @@ One container, one URL, no broker-side installation. The interface starts in lig
 
 ---
 
-**UI/UX roadmap:** [PRs #604–#606](https://github.com/devdownin/Kafkaexplorer/pulls) are not yet released.
+**Kafka Strata 3D (source):** a read-only spatial topic view with 30-minute offset activity, local WebGL diagnostics, guided evidence review, bounded selected-group lag signals and safe local JSON snapshots (no message keys or payloads). [Operator guide](https://github.com/devdownin/Kafkaexplorer/blob/main/docs/STRATA-3D.md). Tagged images can lag behind `main` — check the [published tags](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer/tags).
 
 ## 🚀 Try it in one command
 
