@@ -14,7 +14,7 @@
 [![Flink 2.3](https://img.shields.io/badge/Flink-2.3-E6526F?logo=apacheflink&logoColor=white)](https://flink.apache.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-[Website](https://devdownin.github.io/Kafkaexplorer/) · [Feature Tour](docs/FEATURES.md) · [Strata 3D](docs/strata-3d.md) · [Quick Start](#-quick-start) · [Ecosystem](#-ecosystem) · [Contributing](CONTRIBUTING.md) · [🇫🇷 Français](README.fr.md)
+[Website](https://devdownin.github.io/Kafkaexplorer/) · [Feature Tour](docs/FEATURES.md) · [Strata 3D](docs/STRATA-3D.md) · [Quick Start](#-quick-start) · [Ecosystem](#-ecosystem) · [Contributing](CONTRIBUTING.md) · [🇫🇷 Français](README.fr.md)
 
 </div>
 
@@ -60,6 +60,7 @@ These are generated, not photographed: `docs/screenshots/` drives the compiled S
 - 🧠 **Zero-config schemas** — topics are sampled, their structure inferred (JSON, XML, Avro via Schema Registry), and registered as Flink tables the first time you name them — by the topic's own name, as the cluster shows it: `SELECT * FROM "orders.v2-raw"`.
 - 📝 **A real SQL editor** — Monaco (the VS Code engine), auto-completion of topics and tables, query history, Flink SQL by default, and an explicit bounded Kafka Direct exploration mode with earliest/latest scans and scan coverage.
 - 🎨 **A spatial interface, light or dark** — glass navigation floating over opaque reading planes (tables, charts and the SQL editor never blur), light by default with a persistent dark-mode switch, six accent colours and a compact density for dense screens. Contrast is held to WCAG AA, and reduced motion and reduced transparency are honoured.
+- 🪐 **Kafka Strata 3D** — a spatial observability cockpit with topic navigation, interactive time lens, explicit Flink lineage, on-demand key tracing, per-partition lag, measured forecast overlays and evidence-safe topic comparison. [Operator guide](docs/STRATA-3D.md).
 - 🕸️ **Lineage & tracing** — an interactive graph of topics → tables → live jobs, resolved by Flink's own parser; plus cross-topic message tracing by key, header, JSONPath or XPath, which streams its hops as it finds them, says exactly what it scanned, resumes where a time budget stopped it, and compares two keys side by side.
 - 🗺️ **A data model you did not have to draw** — pick a set of topics and read them as tables, with the relations between them deduced from key-column names. Kafka has no foreign keys, so every edge is a claim: it carries a confidence grade, states its evidence in plain words, and opens as a ready `JOIN` — one relation or a whole subgraph.
 - 🩺 **One-click cluster audit** — poison messages, duplicates, flow drop-offs and latency, computed across your whole cluster in the background.

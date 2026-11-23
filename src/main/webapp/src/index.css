@@ -513,3 +513,29 @@ body { background: rgb(var(--kse-background)); }
     transform: none !important;
   }
 }
+
+/* Kafka Strata 3D spatial surfaces
+   Transparency is reserved for floating controls; diagnostic reading planes
+   stay opaque. Contrast and motion preferences override depth effects. */
+@media (prefers-reduced-transparency: reduce) {
+  .strata-glass {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    background: rgb(var(--kse-surface-container) / 1) !important;
+  }
+}
+@media (prefers-contrast: more) {
+  .strata-glass { border-color: rgb(var(--kse-outline)) !important; }
+}
+@media (forced-colors: active) {
+  .strata-glass {
+    background: Canvas !important;
+    color: CanvasText !important;
+    border: 1px solid CanvasText !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+  .strata-glass button:focus-visible, [aria-label="Topic mini-map"] button:focus-visible {
+    outline: 3px solid Highlight !important;
+  }
+}

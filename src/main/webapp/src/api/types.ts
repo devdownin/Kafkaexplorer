@@ -220,6 +220,29 @@ export interface TopicActivityResponse {
   warnings: string[];
 }
 
+/** @java PartitionActivity */
+export interface PartitionActivity {
+  partition: number;
+  counts: number[];
+  coveredFromMs: number | null;
+  available: boolean;
+  note: string | null;
+}
+
+/** @java PartitionActivityResponse */
+export interface PartitionActivityResponse {
+  topic: string;
+  windowStartMs: number;
+  windowEndMs: number;
+  bucketMs: number;
+  buckets: number;
+  partitionsTotal: number;
+  partitionsMeasured: number;
+  truncated: boolean;
+  partitions: PartitionActivity[];
+  warnings: string[];
+}
+
 /**
  * Où en est un groupe de consommateurs sur une partition.
  *
@@ -1650,6 +1673,8 @@ export interface ForecastSeriesView {
   seriesId: string;
   metricId: string;
   environment: string;
+  topics: string[];
+  groups: string[];
   result: ForecastRecord | null;
   activation: ForecastActivationReadiness;
   stepMillis: number;

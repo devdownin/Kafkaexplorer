@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Kafka Explorer Contributors
+
+import type { PartitionActivityResponse, TopicActivity, TopicActivityResponse } from '../api/types';
+import { bucketReading } from './strataTime';
+
+export type StrataLayer = 'activity' | 'lineage' | 'traces' | 'consumers' | 'anomalies' | 'forecast';
+export type StrataLayers = Record<StrataLayer, boolean>;
+
+export const DEFAULT_STRATA_LAYERS: StrataLayers = {
+  activity: true, lineage: true, traces: true, consumers: true, anomalies: true, forecast: true,
+};
+
+export interface TopicEvidence {
+  status: 'measured' | 'partial' | 'unavailable' | 'stale';
+  selected: number | null;
+  latestRate: number | null;
+  total: number | null;
+  measuredBuckets: number;
+  totalBuckets: number;
+  partitionsMeasured: number;
+  partitionsTotal: number;
+}
+
+/** Every displayed production figure follows the same coverage rule as the spatial rings. */
+export function topicEvidence(activity: TopicActivity | undefined, bucket: number,
+  receivedAt: number | null = null, now: number = Date.now()): TopicEvidence {
+  const duration = activity ? activity.windowEndMs - activity.windowStartMs : 0;
+  const expectedBuckets = activity && Number.isFinite(duration) && Number.isFinite(activity.bucketMs)
+    && duration > 0 && activity.bucketMs > 0 && duration % activity.bucketMs === 0
+    ? duration / activity.bucketMs : 0;
+  const structurallyValid = Boolean(activity && Number.isInteger(expectedBuckets)
+    && expectedBuckets > 0 && expectedBuckets <= 48
+    && activity.counts.length === expectedBuckets
+    && activity.partitionsTotal > 0 && activity.partitionsMeasured <= activity.partitionsTotal);
+  const readings = structurallyValid && activity
+    ? activity.counts.map((_, index) => bucketReading(activity, index)) : [];
+  const measuredBuckets = readings.filter(value => value !== null).length;
+  const allComplete = Boolean(structurallyValid && activity?.available
+    && measuredBuckets === expectedBuckets);
+  const latest = readings[readings.length - 1] ?? null;
+  const stale = receivedAt !== null && now - receivedAt > 90_000;
+  return {
+    status: !activity?.available || !structurallyValid ? 'unavailable' : stale ? 'stale' :
+      allComplete ? 'measured' : 'partial',
+    selected: structurallyValid ? bucketReading(activity, bucket) : null,
+    latestRate: latest !== null && activity?.bucketMs && activity.bucketMs > 0
+      ? latest * 60000 / activity.bucketMs : null,
+    total: allComplete ? readings.reduce<number>((sum, n) => sum + (n ?? 0), 0) : null,
+    measuredBuckets,
+    totalBuckets: expectedBuckets || 0,
+    partitionsMeasured: activity?.partitionsMeasured ?? 0,
+    partitionsTotal: activity?.partitionsTotal ?? 0,
+  };
+}
+
+export function topicMapPositions(items: readonly { name: string; layoutIndex: number }[],
+  totalTopics: number = items.length) {
+  // Use the full cluster extent even when the operator filters the visible
+  // topics. This keeps mini-map coordinates stable across filter changes.
+  const radius = Math.max(5, 3.4 * Math.sqrt(Math.max(1, totalTopics)));
+  return items.map(item => {
+    const distance = 3.4 * Math.sqrt(item.layoutIndex);
+    const angle = item.layoutIndex * 2.399963229728653;
+    return { name: item.name, x: 120 + Math.cos(angle) * distance / radius * 104,
+      y: 82 + Math.sin(angle) * distance / radius * 66 };
+  });
+}
+
+export function activityHistogram(topics: readonly { activity?: TopicActivity }[], buckets: number) {
+  return Array.from({ length: buckets }, (_, index) => {
+    const readings = topics.map(topic => bucketReading(topic.activity, index));
+    return { index, value: readings.reduce<number>((sum, value) => sum + (value ?? 0), 0),
+      measured: readings.filter(value => value !== null).length, total: topics.length };
+  });
+}
+
+/** A/B differences are withheld when either operand lacks complete coverage. */
+export function comparisonDelta(firstRate: number | null, secondRate: number | null) {
+  if (firstRate === null || secondRate === null
+    || !Number.isFinite(firstRate) || !Number.isFinite(secondRate)) return null;
+  return { absolute: firstRate - secondRate,
+    percent: secondRate === 0 ? null : (firstRate - secondRate) / secondRate * 100 };
+}
+
+/** Never overlay partition ribbons onto a lens with different Kafka sampling boundaries. */
+export function partitionFrameMatches(
+  partition: PartitionActivityResponse | null, snapshot: TopicActivityResponse | null,
+): boolean {
+  return Boolean(partition && snapshot && partition.windowStartMs === snapshot.windowStartMs
+    && partition.windowEndMs === snapshot.windowEndMs
+    && partition.bucketMs === snapshot.bucketMs && partition.buckets === snapshot.buckets
+    && partition.partitionsMeasured <= partition.partitionsTotal
+    && partition.partitions.every(row => !row.available || row.counts.length === snapshot.buckets));
+}

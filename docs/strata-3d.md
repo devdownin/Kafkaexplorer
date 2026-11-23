@@ -1,4 +1,9 @@
-# Kafka Strata 3D — spatial activity explorer (P1)
+# Kafka Strata 3D — original spatial activity explorer (archived P1)
+
+> **Current experience:** The spatial cockpit supersedes the initial one-hour
+> prototype described below. See the [current Strata 3D operator guide](STRATA-3D.md)
+> for the 30-minute synchronized timeline, topic navigator, consumer diagnostics,
+> forecast layers and provenance rules. This older guide is retained for historical context.
 
 Strata 3D is available from **Observe → Strata 3D** (`/strata`).
 

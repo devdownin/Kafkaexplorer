@@ -98,6 +98,21 @@ public class DashboardController {
      * @param windowMs how far back to look; the configured default when absent
      * @param buckets  points in each series; the configured default when absent
      */
+    /**
+     * Optional per-partition detail for a focused Kafka Strata topic.
+     * Unlike the dashboard's aggregated series, this uses a separate bounded budget.
+     */
+    @GetMapping("/partition-activity")
+    public com.compagnonsdudev.kafkasqlexplorer.domain.PartitionActivityResponse partitionActivity(
+            @RequestParam("topic") String topic,
+            @RequestParam(name = "windowMs", required = false) Long windowMs,
+            @RequestParam(name = "buckets", required = false) Integer buckets) {
+        return kafkaAdminService.getPartitionActivity(topic,
+                windowMs == null ? explorerConfig.getActivityDefaultWindowMs() : windowMs,
+                buckets == null ? explorerConfig.getActivityBuckets() : buckets,
+                Math.max(1, explorerConfig.getActivityMaxLookups()));
+    }
+
     @GetMapping("/activity")
     public TopicActivityResponse getTopicActivity(
             @RequestParam(name = "topics") List<String> topics,
