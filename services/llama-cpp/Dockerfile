@@ -20,7 +20,7 @@ ARG MODEL_URL=https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/bfc15c3
 ARG MODEL_SHA256=85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87
 
 RUN mkdir -p /models \
- && curl -fL --retry 5 --connect-timeout 30 -o "/models/${MODEL_FILE}" "${MODEL_URL}" \
+ && curl --http1.1 -fL --retry 8 --retry-all-errors --retry-delay 5 --connect-timeout 30 --continue-at - -o "/models/${MODEL_FILE}" "${MODEL_URL}" \
  && echo "${MODEL_SHA256}  /models/${MODEL_FILE}" | sha256sum -c - \
  && chmod -R a+rX /models
 
