@@ -191,6 +191,20 @@ describe('Dashboard honest operational states', () => {
     }
   });
 
+  it('keeps successful topic data distinct from a failed broker ping', async () => {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/dashboard') return Promise.resolve({
+        data: { ...dashboard, snapshotAvailable: true, health: false },
+      });
+      if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(topics.slice(0, 25)) });
+      return Promise.resolve({ data: {} });
+    });
+    renderPage();
+    expect(await screen.findByText('Degraded')).toBeInTheDocument();
+    expect(screen.getByText(topics[0])).toBeInTheDocument();
+    expect(screen.queryByText(/Stale data/)).toBeNull();
+  });
+
   it('keeps the last measured records and reports stale data after a failed refresh', async () => {
     let reads = 0;
     mockedAxios.get.mockImplementation((url: string) => {
