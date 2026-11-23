@@ -93,7 +93,8 @@ public class DashboardController {
         try {
             List<String> topics = kafkaAdminService.listTopics();
             Map<String, Long> offsets = kafkaAdminService.getProducedOffsetsTotals(topics);
-            return new ProductionSnapshot(offsets, System.currentTimeMillis(), topics.size(), true);
+            return new ProductionSnapshot(offsets, System.currentTimeMillis(), topics.size(),
+                    topics.isEmpty() || !offsets.isEmpty());
         } catch (Exception e) {
             logger.warn("Failed to sample produced offsets: {}", e.getMessage());
             return new ProductionSnapshot(Map.of(), System.currentTimeMillis(), 0, false);
