@@ -185,6 +185,11 @@ doctor() {
   fi
   docker info >/dev/null 2>&1 || { echo 'ERROR: Docker Engine is not running.' >&2; return 1; }
   compose config --quiet || { echo 'ERROR: invalid Compose configuration.' >&2; return 1; }
+  for secret in FORECAST_POSTGRES_PASSWORD TIMESFM_TOKEN EXPLORER_MCP_AUTH_TOKEN; do
+    [[ -n ${!secret:-} ]] || { echo "ERROR: missing required variable $secret." >&2; return 1; }
+  done
+  [[ $EXPLORER_PORT != "$KAFKA_PORT" && $EXPLORER_PORT != "$SCHEMA_REGISTRY_PORT" && $KAFKA_PORT != "$SCHEMA_REGISTRY_PORT" ]] ||
+    { echo 'ERROR: Explorer, Schema Registry and Kafka host ports must be different.' >&2; return 1; }
   ram_mb=$(( $(docker info --format '{{.MemTotal}}') / 1024 / 1024 ))
   echo "Docker: Compose $version; ${ram_mb} MiB RAM (TimesFM limit $TIMESFM_MEM_LIMIT)."
   (( ram_mb >= 8192 )) || echo 'WARN: less than 8 GiB allocated to Docker; forecasting may be slow or OOM.' >&2
