@@ -95,7 +95,7 @@ services:
         condition: service_completed_successfully
     environment:
       # Not defined in the normal application; only a deliberate demo Compose stack exposes it.
-      EXPLORER_DEMO_CONTROL_ENABLED: "true"
+      EXPLORER_DEMO_CONTROL_ENABLED: ${DEMO_CONTROL_ENABLED:-true}
       EXPLORER_DEMO_CONTROL_FILE: /app/demo-control/demo-scenario.conf
     volumes:
       - demo_control:/app/demo-control
