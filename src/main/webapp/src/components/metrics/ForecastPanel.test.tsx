@@ -47,7 +47,7 @@ describe('ForecastPanel', () => {
     expect(selector).toHaveValue(second.seriesId);
     await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.map(call => call[0]))
       .toContain(`/api/forecasts/${second.seriesId}`));
-    expect(screen.getByText('staging', { exact: false })).toBeTruthy();
+    expect(screen.getAllByText(/staging/).length).toBeGreaterThan(0);
   });
 
   it('reports persistence outage rather than empty measurements', async () => {
