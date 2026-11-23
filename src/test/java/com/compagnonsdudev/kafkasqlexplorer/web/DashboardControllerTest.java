@@ -87,7 +87,8 @@ class DashboardControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.clusterName").value("Orders prod"))
             .andExpect(jsonPath("$.bootstrapServers").value("kafka:29092"))
-            .andExpect(jsonPath("$.health").value(true));
+            .andExpect(jsonPath("$.health").value(true))
+            .andExpect(jsonPath("$.snapshotAvailable").value(true));
     }
 
     /** A runtime repoint changes the address the pill reports — the label alone never could. */
@@ -109,6 +110,7 @@ class DashboardControllerTest {
         mockMvc.perform(get("/api/dashboard"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.health").value(false))
+            .andExpect(jsonPath("$.snapshotAvailable").value(false))
             .andExpect(jsonPath("$.bootstrapServers").value("kafka:9092"))
             .andExpect(jsonPath("$.topics").isEmpty());
     }
