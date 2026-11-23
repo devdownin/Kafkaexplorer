@@ -28,6 +28,8 @@ export function DemoControlCenter({ metrics, forecast, clock }: {
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
+    // A normal deployment returns 404: discover once, not on every Metrics poll.
+    if (!available) return;
     const controller = new AbortController();
     axios.get<DemoControlStatus>('/api/demo-control', { signal: controller.signal, timeout: 7000 })
       .then(({ data }) => {
@@ -41,7 +43,7 @@ export function DemoControlCenter({ metrics, forecast, clock }: {
         setError('Demo control connection failed. The scenario remains unchanged.');
       });
     return () => controller.abort();
-  }, [clock]);
+  }, [clock, available]);
 
   const demoMetrics = useMemo(() => metrics.filter(m => m.id.startsWith('demo-live-')), [metrics]);
   const demoSeries = useMemo(() => (forecast?.series ?? []).filter(s => s.metricId.startsWith('demo-live-')), [forecast]);
