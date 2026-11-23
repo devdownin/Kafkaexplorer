@@ -114,7 +114,7 @@ The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPO
 
 ```bash
 ./demo-forecast.sh             # Docker Compose pulls published images, initializes secrets and starts live metrics
-./demo-forecast.sh logs demo-forecast-seed
+\n**Forecast demo (P2):** the Metrics page includes an opt-in Demo Control Center for switching live Kafka scenarios and exporting JSON/HTML forecast reports, when the selected Explorer image contains this feature. It stays hidden on standard deployments and older published images. See [Metrics demo scenarios](docs/metrics-demo-scenarios.md#demo-control-center--p2-source-builds-and-subsequent-releases).\n./demo-forecast.sh logs demo-forecast-seed
 ./demo-forecast.sh down        # keep data; reset deletes volumes
 ```
 
