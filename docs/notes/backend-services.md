@@ -211,6 +211,6 @@ both errors, never zero: a silence of zero is "a record just arrived", the oppos
 
 ## Dashboard production snapshots and count coverage (2026-11-23)
 
-`GET /api/dashboard` now reads `KafkaAdminService.getTopicRecordCounts` (the exact, omission-preserving count API) rather than the zero-filling `getTopicsSize` adapter. It keeps `topicSizes` compatible for existing pages and returns `unmeasuredTopics` separately: zero is a measured empty log, whereas absent is a failed offset read.
+`GET /api/dashboard` now reads `KafkaAdminService.getDashboardTopicCounts` (strict, full-partition-coverage counts, cached for 30 s) rather than the zero-filling `getTopicsSize` adapter. It keeps `topicSizes` compatible for existing pages and returns `unmeasuredTopics` separately: zero is a measured empty log, whereas absent is a failed offset read.
 
 `GET /api/dashboard/production` reads one batched latest-offset request across the cluster through `getProducedOffsetsTotals`; an incomplete topic is omitted instead of summed partially. Response: `{ offsets: {topic: totalLatestOffset}, sampledAt: epochMillis, totalTopics, available }`. The browser samples this at most every 30 seconds (or at the slower selected cadence), derives a difference-per-second only for topics in consecutive valid samples, and discloses coverage and time window. This observes **produced offsets**, not retained message counts; retention and compaction cannot masquerade as negative ingest. The endpoint remains bounded by the shared ten-second AdminClient deadline, and rate history is session-local only.
