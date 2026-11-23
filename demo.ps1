@@ -195,7 +195,7 @@ Set-Default TIMESTRAL_THREADS '1'
 # Explorer image: built from this checkout by default; DEMO_PUBLISHED_IMAGE=true pulls the release.
 Set-Default DEMO_PUBLISHED_IMAGE 'false'
 Set-Default EXPLORER_IMAGE_NAMESPACE 'compagnonsdudev'
-Set-Default EXPLORER_IMAGE_TAG '2.8.3'
+Set-Default EXPLORER_IMAGE_TAG '2.9.1'
 
 # SpectraLLM on by default; false drops its seven services and their ~4.8 GB first download.
 Set-Default DEMO_SPECTRA 'true'
