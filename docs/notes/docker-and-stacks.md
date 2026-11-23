@@ -718,6 +718,24 @@ overlay on the real stack, the seeded rows beside the recorded ones, a TimesFM r
 The seeder's SQL was also run against a real PostgreSQL and its rows read back through the real
 `MetricSeriesPreparer` (512 observed points, none missing) before it shipped.
 
+## Prebuilt demo operational gates and scenario control
+
+The no-build launchers check Docker Compose 2.24+, Docker Engine memory, the
+application's published ports and the locally cached images before startup.
+An explicit offline mode skips pulls and uses `--no-build --pull never`; it fails
+fast if an image is missing. Unlike the older single HTTP check, readiness
+requires a successful seeder exit, five histories of >=500 points each,
+a healthy TimesFM service and a READY forecast. `doctor` and `verify` expose
+the checks as CLI actions on Linux/macOS and Windows.
+
+`compose/demo-forecast.yml` mounts the forecast configuration directory
+read-only in `demo-live` as `/demo-control`. The host-side `scenario` verb writes
+`demo-scenario.conf` (normal, overload, incident, recover, seasonal); `live.sh`
+reads it on each tick and calls the shared `signals.awk` override, changing
+real producer outputs, not the seed's cloned PostgreSQL observations.
+The published-image CI workflow, `.github/workflows/forecast-prebuilt-smoke.yml`,
+verifies this operational contract independently of source builds.
+
 ## No-build forecast demo: the published images
 
 `./demo-forecast.sh` / `.\demo-forecast.cmd` wrap `demo.sh --forecast --prebuilt`
