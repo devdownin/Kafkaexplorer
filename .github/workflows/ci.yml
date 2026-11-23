@@ -961,6 +961,16 @@ jobs:
           docker compose $OFFLINE config --format json | python3 docs/forecast-offline-check.py
           named="$named compose/forecast-offline.yml"
 
+          # The no-build forecast demo layers both published images *after* the normal
+          # history/live-traffic stack. Verify the rendered services, not just YAML syntax.
+          PREBUILT="-f docker-compose.yml -f compose/schema-registry.yml -f compose/mcp.yml -f compose/forecasts.yml -f compose/demo-forecast.yml -f compose/forecast-offline.yml -f compose/demo-forecast-prebuilt.yml -f compose/image.yml"
+          echo "· $PREBUILT"
+          # shellcheck disable=SC2086 - stable set of Compose overlay paths
+          docker compose $PREBUILT config --format json | python3 docs/forecast-prebuilt-check.py
+          # shellcheck disable=SC2086 - also prove no build survives with the optional profile
+          docker compose --profile prefetch $PREBUILT config --format json | python3 docs/forecast-prebuilt-check.py
+          named="$named compose/demo-forecast-prebuilt.yml"
+
           # And for the offline LLM, an overlay of compose/llama-cpp.yml.
           LLM_OFFLINE="-f docker-compose.yml -f compose/llama-cpp.yml -f compose/llama-cpp-offline.yml"
           echo "· $LLM_OFFLINE"
