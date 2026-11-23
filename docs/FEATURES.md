@@ -4,6 +4,16 @@ The complete guided tour of everything Kafka SQL Explorer does. For the short ve
 
 > The screenshots below are generated, not photographed: [`docs/screenshots/`](screenshots/README.md) drives the compiled interface over canned API responses shaped like the dataset `setup-demo.sh` seeds. The UI is real; only the data is fixed. Re-run it after a UI change rather than re-photographing.
 
+## Kafka Strata 3D — spatial evidence and guided investigation
+
+Open **Observe → Strata 3D** (route `/strata`) to inspect up to 48 Kafka topics as Three.js columns. Twelve time-aligned 2.5-minute offset-production buckets cover the latest 30 minutes. A ring is not a tracked individual message; gaps and incomplete partition coverage remain **unknown**, never silently zero. OrbitControls, the accessible topic list and mini-map, and light/dark or reduced-motion fallbacks provide complementary navigation. The scene draws Flink links only for explicitly declared dependencies; manual message-key tracing is bounded and is **not** proof of causation.
+
+- **Lot D — performance & accessibility:** open the WebGL diagnostics to sample visible-frame FPS, draw calls, Three.js geometry/texture *counts*, DPR and scene-rebuild time. An idle demand-rendered scene reports *on-demand*, not false zero FPS. These counters are local and do not estimate VRAM bytes, send telemetry or persist readings; hardware GPU/touch and formal accessibility reviews remain release checks.
+- **Lot E — guided investigation:** choose a topic, then follow offset evidence → declared Flink paths → a *selected* consumer group → optional manual tracing. Stage navigation itself performs no extra Kafka reads. The bounded evidence list highlights only sufficiently measured offset deviations and selected-group lag; it does not produce a cluster-wide congestion score or label time correlation as causality.
+- **Export a snapshot:** **Save investigation snapshot** downloads an allowlisted JSON file with capture time, selected topic/time bucket, coverage, measured offsets, declared paths and selected-group status. It contains no Kafka record keys, payloads, headers, trace matches or credentials. No background storage is introduced. Topic, group and job **names** may still be sensitive.
+
+See the [Strata 3D operator guide](STRATA-3D.md) and the [technical audit](notes/strata-3d-audit.md). These features are present in the source tree; a tagged Docker image must be published before claiming availability in a particular image tag.
+
 ## 1. Dashboard & Navigation
 - **Topic List**: Overview of all topics available on the Kafka cluster.
 - **Advanced Filtering**:
