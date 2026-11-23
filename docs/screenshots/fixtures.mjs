@@ -97,6 +97,7 @@ export const dashboard = {
   totalMessages: Object.values(topicSizes).reduce((a, b) => a + b, 0),
   tables: ['demo_orders_1_received', 'demo_orders_nested', 'demo_iot_sensors', 'demo_payments_authorized'],
   health: true,
+  unmeasuredTopics: [],
   topicLastMessages,
   // La valeur par défaut réelle d'`explorer.internal-topic-prefix` : la chaîne vide
   // (`ExplorerConfig`), pas un préfixe inventé. `Layout` la lit avec `?? ''`, donc son absence ne
