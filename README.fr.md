@@ -57,6 +57,7 @@ Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilot
 ## ✨ Points forts
 
 - 🖱️ **Cliquer, c'est requêter** — cliquez sur une clé JSON ou une balise XML dans l'aperçu d'un message et elle atterrit dans votre `SELECT`/`WHERE`, `JSON_VALUE`/XPath générés pour vous.
+- 🗂️ **Explorateur Schema Registry (facultatif)** — parcourez les sujets et versions des schémas Avro/Protobuf/JSON, comparez deux versions et vérifiez leur compatibilité sans modifier le registre. [Guide](docs/SCHEMA-REGISTRY.md).
 - 🧠 **Schémas sans configuration** — les topics sont échantillonnés, leur structure inférée (JSON, XML, Avro via Schema Registry) et enregistrée comme table Flink dès que vous la nommez — par le nom du topic, tel que le cluster l'affiche : `SELECT * FROM "orders.v2-raw"`.
 - 📝 **Un vrai éditeur SQL** — Monaco (le moteur de VS Code), auto-complétion des topics et tables, historique de requêtes, lecture earliest/latest.
 - 🎨 **Une interface spatiale, claire ou sombre** — une navigation en verre qui flotte au-dessus de plans de lecture opaques (tables, graphiques et éditeur SQL ne sont jamais floutés), claire par défaut avec un interrupteur de mode sombre qui mémorise votre choix, avec six couleurs d'accent et une densité compacte pour les écrans chargés. Les contrastes respectent WCAG AA, et la réduction des animations et de la transparence est honorée.
