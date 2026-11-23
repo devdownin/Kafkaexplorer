@@ -11,8 +11,8 @@
 #   ./demo.sh --no-spectra                           # the same without SpectraLLM (DEMO_SPECTRA=false)
 #   ./demo.sh --forecast                             # the forecast demo alone, builds local images
 #   ./demo.sh --forecast --prebuilt                  # demo from published images, no build
-#   ./demo-forecast.sh [up|down|reset|ps|logs [service]|probe] # prebuilt shorthand
-#   ./demo.sh [--no-spectra|--forecast|--prebuilt] down | reset | ps | logs [service] | probe
+#   ./demo-forecast.sh [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]] # prebuilt shorthand
+#   ./demo.sh [--no-spectra|--forecast|--prebuilt] down | reset | ps | logs [service] | probe | doctor | verify | scenario [name]
 #
 # --forecast (DEMO_MODE=forecast) is the stack the forecast demo needs and nothing else: Kafka and the
 # demo topics, Schema Registry, the Explorer with MCP, PostgreSQL, TimesFM, the live traffic and its
@@ -27,7 +27,7 @@ repo_dir=$(cd "$(dirname "$0")" && pwd)
 cd "$repo_dir"
 
 usage() {
-  echo 'Usage: ./demo.sh [--no-spectra|--forecast|--prebuilt] [up|down|reset|ps|logs [service]|probe]' >&2
+  echo 'Usage: ./demo.sh [--no-spectra|--forecast|--prebuilt|--offline] [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]]' >&2
   exit 2
 }
 
@@ -38,6 +38,7 @@ while [[ ${1:-} == --* ]]; do
     --no-spectra) export DEMO_SPECTRA=false ;;
     --forecast) export DEMO_MODE=forecast DEMO_SPECTRA=false ;;
     --prebuilt) export DEMO_PREBUILT=true DEMO_PUBLISHED_IMAGE=true ;;
+    --offline) export DEMO_MODE=forecast DEMO_SPECTRA=false DEMO_PREBUILT=true DEMO_PUBLISHED_IMAGE=true DEMO_OFFLINE=true ;;
     *) usage ;;
   esac
   shift
@@ -70,6 +71,12 @@ export DEMO_MODE=${DEMO_MODE:-full}
 [[ $DEMO_MODE == full || $DEMO_MODE == forecast ]] || { echo "DEMO_MODE must be full or forecast, not '$DEMO_MODE'." >&2; exit 2; }
 [[ $DEMO_MODE == full ]] || export DEMO_SPECTRA=false
 export DEMO_PREBUILT=${DEMO_PREBUILT:-false}
+export DEMO_OFFLINE=${DEMO_OFFLINE:-false}
+[[ $DEMO_OFFLINE == true || $DEMO_OFFLINE == false ]] || { echo 'DEMO_OFFLINE must be true or false.' >&2; exit 2; }
+if [[ $DEMO_OFFLINE == true && $DEMO_PREBUILT != true ]]; then
+  echo 'Offline mode requires a prebuilt forecast demo (--forecast --prebuilt --offline).' >&2
+  exit 2
+fi
 [[ $DEMO_PREBUILT == true || $DEMO_PREBUILT == false ]] || { echo 'DEMO_PREBUILT must be true or false.' >&2; exit 2; }
 if [[ $DEMO_PREBUILT == true ]]; then
   [[ $DEMO_MODE == forecast ]] || { echo '--prebuilt is supported only for the forecast demo (--forecast).' >&2; exit 2; }
@@ -162,6 +169,225 @@ if [[ $DEMO_MODE == full ]]; then
 fi
 
 compose() { docker compose "${files[@]}" "$@"; }
+
+# Diagnostics never compile or pull images. Docker owns the resource view, not host free(1).
+doctor() {
+  [[ $DEMO_MODE == forecast && $DEMO_PREBUILT == true ]] ||
+    { echo 'doctor is for the prebuilt forecast demo.' >&2; return 2; }
+  local version major minor ram_mb image port busy=0
+  version=$(docker compose version --short | sed 's/^v//')
+  if [[ $version =~ ^([0-9]+)\.([0-9]+) ]]; then
+    major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]}
+    (( major > 2 || (major == 2 && minor >= 24) )) ||
+      { echo "ERROR: Docker Compose 2.24+ required (found $version)." >&2; return 1; }
+  else
+    echo "ERROR: cannot determine Docker Compose version: $version" >&2; return 1
+  fi
+  docker info >/dev/null 2>&1 || { echo 'ERROR: Docker Engine is not running.' >&2; return 1; }
+  compose config --quiet || { echo 'ERROR: invalid Compose configuration.' >&2; return 1; }
+  ram_mb=$(( $(docker info --format '{{.MemTotal}}') / 1024 / 1024 ))
+  echo "Docker: Compose $version; ${ram_mb} MiB RAM (TimesFM limit $TIMESFM_MEM_LIMIT)."
+  (( ram_mb >= 8192 )) || echo 'WARN: less than 8 GiB allocated to Docker; forecasting may be slow or OOM.' >&2
+  for port in "$EXPLORER_PORT" "$SCHEMA_REGISTRY_PORT" "$KAFKA_PORT"; do
+    [[ $port =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) ||
+      { echo "ERROR: invalid port $port." >&2; return 1; }
+    if (echo >/dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1; then
+      if [[ -z $(compose ps -q) ]]; then
+        echo "ERROR: port $port is occupied (no containers in this Compose project)." >&2
+        busy=1
+      else
+        echo "WARN: port $port is occupied; an existing demo may own it." >&2
+      fi
+    fi
+  done
+  (( busy == 0 )) || return 1
+  local missing=0
+  while IFS= read -r image; do
+    [[ -n $image ]] || continue
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+      if [[ $DEMO_OFFLINE == true ]]; then
+        echo "ERROR: offline image missing: $image (load it with docker load or pull it beforehand)." >&2
+        missing=1
+      else
+        echo "Image to pull: $image"
+      fi
+    fi
+  done < <(compose config --images | sort -u)
+  (( missing == 0 )) || return 1
+  [[ $DEMO_OFFLINE != true ]] || echo 'Offline check: all images are available locally.'
+  echo 'Preflight OK.'
+}
+
+# Uses the same model result and seeded PostgreSQL observations as the Metrics page.
+# No jq, Python, Node or local build is needed on the user's machine.
+verify_forecast_once() {
+  local cid state code count metrics forecasts id
+  cid=$(compose ps -aq demo-forecast-seed | head -n 1)
+  [[ -n $cid ]] || { echo 'Seeder has not started.'; return 1; }
+  state=$(docker inspect -f '{{.State.Status}}' "$cid")
+  code=$(docker inspect -f '{{.State.ExitCode}}' "$cid")
+  [[ $state == exited ]] || { echo "Seeder is still $state."; return 1; }
+  [[ $code == 0 ]] || { echo "Seeder exited with $code; inspect: ./demo-forecast.sh logs demo-forecast-seed"; return 1; }
+  for id in kafka demo-live forecast-postgres timesfm explorer; do
+    cid=$(compose ps -q "$id" | head -n 1)
+    [[ -n $cid && $(docker inspect -f '{{.State.Running}}' "$cid") == true ]] ||
+      { echo "Service $id is not running."; return 1; }
+  done
+  cid=$(compose ps -q timesfm | head -n 1)
+  [[ $(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$cid") == healthy ]] ||
+    { echo 'TimesFM is not healthy.'; return 1; }
+  count=$(compose exec -T forecast-postgres psql -U forecasts -d forecasts -At -c \
+    "SELECT count(*) FROM (SELECT payload::jsonb->>'metricId' AS metric_id FROM kex_metric_observation_v1 WHERE payload::jsonb->>'collectorRunId' LIKE 'demo-seed-%' AND payload::jsonb->>'component'='value' GROUP BY 1 HAVING count(*) >= 500) seeded;" 2>/dev/null) ||
+    { echo 'Cannot query seeded forecast history.'; return 1; }
+  [[ ${count//
+
+wait_for_http() {
+  local name=$1 url=$2 deadline=$((SECONDS + $3))
+  shift 3
+  printf 'Waiting for %s ' "$name"
+  until curl -fsS -o /dev/null "$@" "$url" 2>/dev/null; do
+    if ((SECONDS >= deadline)); then
+      echo "— not ready after $3 s. See: ./demo.sh logs"
+      return 1
+    fi
+    printf '.'
+    sleep 5
+  done
+  echo ' ok'
+}
+
+up() {
+  if [[ $DEMO_MODE == full && -z $OPENROUTER_API_KEY ]]; then
+    echo 'WARN: OPENROUTER_API_KEY is empty — Process Mining answers without its LLM half and the' >&2
+    echo '      agent starts DEGRADED. Export it (or put it in .env) and rerun ./demo.sh.' >&2
+  fi
+  if [[ $DEMO_PREBUILT == true ]]; then
+    for secret in FORECAST_POSTGRES_PASSWORD TIMESFM_TOKEN EXPLORER_MCP_AUTH_TOKEN; do
+      [[ -n ${!secret:-} ]] || { echo "Missing $secret. Check .env and .forecast-stack/.env." >&2; exit 1; }
+    done
+    doctor
+    echo "Prebuilt forecast demo: using pinned KafkaExplorer and TimesFM images; no local build or model download."
+    echo "TimesFM resources: ${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT}. Model licence: services/timesfm/licenses/NOTICE.md"
+    compose config --quiet
+    if [[ $DEMO_OFFLINE != true ]]; then compose pull --quiet --ignore-buildable; fi
+    compose up -d --no-build --pull never --remove-orphans
+  else
+    echo "First run: Maven build of the Explorer and the pinned TimesFM checkpoint (${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT})."
+    [[ $DEMO_SPECTRA != true ]] || echo 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.'
+    echo 'Later runs start in seconds.'
+    [[ $DEMO_PUBLISHED_IMAGE != true ]] || compose pull --quiet --ignore-buildable
+    # --remove-orphans: switching to --no-spectra stops the SpectraLLM containers a previous run left.
+    compose up -d --build --remove-orphans
+  fi
+  wait_for_http 'Kafka Explorer' "http://127.0.0.1:${EXPLORER_PORT}/actuator/health" 900
+  if [[ $DEMO_MODE == forecast ]]; then
+    wait_forecast_ready
+    cat <<EOF
+
+Kafka SQL Explorer .... http://localhost:${EXPLORER_PORT}   -> Metrics
+  MCP ................. http://localhost:${EXPLORER_PORT}/mcp   (Bearer in .forecast-stack/.env or EXPLORER_MCP_AUTH_TOKEN)
+Schema Registry ....... http://localhost:${SCHEMA_REGISTRY_PORT}
+Kafka ................. localhost:${KAFKA_PORT}
+LLM, agent, SpectraLLM  not started (--forecast): nothing to configure
+
+The forecast demo: Metrics has five live metrics (demo.live.*: orders, requests, imports, events, tickets; each minus its second topic).
+  Their history is seeded in the first minutes (./demo.sh --forecast logs demo-forecast-seed), then:
+  - the unshipped-orders one is already forecast, with its "Warning expected in ~N min" badge;
+  - press Forecast on another (or "Forecast all eligible"): the backlog's hourly cycle is found, the imports climb, the events
+    stay flat with a wide band, the tickets change level and no forecast sees it coming — the Previous forecast vs actual view shows it.
+  - Stream Flow: trace the key orders-1 (or any orders-N): it is found in demo.live.orders and in demo.live.shipped.
+  ./demo-forecast.sh doctor | verify | scenario [normal|overload|incident|recover|seasonal] | down | reset | ps | logs [service] | probe     (docs/metrics-demo-scenarios.md)
+EOF
+    return 0
+  fi
+  wait_for_http 'Kex-anHarness' "http://127.0.0.1:${KEX_AGENT_PORT}/api/agent/mcp/servers" 300 \
+    -H "Authorization: Bearer ${KEX_AGENT_API_KEY}" || true
+  # spectra-api waits for the embedding model and the demo seed; its chat answers once llm-chat
+  # has its weights, which `./demo.sh logs spectra-models llm-chat` follows.
+  if [[ $DEMO_SPECTRA == true ]]; then
+    wait_for_http 'SpectraLLM API' "http://127.0.0.1:${SPECTRA_API_PORT}/actuator/health/readiness" 600 || true
+  fi
+  local spectra='SpectraLLM ............ off (--no-spectra); the agent reports its MCP connection unreachable'
+  [[ $DEMO_SPECTRA != true ]] || spectra="SpectraLLM UI ......... http://localhost:${SPECTRA_UI_PORT}     (401 while SPECTRA_API_KEY is set)
+SpectraLLM API ........ http://localhost:${SPECTRA_API_PORT}/swagger-ui   (/mcp, X-API-Key ${SPECTRA_API_KEY}) · ${LLM_CHAT_MODEL_NAME} local"
+  cat <<EOF
+
+Kafka SQL Explorer .... http://localhost:${EXPLORER_PORT}
+  MCP ................. http://localhost:${EXPLORER_PORT}/mcp   (Bearer in .forecast-stack/.env or EXPLORER_MCP_AUTH_TOKEN)
+Kex-anHarness ......... http://localhost:${KEX_AGENT_PORT}     (Bearer ${KEX_AGENT_API_KEY})
+${spectra}
+Schema Registry ....... http://localhost:${SCHEMA_REGISTRY_PORT}
+Kafka ................. localhost:${KAFKA_PORT}
+LLM ................... OpenRouter ${OPENROUTER_MODEL} (Explorer, agent)
+SQL assistant ......... ${EXPLORER_ASSISTANT_ENABLED} (editor ask bar, Suggest a fix, Metrics: Describe the metric; table and column names go to OpenRouter)
+
+Demo topics (JSON + Avro) are seeded in the background: ./demo.sh logs demo-setup
+Forecast: Metrics → the five demo.live.* metrics have 9 h of seeded history (live traffic keeps them moving):
+  the unshipped-orders one is already forecast; press Forecast on the others, or Forecast all eligible. ./demo.sh logs demo-forecast-seed
+EOF
+}
+
+case ${1:-up} in
+  up) [[ $# -le 1 ]] || usage; up ;;
+  down) compose down --remove-orphans ;;
+  # Volumes included: topics, forecast history, agent state, downloaded models. Credentials stay.
+  reset) compose down -v --remove-orphans ;;
+  ps) compose ps ;;
+  logs) shift; compose logs -f --tail 200 "$@" ;;
+  doctor) [[ $# -eq 1 ]] || usage; doctor ;;
+  verify) [[ $# -eq 1 ]] || usage; verify_forecast ;;
+  scenario) [[ $# -le 2 ]] || usage; set_scenario "${2:-}" ;;
+  probe)
+    compose --profile probe run --rm mcp-probe
+    [[ $DEMO_SPECTRA != true ]] || compose --profile probe run --rm spectra-mcp-probe
+    ;;
+  *) usage ;;
+esac
+\r'/} == 5 ]] || { echo "Only ${count:-0}/5 metrics have >=500 historical observations."; return 1; }
+  metrics=$(curl --max-time 10 -fsS "http://127.0.0.1:${EXPLORER_PORT}/api/metrics") ||
+    { echo 'Metrics API not available.'; return 1; }
+  for id in unshipped backlog creep jitter shift; do
+    [[ $metrics == *"\"id\":\"demo-live-$id\""* ]] ||
+      { echo "Metric demo-live-$id is missing."; return 1; }
+  done
+  forecasts=$(curl --max-time 10 -fsS "http://127.0.0.1:${EXPLORER_PORT}/api/forecasts") ||
+    { echo 'Forecast API not available.'; return 1; }
+  [[ $forecasts == *'"metricId":"demo-live-unshipped"'* &&
+     $forecasts == *'"state":"READY"'* &&
+     $forecasts == *'"strategy":"TIMESFM"'* ]] ||
+    { echo 'Unshipped-orders TimesFM forecast is not READY yet.'; return 1; }
+  echo 'Ready: Kafka, PostgreSQL, Explorer, TimesFM, live traffic, five histories (>=500 points) and TimesFM forecast.'
+}
+verify_forecast() {
+  [[ $DEMO_MODE == forecast ]] || { echo 'verify is available in forecast mode only.' >&2; return 2; }
+  verify_forecast_once
+}
+wait_forecast_ready() {
+  local deadline=$((SECONDS + ${DEMO_FORECAST_READY_TIMEOUT:-900})) reason
+  echo 'Waiting for live data, five seeded histories and first READY TimesFM forecast...'
+  while :; do
+    if reason=$(verify_forecast_once); then echo "$reason"; return 0; fi
+    if (( SECONDS >= deadline )); then
+      echo "ERROR: demo did not become fully ready: $reason" >&2
+      echo 'Check: ./demo-forecast.sh logs demo-forecast-seed; ./demo-forecast.sh logs timesfm' >&2
+      return 1
+    fi
+    sleep 5
+  done
+}
+set_scenario() {
+  [[ $DEMO_MODE == forecast ]] || { echo 'scenario is available in forecast mode only.' >&2; return 2; }
+  local name=${1:-} file="${FORECAST_CONFIG_DIR}/demo-scenario.conf"
+  if [[ -z $name ]]; then
+    if [[ -f $file ]]; then cat "$file"; else echo normal; fi
+    return 0
+  fi
+  case $name in normal|overload|incident|recover|seasonal) ;; *)
+    echo 'Usage: scenario [normal|overload|incident|recover|seasonal]' >&2; return 2 ;; esac
+  mkdir -p "$FORECAST_CONFIG_DIR"
+  printf '%s\n' "$name" > "$file"
+  echo "Live Kafka scenario set to $name (next generator tick, default 15 s)."
+}
 
 wait_for_http() {
   local name=$1 url=$2 deadline=$((SECONDS + $3))
