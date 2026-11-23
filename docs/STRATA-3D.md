@@ -5,6 +5,24 @@ It provides a time-oriented view of topics and deliberate connections, complemen
 [Stream Flow](../src/main/webapp/src/pages/StreamFlow.tsx), [Lineage](../src/main/webapp/src/pages/Lineage.tsx)
 and Topic Explorer.
 
+## Deployment and publication
+
+Open **Observe → Strata 3D** from the application, or navigate to
+`http://localhost:8080/strata` when running the default local stack.
+Strata runs in the browser: there is **no server-side GPU dependency**, dedicated
+container, additional port or Strata-specific environment variable. WebGL2 is
+needed for the 3D canvas, but the topic navigation and evidence controls remain
+usable if the scene is unavailable.
+
+The current source includes Lots D/E (performance diagnostics, guided evidence
+stages and manual snapshots), merged via [PR #662](https://github.com/devdownin/Kafkaexplorer/pull/662).
+The [GitHub Pages overview](https://devdownin.github.io/Kafkaexplorer/#strata)
+describes the source-tree feature, with a **conceptual illustration**, not a
+live screenshot. [Docker Hub](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer/tags)
+publishes versioned images separately: a documentation merge does not rebuild a
+tag or move `latest`. Verify the image digest and release notes before expecting
+these features in a deployed image. See the [container operations guide](DOCKERHUB-OPERATIONS.md).
+
 ## Visual grammar
 
 | Element | Meaning | Evidence |

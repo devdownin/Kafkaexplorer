@@ -6,6 +6,12 @@
 
 > **Portée de la conclusion :** ceci est un audit interne du code et de ses parcours. Ce n'est pas un audit de sécurité externe, une certification WCAG ni un essai de charge sur un cluster de production. Les contrôles non exécutés sont signalés explicitement.
 
+### Suivi des intégrations — 23 novembre 2026
+
+La revue initiale couvre la PR [#661](https://github.com/devdownin/Kafkaexplorer/pull/661), fusionnée sur `main` le 23 novembre 2026. Les lots D/E ont été fusionnés via la [PR #662](https://github.com/devdownin/Kafkaexplorer/pull/662) le même jour. La matrice de risques D/E en fin de document reste applicable ; cette intégration **ne constitue pas** à elle seule une validation GPU matérielle ni un audit WCAG externe.
+
+Lors de la [CI post-fusion D/E](https://github.com/devdownin/Kafkaexplorer/actions/runs/45114548668), le build Maven, les vérifications frontend, les tests Docker/Forecast, les captures et le déploiement Pages ont réussi. Le workflow global était cependant **rouge** à cause du téléchargement interrompu du modèle GGUF dans l'image LLM hors ligne (erreur réseau HTTP/2, indépendamment du code Strata). Un correctif de robustesse est proposé dans la [PR #663](https://github.com/devdownin/Kafkaexplorer/pull/663). Ne pas conclure à une CI globalement verte avant l'exécution réussie des nouveaux contrôles.
+
 ## 1. Architecture et responsabilités
 
 | Couche | Flux / responsabilité | Effets secondaires |
