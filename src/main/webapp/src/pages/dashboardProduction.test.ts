@@ -44,7 +44,7 @@ describe('dashboard production-rate semantics', () => {
     const second = sample(31_000, { orders: 20 });
     const values = appendProductionSnapshot(appendProductionSnapshot([], first), second);
     expect(appendProductionSnapshot(values, second)).toBe(values);
-    expect(appendProductionSnapshot(values, sample(200_000, { orders: 30 })))
-      .toEqual([sample(200_000, { orders: 30 })]);
+    const afterGap = sample(31_000 + MAX_PRODUCTION_GAP_MS + 1_000, { orders: 30 });
+    expect(appendProductionSnapshot(values, afterGap)).toEqual([afterGap]);
   });
 });
