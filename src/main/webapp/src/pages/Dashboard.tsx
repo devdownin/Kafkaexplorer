@@ -556,7 +556,7 @@ const Dashboard: React.FC = () => {
     setHideDlt(false);
     setHideInternal(false);
     setPage(0);
-    document.getElementById('topics')?.scrollIntoView({ behavior: 'smooth' });
+    document.getElementById('topics')?.scrollIntoView?.({ behavior: 'smooth' });
   };
 
   function formatRate(value: number) {
