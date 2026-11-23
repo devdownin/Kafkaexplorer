@@ -28,6 +28,10 @@ services:
         condition: service_healthy
     volumes:
       - ./scripts/demo-forecast:/demo-forecast:ro
+      # Writable only from the host CLI; read-only inside the traffic generator.
+      - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}:/demo-control:ro
+    environment:
+      DEMO_SCENARIO_FILE: /demo-control/demo-scenario.conf
     entrypoint:
       - sh
       - -c

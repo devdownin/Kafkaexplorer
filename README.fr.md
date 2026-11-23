@@ -117,7 +117,17 @@ Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deu
 ./demo-forecast.sh down        # conserve les données ; reset supprime les volumes
 ```
 
-Sous Windows : `.\demo-forecast.cmd` (mêmes commandes `ps`, `logs`, `down` et `reset`).
+Sous Windows : `.\\demo-forecast.cmd` (mêmes commandes `ps`, `logs`, `down` et `reset`).
+
+Le lanceur contrôle d'abord Docker, Compose >= 2.24, les ports, la mémoire et
+les images. Il annonce la démo **prête** seulement après l'injection des cinq
+historiques et l'obtention d'une prévision TimesFM réelle (`READY`).
+Commandes de diagnostic : `./demo-forecast.sh doctor` et
+`./demo-forecast.sh verify`. Après le premier téléchargement, l'option
+`./demo-forecast.sh --offline up` (`.\\demo-forecast.cmd -Offline up` sous Windows)
+interdit tout nouveau téléchargement d'image. Les scénarios de trafic Kafka
+sont pilotés par `scenario overload`, `scenario incident`,
+`scenario recover` et `scenario normal`, sans réécrire l'historique.
 Aucun build Maven, npm ou Docker, aucun téléchargement de poids TimesFM au démarrage.
 Docker Compose 2.24+ et l'accès aux registres d'images sont nécessaires. La stack comprend Kafka,
 Schema Registry, MCP, PostgreSQL, TimesFM et cinq métriques de démonstration alimentées en continu,

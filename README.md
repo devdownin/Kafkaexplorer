@@ -118,7 +118,16 @@ The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPO
 ./demo-forecast.sh down        # keep data; reset deletes volumes
 ```
 
-On Windows: `.\demo-forecast.cmd` (same `ps`, `logs`, `down` and `reset` commands).
+On Windows: `.\\demo-forecast.cmd` (same `ps`, `logs`, `down` and `reset` commands).
+
+The launcher first checks Docker, Compose >= 2.24, ports, memory and images, then
+waits until the five historical metrics and a real **READY TimesFM forecast** exist
+before announcing the demo is ready. Diagnostics: `./demo-forecast.sh doctor`,
+`./demo-forecast.sh verify`. After the first image pull, use
+`./demo-forecast.sh --offline up` (`.\\demo-forecast.cmd -Offline up` on Windows)
+to forbid further image downloads. For live Kafka incidents, try
+`./demo-forecast.sh scenario overload`, `scenario incident`, `scenario recover`
+and `scenario normal`. The scenario control does not modify seeded history.
 No Maven, npm, local Docker image build or model-weight download is required; Docker Compose 2.24+
 and image pulls are required. The stack includes Kafka, Schema Registry, MCP,
 PostgreSQL, TimesFM and five continuously updated demo metrics with seeded history.

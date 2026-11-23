@@ -33,6 +33,7 @@ KAFKA_BIN="${KAFKA_BIN:-/opt/kafka/bin}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SIGNALS="${SIGNALS:-$HERE/signals.awk}"
 TICK="${DEMO_LIVE_TICK:-15}"
+SCENARIO_FILE="${DEMO_SCENARIO_FILE:-/demo-control/demo-scenario.conf}"
 
 # <first topic> <second topic> <curve in signals.awk>: one line per pair, the one place to add one.
 PAIRS="demo.live.orders demo.live.shipped unshipped
@@ -42,8 +43,8 @@ demo.live.events demo.live.archived jitter
 demo.live.tickets demo.live.resolved shift"
 
 # The curve value at epoch second $1, as an awk expression $2 over the functions in signals.awk.
-signal() { awk -v t="$1" "$(cat "$SIGNALS")
-BEGIN { printf \"%d\", $2 }"; }
+signal() { awk -v t="$1" -v mode="$3" "$(cat "$SIGNALS")
+BEGIN { printf \"%d\", scenario_value(\"$2\", t, mode) }"; }
 
 echo "Waiting for Kafka at $BOOTSTRAP..."
 until "$KAFKA_BIN/kafka-broker-api-versions.sh" --bootstrap-server "$BOOTSTRAP" >/dev/null 2>&1; do
@@ -97,9 +98,15 @@ echo "Producing live traffic every ${TICK}s (five topic pairs: orders, requests,
 while :; do
   now=$(date +%s)
   offsets=$(end_offsets) || offsets=""
+  mode=normal
+  if [ -r "$SCENARIO_FILE" ]; then
+    IFS= read -r mode < "$SCENARIO_FILE" || true
+    mode=$(printf "%s" "$mode" | tr -d "\r")
+  fi
+  case "$mode" in normal|overload|incident|recover|seasonal) ;; *) mode=normal ;; esac
   if [ -n "$offsets" ]; then
     printf '%s\n' "$PAIRS" | while read -r left right curve; do
-      hold "$offsets" "$left" "$right" "$(signal "$now" "$curve(t)")" "$now"
+      hold "$offsets" "$left" "$right" "$(signal "$now" "$curve" "$mode")" "$now"
     done
   fi
   sleep "$TICK"
