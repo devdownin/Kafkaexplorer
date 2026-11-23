@@ -365,13 +365,19 @@ const Dashboard: React.FC = () => {
     if (!data) return [] as string[];
     return data.topics
       .filter(t => t.toLowerCase().includes(searchTerm.toLowerCase()))
-      .filter(t => !hideEmpty || (data.topicSizes[t] ?? 0) > 0)
+      .filter(t => !hideEmpty || data.unmeasuredTopics?.includes(t) || (data.topicSizes[t] ?? 0) > 0)
       .filter(t => !hideDlt   || !isDeadLetterTopic(t))
       .filter(t => !hideInternal || !isInternalTopic(t, internalPrefix))
       .sort((a, b) => {
         let cmp = 0;
         if (sortKey === 'name') cmp = a.localeCompare(b);
-        else if (sortKey === 'size') cmp = (data.topicSizes[a] ?? 0) - (data.topicSizes[b] ?? 0);
+        else if (sortKey === 'size') {
+          // Unknown counts are neither small nor zero; always sort them last.
+          const missingA = data.unmeasuredTopics?.includes(a) ?? false;
+          const missingB = data.unmeasuredTopics?.includes(b) ?? false;
+          if (missingA !== missingB) return missingA ? 1 : -1;
+          cmp = (data.topicSizes[a] ?? 0) - (data.topicSizes[b] ?? 0);
+        }
         else if (sortKey === 'state') cmp = getState(a).localeCompare(getState(b));
         else if (sortKey === 'lastMessage') {
           const ta = data.topicLastMessages?.[a] ?? null;
@@ -868,7 +874,9 @@ const Dashboard: React.FC = () => {
                 onDoubleClick={() => navigate(`/topic/${topic}`)}
               >
                 <Td className="font-mono font-medium text-on-surface">{topic}</Td>
-                <Td className="text-on-surface-variant tabular-nums">{(data.topicSizes[topic] ?? 0).toLocaleString()}</Td>
+                <Td className="text-on-surface-variant tabular-nums" title={data.unmeasuredTopics?.includes(topic) ? 'Message count could not be measured' : undefined}>
+                  {data.unmeasuredTopics?.includes(topic) ? '—' : (data.topicSizes[topic] ?? 0).toLocaleString()}
+                </Td>
                 <Td>
                   <span className="flex flex-wrap items-center gap-1.5">
                     {stateBadge(topic, getState(topic))}
