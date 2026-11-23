@@ -33,5 +33,7 @@ public record DashboardResponse(
      */
     String internalTopicPrefix,
     /** Topics whose retained-count measurement could not be completed; not proven empty. */
-    List<String> unmeasuredTopics
+    List<String> unmeasuredTopics,
+    /** Whether the Kafka metadata/count snapshot completed, independent of the ping verdict. */
+    boolean snapshotAvailable
 ) {}
