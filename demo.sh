@@ -244,16 +244,16 @@ verify_forecast_once() {
   metrics=$(curl --max-time 10 -fsS "http://127.0.0.1:${EXPLORER_PORT}/api/metrics") ||
     { echo 'Metrics API not available.'; return 1; }
   for id in unshipped backlog creep jitter shift; do
-    printf '%s' "$metrics" | grep -Fq "\"id\":\"demo-live-$id\"" ||
+    [[ $metrics == *"\"id\":\"demo-live-$id\""* ]] ||
       { echo "Metric demo-live-$id is missing."; return 1; }
   done
   forecasts=$(curl --max-time 10 -fsS "http://127.0.0.1:${EXPLORER_PORT}/api/forecasts") ||
     { echo 'Forecast API not available.'; return 1; }
-  printf '%s' "$forecasts" | grep -Fq '"metricId":"demo-live-unshipped"' ||
+  [[ $forecasts == *'"metricId":"demo-live-unshipped"'* ]] ||
     { echo 'Unshipped-orders series is absent.'; return 1; }
-  printf '%s' "$forecasts" | grep -Fq '"state":"READY"' ||
+  [[ $forecasts == *'"state":"READY"'* ]] ||
     { echo 'No forecast result is READY yet.'; return 1; }
-  printf '%s' "$forecasts" | grep -Fq '"strategy":"TIMESFM"' ||
+  [[ $forecasts == *'"strategy":"TIMESFM"'* ]] ||
     { echo 'TimesFM has not returned a forecast.'; return 1; }
   echo 'Ready: Kafka, PostgreSQL, Explorer, TimesFM, live traffic, five histories (>=500 points) and TimesFM forecast.'
 }
