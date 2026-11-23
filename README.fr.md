@@ -108,6 +108,22 @@ Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deu
 
 </details>
 
+### Démo Forecast sans compilation locale
+
+```bash
+./demo-forecast.sh             # images publiées, secrets initialisés, métriques alimentées
+./demo-forecast.sh logs demo-forecast-seed
+./demo-forecast.sh down        # conserve les données ; reset supprime les volumes
+```
+
+Sous Windows : `.\demo-forecast.cmd` (mêmes commandes `ps`, `logs`, `down` et `reset`).
+Aucun build Maven, npm ou Docker, aucun téléchargement de poids TimesFM au démarrage.
+Docker Compose 2.24+ et l'accès aux registres d'images sont nécessaires. La stack comprend Kafka,
+Schema Registry, MCP, PostgreSQL, TimesFM et cinq métriques de démonstration alimentées en continu,
+avec un historique initialisé automatiquement. L'image Forecast publiée contient Timestral-28M,
+sous une [licence restrictive](services/timesfm/licenses/NOTICE.md), même si son mode shadow est désactivé.
+Voir les [scénarios de démonstration](docs/metrics-demo-scenarios.md) pour les paramètres et les étapes.
+
 ### 🎬 Toute la suite en une commande : `demo.sh`
 
 Pour tout essayer d'un coup — topics Avro et Schema Registry, serveur MCP, prévisions TimesFM, SpectraLLM et l'agent Kex-anHarness, l'explorateur et l'agent sur [OpenRouter](https://openrouter.ai/models) :
