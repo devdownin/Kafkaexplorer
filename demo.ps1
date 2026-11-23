@@ -246,7 +246,8 @@ function Test-ForecastPreflight {
     foreach ($secret in @('FORECAST_POSTGRES_PASSWORD', 'TIMESFM_TOKEN', 'EXPLORER_MCP_AUTH_TOKEN')) {
         if (-not (Test-EnvSet $secret)) { throw "Required variable is empty: $secret" }
     }
-    if (@($env:EXPLORER_PORT, $env:SCHEMA_REGISTRY_PORT, $env:KAFKA_PORT | Sort-Object -Unique).Count -ne 3) {
+    $publishedPorts = @($env:EXPLORER_PORT, $env:SCHEMA_REGISTRY_PORT, $env:KAFKA_PORT)
+    if (@($publishedPorts | Sort-Object -Unique).Count -ne 3) {
         throw 'Explorer, Schema Registry and Kafka host ports must be different.'
     }
     $memoryText = [string]((& docker info --format '{{.MemTotal}}') | Select-Object -First 1)
