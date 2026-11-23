@@ -27,6 +27,8 @@ See the [Strata 3D operator guide](STRATA-3D.md) and the [technical audit](notes
 
 ![The dashboard: every topic with its message count, state and last message, over the seeded demo cluster](img/dashboard.png)
 
+The Dashboard separates **cluster reachability**, **retained-record presence**, **measurement availability**, and **observed production throughput**. Its msg/s KPI is derived from complete latest-offset snapshots, not differences in retained counts; coverage and a sample window accompany every rate, and the value stays unavailable until two valid samples exist. A stale-data indicator preserves the last measured values if a background read fails.
+
 ## 2. Topic Exploration
 - **Real-Time Metadata**: Visualization of the number of partitions, min/max offsets, and estimated data size.
 - **DLT Identification**: Specific badges and warnings for Dead Letter Topics, alerting about potentially malformed data.
