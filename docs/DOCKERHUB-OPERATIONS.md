@@ -2,6 +2,17 @@
 
 The [Docker Hub overview](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer) is kept below 25 KB so the registry can show it in full. This guide contains the detailed settings and troubleshooting notes.
 
+## Kafka Strata 3D: deployment and operational limits
+
+The read-only **Observe → Strata 3D** view is served at `/strata` by builds that include the feature (including Lots D/E on `main`). It uses existing Kafka/Flink APIs; **it does not require a separate service, port, GPU on the server or new environment variable**. Client-side WebGL2 is needed for the 3D scene, while the topic navigator and evidence controls remain available when WebGL is unavailable. A browser without suitable WebGL cannot display the scene.
+
+- **Bounded scope:** at most 48 visible topics, twelve aligned 2.5-minute buckets over 30 minutes and at most 24 detailed partitions for one focused topic. Refreshes and scans must respect existing Kafka read budgets; key tracing is explicitly initiated and cancellable.
+- **Lot D instrumentation:** the WebGL diagnostics panel is local, opt-in and reports active-frame FPS, draw calls and Three.js object counts, not GPU memory bytes. It does not send telemetry or persist measurements. Validate actual GPUs, high-DPI touch and accessibility separately.
+- **Lot E investigation:** guided four-stage inspection, bounded candidate offset deviations and consumer lag for the selected group. Locally exported JSON snapshots omit Kafka record keys, payloads, headers and credentials, but can contain topic, group and Flink job names: review before sharing.
+- **Deployment truth:** a merge to `main` or a Pages update does **not** rebuild the tagged Docker Hub image. Confirm the tag/digest on [Docker Hub](https://hub.docker.com/r/compagnonsdudev/kafkaexplorer/tags) before relying on Lots D/E in a published container. GitHub Pages documents current source; the Docker Hub overview text is synchronized separately from release images.
+
+Detailed behavior, evidence boundaries and the investigation workflow: [Strata 3D guide](STRATA-3D.md).
+
 ## ⚙️ Configuration
 
 Everything is a Spring property, so **any** setting in
