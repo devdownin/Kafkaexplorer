@@ -321,7 +321,7 @@ group, then explicitly initiated message-key tracing. Each stage can be reached
 by a native numbered button or Previous/Next; navigating stages introduces
 no new Kafka reads.
 
-**Signals to inspect** are calculated only from the current sampled window:
+**Signals to inspect** appear in a bounded evidence list and as amber/red outlines on the accessible topic mini-map. They are calculated only from the current sampled window:
 fully covered local offset deviations and consumer-group lag for the
 *currently selected group and topic*. Incomplete, unavailable or stale
 activity cannot generate an offset-deviation signal. A selected group with
