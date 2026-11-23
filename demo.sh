@@ -239,7 +239,7 @@ verify_forecast_once() {
   count=$(compose exec -T forecast-postgres psql -U forecasts -d forecasts -At -c \
     "SELECT count(*) FROM (SELECT payload::jsonb->>'metricId' AS metric_id FROM kex_metric_observation_v1 WHERE payload::jsonb->>'collectorRunId' LIKE 'demo-seed-%' AND payload::jsonb->>'component'='value' GROUP BY 1 HAVING count(*) >= 500) seeded;" 2>/dev/null) ||
     { echo 'Cannot query seeded forecast history.'; return 1; }
-  count=$(printf '%s' "$count" | tr -d '\\r\\n ')
+  count=$(printf '%s' "$count" | tr -d '\r\n ')
   [[ $count == 5 ]] || { echo "Only ${count:-0}/5 metrics have >=500 historical observations."; return 1; }
   metrics=$(curl --max-time 10 -fsS "http://127.0.0.1:${EXPLORER_PORT}/api/metrics") ||
     { echo 'Metrics API not available.'; return 1; }
