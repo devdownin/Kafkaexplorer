@@ -43,6 +43,9 @@ services:
       # Ten persistent console producers run in this small demo; without a heap cap
       # their JVMs can trigger OOM restarts alongside Kafka, Explorer and TimesFM in CI.
       KAFKA_HEAP_OPTS: "-Xms32m -Xmx96m"
+      # Ten CLI producers start ten JVMs. Cap CPU discovery to avoid dozens of
+      # per-JVM background/GC threads on high-core-count GitHub runners.
+      KAFKA_OPTS: "-XX:ActiveProcessorCount=2"
       DEMO_SCENARIO_FILE: /demo-control/demo-scenario.conf
       DEMO_SCENARIO_APPLIED_FILE: /demo-control/demo-scenario-applied.conf
     entrypoint:

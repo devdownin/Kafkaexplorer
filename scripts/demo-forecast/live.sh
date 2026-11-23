@@ -95,13 +95,20 @@ hold() { # <offsets> <left topic> <right topic> <target> <now>
     >"$FIFOS/$topic"
 }
 
-# Verify a previous tick against Kafka's *observed* log end offsets before acknowledging it.
-# Writing to the FIFOs alone does not prove the producer has persisted the messages.
+# Verify the *affected* topic pairs using Kafka's observed log end offsets.
+# The other pairs keep their independent minute-by-minute curves; checking all
+# five for exact equality makes a stable, already-applied overload/incident
+# impossible to acknowledge when an unrelated noisy curve changes.
+# Writing to the FIFO alone is never proof that Kafka persisted a change.
 targets_reached() { # <offset snapshot> <epoch> <scenario>
   printf '%s\n' "$PAIRS" | while read -r left right curve; do
-    wanted=$(signal "$2" "$curve" "$3")
-    actual=$(( $(count_of "$left" "$1") - $(count_of "$right" "$1") ))
-    [ "$actual" -eq "$wanted" ] || return 1
+    case "$3:$curve" in
+      overload:unshipped|overload:backlog|incident:shift|incident:jitter|seasonal:backlog|recover:*|normal:*)
+        wanted=$(signal "$2" "$curve" "$3")
+        actual=$(( $(count_of "$left" "$1") - $(count_of "$right" "$1") ))
+        [ "$actual" -eq "$wanted" ] || return 1
+        ;;
+    esac
   done
 }
 # A container restart invalidates a previous generator's heartbeat immediately.

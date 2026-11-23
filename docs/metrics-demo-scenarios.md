@@ -13,8 +13,9 @@ remains a one-click escape route. Historical observations and existing forecasts
 
 The API distinguishes the **requested** scenario from the **confirmed** scenario. A scenario
 is *Applying* until the generator has executed a complete tick, then inspected Kafka's
-log end offsets on the following tick and confirmed that the five topic pairs reflect
-the target counts. Only then does it write a timestamped acknowledgement
+log end offsets on the following tick and confirmed that the scenario-affected topic pairs reflect
+the requested values. Unaffected topic pairs continue their independent curves and cannot block
+confirmation of an otherwise applied incident. Only then does it write a timestamped acknowledgement
 (`demo-scenario-applied.conf`) to the local shared control directory. The UI shows
 *Active* with the generator's verification time, or *Generator unavailable* when the
 receipt becomes stale (default 75 seconds). A UUID on UI requests prevents a previous
