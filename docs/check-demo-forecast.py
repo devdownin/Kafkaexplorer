@@ -205,6 +205,18 @@ with tempfile.TemporaryDirectory() as tmp:
         elif [l.split('|')[0] for l in first[:shared]] != [l.split('|')[0] for l in second[:shared]]:
             problems.append(f'live.sh gave {left} and {right} different keys: a key traced in Stream Flow would not be found in both')
 
+    # A constant overload must become verified even as unrelated pairs retain
+    # their baseline oscillations. This reproduces the prebuilt smoke transition.
+    (control / 'demo-scenario.conf').write_text('overload|test-overload\n')
+    try:
+        subprocess.run(['sh', str(DIR / 'live.sh'), 'stub:9092'], env=env,
+                       capture_output=True, text=True, timeout=7)
+    except subprocess.TimeoutExpired:
+        pass
+    time.sleep(1)
+    if not receipt.exists() or not receipt.read_text().startswith('v2|overload|test-overload|'):
+        problems.append('live.sh did not verify an overload transition against Kafka offsets')
+
 # 3. Both platforms, and the compose registry, name the overlay — and layer the same files. The two
 # scripts are twins that nothing else compares; the forecast-only mode (`--forecast` / `-Forecast`)
 # is the newest thing they must agree about.
