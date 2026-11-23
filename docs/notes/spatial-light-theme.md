@@ -201,10 +201,13 @@ contrast: the ratios above are computed from the tokens.
   `--dm-accent-N`. Dark keeps the original dark blocks; light uses pastel containers with dark
   text and accents darkened for strokes. Exports (SVG, PNG, Mermaid) keep the hex palette: they
   are standalone files that cannot know the page's theme.
-- **Dashboard bento**: Cluster Health is the large tile; Message Count is a full-width strip with a
-  `TrendLine` of `totalMessages` at each refresh *of this visit* (30 samples, in memory only). Fewer
-  than two samples draw nothing — the tile says the trend builds up, rather than drawing a dash
-  that pretends to be one. A constant series is a flat mid-line, not noise stretched over the range.
+- **Dashboard bento**: Cluster Health remains the large tile; Message Count is now a compact
+  tile on the same row at desktop widths, alongside the smaller topic and Flink counts. The
+  `TrendLine` uses `totalMessages` at each refresh *of this visit* (30 samples, in memory only)
+  and a narrower plot sized for the tile. Fewer than two samples draw nothing — the tile says
+  when the trend becomes available, rather than drawing a dash that pretends to be one. A
+  constant series is a flat mid-line, not noise stretched over the range. On narrower screens,
+  the two wider tiles stack to keep the values and trend readable.
 
 ## Seventh pass — motion and type
 
