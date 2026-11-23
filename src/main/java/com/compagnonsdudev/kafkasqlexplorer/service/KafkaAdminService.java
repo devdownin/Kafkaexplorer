@@ -332,6 +332,21 @@ public class KafkaAdminService {
     }
 
     /**
+     * Dashboard-only strict counts. A topic is present only when every partition
+     * returned both boundaries; otherwise the UI must show "Not measured" rather
+     * than a partial floor labelled as an exact empty/populated result.
+     *
+     * The ordinary record-count API intentionally retains partial floors for
+     * feature discovery and metrics, so this strict view has its own 30-second
+     * cache and does not alter their semantics.
+     */
+    @Cacheable(value = "dashboardTopicCounts", key = "#topicNames")
+    public Map<String, Long> getDashboardTopicCounts(List<String> topicNames) {
+        if (topicNames == null || topicNames.isEmpty()) return Map.of();
+        return readRecordCounts(topicNames, true);
+    }
+
+    /**
      * Offsets ever produced to one topic: the latest offset summed over its partitions. A
      * cumulative total — what was produced, not what retention left — so a forecast reads it as a
      * produce rate through its counter-rate preparation.
@@ -417,6 +432,10 @@ public class KafkaAdminService {
     }
 
     private Map<String, Long> readRecordCounts(List<String> topicNames) {
+        return readRecordCounts(topicNames, false);
+    }
+
+    private Map<String, Long> readRecordCounts(List<String> topicNames, boolean requireComplete) {
         Map<String, Long> sizes = new HashMap<>();
 
         Map<String, List<TopicPartition>> topicToPartitions;
@@ -461,7 +480,9 @@ public class KafkaAdminService {
                 // anything to measure". A topic where *none* answered is a different matter:
                 // the sum would be 0, and 0 is the one value that must never be invented, so
                 // the topic carries no entry at all rather than a fabricated emptiness.
-                if (measured > 0) sizes.put(entry.getKey(), size);
+                if (measured > 0 && (!requireComplete || measured == entry.getValue().size())) {
+                    sizes.put(entry.getKey(), size);
+                }
             }
         } catch (Exception e) {
             log.error("Failed to read record counts for: {}", topicNames, e);
