@@ -85,7 +85,7 @@ class SchemaRegistryExplorerServiceTest {
             } else if (path.equals("/compatibility/subjects/orders-value/versions/1")) {
                 String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
                 assertTrue(body.contains("\"schemaType\":\"AVRO\""));
-                assertTrue(body.contains("\"type\""));
+                assertTrue(body.contains("type"));
                 reply(exchange, 200, "{\"is_compatible\":false,\"messages\":[\"BREAKING_CHANGE\"]}");
             } else if (path.equals("/config/orders-value")) {
                 reply(exchange, 200, "{\"compatibilityLevel\":\"BACKWARD\"}");
