@@ -42,7 +42,7 @@ describe('ForecastPanel', () => {
     const user = userEvent.setup();
     render(<ForecastPanel />);
     const selector = await screen.findByRole('combobox', { name: 'Forecast series' });
-    expect(screen.getAllByRole('option')).toHaveLength(2);
+    expect((selector as HTMLSelectElement).options).toHaveLength(2);
     await user.selectOptions(selector, second.seriesId);
     expect(selector).toHaveValue(second.seriesId);
     await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.map(call => call[0]))
