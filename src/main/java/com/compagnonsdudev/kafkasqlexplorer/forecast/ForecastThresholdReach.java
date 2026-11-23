@@ -54,14 +54,21 @@ public final class ForecastThresholdReach {
     return null;
   }
 
-  /** A record's reach against a metric's thresholds, or null — the {@code forecastReachFor} of the page. */
+  /** A record's next future reach against a metric's thresholds; never return an elapsed prediction. */
   public static Reach reachFor(ForecastRecord record, Double warning, Double critical) {
-    if (record == null || record.forecast() == null) return null;
+    return reachFor(record, warning, critical, System.currentTimeMillis());
+  }
+
+  /** Clock overload keeps Prometheus/MCP and the UI on the same rule, with deterministic tests. */
+  public static Reach reachFor(ForecastRecord record, Double warning, Double critical, long nowMillis) {
+    if (record == null || record.forecast() == null
+        || "STALE".equals(record.state()) || "DEGRADED".equals(record.state())) return null;
     if (record.context() != null && record.context().profile() != null
         && record.context().profile().transformation() == SeriesPreparationProfile.Transformation.COUNTER_RATE) {
       return null;
     }
-    return reach(record.forecast().points(), record.forecast().historyEndAt(), warning, critical,
+    var future = record.forecast().points().stream().filter(p -> p.at() > nowMillis).toList();
+    return reach(future, record.forecast().historyEndAt(), warning, critical,
         "TIMESFM".equals(record.strategy()));
   }
 
