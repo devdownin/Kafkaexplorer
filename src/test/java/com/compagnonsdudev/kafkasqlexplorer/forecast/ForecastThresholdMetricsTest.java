@@ -79,7 +79,8 @@ class ForecastThresholdMetricsTest {
   void omitsPastBreachesAndStaleModelResults() throws Exception {
     when(provider.getIfAvailable()).thenReturn(pilot);
     when(metricService.getAllMetrics()).thenReturn(List.of(metric("latency", 800.0, 1600.0)));
-    when(pilot.series()).thenReturn(List.of(series("a", "latency")));
+    var configuredSeries = series("a", "latency");
+    when(pilot.series()).thenReturn(List.of(configuredSeries));
     var current = record(SeriesPreparationProfile.Transformation.GAUGE_MEAN, 700, 900, 1700);
     when(pilot.get("a")).thenReturn(current);
     // All threshold-crossing points have already elapsed.
