@@ -17,6 +17,7 @@ import { isShadowComparison, type ShadowView } from './shadowModels';
 import { ForecastTimeline } from './ForecastTimeline';
 import { about, forecastStage } from './forecastStage';
 import { FORECAST_COLORS, THRESHOLD_COLORS } from './forecastColors';
+import { type DemoScenarioEvent, eventWithinObserved, comparedAfterEvent } from './demoScenarios';
 import { placeThresholds } from './thresholdPlacement';
 import { predictedPoints, whatIfReach } from './forecastBreach';
 import { forecastCsv } from './forecastCsv';
@@ -80,7 +81,7 @@ function isProgress(data: Progress | undefined, seriesId: string): data is Progr
     && data.requiredPoints === 512 && Array.isArray(data.topics) && Array.isArray(data.groups);
 }
 
-export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metricNames = {}, metricThresholds = {} }: {
+export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metricNames = {}, metricThresholds = {}, demoEvent = null }: {
   /**
    * The series to show: the one a card's Details asked for, or the one just started. The card is
    * where a series is chosen — every forecast belongs to a metric card — so the panel has no
@@ -91,6 +92,8 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   metricNames?: Record<string, string>;
   /** Each metric's own warning and critical thresholds, drawn on its chart as the card draws them. */
   metricThresholds?: Record<string, { warning: number | null; critical: number | null }>;
+  /** Last first-verified Kafka traffic scenario, used only when this forecast measures its topics. */
+  demoEvent?: DemoScenarioEvent | null;
   /** Receives every status the panel polls, so the page can show it on the cards without a second poll. */
   onStatus?: (status: ForecastStatus | null) => void;
   /** Bumped by the page after an approval, to poll at once rather than at the next tick. */
@@ -273,6 +276,13 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
     ...(result?.forecast?.points.map(p => ({ at: p.at, median: p.q50, floor: p.q10, band: p.q90 - p.q10, q10: p.q10, q90: p.q90 })) ?? []),
   ];
   const forecastStart = lastMeasured?.at ?? result?.forecast?.historyEndAt;
+  const relevantEvent = demoEvent && series && demoEvent.metricIds.includes(series.metricId) ? demoEvent : null;
+  const observedTimes = history.filter(p => typeof p.actual === 'number').map(p => p.at);
+  const eventOnChart = series && eventWithinObserved(relevantEvent, series.metricId,
+    observedTimes[0], observedTimes[observedTimes.length - 1]);
+  // Only compare exact timestamps where a previous prediction and a real observation coexist.
+  const eventComparison = series && compare && previous
+    ? comparedAfterEvent(relevantEvent, series.metricId, history, previous.points) : null;
   // Fifteen-minute steps over sixty history and sixty forecast points cover a day and more: a tick
   // that shows only the time then repeats across midnight.
   const anyImputed = chart.some(p => 'imputed' in p && p.imputed != null);
@@ -463,7 +473,25 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
             {windows.map(n => <option key={n} value={n}>Last {n} points · {about(n, series?.stepMillis ?? 60000)}</option>)}
           </Select>}</Field>
         </div>
-        <div className="kse-chart-viewport" style={{ height: 278 }} role="img" aria-label={chartSummary}>
+        {relevantEvent && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/30 bg-warning/5 p-3 text-xs"
+          role="note" aria-label="Demo scenario before and after">
+          <div className="min-w-0">
+            <p className="font-semibold text-on-surface capitalize">{relevantEvent.scenario} · verified {new Date(relevantEvent.at).toLocaleTimeString()}</p>
+            <p className="text-on-surface-variant mt-1">
+              {eventOnChart ? 'The vertical marker shows when Kafka first applied the scenario.'
+                : 'This event is not yet present in this forecast’s measured history. Await newer observations; no post-event difference is inferred.'}
+            </p>
+            {compare && <p className="mt-1 text-on-surface-variant" aria-label="Observed versus previous prediction after scenario">
+              {eventComparison ? `${eventComparison.count} matched measured/predicted points after event · mean observed minus predicted: ${eventComparison.meanDelta > 0 ? '+' : ''}${number(eventComparison.meanDelta)} ${result.context.outputUnit}`
+                : 'No previous forecast points overlap the measured period after this scenario yet.'}
+            </p>}
+          </div>
+          {!compare && <button type="button" onClick={() => setCompare(true)}
+            className="min-h-11 shrink-0 rounded-lg border border-outline-variant px-3 py-2 text-xs font-medium text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary">
+            Compare with previous forecast
+          </button>}
+        </div>}
+        <div className="kse-chart-viewport" style={{ height: 278 }} role="img" aria-label={chartSummary + (eventOnChart && relevantEvent ? ` Scenario ${relevantEvent.scenario} at ${new Date(relevantEvent.at).toLocaleString()}.` : '')}>
           <ResponsiveContainer><ComposedChart data={chart}>
             <CartesianGrid stroke={FORECAST_COLORS.band} strokeOpacity={0.12} vertical={false} />
             <XAxis dataKey="at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={tick}
@@ -475,6 +503,10 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
             {/* What lies ahead is tinted, and "now" marks where the measurements stop. */}
             {forecastStart !== undefined && <ReferenceArea x1={forecastStart} x2={chart[chart.length - 1].at}
               fill={FORECAST_COLORS.forecast} fillOpacity={0.05} strokeOpacity={0} ifOverflow="hidden" />}
+            {eventOnChart && relevantEvent && <ReferenceLine x={relevantEvent.at} stroke={FORECAST_COLORS.warning}
+              strokeWidth={2} strokeDasharray="4 3" ifOverflow="hidden"
+              label={{ value: `${relevantEvent.scenario} began`, position: 'insideTopRight',
+                fill: FORECAST_COLORS.warning, fontSize: 11 }} />}
             {forecastStart !== undefined && <ReferenceLine x={forecastStart} stroke={FORECAST_COLORS.band} strokeDasharray="3 3"
               label={{ value: 'Forecast begins', position: 'insideTopLeft', fill: 'var(--viz-axis)', fontSize: 11 }} />}
             {/* The band is drawn as a floor plus a width, so its own tooltip value is the width — shown

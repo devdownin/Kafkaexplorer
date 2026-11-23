@@ -25,6 +25,7 @@ import { describeQueryError } from '../../pages/queryError';
 import type { ForecastSeriesView, MetricConfig } from '../../api/types';
 import { about, type ForecastStageSummary } from './forecastStage';
 import { FORECAST_COLORS, THRESHOLD_COLORS } from './forecastColors';
+import { type DemoScenarioEvent, eventWithinObserved } from './demoScenarios';
 import { forecastReachFor, predictedPoints } from './forecastBreach';
 import { forecastReliability, lastCheck, reliabilityTrend } from './forecastVsActual';
 import { forecastBreachRule, metricTopics } from '../../pages/metricLinks';
@@ -123,6 +124,8 @@ const MetricCardView: React.FC<{
   forecast?: ForecastStageSummary;
   /** Forecast points come from the already-polled /api/forecasts status; no per-card API calls. */
   forecastSeries?: ForecastSeriesView;
+  /** Last Kafka-verified demo scenario, shown only on affected metric cards. */
+  demoEvent?: DemoScenarioEvent | null;
   /** Only supplied while a future threshold is displayed; avoids re-rendering all charts on every tick. */
   forecastNow?: number;
   /** The one-click creation is running for this card. */
@@ -137,7 +140,7 @@ const MetricCardView: React.FC<{
   refreshTickMs?: number;
   /** How far the latest forecast moved the predicted threshold from the previous one (ms, negative = sooner). */
   reachShiftMs?: number;
-}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, forecastNow, forecastCreating = false, onShowForecast, nextForecastAt = null, refreshDurationMs, refreshTickMs, reachShiftMs }) => {
+}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, demoEvent, forecastNow, forecastCreating = false, onShowForecast, nextForecastAt = null, refreshDurationMs, refreshTickMs, reachShiftMs }) => {
   const { toast } = useToast();
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
@@ -204,6 +207,9 @@ const MetricCardView: React.FC<{
     lastMeasured.predicted = lastMeasured.v;
   }
   const boundary = timed ? lastMeasured?.at ?? prediction!.historyEndAt : chartData.length - 1;
+  const observedTimestamps = timed ? chartData.filter(p => p.v !== null && p.at !== undefined).map(p => p.at!) : [];
+  const eventOnChart = eventWithinObserved(demoEvent, metric.id,
+    observedTimestamps[0], observedTimestamps[observedTimestamps.length - 1]);
   /*
    * The metric's thresholds are set on its own value. A counter's forecast is a rate per second —
    * another quantity — so on that chart they are neither drawn nor compared with the forecast.
@@ -359,6 +365,10 @@ const MetricCardView: React.FC<{
                   {forecastPoints.length > 0 && <ReferenceArea yAxisId="observed" x1={boundary}
                     x2={timed ? forecastPoints[forecastPoints.length - 1].at : chartData.length - 1}
                     fill={FORECAST_COLORS.forecast} fillOpacity={0.06} strokeOpacity={0} ifOverflow="hidden" />}
+                  {eventOnChart && demoEvent && <ReferenceLine yAxisId="observed" x={demoEvent.at}
+                    stroke={FORECAST_COLORS.warning} strokeDasharray="3 2" strokeWidth={2}
+                    label={{ value: demoEvent.scenario, position: 'insideTopRight', fontSize: 9,
+                      fill: FORECAST_COLORS.warning }} />}
                   {forecastPoints.length > 0 && <ReferenceLine yAxisId="observed" x={boundary} stroke={FORECAST_COLORS.band}
                     strokeOpacity={0.6} strokeDasharray="2 2"
                     label={{ value: 'now', position: 'insideTopLeft', fontSize: 8, fill: FORECAST_COLORS.band, dy: -2 }} />}
@@ -397,6 +407,11 @@ const MetricCardView: React.FC<{
                   />
                 </ComposedChart>
               </ResponsiveContainer>
+              {demoEvent && <p className="px-3 pt-2 text-[11px] text-on-surface-variant"
+                role="note" aria-label="Demo scenario annotation">
+                <span className="font-semibold capitalize">{demoEvent.scenario}</span> · applied {new Date(demoEvent.at).toLocaleTimeString()}
+                {eventOnChart ? ' · event marked on observed history' : ' · waiting for recorded history in this forecast snapshot'}
+              </p>}
               {/* Beside the chart rather than over it: drawn in a corner they covered the forecast. */}
               {offScale.length > 0 && <div className="flex flex-wrap gap-x-3 px-3 pt-1 text-[11px] font-mono" aria-label="Thresholds off the chart scale">
                 {offScale.map(t => <span key={t.label} style={{ color: t.color }}>{t.up ? '↑' : '↓'} {t.label} {t.value.toLocaleString()} <span className="text-outline">off scale</span></span>)}
