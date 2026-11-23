@@ -288,3 +288,60 @@ bucket coverage, conservative anomaly detection, declared-only topic paths,
 complete versus partial comparison and non-causal correlation.
 Runtime checks should additionally verify orbit, selection, light/dark modes,
 WebGL fallback, trace cancel, and missing/partial Kafka metadata.
+
+## Lot D — Rendering diagnostics and accessibility hardening
+
+The collapsed **Scene telemetry (local)** panel displays the most recent browser-side WebGL
+sample every three seconds while the tab is visible: active FPS, last-frame draw calls,
+allocated Three.js geometry/texture object counts, actual device pixel ratio, topic
+count and most recent scene-rebuild duration. An idle scene uses demand rendering and
+intentionally reports **on-demand / no FPS** rather than a fabricated 0 FPS. The
+counts are *not* GPU memory consumption in bytes. Diagnostics do not call Kafka,
+send telemetry to a server or persist measurements.
+
+The render budget, bounded topic and partition counts, renderer disposal and
+WebGL loss fallback remain in place. Changes to the operating system's
+**Reduce motion** preference also update the active animation mode. Manual
+Pause/Resume remains available. All monitoring controls use native HTML
+elements outside the canvas so they can be reached with a keyboard.
+
+**Validation checklist before a release:** run the frontend preflight and the
+Chromium/WebGL interaction probe; then inspect a real integrated GPU, discrete
+GPU and a mobile touch device in both light/dark modes. Check scene
+rebuilds, context loss, focus order, contrast, 200% zoom, reduced-motion
+transitions and absence of horizontal overflow. Chromium SwiftShader is not
+a substitute for physical hardware profiling, and the code is not a formal
+WCAG accessibility certification.
+
+## Lot E — Guided investigation, bounded leads and local snapshots
+
+In **Investigate** mode, the inspector offers four ordered evidence stages:
+offset production and coverage, declared Flink paths, the selected consumer
+group, then explicitly initiated message-key tracing. Each stage can be reached
+by a native numbered button or Previous/Next; navigating stages introduces
+no new Kafka reads.
+
+**Signals to inspect** are calculated only from the current sampled window:
+fully covered local offset deviations and consumer-group lag for the
+*currently selected group and topic*. Incomplete, unavailable or stale
+activity cannot generate an offset-deviation signal. A selected group with
+lag and no assigned members is labelled as a scoped stalled-group observation.
+The panel does not compute an overall congestion score, infer a relation
+from topic proximity or claim that time correlation proves causation.
+Topics with no visible signal may still lack measurements.
+
+**Save investigation snapshot** downloads an allowlisted JSON document in
+the browser with a schema version, capture time, selected topic and time
+bucket, coverage and measured offsets, current view choices, declared
+lineage and the currently selected group's status. It excludes raw Kafka
+message keys, values, headers, full trace matches, credentials and arbitrary
+server responses. No snapshot is automatically stored or uploaded. The
+download is intentionally **not a live data source**: it reflects the last
+received samples and records their sampling time. Only share it when topic,
+Flink-job and group names are suitable for the recipient.
+
+The JavaScript unit tests exercise missing/stale observations, scoped
+consumer lag, the non-causal signal vocabulary and the snapshot allowlist.
+The WebGL browser probe also exercises the telemetry disclosure, stage
+navigation and snapshot download.
+
