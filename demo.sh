@@ -281,15 +281,30 @@ wait_forecast_ready() {
 }
 set_scenario() {
   [[ $DEMO_MODE == forecast ]] || { echo 'scenario is available in forecast mode only.' >&2; return 2; }
-  local name=${1:-} file="${FORECAST_CONFIG_DIR}/demo-scenario.conf"
+  local name=${1:-} file="${FORECAST_CONFIG_DIR}/demo-scenario.conf" running
+  # The browser and the live generator share a Docker volume. Retain a host fallback for
+  # a scenario selected before the first startup (the volume initializer imports it once).
+  running=$(compose ps -q explorer 2>/dev/null || true)
   if [[ -z $name ]]; then
-    if [[ -f $file ]]; then cat "$file"; else echo normal; fi
+    if [[ -n $running ]]; then
+      compose exec -T explorer sh -c 'cat /app/demo-control/demo-scenario.conf 2>/dev/null || echo normal'
+    elif [[ -f $file ]]; then
+      cat "$file"
+    else
+      echo normal
+    fi
     return 0
   fi
   case $name in normal|overload|incident|recover|seasonal) ;; *)
     echo 'Usage: scenario [normal|overload|incident|recover|seasonal]' >&2; return 2 ;; esac
-  mkdir -p "$FORECAST_CONFIG_DIR"
-  printf '%s\n' "$name" > "$file"
+  if [[ -n $running ]]; then
+    # The value has already passed the fixed allowlist; no shell expansion of arbitrary input.
+    compose exec -T explorer sh -c 'printf "%s\\n" "$1" > /app/demo-control/demo-scenario.conf' -- "$name"
+  else
+    mkdir -p "$FORECAST_CONFIG_DIR"
+    printf '%s\n' "$name" > "$file"
+    echo 'Scenario stored for initial startup. An existing stopped stack retains its Docker-volume state.'
+  fi
   echo "Live Kafka scenario set to $name (next generator tick, default 15 s)."
 }
 
