@@ -24,7 +24,7 @@ import { isInternalTopic } from '../internalTopics';
 import { useCatalog } from '../catalogStore';
 import {
   REFRESH_OPTIONS, REFRESH_OFF, readRefreshChoice, writeRefreshChoice,
-  refreshIntervalMs, activityIntervalMs, describeRefreshStatus, isDashboardStale,
+  refreshIntervalMs, activityIntervalMs, describeRefreshStatus, describeAge, isDashboardStale,
   type RefreshChoice,
 } from './dashboardRefresh';
 import {
@@ -83,6 +83,7 @@ const Dashboard: React.FC = () => {
   const [productionError, setProductionError] = useState(false);
   const productionRequestedAt = useRef(0);
   const [snapshotFailed, setSnapshotFailed] = useState(false);
+  const [hasSuccessfulSnapshot, setHasSuccessfulSnapshot] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState(() => params.get('q') ?? '');
@@ -212,6 +213,7 @@ const Dashboard: React.FC = () => {
       if (snapshot.health) {
         setData(snapshot);
         setSnapshotFailed(false);
+        setHasSuccessfulSnapshot(true);
         setFetchedAt(Date.now());
       } else {
         // Keep the last successfully measured values while showing a degraded broker.
@@ -567,7 +569,9 @@ const Dashboard: React.FC = () => {
             {stale && (
               <span role="status" className="rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-[11px] text-warning"
                 title={snapshotFailed ? 'The latest cluster read failed; previous values are retained where possible' : 'The latest cluster snapshot is older than the refresh allowance'}>
-                Stale data · last successful update {describeRefreshStatus(REFRESH_OFF, fetchedAt, now).split(' · ')[0].replace('Updated ', '')}
+                {hasSuccessfulSnapshot
+                  ? `Stale data · last successful update ${describeAge(fetchedAt, now)}`
+                  : 'Cluster data unavailable · no successful snapshot yet'}
               </span>
             )}
             <span className="text-[11px] text-on-surface-variant tabular-nums">
@@ -629,8 +633,11 @@ const Dashboard: React.FC = () => {
             <>
               <span>{latestRate
                 ? `Observed from produced offsets · ${latestRate.measuredTopics}/${latestRate.totalTopics} topics · ${Math.round(latestRate.seconds)} s`
-                : productionError ? 'Production rate unavailable' : 'Measuring produced offsets…'}</span>
-              <span className="block">Stored messages: {formatCount(data.totalMessages)}</span>
+                : productionError ? 'Production rate unavailable'
+                : productionSamples.length >= 2 ? 'Rate unavailable · no comparable topics'
+                : productionSamples.length === 1 && productionSamples[0].totalTopics === 0 ? 'No topics to measure'
+                : 'Measuring produced offsets…'}</span>
+              <span className="block">Stored messages: {formatCount(data.totalMessages)}{data.unmeasuredTopics?.length ? ' (partial)' : ''}</span>
             </>
           }
           aside={latestRate && rateSeries.length >= 2
