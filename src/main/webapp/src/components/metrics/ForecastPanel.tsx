@@ -125,10 +125,6 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   // Followed during render rather than in an effect: it takes hold once the list carries the series.
-  if (focus !== seenFocus) { setSeenFocus(focus); if (focus) {
-    setSelected(focus); setCopied(false); setAction(null);
-    setWhatIf(''); setWhatIfBelow(null); setCompare(false);
-  } }
   const [revision, setRevision] = useState(0);
   /*
    * Whether the panel is on screen. It sits at the bottom of the page and read the shown series'
@@ -149,6 +145,11 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   // A threshold the operator is only trying out: drawn, and read like the metric's own.
   const [whatIf, setWhatIf] = useState('');
   const [whatIfBelow, setWhatIfBelow] = useState<boolean | null>(null);
+  // Reset per-series experimentation when the card focuses another forecast.
+  if (focus !== seenFocus) { setSeenFocus(focus); if (focus) {
+    setSelected(focus); setCopied(false); setAction(null);
+    setWhatIf(''); setWhatIfBelow(null); setCompare(false);
+  } }
   /** P4: the preparation checks are read when their section is opened, not on every visit. */
   const [preparationOpen, setPreparationOpen] = useState(false);
   const [detail, setDetail] = useState<ForecastSeriesView | null>(null);
