@@ -239,7 +239,54 @@ verify_forecast_once() {
   count=$(compose exec -T forecast-postgres psql -U forecasts -d forecasts -At -c \
     "SELECT count(*) FROM (SELECT payload::jsonb->>'metricId' AS metric_id FROM kex_metric_observation_v1 WHERE payload::jsonb->>'collectorRunId' LIKE 'demo-seed-%' AND payload::jsonb->>'component'='value' GROUP BY 1 HAVING count(*) >= 500) seeded;" 2>/dev/null) ||
     { echo 'Cannot query seeded forecast history.'; return 1; }
-  [[ ${count//
+  count=$(printf '%s' "$count" | tr -d '\\r\\n ')
+  [[ $count == 5 ]] || { echo "Only ${count:-0}/5 metrics have >=500 historical observations."; return 1; }
+  metrics=$(curl --max-time 10 -fsS "http://127.0.0.1:${EXPLORER_PORT}/api/metrics") ||
+    { echo 'Metrics API not available.'; return 1; }
+  for id in unshipped backlog creep jitter shift; do
+    printf '%s' "$metrics" | grep -Fq "\"id\":\"demo-live-$id\"" ||
+      { echo "Metric demo-live-$id is missing."; return 1; }
+  done
+  forecasts=$(curl --max-time 10 -fsS "http://127.0.0.1:${EXPLORER_PORT}/api/forecasts") ||
+    { echo 'Forecast API not available.'; return 1; }
+  printf '%s' "$forecasts" | grep -Fq '"metricId":"demo-live-unshipped"' ||
+    { echo 'Unshipped-orders series is absent.'; return 1; }
+  printf '%s' "$forecasts" | grep -Fq '"state":"READY"' ||
+    { echo 'No forecast result is READY yet.'; return 1; }
+  printf '%s' "$forecasts" | grep -Fq '"strategy":"TIMESFM"' ||
+    { echo 'TimesFM has not returned a forecast.'; return 1; }
+  echo 'Ready: Kafka, PostgreSQL, Explorer, TimesFM, live traffic, five histories (>=500 points) and TimesFM forecast.'
+}
+verify_forecast() {
+  [[ $DEMO_MODE == forecast ]] || { echo 'verify is available in forecast mode only.' >&2; return 2; }
+  verify_forecast_once
+}
+wait_forecast_ready() {
+  local deadline=$((SECONDS + ${DEMO_FORECAST_READY_TIMEOUT:-900})) reason
+  echo 'Waiting for live data, five seeded histories and first READY TimesFM forecast...'
+  while :; do
+    if reason=$(verify_forecast_once); then echo "$reason"; return 0; fi
+    if (( SECONDS >= deadline )); then
+      echo "ERROR: demo did not become fully ready: $reason" >&2
+      echo 'Check: ./demo-forecast.sh logs demo-forecast-seed; ./demo-forecast.sh logs timesfm' >&2
+      return 1
+    fi
+    sleep 5
+  done
+}
+set_scenario() {
+  [[ $DEMO_MODE == forecast ]] || { echo 'scenario is available in forecast mode only.' >&2; return 2; }
+  local name=${1:-} file="${FORECAST_CONFIG_DIR}/demo-scenario.conf"
+  if [[ -z $name ]]; then
+    if [[ -f $file ]]; then cat "$file"; else echo normal; fi
+    return 0
+  fi
+  case $name in normal|overload|incident|recover|seasonal) ;; *)
+    echo 'Usage: scenario [normal|overload|incident|recover|seasonal]' >&2; return 2 ;; esac
+  mkdir -p "$FORECAST_CONFIG_DIR"
+  printf '%s\n' "$name" > "$file"
+  echo "Live Kafka scenario set to $name (next generator tick, default 15 s)."
+}
 
 wait_for_http() {
   local name=$1 url=$2 deadline=$((SECONDS + $3))
