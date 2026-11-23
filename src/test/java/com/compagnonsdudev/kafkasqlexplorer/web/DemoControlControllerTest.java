@@ -47,6 +47,15 @@ class DemoControlControllerTest {
     assertEquals("ACTIVE", confirmed.phase());
     assertEquals("incident", confirmed.scenario());
     assertNotNull(confirmed.appliedAt());
+    assertEquals(confirmed.appliedAt(), confirmed.startedAt()); // legacy receipt
+
+    long firstTick = Instant.now().getEpochSecond() - 10;
+    Files.writeString(directory.resolve("demo-scenario-applied.conf"),
+        "v2|" + request + "|" + Instant.now().getEpochSecond() + "|" + firstTick + "\n");
+    var versioned = controller.status().getBody();
+    assertNotNull(versioned);
+    assertEquals(firstTick * 1000, versioned.startedAt());
+    assertEquals("ACTIVE", versioned.phase());
 
     var replaced = controller.select(new DemoControlController.Selection("normal"), null, null).getBody();
     assertNotNull(replaced);

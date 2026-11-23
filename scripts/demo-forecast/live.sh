@@ -127,7 +127,22 @@ while :; do
        [ -d "${APPLIED_FILE%/*}" ] &&
        targets_reached "$offsets" "$previous_at" "$previous_mode"; then
       receipt_tmp="${APPLIED_FILE}.$"
-      printf '%s|%s\n' "$request" "$now" > "$receipt_tmp"
+      started=$now
+      if [ -r "$APPLIED_FILE" ]; then
+        old_receipt=$(cat "$APPLIED_FILE" 2>/dev/null || true)
+        case "$old_receipt" in
+          v2\|*)
+            old_rest=${old_receipt#v2|}
+            old_started=${old_rest##*|}
+            old_rest=${old_rest%|*}
+            old_request=${old_rest%|*}
+            if [ "$old_request" = "$request" ]; then
+              case "$old_started" in *[!0-9]*|'') ;; *) started=$old_started ;; esac
+            fi
+            ;;
+        esac
+      fi
+      printf 'v2|%s|%s|%s\n' "$request" "$now" "$started" > "$receipt_tmp"
       mv -f "$receipt_tmp" "$APPLIED_FILE"
     fi
     printf '%s\n' "$PAIRS" | while read -r left right curve; do

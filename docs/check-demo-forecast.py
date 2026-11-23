@@ -182,7 +182,7 @@ with tempfile.TemporaryDirectory() as tmp:
         problems.append('live.sh did not acknowledge a scenario after Kafka offsets reflected the completed tick')
     else:
         parts = receipt.read_text().strip().split('|')
-        if len(parts) != 3 or parts[:2] != ['normal', 'test-revision'] or not parts[2].isdigit():
+        if len(parts) != 5 or parts[:3] != ['v2', 'normal', 'test-revision'] or not all(p.isdigit() for p in parts[3:]):
             problems.append('live.sh receipt does not identify the exact request and verified tick')
 
     ended = int(time.time())

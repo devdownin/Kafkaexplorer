@@ -41,7 +41,7 @@ public class DemoControlController {
    * appliedAt is epoch milliseconds of the generator's last verified tick.
    */
   public record State(boolean enabled, String scenario, String requestedScenario, String phase,
-                      Long appliedAt) {}
+                      Long appliedAt, Long startedAt) {}
   public record Selection(String scenario) {}
 
   @GetMapping
@@ -63,28 +63,47 @@ public class DemoControlController {
     String requested = scenarioOf(request);
     if (requested == null) throw new IOException("Invalid demo scenario request");
     if (!Files.isRegularFile(appliedFile))
-      return new State(true, null, requested, "APPLYING", null);
+      return new State(true, null, requested, "APPLYING", null, null);
 
     String receipt = Files.readString(appliedFile, StandardCharsets.UTF_8).trim();
-    int separator = receipt.lastIndexOf('|');
-    if (separator < 1) return new State(true, null, requested, "STALE", null);
-    String acknowledgedRequest = receipt.substring(0, separator);
+    // v2|<exact request>|<last verified epoch>|<first verified epoch>.
+    // Continue reading v1 receipts from older published demo generators.
+    boolean v2 = receipt.startsWith("v2|");
+    String payload = v2 ? receipt.substring(3) : receipt;
+    int separator = payload.lastIndexOf('|');
+    if (separator < 1) return new State(true, null, requested, "STALE", null, null);
+    long startedSeconds;
+    if (v2) {
+      try {
+        startedSeconds = Long.parseLong(payload.substring(separator + 1));
+      } catch (NumberFormatException e) {
+        return new State(true, null, requested, "STALE", null, null);
+      }
+      payload = payload.substring(0, separator);
+      separator = payload.lastIndexOf('|');
+      if (separator < 1) return new State(true, null, requested, "STALE", null, null);
+    } else {
+      startedSeconds = -1;
+    }
+    String acknowledgedRequest = payload.substring(0, separator);
     String acknowledgedScenario = scenarioOf(acknowledgedRequest);
     long epochSeconds;
     try {
-      epochSeconds = Long.parseLong(receipt.substring(separator + 1));
+      epochSeconds = Long.parseLong(payload.substring(separator + 1));
+      if (!v2) startedSeconds = epochSeconds;
     } catch (NumberFormatException e) {
-      return new State(true, null, requested, "STALE", null);
+      return new State(true, null, requested, "STALE", null, null);
     }
     long now = Instant.now().getEpochSecond();
     if (acknowledgedScenario == null || epochSeconds <= 0 || epochSeconds > now + 5
+        || startedSeconds <= 0 || startedSeconds > epochSeconds
         || now - epochSeconds > ackMaxAgeSeconds)
-      return new State(true, null, requested, "STALE", null);
+      return new State(true, null, requested, "STALE", null, null);
 
     // A previous request may still be confirmed while a new one is in flight.
     return new State(true, acknowledgedScenario, requested,
         request.equals(acknowledgedRequest) ? "ACTIVE" : "APPLYING",
-        epochSeconds * 1000);
+        epochSeconds * 1000, startedSeconds * 1000);
   }
 
   private static String scenarioOf(String request) {
