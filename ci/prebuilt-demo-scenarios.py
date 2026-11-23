@@ -8,6 +8,7 @@ No build tools are used by the launcher. Use the application's own metric refres
 endpoint rather than assuming how quickly Kafka producers flush their records.
 """
 import json
+import pathlib
 import subprocess
 import time
 import urllib.error
@@ -30,7 +31,21 @@ def read_metric(metric_id):
     return next(row["lastValue"] for row in metrics if row["id"] == metric_id)
 
 
-def assert_live(label, metric_id, check, seconds=90):
+def wait_for_verified_scenario(mode, seconds=180):
+    """Do not start the UI timeout until the generator has verified the Kafka offsets."""
+    path = pathlib.Path(".forecast-stack/config/demo-scenario-applied.conf")
+    deadline = time.monotonic() + seconds
+    last = None
+    while time.monotonic() < deadline:
+        if path.exists():
+            last = path.read_text().strip()
+            if last.startswith(f"v2|{mode}|"):
+                return
+        time.sleep(5)
+    raise AssertionError(f"generator never verified scenario {mode} in {seconds}s (last receipt={last})")
+
+
+def assert_live(label, metric_id, check, seconds=120):
     deadline = time.monotonic() + seconds
     last = None
     while time.monotonic() < deadline:
@@ -54,12 +69,15 @@ def scenario(mode):
 def main():
     try:
         scenario("overload")
+        wait_for_verified_scenario("overload")
         assert_live("overloaded orders", "demo-live-unshipped", lambda value: value >= 460)
         assert_live("overloaded requests", "demo-live-backlog", lambda value: value >= 165)
         scenario("incident")
+        wait_for_verified_scenario("incident")
         assert_live("incident tickets", "demo-live-shift", lambda value: value >= 175)
         assert_live("incident events", "demo-live-jitter", lambda value: value >= 155)
         scenario("recover")
+        wait_for_verified_scenario("recover")
         assert_live("recovered requests", "demo-live-backlog", lambda value: value <= 40)
         assert_live("recovered tickets", "demo-live-shift", lambda value: value <= 70)
         scenario("seasonal")

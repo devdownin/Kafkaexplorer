@@ -126,7 +126,7 @@ while :; do
     if [ "$request" = "$previous_request" ] && [ -n "$previous_at" ] &&
        [ -d "${APPLIED_FILE%/*}" ] &&
        targets_reached "$offsets" "$previous_at" "$previous_mode"; then
-      receipt_tmp="${APPLIED_FILE}.$"
+      receipt_tmp="${APPLIED_FILE}.pending"
       started=$now
       if [ -r "$APPLIED_FILE" ]; then
         old_receipt=$(cat "$APPLIED_FILE" 2>/dev/null || true)
