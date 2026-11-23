@@ -21,7 +21,8 @@ export interface ProductionRate {
 }
 
 export const PRODUCTION_SAMPLE_MS = 30_000;
-export const MAX_PRODUCTION_GAP_MS = 90_000;
+// Covers the slowest offered refresh (5 min) while rejecting hours-old averages.
+export const MAX_PRODUCTION_GAP_MS = 10 * 60_000;
 export const MAX_PRODUCTION_SAMPLES = 30;
 
 export function calculateProductionRate(
