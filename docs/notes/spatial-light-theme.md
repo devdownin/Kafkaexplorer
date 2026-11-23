@@ -203,8 +203,9 @@ contrast: the ratios above are computed from the tokens.
   are standalone files that cannot know the page's theme.
 - **Dashboard bento**: Cluster Health remains the large tile; Message Count is now a compact
   tile on the same row at desktop widths, alongside the smaller topic and Flink counts. The
-  `TrendLine` uses `totalMessages` at each refresh *of this visit* (30 samples, in memory only)
-  and a narrower plot sized for the tile. Fewer than two samples draw nothing — the tile says
+  `TrendLine` now plots estimated produced-message rates from successive latest-offset snapshots,
+  sampled on their own 30-second minimum cadence (and stopped with auto-refresh).
+  The total retained-message count stays visible as secondary context. Fewer than two samples draw nothing — the tile says
   when the trend becomes available, rather than drawing a dash that pretends to be one. A
   constant series is a flat mid-line, not noise stretched over the range. On narrower screens,
   the two wider tiles stack to keep the values and trend readable.
@@ -224,3 +225,9 @@ contrast: the ratios above are computed from the tokens.
 - **Accent** (`accent-tokens.css`, `appearance.ts`, Settings → Appearance): indigo (default), blue, teal, pink, orange, graphite, as `data-accent` on `<html>`. Each overrides primary, its container, its dim variant, the tint, the focus ring and the chart primary, per scheme. Every pair was checked at ≥ 4.5:1 (primary on page and card, text on primary, container text); the default is stored as absence. Violet and green are not offered: violet is the secondary colour and green is the success colour, so an accent there would read as a status.
 - **Density** (`data-density="compact"`): table rows, `h-9` buttons and fields, and sidebar links tighten, with every target kept at or above 24 px. The rules are unlayered so they beat the utility classes the components carry.
 - Both preferences are browser-only and applied by `index.html` before first paint.
+
+## Dashboard operational-truth pass (2026-11-23)
+
+- **Throughput** is computed from complete latest-offset snapshots by a single batched Kafka lookup: only topics seen in both reads with nondecreasing offsets contribute. The KPI shows msg/s and the number of comparable topics, not a retained-count delta. The first read, absent readings, long gaps and failed batches show unavailable instead of zero. The 30-second minimum sampling cadence prevents heavy reads every five seconds.
+- **State** in the topic table now describes *record presence* and *DLT naming*, not a health verdict. The backend returns `unmeasuredTopics` from the exact count lookup so unreadable counts are distinct from a measured empty topic; the diagnostics' empty count excludes them.
+- **Staleness** is explicit when a background refresh fails, the broker becomes unavailable, or the last successful snapshot exceeds the polling allowance. The previous successfully measured rows are retained during failure. An intentionally disabled timer is labelled Off, not presented as a failed refresh.
