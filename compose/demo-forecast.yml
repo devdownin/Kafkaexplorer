@@ -21,6 +21,15 @@
 # `sed` first, as the seeders' entrypoints do, so a CRLF checkout on Windows does not break it.
 services:
 
+  explorer:
+    # Demo-only endpoint; disabled in every other stack. The directory is shared with
+    # the live generator and never exposes Docker or host shell access.
+    environment:
+      EXPLORER_DEMO_CONTROL_ENABLED: 'true'
+      EXPLORER_DEMO_CONTROL_DIRECTORY: /app/demo-control
+    volumes:
+      - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}:/app/demo-control
+
   demo-live:
     image: ${KAFKA_IMAGE:-apache/kafka:4.4.0}
     depends_on:

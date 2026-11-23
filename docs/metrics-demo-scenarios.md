@@ -1,5 +1,23 @@
 # Metrics demo test scenarios
 
+## Forecast Demo Control Center (P2)
+
+The **Metrics** page shows a Demo Control Center only when the Explorer runs with
+`EXPLORER_DEMO_CONTROL_ENABLED=true` (set by `compose/demo-forecast.yml`). It reports
+live demo metric counts, forecast series and READY results, and lets the operator
+switch between **normal**, **overload**, **incident**, **recover**, and **seasonal**
+traffic. The Kafka generator reads the shared scenario file on its next tick (15 s
+by default); historical observations and existing forecasts are preserved.
+
+The endpoint is disabled (404) in regular deployments, validates a fixed allowlist,
+rejects cross-origin browser writes and never runs shell commands. The demo binds
+its UI to loopback by default; do not expose demo control on a public host.
+
+**Published-image note:** this UI and API require a KafkaExplorer image built from
+this change or a subsequent published release. Until that image is available,
+`demo-forecast.sh` with the pinned 2.9.1 image retains CLI scenario control via
+`./demo-forecast.sh scenario <name>`; the UI is not present in that older image.
+
 ## No-build forecast demo (published images)
 
 This is the shortest way to run the **complete live Metrics/Forecast demo** without compiling

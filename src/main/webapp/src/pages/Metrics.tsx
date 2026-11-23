@@ -33,6 +33,7 @@ import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop
 const BACKDROP_KEY = 'kse:metrics-backdrop';
 import { ForecastSetupWizard } from '../components/metrics/ForecastSetupWizard';
 import { ForecastPanel } from '../components/metrics/ForecastPanel';
+import { DemoControlCenter } from '../components/metrics/DemoControlCenter';
 import { AutoCreateRefused, createForecastFromMetric } from '../components/metrics/forecastAutoCreate';
 import { about, forecastStage, type ForecastStageSummary } from '../components/metrics/forecastStage';
 import { EMPTY_REACH_MEMORY, forecastReadDue, groupReasons, keepUnchanged, nextReachMemory } from './metricsPolling';
@@ -1179,6 +1180,8 @@ const Metrics: React.FC = () => {
           </>
         }
       />
+
+      <DemoControlCenter metricCount={metrics.filter(metric => metric.id.startsWith('demo-live-')).length} forecasts={forecastStatus} />
 
       {/* Summary bar */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
