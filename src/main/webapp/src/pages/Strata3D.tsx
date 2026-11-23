@@ -1112,7 +1112,7 @@ export default function Strata3D() {
               className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface" />
           </label>
           <StrataMiniMap items={topics} totalTopics={names.length} selected={selected} peer={activeCompareWith}
-            onSelect={chooseTopic} onFocus={focusTopic} />
+            leads={leads} onSelect={chooseTopic} onFocus={focusTopic} />
           <div>
             <h3 className="mb-2 text-xs font-semibold text-on-surface">Topics in view</h3>
             <p className="mb-2 text-[11px] text-on-surface-variant">
