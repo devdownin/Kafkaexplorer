@@ -151,6 +151,8 @@ export interface DashboardResponse {
   topics: string[];
   topicSizes: Record<string, number>;
   totalMessages: number;
+  /** Topics for which a retained-count measurement was incomplete. */
+  unmeasuredTopics?: string[];
   tables: string[];
   health: boolean;
   /** Nom d'affichage choisi au déploiement — pas une information sur le broker. */
