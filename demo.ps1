@@ -150,6 +150,11 @@ if ($prebuilt) { $env:DEMO_PUBLISHED_IMAGE = 'true' }
 
 # -- Defaults: the same values as demo.sh ---------------------------------------------------
 Set-Default BIND_ADDR '127.0.0.1'
+Set-Default DEMO_CONTROL_ENABLED 'true'
+if ($env:DEMO_CONTROL_ENABLED -notin @('true', 'false')) { throw 'DEMO_CONTROL_ENABLED must be true or false.' }
+if ($env:DEMO_CONTROL_ENABLED -eq 'true' -and $env:BIND_ADDR -notin @('127.0.0.1', '::1')) {
+    throw 'Demo Control Center requires loopback BIND_ADDR; set DEMO_CONTROL_ENABLED=false for an exposed demo.'
+}
 Set-Default EXPLORER_PORT '8080'
 Set-Default KAFKA_PORT '9092'
 Set-Default KAFKA_IMAGE 'apache/kafka:4.4.0'
