@@ -78,13 +78,15 @@ export function StrataLayerMenu({ layers, onChange }: {
   </div>;
 }
 
-export function StrataMiniMap({ items, totalTopics, selected, peer, onSelect, onFocus }: {
+export function StrataMiniMap({ items, totalTopics, selected, peer, leads, onSelect, onFocus }: {
   items: readonly { name: string; layoutIndex: number }[];
   totalTopics: number;
   selected: string | null; peer: string | null;
+  leads?: readonly { topic: string; label: string; level: 'watch' | 'stalled'; source: string }[];
   onSelect: (name: string) => void; onFocus: (name: string) => void;
 }) {
   const positions = topicMapPositions(items, totalTopics);
+  const findLead = (topic: string) => leads?.find(lead => lead.topic === topic);
   return <section className="rounded-xl border border-outline-variant bg-surface-container-low p-3" aria-label="Topic mini-map">
     <div className="flex items-center justify-between">
       <h3 className="text-xs font-semibold text-on-surface">Topic map</h3>
@@ -94,13 +96,15 @@ export function StrataMiniMap({ items, totalTopics, selected, peer, onSelect, on
       <svg viewBox="0 0 240 164" className="absolute inset-0 h-full w-full" aria-hidden="true">
         <path d="M0 82H240M120 0V164" stroke="currentColor" opacity=".10" strokeDasharray="3 6" />
         {positions.map(p => <circle key={p.name} cx={p.x} cy={p.y}
-          r={p.name === selected || p.name === peer ? 5 : 2.7}
+          r={p.name === selected || p.name === peer ? 5 : findLead(p.name) ? 4 : 2.7}
           fill={p.name === selected ? '#0c9da9' : p.name === peer ? '#9b76db' : '#8aa5b8'}
-          opacity={p.name === selected || p.name === peer ? 1 : .7} />)}
+          stroke={findLead(p.name)?.level === 'stalled' ? '#d95b64' : findLead(p.name) ? '#e4a757' : 'none'}
+          strokeWidth={findLead(p.name) ? 2.5 : 0}
+          opacity={p.name === selected || p.name === peer || findLead(p.name) ? 1 : .7} />)}
       </svg>
       <span className="sr-only">Position of visible topics in the full cluster.</span>
       {positions.map(p => <button type="button" key={p.name} title={p.name}
-        aria-label={`Select ${p.name} on the topic map`}
+        aria-label={`Select ${p.name} on the topic map${findLead(p.name) ? '; ' + findLead(p.name)!.label + ' (' + findLead(p.name)!.source + ')' : ''}`}
         aria-pressed={p.name === selected}
         className="absolute rounded-full focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-primary"
         style={{ left: `${p.x / 240 * 100}%`, top: `${p.y / 164 * 100}%`,
@@ -111,7 +115,7 @@ export function StrataMiniMap({ items, totalTopics, selected, peer, onSelect, on
         } }} />)}
     </div>
     <p className="mt-2 text-[11px] text-on-surface-variant">
-      Select a point to inspect; double-click to focus. Cyan: selected. Violet: comparison.
+      Select to inspect, double-click to focus. Cyan: selected; violet: comparison; amber outline: candidate signal; red: selected group stalled. Never a cluster health score.
     </p>
   </section>;
 }
