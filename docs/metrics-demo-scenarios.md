@@ -23,7 +23,7 @@ is needed. `COMPOSE_PROJECT_NAME` defaults to `kafka-explorer-demo`, bound to lo
 8080 (Explorer), 8085 (Schema Registry) and 9092 (Kafka).
 
 The scripts **pull**, but never build, the pinned published Explorer
-(`compagnonsdudev/kafkaexplorer:2.8.3` by default) and forecast
+(`compagnonsdudev/kafkaexplorer:2.9.1` by default) and forecast
 (`ghcr.io/devdownin/kex-forecast:0.3.0` by default) images.
 A missing/unavailable image is a hard failure rather than an implicit local build. The
 forecast image already includes model checkpoints; `forecast-model-prefetch` is not started.
