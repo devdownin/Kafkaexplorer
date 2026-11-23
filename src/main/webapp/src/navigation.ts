@@ -21,6 +21,7 @@ export const NAV_ITEMS: NavItem[] = [
   { name: 'Dashboard',      icon: 'dashboard',       path: '/' },
 
   { name: 'Topic hierarchy', icon: 'account_tree',    path: '/topics/hierarchy', group: 'Explore' },
+  { name: 'Schema Registry', icon: 'data_object', path: '/schema-registry', group: 'Explore' },
   { name: 'SQL Editor',     icon: 'terminal',        path: '/query',          group: 'Explore' },
   { name: 'Compare',        icon: 'compare_arrows',  path: '/compare',        group: 'Explore' },
   { name: 'Stream Flow',    icon: 'waves',           path: '/stream-flow',    group: 'Explore' },
