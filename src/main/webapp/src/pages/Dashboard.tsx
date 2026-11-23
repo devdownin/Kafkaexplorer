@@ -54,6 +54,7 @@ interface DashboardData {
   totalMessages: number;
   /** Topics whose retained-count lookup failed; zero for them would be misleading. */
   unmeasuredTopics?: string[];
+  snapshotAvailable?: boolean;
   tables: string[];
   health: boolean;
   topicLastMessages: Record<string, number | null>;
@@ -210,7 +211,7 @@ const Dashboard: React.FC = () => {
     try {
       const response = await axios.get('/api/dashboard');
       const snapshot: DashboardData = response.data;
-      if (snapshot.health) {
+      if (snapshot.snapshotAvailable ?? snapshot.health) {
         setData(snapshot);
         setSnapshotFailed(false);
         setHasSuccessfulSnapshot(true);
