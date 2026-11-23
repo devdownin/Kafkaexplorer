@@ -24,7 +24,8 @@ const metric = {
   warningThreshold: null, criticalThreshold: null, lastValue: 459, lastUpdateTime: Date.now(), errorMessage: null,
   history: [380, 402, 412], lastSummary: null, createTableSql: null,
 } as unknown as MetricConfig;
-const historyEndAt = Date.UTC(2026, 10, 20, 12);
+// A live-looking forecast must have future points; expired forecasts correctly have no breach badge.
+const historyEndAt = Date.now();
 const series = {
   seriesId: 'c'.repeat(64), metricId: 'm-1', environment: 'local', stepMillis: 60000, minimumContextPoints: 128,
   withdrawable: true, thresholdConfigured: false, activation: null,
