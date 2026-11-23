@@ -6,6 +6,7 @@ import {
   REFRESH_OPTIONS, REFRESH_OFF, DEFAULT_REFRESH_CHOICE, ACTIVITY_FLOOR_MS, ACTIVITY_REFRESH_OPTIONS,
   readRefreshChoice, writeRefreshChoice, refreshById,
   refreshIntervalMs, activityIntervalMs, activityRefreshChoice, describeAge, describeRefreshStatus,
+  isDashboardStale,
 } from './dashboardRefresh';
 
 beforeEach(() => localStorage.clear());
@@ -119,5 +120,23 @@ describe('activityRefreshChoice', () => {
 
   it('never reads an unknown choice as off', () => {
     expect(activityRefreshChoice('retired')).toBe('30s');
+  });
+});
+
+describe('dashboard stale freshness', () => {
+  const measuredAt = 1_700_000_000_000;
+
+  it('flags failed reads immediately without replacing their last successful data', () => {
+    expect(isDashboardStale('5s', measuredAt, measuredAt + 5_000, true)).toBe(true);
+  });
+
+  it('allows cache jitter and then marks an expired periodic read', () => {
+    expect(isDashboardStale('5s', measuredAt, measuredAt + 59_000, false)).toBe(false);
+    expect(isDashboardStale('5s', measuredAt, measuredAt + 61_000, false)).toBe(true);
+    expect(isDashboardStale('5m', measuredAt, measuredAt + 610_001, false)).toBe(true);
+  });
+
+  it('does not call an intentionally paused interval a failed refresh', () => {
+    expect(isDashboardStale(REFRESH_OFF, measuredAt, measuredAt + 3_600_000, false)).toBe(false);
   });
 });
