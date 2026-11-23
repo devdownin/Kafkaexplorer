@@ -9,8 +9,10 @@
 #
 #   OPENROUTER_API_KEY=sk-or-... ./demo.sh          # build, start, wait, print the endpoints
 #   ./demo.sh --no-spectra                           # the same without SpectraLLM (DEMO_SPECTRA=false)
-#   ./demo.sh --forecast                             # the forecast demo alone, nothing to configure
-#   ./demo.sh [--no-spectra|--forecast] down | reset | ps | logs [service] | probe
+#   ./demo.sh --forecast                             # the forecast demo alone, builds local images
+#   ./demo.sh --forecast --prebuilt                  # demo from published images, no build
+#   ./demo-forecast.sh [up|down|reset|ps|logs [service]|probe] # prebuilt shorthand
+#   ./demo.sh [--no-spectra|--forecast|--prebuilt] down | reset | ps | logs [service] | probe
 #
 # --forecast (DEMO_MODE=forecast) is the stack the forecast demo needs and nothing else: Kafka and the
 # demo topics, Schema Registry, the Explorer with MCP, PostgreSQL, TimesFM, the live traffic and its
@@ -25,7 +27,7 @@ repo_dir=$(cd "$(dirname "$0")" && pwd)
 cd "$repo_dir"
 
 usage() {
-  echo 'Usage: ./demo.sh [--no-spectra|--forecast] [up|down|reset|ps|logs [service]|probe]' >&2
+  echo 'Usage: ./demo.sh [--no-spectra|--forecast|--prebuilt] [up|down|reset|ps|logs [service]|probe]' >&2
   exit 2
 }
 
@@ -35,6 +37,7 @@ while [[ ${1:-} == --* ]]; do
   case $1 in
     --no-spectra) export DEMO_SPECTRA=false ;;
     --forecast) export DEMO_MODE=forecast DEMO_SPECTRA=false ;;
+    --prebuilt) export DEMO_PREBUILT=true DEMO_PUBLISHED_IMAGE=true ;;
     *) usage ;;
   esac
   shift
@@ -45,10 +48,11 @@ load_env_file() {
   [[ -f $1 ]] || return 0
   local key value
   while IFS='=' read -r key value || [[ -n $key ]]; do
-    [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ && ! -v $key ]] || continue
+    [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ && -z ${!key:-} ]] || continue
     value=${value%$'\r'}
     value=${value#[\"\']}
     value=${value%[\"\']}
+    [[ -n $value ]] || continue
     export "$key=$value"
   done < "$1"
 }
@@ -65,11 +69,18 @@ load_env_file .forecast-stack/.env
 export DEMO_MODE=${DEMO_MODE:-full}
 [[ $DEMO_MODE == full || $DEMO_MODE == forecast ]] || { echo "DEMO_MODE must be full or forecast, not '$DEMO_MODE'." >&2; exit 2; }
 [[ $DEMO_MODE == full ]] || export DEMO_SPECTRA=false
+export DEMO_PREBUILT=${DEMO_PREBUILT:-false}
+[[ $DEMO_PREBUILT == true || $DEMO_PREBUILT == false ]] || { echo 'DEMO_PREBUILT must be true or false.' >&2; exit 2; }
+if [[ $DEMO_PREBUILT == true ]]; then
+  [[ $DEMO_MODE == forecast ]] || { echo '--prebuilt is supported only for the forecast demo (--forecast).' >&2; exit 2; }
+  export DEMO_PUBLISHED_IMAGE=true
+fi
 
 # ── Defaults ─────────────────────────────────────────────────────────────────────
 export BIND_ADDR=${BIND_ADDR:-127.0.0.1}
 export EXPLORER_PORT=${EXPLORER_PORT:-8080}
 export KAFKA_PORT=${KAFKA_PORT:-9092}
+export KAFKA_IMAGE=${KAFKA_IMAGE:-apache/kafka:4.4.0}
 export KEX_AGENT_PORT=${KEX_AGENT_PORT:-8081}
 # 8081 belongs to the agent in the shared port plan; Schema Registry moves aside.
 export SCHEMA_REGISTRY_PORT=${SCHEMA_REGISTRY_PORT:-8085}
@@ -111,15 +122,20 @@ export FORECAST_ENVIRONMENTS=${FORECAST_ENVIRONMENTS:-local}
 export FORECAST_CLUSTER_ID=${FORECAST_CLUSTER_ID:-local}
 export FORECAST_COLLECTOR_ID=${FORECAST_COLLECTOR_ID:-kafkaexplorer}
 export FORECAST_RUNTIME_APPROVAL=${FORECAST_RUNTIME_APPROVAL:-true}
+export FORECAST_CONFIG_DIR=${FORECAST_CONFIG_DIR:-./.forecast-stack/config}
+export FORECAST_IMAGE_TAG=${FORECAST_IMAGE_TAG:-0.3.0}
 export TIMESFM_THREADS=${TIMESFM_THREADS:-4}
 export TIMESFM_CPUS=${TIMESFM_CPUS:-4.0}
 export TIMESFM_MEM_LIMIT=${TIMESFM_MEM_LIMIT:-8g}
 export TIMESFM_TIMEOUT=${TIMESFM_TIMEOUT:-35s}
+export TIMESTRAL_SHADOW_ENABLED=${TIMESTRAL_SHADOW_ENABLED:-false}
+export TIMESTRAL_TIMEOUT=${TIMESTRAL_TIMEOUT:-15s}
+export TIMESTRAL_THREADS=${TIMESTRAL_THREADS:-1}
 
 # Explorer image: built from this checkout by default; DEMO_PUBLISHED_IMAGE=true pulls the release.
 export DEMO_PUBLISHED_IMAGE=${DEMO_PUBLISHED_IMAGE:-false}
 export EXPLORER_IMAGE_NAMESPACE=${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}
-export EXPLORER_IMAGE_TAG=${EXPLORER_IMAGE_TAG:-2.3.3}
+export EXPLORER_IMAGE_TAG=${EXPLORER_IMAGE_TAG:-2.9.1}
 
 # SpectraLLM on by default; false drops its seven services and their ~4.8 GB first download.
 export DEMO_SPECTRA=${DEMO_SPECTRA:-true}
@@ -129,6 +145,9 @@ export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-kafka-explorer-demo}
 
 files=(-f docker-compose.yml -f compose/schema-registry.yml -f compose/mcp.yml -f compose/forecasts.yml
   -f compose/demo-forecast.yml)
+if [[ $DEMO_PREBUILT == true ]]; then
+  files+=(-f compose/forecast-offline.yml -f compose/demo-forecast-prebuilt.yml)
+fi
 [[ $DEMO_PUBLISHED_IMAGE == true ]] && files+=(-f compose/image.yml)
 # The forecast demo stops here: the agent (compose/demo*.yml, ecosystem) and the hosted model
 # (demo-llm.yml) are what want a key, and nothing it shows uses them.
@@ -164,12 +183,23 @@ up() {
     echo 'WARN: OPENROUTER_API_KEY is empty — Process Mining answers without its LLM half and the' >&2
     echo '      agent starts DEGRADED. Export it (or put it in .env) and rerun ./demo.sh.' >&2
   fi
-  echo "First run: Maven build of the Explorer and the pinned TimesFM checkpoint (${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT})."
-  [[ $DEMO_SPECTRA != true ]] || echo 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.'
-  echo 'Later runs start in seconds.'
-  [[ $DEMO_PUBLISHED_IMAGE != true ]] || compose pull --quiet --ignore-buildable
-  # --remove-orphans: switching to --no-spectra stops the SpectraLLM containers a previous run left.
-  compose up -d --build --remove-orphans
+  if [[ $DEMO_PREBUILT == true ]]; then
+    for secret in FORECAST_POSTGRES_PASSWORD TIMESFM_TOKEN EXPLORER_MCP_AUTH_TOKEN; do
+      [[ -n ${!secret:-} ]] || { echo "Missing $secret. Check .env and .forecast-stack/.env." >&2; exit 1; }
+    done
+    echo "Prebuilt forecast demo: pulling pinned KafkaExplorer and TimesFM images; no local build or model download."
+    echo "TimesFM resources: ${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT}. Model licence: services/timesfm/licenses/NOTICE.md"
+    compose config --quiet
+    compose pull --quiet --ignore-buildable
+    compose up -d --no-build --pull never --remove-orphans
+  else
+    echo "First run: Maven build of the Explorer and the pinned TimesFM checkpoint (${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT})."
+    [[ $DEMO_SPECTRA != true ]] || echo 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.'
+    echo 'Later runs start in seconds.'
+    [[ $DEMO_PUBLISHED_IMAGE != true ]] || compose pull --quiet --ignore-buildable
+    # --remove-orphans: switching to --no-spectra stops the SpectraLLM containers a previous run left.
+    compose up -d --build --remove-orphans
+  fi
   wait_for_http 'Kafka Explorer' "http://127.0.0.1:${EXPLORER_PORT}/actuator/health" 900
   if [[ $DEMO_MODE == forecast ]]; then
     cat <<EOF
