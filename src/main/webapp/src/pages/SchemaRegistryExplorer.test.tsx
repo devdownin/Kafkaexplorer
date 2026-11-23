@@ -29,7 +29,7 @@ describe('Schema Registry Explorer', () => {
       }
       if (url === `${base}/versions`) return Promise.resolve({ data: [1, 2] });
       if (url.startsWith(`${base}/versions/`)) {
-        const version = Number(url.split('/').at(-1));
+        const version = Number(url.split('/').pop());
         return Promise.resolve({ data: {
           subject: SUBJECT, version, id: 40 + version, schemaType: 'AVRO',
           schema: JSON.stringify({ type: 'record', name: 'Order', fields: [
