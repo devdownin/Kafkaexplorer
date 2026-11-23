@@ -205,10 +205,10 @@ export function DemoControlCenter({ metricCount, metricsLoading, forecasts, fore
         {appliedTime && <span>Last verified: {appliedTime}</span>}
       </div>
       <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={() => onInspectMetrics?.(inspectIds)}
+        {onInspectMetrics && <button type="button" onClick={() => onInspectMetrics(inspectIds)}
           className="min-h-11 rounded-xl px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary">
           View impacted metrics
-        </button>
+        </button>}
       {state.requestedScenario !== 'normal' && <button type="button" disabled={busy}
         onClick={() => void choose('normal')}
         className="min-h-10 rounded-lg border border-outline-variant px-3 py-2 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50">

@@ -18,7 +18,8 @@ const applying = {
   enabled: true, scenario: null, requestedScenario: 'normal', phase: 'APPLYING', appliedAt: null,
 };
 const confirmed = {
-  enabled: true, scenario: 'normal', requestedScenario: 'normal', phase: 'ACTIVE', appliedAt: Date.now(),
+  enabled: true, scenario: 'normal', requestedScenario: 'normal', phase: 'ACTIVE',
+  appliedAt: Date.now(), startedAt: Date.now() - 5000,
 };
 const emptyForecast: ForecastStatus = { enabled: true, state: 'AVAILABLE', series: [], shadowEnabled: false, modelAvailable: true };
 
@@ -67,6 +68,36 @@ describe('Forecast Demo Control Center', () => {
     expect(await screen.findByText(/Active · verified against Kafka offsets/)).toBeTruthy();
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0);
     expect(screen.getByText('0 / 5')).toBeTruthy();
+  });
+
+  it('offers illustrated scenarios, a guided incident-to-recovery journey and a metric spotlight', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: confirmed });
+    const onInspectMetrics = vi.fn();
+    const user = userEvent.setup();
+    render(<DemoControlCenter metricCount={5} metricsLoading={false}
+      forecasts={emptyForecast} forecastsQueried onInspectMetrics={onInspectMetrics} />);
+    await user.click(await screen.findByRole('button', { name: 'Start guide' }));
+    expect(screen.getByRole('list', { name: 'Three demo steps' })).toBeTruthy();
+    const incident = screen.getByRole('button', { name: 'Trigger incident' });
+    expect(incident).toBeEnabled();
+    await user.click(incident);
+    expect(screen.getByRole('group', { name: 'Confirm traffic scenario' })).toBeTruthy();
+    expect(axios.put).not.toHaveBeenCalled();
+    expect(screen.getByRole('img', { name: /Illustrative incident traffic shape/ })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'View impacted metrics' }));
+    expect(onInspectMetrics).toHaveBeenCalledWith(expect.arrayContaining(['demo-live-unshipped']));
+  });
+
+  it('announces only Kafka-confirmed activation with its original timestamp', async () => {
+    const onConfirmed = vi.fn();
+    const next = { ...confirmed, scenario: 'incident', requestedScenario: 'incident',
+      startedAt: 1720000000000, appliedAt: 1720000015000 };
+    vi.mocked(axios.get).mockResolvedValue({ data: next });
+    render(<DemoControlCenter metricCount={5} metricsLoading={false}
+      forecasts={emptyForecast} forecastsQueried onConfirmed={onConfirmed} />);
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledWith(expect.objectContaining({
+      scenario: 'incident', at: 1720000000000, metricIds: ['demo-live-shift', 'demo-live-jitter'],
+    })));
   });
 
   it('stays absent on the deliberate 404 when demo control is not enabled', async () => {

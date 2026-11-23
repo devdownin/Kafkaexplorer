@@ -36,6 +36,37 @@ this change or a subsequent published release. The no-build demo now follows
 once that moving tag includes the merged P2 change. Until then, CLI scenario control
 (`./demo-forecast.sh scenario <name>`) remains available.
 
+## Scenario Studio — lots B and C
+
+In the Metrics **Forecast Demo Control Center**, choose **Manage scenarios** to see
+five compact mini-curve previews. Those previews illustrate the shape of a scenario;
+they are explicitly **not observed Kafka measurements**. Selected cards describe the
+affected business signals before the generator request is sent. **View impacted metrics**
+focuses the actual relevant metric cards and clears other filters; **Show all metrics**
+restores the unfiltered list.
+
+The **Guided demonstration** runs a three-step narrative:
+**Baseline → Incident → Recovery**. Each action changes the real Kafka demo generator;
+an incident still needs explicit confirmation, and Recovery stays a one-click action.
+The UI distinguishes a requested change from Kafka-verified activation. After
+confirmation it refreshes the affected metrics once, without issuing a refresh on every
+generator heartbeat.
+
+The resulting first-verified activation time stays stable as new heartbeats arrive.
+Metric cards and the detailed Forecast chart place a vertical event marker only when
+that time falls **inside non-imputed, measured history**. Until then, the note says the
+event is not yet represented; it does not draw a future observation or invent a delta.
+The detailed view also offers **Compare with previous forecast**, using the existing
+previous-prediction overlay. The post-event mean observed-minus-predicted difference
+is computed **only at exact matching timestamps**; when no measured point is available,
+it explicitly says so. Forecast model uncertainty and out-of-range intervals are
+never implied to be actual observations.
+
+The responsive layout supports narrow 320 px screens and touch, uses keyboard-reachable
+buttons with focus rings and accessible status messages, and avoids motion-dependent
+feedback. If the viewer prefers reduced motion, scrolling to metrics is immediate.
+The visual surfaces use KafkaExplorer's theme tokens instead of hard-coded colors.
+
 ## No-build forecast demo (published images)
 
 This is the shortest way to run the **complete live Metrics/Forecast demo** without compiling
