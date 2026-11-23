@@ -56,14 +56,15 @@ const MetricRowView: React.FC<{
   metric: MetricConfig;
   forecast?: ForecastStageSummary;
   forecastSeries?: ForecastSeriesView;
+  forecastNow?: number;
   refreshing: boolean;
   onEdit: (id: string) => void;
   onRefresh: (id: string) => void;
   onShowForecast?: (id: string) => void;
-}> = ({ metric, forecast, forecastSeries, refreshing, onEdit, onRefresh, onShowForecast }) => {
+}> = ({ metric, forecast, forecastSeries, forecastNow, refreshing, onEdit, onRefresh, onShowForecast }) => {
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
-  const reach = forecastReachFor(metric, forecastSeries);
+  const reach = forecastReachFor(metric, forecastSeries, forecastNow);
   const name = metric.name || metric.id;
   return (
     <li className="flex items-center gap-3 px-3 py-2 border-b border-outline-variant/40 text-sm min-w-0"
