@@ -1189,7 +1189,7 @@ const Metrics: React.FC = () => {
         <Stat label="Critical" value={counts.critical + counts.error} tone={(counts.critical + counts.error) > 0 ? 'error' : 'none'} />
       </div>
 
-      <DemoControlCenter metrics={metrics} forecast={forecastStatus} clock={forecastClock} />
+      <DemoControlCenter metrics={metrics} forecast={forecastStatus} clock={forecastClock} now={forecastNow} />
 
       {/* Filters */}
       {!loading && metrics.length > 0 && (
