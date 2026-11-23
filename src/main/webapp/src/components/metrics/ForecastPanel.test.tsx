@@ -41,7 +41,7 @@ describe('ForecastPanel', () => {
     });
     const user = userEvent.setup();
     render(<ForecastPanel />);
-    const selector = await screen.findByRole('combobox', { name: 'Forecast series' });
+    const selector = await screen.findByRole('combobox', { name: 'Choose forecast' });
     expect((selector as HTMLSelectElement).options).toHaveLength(2);
     await user.selectOptions(selector, second.seriesId);
     expect(selector).toHaveValue(second.seriesId);
@@ -298,15 +298,15 @@ describe('ForecastPanel', () => {
     await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).toContain(`/api/forecasts/${'b'.repeat(64)}`));
     expect(vi.mocked(axios.get).mock.calls.map(c => c[0])).not.toContain('/api/forecasts');
   });
-  // The card is where a series is chosen: the panel names the one it shows, by metric name, and has no selector.
-  it('names the series it shows instead of offering a selector', async () => {
+  // A card focuses a series; the panel also exposes a selector for every configured series.
+  it('names the focused series and offers a selector for switching', async () => {
     const two = seriesWith(ready);
     const other = { ...two.series[0], seriesId: 'b'.repeat(64), metricId: 'other' };
     vi.mocked(axios.get).mockImplementation(url => Promise.resolve({ data: url === '/api/forecasts' ? { ...two, series: [two.series[0], other] } : {} }));
     render(<ConfirmProvider><ForecastPanel focus={'b'.repeat(64)} metricNames={{ other: 'Orders lag' }} /></ConfirmProvider>);
     expect(await screen.findByLabelText('Forecast series')).toHaveTextContent('Orders lag');
     expect(screen.getByText(/2 forecasts — Details on a metric card shows its own/)).toBeTruthy();
-    expect(screen.queryByLabelText('Series')).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Choose forecast' })).toBeInTheDocument();
   });
 
   it('shows the series the assistant just started, not whichever is first', async () => {
