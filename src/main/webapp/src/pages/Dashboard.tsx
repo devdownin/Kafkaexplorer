@@ -522,8 +522,8 @@ const Dashboard: React.FC = () => {
       />
 
       {/* KPI Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Bento: the cluster verdict is the large tile; counts are small; the ingest curve gets a full-width strip. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+        {/* Cluster Health and Message Count share the desktop row; the other two KPIs stay compact. */}
         {/*
           * Cette tuile comptait les jobs Flink, avec l'état du cluster pour seule couleur et pour
           * seul sous-titre. Le compte est parti avec le tableau « Flink SQL Jobs » — plus rien ne
@@ -532,7 +532,7 @@ const Dashboard: React.FC = () => {
           * est ce que la tuile disait vraiment : le cluster répond, ou non.
           */}
         <Stat
-          size="lg" className="sm:col-span-2"
+          size="lg" className="sm:col-span-2 lg:col-span-2"
           label="Cluster Health" icon={data.health ? 'check_circle' : 'error'}
           tone={data.health ? 'success' : 'error'}
           value={data.health ? 'Healthy' : 'Degraded'}
@@ -544,6 +544,16 @@ const Dashboard: React.FC = () => {
           }
         />
         <Stat
+          className="sm:col-span-2 lg:col-span-2"
+          label="Message Count" icon="bolt"
+          value={formatCount(data.totalMessages)}
+          hint={data.totalMessages > 0 ? 'Active ingest' : 'No activity'}
+          aside={messageSamples.length >= 2
+            ? <TrendLine values={messageSamples} width={100} height={32}
+                label={`Total message count at each of the last ${messageSamples.length} refreshes of this visit`} />
+            : <p className="text-[12px] text-on-surface-variant">Trend after 2 refreshes</p>}
+        />
+        <Stat
           label="Total Topics" icon="format_list_bulleted"
           value={data.topics.length.toLocaleString()}
           hint={<span className={topicDiff !== 0 ? 'text-primary' : ''}>{topicTrend}</span>}
@@ -552,16 +562,6 @@ const Dashboard: React.FC = () => {
           label="Flink Tables" icon="database"
           value={data.tables.length.toLocaleString()}
           hint={data.tables.length > 0 ? `${data.tables.length} registered` : 'None registered'}
-        />
-        <Stat
-          className="sm:col-span-2 lg:col-span-4"
-          label="Message Count" icon="bolt"
-          value={formatCount(data.totalMessages)}
-          hint={data.totalMessages > 0 ? 'Active ingest' : 'No activity'}
-          aside={messageSamples.length >= 2
-            ? <TrendLine values={messageSamples} width={220} height={40}
-                label={`Total message count at each of the last ${messageSamples.length} refreshes of this visit`} />
-            : <p className="text-[12px] text-on-surface-variant">The trend builds up as the page refreshes.</p>}
         />
       </div>
 
