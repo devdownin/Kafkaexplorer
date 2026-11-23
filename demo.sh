@@ -124,6 +124,14 @@ export LLM_CHAT_MODEL_NAME=${LLM_CHAT_MODEL_NAME:-qwen2.5-7b-instruct}
 export LLM_CHAT_MODEL_FILE=${LLM_CHAT_MODEL_FILE:-Qwen2.5-7B-Instruct-Q4_K_M.gguf}
 export SPECTRA_AUTO_INSTALL_MODELS=${SPECTRA_AUTO_INSTALL_MODELS:-true}
 
+# The prebuilt Forecast demo follows published application/model images by default.
+# Other stacks retain versioned pins; an explicit environment/.env tag always wins.
+# Keep this outside Compose so the repository's production image-pin checks stay strict.
+if [[ $DEMO_PREBUILT == true ]]; then
+  export EXPLORER_IMAGE_TAG=${EXPLORER_IMAGE_TAG:-latest}
+  export FORECAST_IMAGE_TAG=${FORECAST_IMAGE_TAG:-latest}
+fi
+
 # Forecasting.
 export FORECAST_ENVIRONMENTS=${FORECAST_ENVIRONMENTS:-local}
 export FORECAST_CLUSTER_ID=${FORECAST_CLUSTER_ID:-local}
@@ -220,6 +228,7 @@ doctor() {
   done < <(compose config --images | sort -u)
   (( missing == 0 )) || return 1
   [[ $DEMO_OFFLINE != true ]] || echo 'Offline check: all images are available locally.'
+  echo "Demo images: ${EXPLORER_IMAGE_NAMESPACE}/kafkaexplorer:${EXPLORER_IMAGE_TAG}; ghcr.io/devdownin/kex-forecast:${FORECAST_IMAGE_TAG}"
   echo 'Preflight OK.'
 }
 
@@ -324,7 +333,7 @@ up() {
       [[ -n ${!secret:-} ]] || { echo "Missing $secret. Check .env and .forecast-stack/.env." >&2; exit 1; }
     done
     doctor
-    echo "Prebuilt forecast demo: using pinned KafkaExplorer and TimesFM images; no local build or model download."
+    echo "Prebuilt forecast demo: published KafkaExplorer and TimesFM images; no local build or model download."
     echo "TimesFM resources: ${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT}. Model licence: services/timesfm/licenses/NOTICE.md"
     compose config --quiet
     if [[ $DEMO_OFFLINE != true ]]; then compose pull --quiet --ignore-buildable; fi

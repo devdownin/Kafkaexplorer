@@ -40,6 +40,11 @@ jobs:
           sh -n scripts/demo-forecast/live.sh scripts/demo-forecast/seed.sh
       - name: Preflight using the exact no-build launcher
         run: ./demo-forecast.sh doctor
+      - name: Assert demo uses latest images by default
+        run: |
+          output=$(./demo-forecast.sh doctor)
+          printf '%s\n' "$output"
+          grep -Fq 'Demo images: compagnonsdudev/kafkaexplorer:latest; ghcr.io/devdownin/kex-forecast:latest' <<< "$output"
       - name: Pull released images and launch with no build
         run: ./demo-forecast.sh up
       - name: Assert demo is actually ready

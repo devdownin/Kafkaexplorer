@@ -183,6 +183,13 @@ Set-Default LLM_CHAT_MODEL_NAME 'qwen2.5-7b-instruct'
 Set-Default LLM_CHAT_MODEL_FILE 'Qwen2.5-7B-Instruct-Q4_K_M.gguf'
 Set-Default SPECTRA_AUTO_INSTALL_MODELS 'true'
 
+# Follow latest published Explorer/Forecast images only in the prebuilt Forecast demo.
+# Versioned defaults remain for other stacks; explicit tags from the environment/.env win.
+if ($prebuilt) {
+    Set-Default EXPLORER_IMAGE_TAG 'latest'
+    Set-Default FORECAST_IMAGE_TAG 'latest'
+}
+
 # Forecasting.
 Set-Default FORECAST_ENVIRONMENTS 'local'
 Set-Default FORECAST_CLUSTER_ID 'local'
@@ -277,6 +284,7 @@ function Test-ForecastPreflight {
         }
     }
     if ($offline) { Write-Host 'Offline check: all images are local.' }
+    Write-Host "Demo images: $($env:EXPLORER_IMAGE_NAMESPACE)/kafkaexplorer:$($env:EXPLORER_IMAGE_TAG); ghcr.io/devdownin/kex-forecast:$($env:FORECAST_IMAGE_TAG)"
     Write-Host 'Preflight OK.'
 }
 

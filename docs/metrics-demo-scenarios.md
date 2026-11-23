@@ -14,9 +14,10 @@ rejects cross-origin browser writes and never runs shell commands. The demo bind
 its UI to loopback by default; do not expose demo control on a public host.
 
 **Published-image note:** this UI and API require a KafkaExplorer image built from
-this change or a subsequent published release. Until that image is available,
-`demo-forecast.sh` with the pinned 2.9.1 image retains CLI scenario control via
-`./demo-forecast.sh scenario <name>`; the UI is not present in that older image.
+this change or a subsequent published release. The no-build demo now follows
+`compagnonsdudev/kafkaexplorer:latest` by default; the Control Center appears
+once that moving tag includes the merged P2 change. Until then, CLI scenario control
+(`./demo-forecast.sh scenario <name>`) remains available.
 
 ## No-build forecast demo (published images)
 
@@ -40,9 +41,14 @@ TimesFM bearer and MCP bearer are generated once and reused across launches. No 
 is needed. `COMPOSE_PROJECT_NAME` defaults to `kafka-explorer-demo`, bound to loopback on
 8080 (Explorer), 8085 (Schema Registry) and 9092 (Kafka).
 
-The scripts **pull**, but never build, the pinned published Explorer
-(`compagnonsdudev/kafkaexplorer:2.9.1` by default) and forecast
-(`ghcr.io/devdownin/kex-forecast:0.3.0` by default) images.
+The scripts **pull**, but never build, the latest published Explorer
+(`compagnonsdudev/kafkaexplorer:latest`) and Forecast/TimesFM
+(`ghcr.io/devdownin/kex-forecast:latest`) images by default.
+Only the prebuilt Forecast demo uses these moving tags: other Compose stacks
+retain versioned defaults. Override either image independently by setting
+`EXPLORER_IMAGE_TAG` and/or `FORECAST_IMAGE_TAG` in the environment or root
+`.env`, e.g. `EXPLORER_IMAGE_TAG=2.9.1 FORECAST_IMAGE_TAG=0.3.0 ./demo-forecast.sh`.
+Use versioned overrides to reproduce an older demonstration.
 A missing/unavailable image is a hard failure rather than an implicit local build. The
 forecast image already includes model checkpoints; `forecast-model-prefetch` is not started.
 Allow roughly **4 CPUs and 8 GiB RAM** for TimesFM, plus Kafka and PostgreSQL.
@@ -82,7 +88,7 @@ A successful HTTP health request alone does **not** mean the demo is ready.
 
 ### Fully offline launch
 
-First run the normal launcher once so all pinned images are present, or import those
+First run the normal launcher once so the selected images are present, or import those
 images from `docker save` archives using `docker load`. Then launch with
 `--offline` on Linux/macOS or `-Offline` on Windows. Offline mode **fails
 before starting** if an image is missing. It uses `docker compose up --no-build
@@ -116,7 +122,7 @@ volumes but deliberately preserves the local scenario file. Select `normal`
 before a clean demonstration. Forecast results are not instant: their cadence
 and the time needed for new observed measurements still apply.
 
-The dedicated `.github/workflows/forecast-prebuilt-smoke.yml` checks the *published
+The dedicated `.github/workflows/forecast-prebuilt-smoke.yml` checks the *published latest
 images* via the same launcher, validates the initial READY forecast, exercises
 the incident and recovery scenarios against real Kafka metrics, and restarts
 offline. It is separate from the source-build CI regression job.

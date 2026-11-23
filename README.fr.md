@@ -112,12 +112,17 @@ Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deu
 ### Démo Forecast sans compilation locale
 
 ```bash
-./demo-forecast.sh             # images publiées, secrets initialisés, métriques alimentées
+./demo-forecast.sh             # images Explorer et Forecast :latest, secrets initialisés, métriques alimentées
 ./demo-forecast.sh logs demo-forecast-seed
 ./demo-forecast.sh down        # conserve les données ; reset supprime les volumes
 ```
 
 Sous Windows : `.\\demo-forecast.cmd` (mêmes commandes `ps`, `logs`, `down` et `reset`).
+La démo Forecast sans compilation récupère par défaut
+`compagnonsdudev/kafkaexplorer:latest` et `ghcr.io/devdownin/kex-forecast:latest`
+à chaque lancement connecté. Pour figer une version, définir
+`EXPLORER_IMAGE_TAG` et/ou `FORECAST_IMAGE_TAG` dans l'environnement ou `.env`.
+Les autres déploiements conservent leurs versions explicites.
 
 Le lanceur contrôle d'abord Docker, Compose >= 2.24, les ports, la mémoire et
 les images. Il annonce la démo **prête** seulement après l'injection des cinq
