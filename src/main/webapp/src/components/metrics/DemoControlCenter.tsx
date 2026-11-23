@@ -2,11 +2,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Badge, Button, Card } from '../ui';
-import type { ForecastStatus, MetricConfig } from '../../api/types';
+import type { DemoControlStatus, ForecastStatus, MetricConfig } from '../../api/types';
 import { demoSnapshot, downloadDemoReport } from './demoReport';
 
 type Scenario = 'normal' | 'overload' | 'incident' | 'recover' | 'seasonal';
-interface ControlStatus { scenario: string; changedAt: number | null }
 const SCENARIOS: { key: Scenario; title: string; detail: string; icon: string }[] = [
   { key: 'normal', title: 'Normal', detail: 'Natural traffic patterns', icon: 'check_circle' },
   { key: 'overload', title: 'Overload', detail: 'Orders and requests back up', icon: 'trending_up' },
@@ -22,7 +21,7 @@ const SCENARIOS: { key: Scenario; title: string; detail: string; icon: string }[
 export function DemoControlCenter({ metrics, forecast, clock }: {
   metrics: MetricConfig[]; forecast: ForecastStatus | null; clock: number;
 }) {
-  const [status, setStatus] = useState<ControlStatus | null>(null);
+  const [status, setStatus] = useState<DemoControlStatus | null>(null);
   const [available, setAvailable] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -30,9 +29,10 @@ export function DemoControlCenter({ metrics, forecast, clock }: {
 
   useEffect(() => {
     const controller = new AbortController();
-    axios.get<ControlStatus>('/api/demo-control', { signal: controller.signal, timeout: 7000 })
+    axios.get<DemoControlStatus>('/api/demo-control', { signal: controller.signal, timeout: 7000 })
       .then(({ data }) => {
         if (controller.signal.aborted) return;
+        if (!data || !SCENARIOS.some(item => item.key === data.scenario)) { setAvailable(false); return; }
         setAvailable(true); setStatus(data); setError('');
       })
       .catch(e => {
@@ -56,7 +56,7 @@ export function DemoControlCenter({ metrics, forecast, clock }: {
     if (busy || !status || status.scenario === scenario) return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const { data } = await axios.post<ControlStatus>('/api/demo-control/scenario', { scenario }, {
+      const { data } = await axios.post<DemoControlStatus>('/api/demo-control/scenario', { scenario }, {
         headers: { 'X-Kex-Demo-Control': 'change-scenario' }, timeout: 10000,
       });
       setStatus(data);
