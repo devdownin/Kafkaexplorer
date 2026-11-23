@@ -414,4 +414,21 @@ class KafkaAdminServiceActivityTest {
         assertTrue(service.getProducedOffsetsTotals(List.of(TOPIC)).isEmpty());
     }
 
+    @Test
+    void dashboardCountsRequireAllPartitionsEvenWhenThePartialFloorIsPositive() {
+        partition(0, 0, START, START + 1);
+        unreadablePartition(1);
+        topicsExist(TOPIC);
+
+        assertEquals(Map.of(TOPIC, 2L), service.getTopicRecordCounts(List.of(TOPIC)));
+        assertTrue(service.getDashboardTopicCounts(List.of(TOPIC)).isEmpty());
+    }
+
+    @Test
+    void dashboardCountsKeepMeasuredZeroSeparateFromUnmeasured() {
+        partition(0, 0);
+        topicsExist(TOPIC);
+        assertEquals(Map.of(TOPIC, 0L), service.getDashboardTopicCounts(List.of(TOPIC)));
+    }
+
 }
