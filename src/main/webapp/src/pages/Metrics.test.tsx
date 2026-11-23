@@ -26,6 +26,13 @@ import type { MetricConfig, MetricSuggestion, MetricSuggestions } from '../api/t
 // La logique pure a quitté la page pour `metricsEditor.ts` ; les cas ci-dessous sont inchangés.
 import { defaultReadMode, isSingleTableRead, sameStatement, validateScanParams, validateTemplate } from './metricsEditor';
 
+// Demo Control Center has its own contract suite. These page tests use sequential
+// axios fixtures for metric/forecast requests; its independent demo-status probe must
+// not consume those fixtures or change the result of an unrelated editor test.
+vi.mock('../components/metrics/DemoControlCenter', () => ({
+  DemoControlCenter: () => null,
+}));
+
 vi.mock('axios');
 const mockedAxios = vi.mocked(axios, true);
 
