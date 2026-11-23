@@ -23,7 +23,7 @@ import {
 import StrataShortcutDialog from './StrataShortcutDialog';
 import StrataPerformancePanel from './StrataPerformancePanel';
 import StrataInvestigationPanel from './StrataInvestigationPanel';
-import { strataInspection, strataInvestigationSnapshot, strataLeads } from './strataInvestigation';
+import { strataInspection, strataInvestigationSnapshot, strataLeads, type StrataInspection, type StrataSnapshotView } from './strataInvestigation';
 import { summarizeStrataPerformance, type StrataPerformance } from './strataPerformance';
 import { strataShortcut } from './strataShortcuts';
 import axios from 'axios';
@@ -672,6 +672,21 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   );
 }
 
+/** Called only from an explicit click, never during a React render. */
+function downloadInvestigation(inspection: StrataInspection, view: StrataSnapshotView) {
+  const capturedAt = Date.now();
+  const contents = strataInvestigationSnapshot(inspection, view, capturedAt);
+  const blob = new Blob([JSON.stringify(contents, null, 2)], { type: 'application/json' });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = 'strata-investigation-' + capturedAt + '.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+}
+
 export default function Strata3D() {
   const [initialView] = useState(() => readStrataView(new URLSearchParams(window.location.search)));
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -943,17 +958,7 @@ export default function Strata3D() {
   const leads = strataLeads(topics, selectedBucket, receivedAt,
     selectedTopic?.name ?? null, selectedGroup);
   const saveInvestigation = () => {
-    if (!inspection) return;
-    const contents = strataInvestigationSnapshot(inspection, { filter: filteredQuery, quality, layers }, Date.now());
-    const blob = new Blob([JSON.stringify(contents, null, 2)], { type: 'application/json' });
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.download = 'strata-investigation-' + Date.now() + '.json';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+    if (inspection) downloadInvestigation(inspection, { filter: filteredQuery, quality, layers });
   };
   const hoveredTopic = hovered && topics.find(t => t.name === hovered.name);
   const setLayer = useCallback((layer: StrataLayer, enabled: boolean) => {
