@@ -53,7 +53,7 @@ public class DashboardController {
             topics = kafkaAdminService.listTopics();
             // The lenient getTopicsSize() fills missing measurements with zero. Keep the
             // visible counts compatible, but do not call an unreadable topic "empty".
-            Map<String, Long> measured = kafkaAdminService.getTopicRecordCounts(topics);
+            Map<String, Long> measured = kafkaAdminService.getDashboardTopicCounts(topics);
             topicSizes = new HashMap<>();
             for (String topic : topics) topicSizes.put(topic, measured.getOrDefault(topic, 0L));
             unmeasuredTopics = topics.stream().filter(topic -> !measured.containsKey(topic)).toList();
