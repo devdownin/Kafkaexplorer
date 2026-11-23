@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Metrics / Forecast operational reliability (P0/P1):** ignore elapsed or stale forecast
+  threshold predictions; calculate threshold ETA from future timestamps; refresh risk badges
+  independently of the metrics collection cadence. The forecast panel exposes every series,
+  preserves only detail matching the current result version, and distinguishes summary data from
+  unavailable history. Exports now generate correctly escaped CSV rows. The metric editor stacks
+  its controls and SQL editor on narrow screens.
+
+
 - **Optional MCP OAuth JWT resource-server mode:** external issuer/JWK validation,
   required audience and separate `mcp:invoke` / `mcp:admin` transport scopes.
   Legacy shared-token mode remains the default; MCP Tasks and per-tool OAuth RBAC
