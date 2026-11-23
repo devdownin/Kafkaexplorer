@@ -39,16 +39,74 @@ four can be forecast with their card actions or **Forecast all eligible**.
 
 | Action | Linux/macOS | Windows |
 | --- | --- | --- |
-| Start | `./demo-forecast.sh` | `.\demo-forecast.cmd` |
+| Preflight (no pull/build) | `./demo-forecast.sh doctor` | `.\\demo-forecast.cmd doctor` |
+| Start and wait until **fully ready** | `./demo-forecast.sh` | `.\\demo-forecast.cmd` |
+| Verify five histories and a READY TimesFM forecast | `./demo-forecast.sh verify` | `.\\demo-forecast.cmd verify` |
+| Offline start from already-loaded images | `./demo-forecast.sh --offline up` | `.\\demo-forecast.cmd -Offline up` |
+| Select live scenario | `./demo-forecast.sh scenario overload` | `.\\demo-forecast.cmd scenario overload` |
 | Status | `./demo-forecast.sh ps` | `.\demo-forecast.cmd ps` |
 | Seeding logs | `./demo-forecast.sh logs demo-forecast-seed` | `.\demo-forecast.cmd logs demo-forecast-seed` |
 | Stop, keep data | `./demo-forecast.sh down` | `.\demo-forecast.cmd down` |
 | Reset, **delete volumes** | `./demo-forecast.sh reset` | `.\demo-forecast.cmd reset` |
 
+The preflight checks the Compose version and configuration, Docker Engine, available Docker RAM,
+the three published host ports and image presence. It warns below 8 GiB assigned to Docker.
+If a port is occupied and the current Compose project is not running, startup stops with an error.
+An already-running demo can keep its own ports.
+
+`up` reports **ready only after** the one-shot seeder has exited successfully, the
+Kafka producer and dependent services are running, TimesFM is healthy, all five metrics
+have at least 500 seeded historical observations, and the unshipped-orders series has
+a READY TimesFM result. Set `DEMO_FORECAST_READY_TIMEOUT` (seconds, default 900)
+if your machine needs longer. `verify` performs those checks once and returns nonzero
+with the relevant diagnosis; the startup also prints the appropriate log commands on timeout.
+A successful HTTP health request alone does **not** mean the demo is ready.
+
+### Fully offline launch
+
+First run the normal launcher once so all pinned images are present, or import those
+images from `docker save` archives using `docker load`. Then launch with
+`--offline` on Linux/macOS or `-Offline` on Windows. Offline mode **fails
+before starting** if an image is missing. It uses `docker compose up --no-build
+--pull never` and does not contact registries or download model checkpoints.
+It does not prohibit network communication by Kafka or the application; it
+specifically disables image/model fetching.
+
+### Interactive live traffic scenarios
+
+These commands work on an already-running stack and are applied at the next live
+producer tick (normally 15 seconds), by writing `demo-scenario.conf` into the
+host-side `.forecast-stack/config` directory. The producer reads the file read-only.
+They change **real Kafka topic offsets** and thus the next live observations; they
+do not rewrite the pre-seeded historical observations or spoof forecasts.
+
+| Command suffix | Effect on live Kafka signals |
+| --- | --- |
+| `scenario overload` | Force unshipped orders to ~480 and request backlog to ~185 (above their critical thresholds) |
+| `scenario incident` | Force open tickets to ~195 and unarchived events to ~180 (abrupt shift) |
+| `scenario recover` | Return all five live counts to a stable nominal baseline |
+| `scenario seasonal` | Enlarge the request backlog's variation into a 20-minute cycle |
+| `scenario normal` | Remove overrides and resume the five baseline wall-clock curves |
+| `scenario` | Show the selected scenario |
+
+For example, run `./demo-forecast.sh scenario incident`, observe Metrics and
+the difference between the previous forecast and reality, then run
+`./demo-forecast.sh scenario recover` and `./demo-forecast.sh scenario normal`.
+The equivalent Windows commands begin `.\\demo-forecast.cmd`.
+A scenario persists across container restarts until changed; `reset` deletes
+volumes but deliberately preserves the local scenario file. Select `normal`
+before a clean demonstration. Forecast results are not instant: their cadence
+and the time needed for new observed measurements still apply.
+
+The dedicated `.github/workflows/forecast-prebuilt-smoke.yml` checks the *published
+images* via the same launcher, validates the initial READY forecast, exercises
+the incident and recovery scenarios against real Kafka metrics, and restarts
+offline. It is separate from the source-build CI regression job.
+
 Requires Docker Compose **2.24+** (for `!reset` / `!override`); on Linux/macOS
 the Bash launcher also needs `curl` and `openssl` for health checks and first-run credentials.
 The original `./demo.sh --forecast` / `.\demo.cmd -Forecast` still run the
-source-build demo, unchanged by the new opt-in mode.
+source-build demo; its forecast-only mode now also waits for full forecast readiness.
 
 ## The forecast demo: two live metrics that are forecast from the first minutes
 
