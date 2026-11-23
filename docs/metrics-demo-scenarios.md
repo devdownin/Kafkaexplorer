@@ -108,6 +108,42 @@ the Bash launcher also needs `curl` and `openssl` for health checks and first-ru
 The original `./demo.sh --forecast` / `.\demo.cmd -Forecast` still run the
 source-build demo; its forecast-only mode now also waits for full forecast readiness.
 
+## Demo Control Center — P2 (source builds and subsequent releases)
+
+On **Metrics**, an opt-in `Forecast Demo Control Center` appears above the filters when
+the Explorer image includes the demo endpoint and is launched with the Forecast demo
+Compose overlay. It is **not present in a normal KafkaExplorer deployment**:
+`GET /api/demo-control` returns 404 unless `EXPLORER_DEMO_CONTROL_ENABLED=true`.
+
+The five scenario buttons — **Normal**, **Overload**, **Incident**, **Recovery**, and
+**Seasonality** — change the live generator on its next tick (15 seconds by default).
+Their visual state is confirmed by the server rather than assumed on click. The CLI
+`./demo-forecast.sh scenario overload` and `.\\demo-forecast.cmd scenario overload`
+use the same isolated Docker volume, so a CLI change is reflected in the UI's next poll.
+The existing nine hours of synthetic history are not modified by scenario changes.
+
+The panel shows **observational** indicators for the Explorer API, recent Kafka-derived
+metric readings, available history context, and ready TimesFM forecasts. These do not
+claim to be Docker container health statuses. The **JSON** and **HTML** export actions
+save a point-in-time report of the five demo metrics, thresholds, available observed
+samples, forecast states, predicted points and quality metrics. No credentials, model
+tokens, database connection strings or complete raw history are exported.
+
+**Isolation:** the `demo_control` named volume is writable only from Explorer (UID 10001)
+and read-only in the live Kafka generator; `demo-control-init` initializes its ownership.
+No Docker socket is mounted. The optional browser endpoint accepts only the five named
+modes and requires a JSON request with `X-Kex-Demo-Control: change-scenario`.
+The demo is unauthenticated and must remain bound to loopback (default
+`BIND_ADDR=127.0.0.1`); do not enable the control API in an externally reachable
+instance. Removing the demo overlay removes the endpoint. `reset` deletes the scenario
+volume along with the other demo volumes.
+
+**Published image caveat:** `demo-forecast.sh` deliberately uses a pinned published
+Explorer image (currently 2.9.1). Until a release containing this P2 backend/frontend
+is published and selected via `EXPLORER_IMAGE_TAG`, the older image has no
+`/api/demo-control` route and the panel remains hidden. CLI scenarios continue to work
+without a local build on the existing pinned image.
+
 ## The forecast demo: two live metrics that are forecast from the first minutes
 
 **Start it with nothing to configure:** `./demo.sh --forecast` (Windows: `.\demo.cmd -Forecast`). That is the
