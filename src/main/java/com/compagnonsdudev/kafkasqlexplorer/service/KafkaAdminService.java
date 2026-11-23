@@ -364,6 +364,58 @@ public class KafkaAdminService {
         }
     }
 
+    /**
+     * One batched latest-offset lookup for the dashboard's production-rate samples.
+     * Unlike retained record counts, latest offsets are unaffected by retention/compaction.
+     * A topic is omitted unless every partition answered; a partial sum would look like a
+     * counter reset on the next sample. The caller polls this at most every 30 seconds.
+     */
+    public Map<String, Long> getProducedOffsetsTotals(List<String> topicNames) {
+        if (topicNames == null || topicNames.isEmpty()) return Map.of();
+
+        Map<String, List<TopicPartition>> byTopic;
+        try {
+            byTopic = cachedPartitions(topicNames, 10_000);
+        } catch (Exception e) {
+            log.debug("Could not describe partitions for production snapshot: {}",
+                    LogSafe.text(SqlErrorClassifier.explain(e)));
+            return Map.of();
+        }
+
+        List<TopicPartition> partitions = byTopic.values().stream()
+                .flatMap(List::stream).toList();
+        if (partitions.isEmpty()) return Map.of();
+
+        try {
+            ListOffsetsResult latest = adminClient.listOffsets(specs(partitions, OffsetSpec.latest()));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            Map<String, Long> measured = new HashMap<>();
+            for (Map.Entry<String, List<TopicPartition>> entry : byTopic.entrySet()) {
+                if (entry.getValue().isEmpty()) continue;
+                long total = 0L;
+                boolean complete = true;
+                for (TopicPartition partition : entry.getValue()) {
+                    try {
+                        long offset = awaitOffset(latest, partition, deadline).offset();
+                        if (offset < 0) throw new IllegalStateException("Negative latest offset");
+                        total = Math.addExact(total, offset);
+                    } catch (Exception e) {
+                        complete = false;
+                        log.debug("Could not read complete produced offsets for {}: {}",
+                                LogSafe.name(entry.getKey()), LogSafe.text(SqlErrorClassifier.explain(e)));
+                        break;
+                    }
+                }
+                if (complete) measured.put(entry.getKey(), total);
+            }
+            return measured;
+        } catch (Exception e) {
+            log.debug("Could not read produced offsets snapshot: {}",
+                    LogSafe.text(SqlErrorClassifier.explain(e)));
+            return Map.of();
+        }
+    }
+
     private Map<String, Long> readRecordCounts(List<String> topicNames) {
         Map<String, Long> sizes = new HashMap<>();
 
