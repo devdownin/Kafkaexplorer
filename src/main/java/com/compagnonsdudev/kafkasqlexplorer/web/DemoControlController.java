@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFilePermission;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
@@ -60,6 +61,12 @@ public class DemoControlController {
       Path temp = Files.createTempFile(dir, ".demo-scenario-", ".tmp");
       try {
         Files.writeString(temp, selection.scenario() + "\n", StandardCharsets.UTF_8);
+        // The host CLI also writes this single demo-only file (uid differs from the
+        // container's non-root uid). No other files or secrets share this directory.
+        Files.setPosixFilePermissions(temp, Set.of(
+            PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE,
+            PosixFilePermission.GROUP_READ, PosixFilePermission.GROUP_WRITE,
+            PosixFilePermission.OTHERS_READ, PosixFilePermission.OTHERS_WRITE));
         Files.move(temp, dir.resolve("demo-scenario.conf"),
             StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
       } finally {
