@@ -230,6 +230,110 @@ if (-not $forecastOnly) {
     $script:ComposeFiles += @('-f', 'compose/demo-llm.yml')
 }
 
+
+# No Java, Python, jq, Node or local build is required on Windows.
+Set-Default DEMO_FORECAST_READY_TIMEOUT '900'
+
+function Test-ForecastPreflight {
+    if (-not $prebuilt -or -not $forecastOnly) { throw 'doctor requires the prebuilt forecast demo.' }
+    $versionText = [string]((& docker compose version --short) | Select-Object -First 1)
+    if ($versionText -notmatch '^v?(\d+)\.(\d+)') { throw "Cannot identify Docker Compose version: $versionText" }
+    $major = [int]$Matches[1]; $minor = [int]$Matches[2]
+    if ($major -lt 2 -or ($major -eq 2 -and $minor -lt 24)) { throw "Docker Compose 2.24+ required (found $versionText)." }
+    & docker info *> $null
+    if ($LASTEXITCODE -ne 0) { throw 'Docker Engine is not running.' }
+    Invoke-Compose config --quiet
+    $memoryText = [string]((& docker info --format '{{.MemTotal}}') | Select-Object -First 1)
+    $memoryMb = [math]::Floor(([double]$memoryText) / 1MB)
+    Write-Host "Docker: Compose $versionText; $memoryMb MiB RAM (TimesFM limit $($env:TIMESFM_MEM_LIMIT))."
+    if ($memoryMb -lt 8192) { Write-Warning 'Less than 8 GiB assigned to Docker; forecasting may be slow or OOM.' }
+    $running = @((Invoke-Compose ps -q) | Where-Object { $_ }).Count -gt 0
+    foreach ($portText in @($env:EXPLORER_PORT, $env:SCHEMA_REGISTRY_PORT, $env:KAFKA_PORT)) {
+        $port = 0
+        if (-not [int]::TryParse($portText, [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
+            throw "Invalid port: $portText"
+        }
+        $client = New-Object System.Net.Sockets.TcpClient
+        try {
+            $pending = $client.BeginConnect('127.0.0.1', $port, $null, $null)
+            $occupied = $pending.AsyncWaitHandle.WaitOne(250) -and $client.Connected
+        } catch { $occupied = $false } finally { $client.Close() }
+        if ($occupied -and -not $running) { throw "Port $port is occupied (no running container in this Compose project)." }
+        if ($occupied) { Write-Warning "Port $port is occupied; an existing demo may own it." }
+    }
+    foreach ($image in @((Invoke-Compose config --images) | Sort-Object -Unique)) {
+        if ([string]::IsNullOrWhiteSpace($image)) { continue }
+        & docker image inspect $image *> $null
+        if ($LASTEXITCODE -ne 0) {
+            if ($offline) { throw "Offline image missing: $image (docker load or pull before starting)." }
+            Write-Host "Image to pull: $image"
+        }
+    }
+    if ($offline) { Write-Host 'Offline check: all images are local.' }
+    Write-Host 'Preflight OK.'
+}
+
+function Assert-ForecastReady {
+    if (-not $forecastOnly) { throw 'verify is available in forecast mode only.' }
+    $cid = [string]((Invoke-Compose ps -aq demo-forecast-seed) | Select-Object -First 1)
+    if (-not $cid) { throw 'Seeder has not started.' }
+    $state = [string]((& docker inspect --format '{{.State.Status}}' $cid) | Select-Object -First 1)
+    $exitCode = [string]((& docker inspect --format '{{.State.ExitCode}}' $cid) | Select-Object -First 1)
+    if ($state -ne 'exited') { throw "Seeder is still $state." }
+    if ($exitCode -ne '0') { throw "Seeder failed ($exitCode): inspect logs demo-forecast-seed." }
+    foreach ($service in @('kafka', 'demo-live', 'forecast-postgres', 'timesfm', 'explorer')) {
+        $id = [string]((Invoke-Compose ps -q $service) | Select-Object -First 1)
+        if (-not $id) { throw "Service $service is not running." }
+        $isRunning = [string]((& docker inspect --format '{{.State.Running}}' $id) | Select-Object -First 1)
+        if ($isRunning -ne 'true') { throw "Service $service is stopped." }
+    }
+    $timesfm = [string]((Invoke-Compose ps -q timesfm) | Select-Object -First 1)
+    $health = [string]((& docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' $timesfm) | Select-Object -First 1)
+    if ($health -ne 'healthy') { throw 'TimesFM has not become healthy.' }
+    $sql = "SELECT count(*) FROM (SELECT payload::jsonb->>'metricId' AS metric_id FROM kex_metric_observation_v1 WHERE payload::jsonb->>'collectorRunId' LIKE 'demo-seed-%' AND payload::jsonb->>'component'='value' GROUP BY 1 HAVING count(*) >= 500) seeded;"
+    $count = [string]((Invoke-Compose exec -T forecast-postgres psql -U forecasts -d forecasts -At -c $sql) | Select-Object -First 1)
+    if ($count.Trim() -ne '5') { throw "Only $count/5 metrics have >=500 historical observations." }
+    $metrics = @(Invoke-RestMethod -Uri "http://127.0.0.1:$($env:EXPLORER_PORT)/api/metrics" -TimeoutSec 10)
+    foreach ($name in @('unshipped', 'backlog', 'creep', 'jitter', 'shift')) {
+        if (-not @($metrics | Where-Object { $_.id -eq "demo-live-$name" }).Count) { throw "Metric demo-live-$name is missing." }
+    }
+    $forecast = Invoke-RestMethod -Uri "http://127.0.0.1:$($env:EXPLORER_PORT)/api/forecasts" -TimeoutSec 10
+    $series = @($forecast.series | Where-Object { $_.metricId -eq 'demo-live-unshipped' })
+    if ($series.Count -eq 0 -or -not $series[0].result -or
+        $series[0].result.state -ne 'READY' -or $series[0].result.strategy -ne 'TIMESFM' -or
+        -not $series[0].result.forecast) { throw 'Unshipped-orders TimesFM forecast is not READY.' }
+    Write-Host 'Ready: Kafka, PostgreSQL, Explorer, TimesFM, live traffic, five histories and TimesFM forecast.'
+}
+
+function Wait-ForecastReady {
+    Write-Host 'Waiting for live data, five histories and first READY TimesFM forecast...'
+    $deadline = (Get-Date).AddSeconds([int]$env:DEMO_FORECAST_READY_TIMEOUT)
+    while ($true) {
+        try { Assert-ForecastReady; return } catch {
+            $message = $_.Exception.Message
+            if ((Get-Date) -ge $deadline) { throw "Demo never became fully ready: $message (logs demo-forecast-seed / timesfm)." }
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+
+function Set-ForecastScenario([string] $Name) {
+    if (-not $forecastOnly) { throw 'scenario is available in forecast mode only.' }
+    $file = Join-Path $env:FORECAST_CONFIG_DIR 'demo-scenario.conf'
+    if (-not $Name) {
+        if (Test-Path -LiteralPath $file) { Write-Host ([IO.File]::ReadAllText((Resolve-Path $file).Path).Trim()) }
+        else { Write-Host 'normal' }
+        return
+    }
+    if ($Name -notin @('normal', 'overload', 'incident', 'recover', 'seasonal')) {
+        throw 'Valid scenarios: normal, overload, incident, recover, seasonal.'
+    }
+    New-Item -ItemType Directory -Path $env:FORECAST_CONFIG_DIR -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path (Resolve-Path $env:FORECAST_CONFIG_DIR).Path 'demo-scenario.conf'),
+        "$Name`n", $Utf8NoBom)
+    Write-Host "Live Kafka scenario: $Name (applied at the next tick, default 15 s)."
+}
+
 function Start-Demo {
     if (-not $forecastOnly -and -not (Test-EnvSet 'OPENROUTER_API_KEY')) {
         Write-Warning ('OPENROUTER_API_KEY is empty - Process Mining answers without its LLM half and the ' +
