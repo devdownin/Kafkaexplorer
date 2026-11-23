@@ -293,7 +293,7 @@ describe('Dashboard top producers and quick diagnostics', () => {
   it('freezes silence only for the currently measured page and labels its scope', async () => {
     const user = userEvent.setup();
     const response = activityFor(topics.slice(0, 25));
-    response.topics[topics[0]] = series(topics[0], [10, 0, 0, 0]);
+    response.topics[topics[0]] = series(topics[0], [10, 10, 0, 0]);
     stubApi(response);
     renderPage();
     const action = await screen.findByRole('button', { name: 'Show silent topics on this page' });
