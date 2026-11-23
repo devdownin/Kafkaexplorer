@@ -75,8 +75,10 @@ specifically disables image/model fetching.
 ### Interactive live traffic scenarios
 
 These commands work on an already-running stack and are applied at the next live
-producer tick (normally 15 seconds), by writing `demo-scenario.conf` into the
-host-side `.forecast-stack/config` directory. The producer reads the file read-only.
+producer tick (normally 15 seconds), by writing `demo-scenario.conf` into a
+**dedicated named Docker volume** shared with the browser control panel. The generator
+mounts that volume read-only. A mode chosen before the first startup is staged in
+`.forecast-stack/config/demo-scenario.conf` and imported by `demo-control-init`.
 They change **real Kafka topic offsets** and thus the next live observations; they
 do not rewrite the pre-seeded historical observations or spoof forecasts.
 
@@ -93,9 +95,9 @@ For example, run `./demo-forecast.sh scenario incident`, observe Metrics and
 the difference between the previous forecast and reality, then run
 `./demo-forecast.sh scenario recover` and `./demo-forecast.sh scenario normal`.
 The equivalent Windows commands begin `.\\demo-forecast.cmd`.
-A scenario persists across container restarts until changed; `reset` deletes
-volumes but deliberately preserves the local scenario file. Select `normal`
-before a clean demonstration. Forecast results are not instant: their cadence
+A running scenario persists across container restarts until changed. `reset`
+deletes the scenario volume; an optional host-side pre-start selection remains and
+can be imported on first startup. Select `normal` before a clean demonstration. Forecast results are not instant: their cadence
 and the time needed for new observed measurements still apply.
 
 The dedicated `.github/workflows/forecast-prebuilt-smoke.yml` checks the *published
