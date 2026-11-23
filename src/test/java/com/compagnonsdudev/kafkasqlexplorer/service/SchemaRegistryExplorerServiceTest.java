@@ -4,7 +4,6 @@ package com.compagnonsdudev.kafkasqlexplorer.service;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
 import com.compagnonsdudev.kafkasqlexplorer.service.SchemaRegistryExplorerService.RegistryFailure;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -30,7 +29,7 @@ class SchemaRegistryExplorerServiceTest {
     private SchemaRegistryExplorerService service() {
         KafkaConfig config = new KafkaConfig();
         config.setSchemaRegistryUrl("http://127.0.0.1:" + server.getAddress().getPort());
-        return new SchemaRegistryExplorerService(config, new ObjectMapper());
+        return new SchemaRegistryExplorerService(config);
     }
 
     @AfterEach
@@ -107,7 +106,7 @@ class SchemaRegistryExplorerServiceTest {
     void reportsDisabledRegistryAndRejectsInvalidSubjectAndVersions() throws Exception {
         KafkaConfig disabled = new KafkaConfig();
         disabled.setSchemaRegistryUrl("");
-        var service = new SchemaRegistryExplorerService(disabled, new ObjectMapper());
+        var service = new SchemaRegistryExplorerService(disabled);
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, assertThrows(RegistryFailure.class, service::subjects).status());
 
         startServer();
