@@ -104,6 +104,27 @@ try {
   await page.keyboard.press('Escape');
   if (await layerMenu.count()) throw new Error('Layer menu did not close on Escape');
 
+  // Lots D/E: diagnostics must be keyboard-reachable; investigation snapshots
+  // are an explicit local download and must never include trace payloads.
+  await page.getByText('Scene telemetry (local)', { exact: true }).click();
+  await page.getByText('Geometry objects', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Investigate', exact: true }).click();
+  const guide = page.getByRole('region', { name: 'Strata guided investigation' });
+  await guide.waitFor();
+  await guide.getByRole('button', { name: 'Stage 2: Declared dependencies' }).click();
+  await guide.getByText('Declared dependencies', { exact: true }).waitFor();
+  const downloading = page.waitForEvent('download');
+  await guide.getByRole('button', { name: 'Save investigation snapshot' }).click();
+  const download = await downloading;
+  if (!download.suggestedFilename().startsWith('strata-investigation-')) {
+    throw new Error('Investigation snapshot download was not generated');
+  }
+  const snapshot = JSON.parse(await (await import('node:fs/promises')).readFile(await download.path(), 'utf8'));
+  if (snapshot.schema !== 'kafkaexplorer.strata.investigation.v1' || !snapshot.evidence ||
+    'hits' in snapshot || 'key' in snapshot || 'headers' in snapshot || 'messages' in snapshot) {
+    throw new Error('Investigation snapshot contract or privacy guard failed');
+  }
+
   await page.setViewportSize({ width: 390, height: 844 });
   const bounds = await page.locator('[data-testid="strata-workspace"]').boundingBox();
   if (!bounds || bounds.width > 390 + 3) {
@@ -114,7 +135,7 @@ try {
   await page.getByRole('button', { name: 'Show inspector' }).click();
   await page.locator('aside[aria-label="Topic inspector and comparison"]').waitFor();
   if (pageErrors.length) throw new Error('Uncaught browser errors: ' + pageErrors.join('; '));
-  console.log('Strata WebGL: context, orbit, URL round-trip, partitions, keyboard, layers and mobile layout passed.');
+  console.log('Strata WebGL: context, orbit, URL, partitions, keyboard, diagnostics, investigation snapshot and mobile passed.');
 } catch (error) {
   failure = error;
 } finally {

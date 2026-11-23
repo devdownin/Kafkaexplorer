@@ -21,6 +21,10 @@ import {
   StrataHoverCard, StrataLayerMenu, StrataMiniMap, StrataResizeHandle, StrataTimelineDock,
 } from './StrataWorkspaceUI';
 import StrataShortcutDialog from './StrataShortcutDialog';
+import StrataPerformancePanel from './StrataPerformancePanel';
+import StrataInvestigationPanel from './StrataInvestigationPanel';
+import { strataInspection, strataInvestigationSnapshot, strataLeads, type StrataInspection, type StrataSnapshotView } from './strataInvestigation';
+import { summarizeStrataPerformance, type StrataPerformance } from './strataPerformance';
 import { strataShortcut } from './strataShortcuts';
 import axios from 'axios';
 import * as THREE from 'three';
@@ -169,7 +173,7 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
 
 function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect, onFocus,
   focused, partitionActivity, forecast,
-  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, onHover }: {
+  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, onHover, onPerformance }: {
   topics: Topic[];
   selected: string | null;
   compareWith: string | null;
@@ -189,11 +193,13 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   lensAvailable: boolean;
   layers: typeof DEFAULT_STRATA_LAYERS;
   onHover: (hover: { name: string; x: number; y: number } | null) => void;
+  onPerformance: (reading: StrataPerformance) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const onSelectRef = useRef(onSelect);
   const onFocusRef = useRef(onFocus);
   const onHoverRef = useRef(onHover);
+  const onPerformanceRef = useRef(onPerformance);
   const motionRef = useRef(motion);
   const budget = useMemo(() => strataRenderBudget(quality, topics.length, window.devicePixelRatio || 1), [quality, topics.length]);
   const budgetRef = useRef(budget);
@@ -201,6 +207,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
   useEffect(() => { onFocusRef.current = onFocus; }, [onFocus]);
   useEffect(() => { onHoverRef.current = onHover; }, [onHover]);
+  useEffect(() => { onPerformanceRef.current = onPerformance; }, [onPerformance]);
   const state = useRef<{
     scene: THREE.Scene;
     camera: THREE.OrthographicCamera;
@@ -210,6 +217,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     groups: THREE.Group[];
     lens: THREE.Mesh;
     signature: string;
+    rebuildMs: number | null;
     invalidate: () => void;
     fit: (items: Topic[]) => void;
     focus: (topic: string | null) => void;
@@ -282,6 +290,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       scene, camera, renderer, controls, content: contentGroup,
       groups: [] as THREE.Group[], lens, signature: topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000'),
       positions: new Map<string, THREE.Vector3>(),
+      rebuildMs: null as number | null,
       overview: { position: camera.position.clone(), target: controlsTarget.clone(), zoom: 1 },
       invalidate: () => {},
       fit: (_items: Topic[]) => {},
@@ -389,6 +398,22 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     let frame = 0;
     let last = 0;
     let contextLost = false;
+    let reportSince = performance.now();
+    let renderedFrames = 0;
+    const reportPerformance = () => {
+      if (document.visibilityState !== 'visible') { reportSince = performance.now(); renderedFrames = 0; return; }
+      const now = performance.now();
+      onPerformanceRef.current(summarizeStrataPerformance({
+        elapsedMs: now - reportSince, renderedFrames, contextLost,
+        drawCalls: renderer.info.render.calls, geometries: renderer.info.memory.geometries,
+        textures: renderer.info.memory.textures, pixelRatio: renderer.getPixelRatio(),
+        rebuildMs: current.rebuildMs, topics: current.groups.length,
+        measuredAtMs: Date.now(),
+      }));
+      reportSince = now;
+      renderedFrames = 0;
+    };
+    const reportTimer = window.setInterval(reportPerformance, 3000);
     const requestRender = () => {
       if (!contextLost && !frame && document.visibilityState === 'visible') frame = requestAnimationFrame(render);
     };
@@ -424,6 +449,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
         }
       }
       renderer.render(scene, camera);
+      renderedFrames++;
       if (transition || moving || cameraChanged) requestRender();
     };
     current.invalidate = requestRender;
@@ -440,6 +466,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       cancelAnimationFrame(frame);
       frame = 0;
       setWebglFailed(true);
+      reportPerformance();
     };
     const onContextRestored = () => { contextLost = false; setWebglFailed(false); requestRender(); };
     renderer.domElement.addEventListener('webglcontextlost', onContextLost);
@@ -449,6 +476,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     resize();
     requestRender();
     return () => {
+      window.clearInterval(reportTimer);
       cancelAnimationFrame(frame);
       observer.disconnect();
       document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -483,6 +511,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       current.fit(topics);
     }
     // Replace measured geometry without tearing down WebGL, orbit or pointer handlers.
+    const rebuildStarted = performance.now();
     disposeGroup(current.content);
     current.content.clear();
     const dark = document.documentElement.classList.contains('dark') ||
@@ -599,6 +628,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       const center = lookup.get(forecast.topic);
       if (center) current.content.add(createForecastCanopy(forecast, center, dark));
     }
+    current.rebuildMs = performance.now() - rebuildStarted;
     current.invalidate();
   }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments, layers]);
 
@@ -642,6 +672,21 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   );
 }
 
+/** Called only from an explicit click, never during a React render. */
+function downloadInvestigation(inspection: StrataInspection, view: StrataSnapshotView) {
+  const capturedAt = Date.now();
+  const contents = strataInvestigationSnapshot(inspection, view, capturedAt);
+  const blob = new Blob([JSON.stringify(contents, null, 2)], { type: 'application/json' });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = 'strata-investigation-' + capturedAt + '.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+}
+
 export default function Strata3D() {
   const [initialView] = useState(() => readStrataView(new URLSearchParams(window.location.search)));
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
@@ -660,7 +705,14 @@ export default function Strata3D() {
   const [quality, setQuality] = useState<StrataQuality>(initialView.quality);
   const [shareNotice, setShareNotice] = useState<string | null>(null);
   const [shareLink, setShareLink] = useState<string | null>(null);
+  const [performanceStats, setPerformanceStats] = useState<StrataPerformance | null>(null);
   const [motion, setMotion] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  useEffect(() => {
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => setMotion(!preference.matches);
+    preference.addEventListener('change', onChange);
+    return () => preference.removeEventListener('change', onChange);
+  }, []);
   const [refresh, setRefresh] = useState(0);
   const [themeRevision, setThemeRevision] = useState(0);
   const [selectedBucket, setSelectedBucket] = useState(initialView.bucket);
@@ -897,8 +949,17 @@ export default function Strata3D() {
   })), [scoped, dashboard, activity, layoutIndices]);
   const links = useMemo(() => lineage ? deriveStrataLinks(lineage, scoped) : [], [lineage, scoped]);
   const selectedTopic = topics.find(t => t.name === selected);
-  const selectedEvidence = topicEvidence(selectedTopic?.activity, selectedBucket,
-    activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null);
+  const receivedAt = activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null;
+  const selectedEvidence = topicEvidence(selectedTopic?.activity, selectedBucket, receivedAt);
+  // Cheap, bounded derived views; avoid memoizing mutable Kafka snapshot objects.
+  // React Compiler cannot safely preserve memoization around these inputs.
+  const inspection = selectedTopic ? strataInspection(selectedTopic.name,
+    selectedTopic.activity, selectedBucket, receivedAt, links, selectedGroup) : null;
+  const leads = strataLeads(topics, selectedBucket, receivedAt,
+    selectedTopic?.name ?? null, selectedGroup);
+  const saveInvestigation = () => {
+    if (inspection) downloadInvestigation(inspection, { filter: filteredQuery, quality, layers });
+  };
   const hoveredTopic = hovered && topics.find(t => t.name === hovered.name);
   const setLayer = useCallback((layer: StrataLayer, enabled: boolean) => {
     setLayers(current => ({ ...current, [layer]: enabled }));
@@ -1036,6 +1097,7 @@ export default function Strata3D() {
           ? 'Sampled ' + new Date(activitySnapshot.receivedAt).toLocaleTimeString()
           : 'Activity not measured yet'}</span>
       </div>
+      <StrataPerformancePanel reading={performanceStats} />
       {names.length > MAX_TOPICS && <p className="text-xs text-on-surface-variant">
         The view is limited to {MAX_TOPICS} topics. Filter by name to reach the others.
       </p>}
@@ -1055,7 +1117,7 @@ export default function Strata3D() {
               className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface" />
           </label>
           <StrataMiniMap items={topics} totalTopics={names.length} selected={selected} peer={activeCompareWith}
-            onSelect={chooseTopic} onFocus={focusTopic} />
+            leads={leads} onSelect={chooseTopic} onFocus={focusTopic} />
           <div>
             <h3 className="mb-2 text-xs font-semibold text-on-surface">Topics in view</h3>
             <p className="mb-2 text-[11px] text-on-surface-variant">
@@ -1093,7 +1155,7 @@ export default function Strata3D() {
               <StrataCanvas topics={topics} selected={selected} compareWith={activeCompareWith}
                 diagnosticMode={diagnosticMode} onSelect={chooseTopic} onFocus={focusTopic}
                 focused={activeFocus} partitionActivity={alignedPartitionActivity} forecast={visibleForecast} motion={motion}
-                quality={quality} layers={layers} onHover={updateHovered}
+                quality={quality} layers={layers} onHover={updateHovered} onPerformance={setPerformanceStats}
                 links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
                 selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
               <p className="p-8 text-sm text-on-surface-variant">{dashboard ? 'No matching topics.' : 'Loading cluster…'}</p>}
@@ -1134,6 +1196,12 @@ export default function Strata3D() {
             compareWith={activeCompareWith} topics={scoped} snapshot={activity} links={links}
             trace={activeTrace} selectedBucket={selectedBucket} selectedGroup={selectedGroup}
             onChooseTopic={chooseTopic} onCompareWith={setCompareWith} />
+          {diagnosticMode === 'investigate' && <StrataInvestigationPanel inspection={inspection} leads={leads}
+            onChooseTopic={chooseTopic} onFocus={() => { if (selectedTopic) focusTopic(selectedTopic.name); }}
+            onEvidence={() => document.getElementById('strata-evidence-details')?.scrollIntoView({
+              behavior: motion ? 'smooth' : 'auto', block: 'start',
+            })}
+            onSnapshot={saveInvestigation} />}
         <aside className="rounded-xl border border-outline-variant bg-surface p-4" aria-live="polite">
           <h2 className="font-semibold text-on-surface mb-3">Topic inspector</h2>
           {selectedTopic ? <>
@@ -1169,7 +1237,7 @@ export default function Strata3D() {
         </aside>
         </aside>}
       </div>
-      <section className="space-y-4 rounded-2xl border border-outline-variant bg-surface-container-low p-3 sm:p-5"
+      <section id="strata-evidence-details" className="space-y-4 rounded-2xl border border-outline-variant bg-surface-container-low p-3 sm:p-5"
         aria-label="Detailed evidence and traces">
         <div>
           <h2 className="text-base font-semibold text-on-surface">Evidence details</h2>
