@@ -161,7 +161,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # Exercise the request/ack protocol under the stub broker as well as topic offsets.
     control = tmp / 'control'
     control.mkdir()
-    (control / 'demo-scenario.conf').write_text('normal|test-revision\\n'.replace('\\n', '\n'))
+    (control / 'demo-scenario.conf').write_text('normal|test-revision\n')
     env = {'PATH': '/usr/bin:/bin', 'OUT': str(tmp / 'out'), 'KAFKA_BIN': str(tmp / 'bin'),
            'DEMO_LIVE_TICK': '1', 'DEMO_SCENARIO_FILE': str(control / 'demo-scenario.conf'),
            'DEMO_SCENARIO_APPLIED_FILE': str(control / 'demo-scenario-applied.conf')}

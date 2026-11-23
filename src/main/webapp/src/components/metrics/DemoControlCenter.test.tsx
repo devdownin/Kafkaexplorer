@@ -20,7 +20,7 @@ const applying = {
 const confirmed = {
   enabled: true, scenario: 'normal', requestedScenario: 'normal', phase: 'ACTIVE', appliedAt: Date.now(),
 };
-const emptyForecast = { enabled: true, state: 'AVAILABLE', series: [] } as ForecastStatus;
+const emptyForecast: ForecastStatus = { enabled: true, state: 'AVAILABLE', series: [], shadowEnabled: false, modelAvailable: true };
 
 describe('Forecast Demo Control Center', () => {
   beforeEach(() => vi.clearAllMocks());
