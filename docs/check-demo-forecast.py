@@ -158,7 +158,13 @@ with tempfile.TemporaryDirectory() as tmp:
     # produce to the *second* one — the only way to see the keys it gives them.
     for left in ('orders', 'requests', 'imports', 'events', 'tickets'):
         (tmp / 'out' / f'demo.live.{left}').write_text(''.join(f'{left}-{i}|{{}}\n' for i in range(1, 601)))
-    env = {'PATH': '/usr/bin:/bin', 'OUT': str(tmp / 'out'), 'KAFKA_BIN': str(tmp / 'bin'), 'DEMO_LIVE_TICK': '1'}
+    # Exercise the request/ack protocol under the stub broker as well as topic offsets.
+    control = tmp / 'control'
+    control.mkdir()
+    (control / 'demo-scenario.conf').write_text('normal|test-revision\\n'.replace('\\n', '\n'))
+    env = {'PATH': '/usr/bin:/bin', 'OUT': str(tmp / 'out'), 'KAFKA_BIN': str(tmp / 'bin'),
+           'DEMO_LIVE_TICK': '1', 'DEMO_SCENARIO_FILE': str(control / 'demo-scenario.conf'),
+           'DEMO_SCENARIO_APPLIED_FILE': str(control / 'demo-scenario-applied.conf')}
     try:
         subprocess.run(['sh', str(DIR / 'live.sh'), 'stub:9092'], env=env, capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:
@@ -170,6 +176,14 @@ with tempfile.TemporaryDirectory() as tmp:
     def lines(topic):
         path = tmp / 'out' / topic
         return path.read_text().splitlines() if path.exists() else []
+
+    receipt = control / 'demo-scenario-applied.conf'
+    if not receipt.exists():
+        problems.append('live.sh did not acknowledge a scenario after Kafka offsets reflected the completed tick')
+    else:
+        parts = receipt.read_text().strip().split('|')
+        if len(parts) != 3 or parts[:2] != ['normal', 'test-revision'] or not parts[2].isdigit():
+            problems.append('live.sh receipt does not identify the exact request and verified tick')
 
     ended = int(time.time())
     for left, right, curve in (('demo.live.orders', 'demo.live.shipped', 'unshipped(t)'),

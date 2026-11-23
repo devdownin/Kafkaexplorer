@@ -6,8 +6,25 @@ The **Metrics** page shows a Demo Control Center only when the Explorer runs wit
 `EXPLORER_DEMO_CONTROL_ENABLED=true` (set by `compose/demo-forecast.yml`). It reports
 live demo metric counts, forecast series and READY results, and lets the operator
 switch between **normal**, **overload**, **incident**, **recover**, and **seasonal**
-traffic. The Kafka generator reads the shared scenario file on its next tick (15 s
-by default); historical observations and existing forecasts are preserved.
+traffic. Disruptive scenarios show their affected metrics before confirmation; **Return to normal**
+remains a one-click escape route. Historical observations and existing forecasts are preserved.
+
+### Scenario application is verified
+
+The API distinguishes the **requested** scenario from the **confirmed** scenario. A scenario
+is *Applying* until the generator has executed a complete tick, then inspected Kafka's
+log end offsets on the following tick and confirmed that the five topic pairs reflect
+the target counts. Only then does it write a timestamped acknowledgement
+(`demo-scenario-applied.conf`) to the local shared control directory. The UI shows
+*Active* with the generator's verification time, or *Generator unavailable* when the
+receipt becomes stale (default 75 seconds). A UUID on UI requests prevents a previous
+acknowledgement from being mistaken for the new request; the CLI's plain single-word
+scenario commands remain compatible. A request is not proof of delivery.
+
+During the first load, metric/forecast counters say *Loading*, never a fabricated zero;
+unavailable forecast data is labelled *Unavailable*, separately from a genuine zero
+series. A failed control API request produces a retryable error panel instead of silently
+hiding the demo; an intentional 404 still hides it in non-demo deployments.
 
 The endpoint is disabled (404) in regular deployments, validates a fixed allowlist,
 rejects cross-origin browser writes and never runs shell commands. The demo binds
