@@ -72,7 +72,7 @@ class DashboardControllerTest {
 
     private void brokerAnswers() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
-        when(kafkaAdminService.getTopicRecordCounts(anyList())).thenReturn(Map.of("orders", 12L));
+        when(kafkaAdminService.getDashboardTopicCounts(anyList())).thenReturn(Map.of("orders", 12L));
         when(kafkaAdminService.getTopicsLastMessageTimestamps(anyList())).thenReturn(Map.of("orders", 1_700_000_000_000L));
         when(kafkaAdminService.ping()).thenReturn(true);
     }
@@ -122,7 +122,7 @@ class DashboardControllerTest {
     @Test
     void doesNotConfuseUnreadableRecordCountsWithEmptyTopics() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("empty", "unreadable"));
-        when(kafkaAdminService.getTopicRecordCounts(anyList())).thenReturn(Map.of("empty", 0L));
+        when(kafkaAdminService.getDashboardTopicCounts(anyList())).thenReturn(Map.of("empty", 0L));
         when(kafkaAdminService.getTopicsLastMessageTimestamps(anyList())).thenReturn(Map.of());
         when(kafkaAdminService.ping()).thenReturn(true);
 
