@@ -173,6 +173,7 @@ const Metrics: React.FC = () => {
   const [creatingForecastId, setCreatingForecastId] = useState('');
   // The panel's own poll feeds the cards: one request for both, not one per card.
   const [forecastStatus, setForecastStatus] = useState<ForecastStatus | null>(null);
+  const [forecastStatusQueried, setForecastStatusQueried] = useState(false);
   const [forecastRevision, setForecastRevision] = useState(0);
   // The page's one clock, handed to the forecast panel so both read on the same tick.
   const [forecastClock, setForecastClock] = useState(0);
@@ -1181,7 +1182,8 @@ const Metrics: React.FC = () => {
         }
       />
 
-      <DemoControlCenter metricCount={metrics.filter(metric => metric.id.startsWith('demo-live-')).length} forecasts={forecastStatus} />
+      <DemoControlCenter metricCount={metrics.filter(metric => metric.id.startsWith('demo-live-')).length}
+        metricsLoading={loading} forecasts={forecastStatus} forecastsQueried={forecastStatusQueried} />
 
       {/* Summary bar */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1363,6 +1365,7 @@ const Metrics: React.FC = () => {
           }} />
       </section>}
       <ForecastPanel refresh={forecastRevision} clock={forecastClock} focus={forecastFocus} metricNames={metricNames} metricThresholds={metricThresholds} onStatus={status => {
+        setForecastStatusQueried(true);
         if (status) forecastReads.current = { lastAt: Date.now(), nextCycleAt: status.nextCycleAt ?? null };
         // Series by series, as the list: a series that did not move stays the same object.
         setForecastStatus(previous => {
