@@ -48,6 +48,7 @@ public class DashboardController {
         List<String> unmeasuredTopics;
         Map<String, Long> topicLastMessages;
         boolean health;
+        boolean snapshotAvailable;
 
         try {
             topics = kafkaAdminService.listTopics();
@@ -59,6 +60,7 @@ public class DashboardController {
             unmeasuredTopics = topics.stream().filter(topic -> !measured.containsKey(topic)).toList();
             topicLastMessages = kafkaAdminService.getTopicsLastMessageTimestamps(topics);
             health = kafkaAdminService.ping();
+            snapshotAvailable = true;
         } catch (Exception e) {
             logger.warn("Failed to fetch Kafka metadata, returning empty defaults: {}", e.getMessage());
             topics = Collections.emptyList();
@@ -66,6 +68,7 @@ public class DashboardController {
             unmeasuredTopics = Collections.emptyList();
             topicLastMessages = Collections.emptyMap();
             health = false;
+            snapshotAvailable = false;
         }
 
         long totalMessages = topicSizes.values().stream().mapToLong(Long::longValue).sum();
@@ -80,7 +83,8 @@ public class DashboardController {
                 kafkaConfig.getBootstrapServers(),
                 topicLastMessages,
                 explorerConfig.getResolvedInternalTopicPrefix(),
-                unmeasuredTopics
+                unmeasuredTopics,
+                snapshotAvailable
         );
     }
 
