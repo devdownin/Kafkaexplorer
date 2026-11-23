@@ -942,7 +942,7 @@ export default function Strata3D() {
     selectedTopic.activity, selectedBucket, receivedAt, links, selectedGroup) : null;
   const leads = strataLeads(topics, selectedBucket, receivedAt,
     selectedTopic?.name ?? null, selectedGroup);
-  const saveInvestigation = useCallback(() => {
+  const saveInvestigation = () => {
     if (!inspection) return;
     const contents = strataInvestigationSnapshot(inspection, { filter: filteredQuery, quality, layers }, Date.now());
     const blob = new Blob([JSON.stringify(contents, null, 2)], { type: 'application/json' });
@@ -954,7 +954,7 @@ export default function Strata3D() {
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
-  }, [inspection, filteredQuery, quality, layers]);
+  };
   const hoveredTopic = hovered && topics.find(t => t.name === hovered.name);
   const setLayer = useCallback((layer: StrataLayer, enabled: boolean) => {
     setLayers(current => ({ ...current, [layer]: enabled }));
