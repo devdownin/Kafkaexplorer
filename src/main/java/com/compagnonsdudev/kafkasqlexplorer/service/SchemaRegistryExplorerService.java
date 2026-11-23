@@ -44,8 +44,8 @@ public class SchemaRegistryExplorerService {
     private final HttpClient client;
 
     @Autowired
-    public SchemaRegistryExplorerService(KafkaConfig config, ObjectMapper mapper) {
-        this(config, mapper, HttpClient.newBuilder()
+    public SchemaRegistryExplorerService(KafkaConfig config) {
+        this(config, new ObjectMapper(), HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(3))
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build());
