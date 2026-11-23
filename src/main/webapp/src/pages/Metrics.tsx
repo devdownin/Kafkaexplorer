@@ -974,7 +974,11 @@ const Metrics: React.FC = () => {
   const onDemoConfirmed = useCallback((event: DemoScenarioEvent) => {
     const key = `${event.scenario}:${event.at}`;
     if (lastDemoConfirmation.current === key) return;
+    const first = lastDemoConfirmation.current === '';
     lastDemoConfirmation.current = key;
+    // Opening a new demo at its default normal state must not trigger five expensive
+    // refresh requests; only an actual scenario transition should recompute them.
+    if (first && event.scenario === 'normal') return;
     setDemoEvent(event);
     void Promise.allSettled(event.metricIds.map(metricId =>
       axios.post(`/api/metrics/${encodeURIComponent(metricId)}/refresh`, undefined, { timeout: 10000 })))

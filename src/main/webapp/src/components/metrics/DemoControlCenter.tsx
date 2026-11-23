@@ -118,7 +118,8 @@ export function DemoControlCenter({ metricCount, metricsLoading, forecasts, fore
       exportedAt: new Date().toISOString(),
       scenario: {
         requested: state?.requestedScenario, confirmed: state?.scenario,
-        phase: state?.phase, appliedAt: state?.appliedAt,
+        phase: state?.phase, appliedAt: state?.appliedAt, startedAt: state?.startedAt,
+        affectedMetrics: state?.scenario ? scenarioFor(state.scenario).metricIds : [],
       },
       metrics: { active: metricsLoading ? null : metricCount, expected: 5 },
       forecasts: {
@@ -259,6 +260,17 @@ export function DemoControlCenter({ metricCount, metricsLoading, forecasts, fore
     </div>}
     {expanded && <div className="border-t border-outline-variant/60 px-4 py-4 sm:px-5">
       <p className="text-xs text-on-surface-variant mb-3">Select a scenario. Changes reach Kafka on the next traffic tick; the confirmation waits for broker offsets.</p>
+      {selectedScenario && <div role="group" aria-label="Confirm traffic scenario"
+        className="mt-3 rounded-xl border border-warning/40 bg-warning/5 p-3">
+        <p className="text-sm font-medium text-on-surface">Apply {selectedScenario.label}?</p>
+        <p className="text-xs text-on-surface-variant mt-1">{selectedScenario.impact} The change affects demo Kafka data only and does not rewrite historical metrics.</p>
+        <div className="flex flex-wrap gap-2 mt-3">
+          <button type="button" onClick={() => void choose(selectedScenario.id)} disabled={busy}
+            className="min-h-10 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-on-primary">Apply scenario</button>
+          <button type="button" onClick={() => setCandidate(null)} disabled={busy}
+            className="min-h-10 rounded-lg border border-outline-variant px-4 py-2 text-sm text-on-surface">Cancel</button>
+        </div>
+      </div>}
       <div className="grid grid-cols-1 min-[440px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2">
         {SCENARIOS.map(s => <button type="button" key={s.id} disabled={busy || s.id === state.requestedScenario}
           aria-pressed={active && state.scenario === s.id} onClick={() => selectScenario(s.id)}
@@ -273,17 +285,6 @@ export function DemoControlCenter({ metricCount, metricsLoading, forecasts, fore
       {onInspectMetrics && <p className="mt-3 text-xs text-on-surface-variant">
         The chart previews are illustrative. Use <strong>View impacted metrics</strong> for live observed data.
       </p>}
-      {selectedScenario && <div role="group" aria-label="Confirm traffic scenario"
-        className="mt-3 rounded-xl border border-warning/40 bg-warning/5 p-3">
-        <p className="text-sm font-medium text-on-surface">Apply {selectedScenario.label}?</p>
-        <p className="text-xs text-on-surface-variant mt-1">{selectedScenario.impact} The change affects demo Kafka data only and does not rewrite historical metrics.</p>
-        <div className="flex flex-wrap gap-2 mt-3">
-          <button type="button" onClick={() => void choose(selectedScenario.id)} disabled={busy}
-            className="min-h-10 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-on-primary">Apply scenario</button>
-          <button type="button" onClick={() => setCandidate(null)} disabled={busy}
-            className="min-h-10 rounded-lg border border-outline-variant px-4 py-2 text-sm text-on-surface">Cancel</button>
-        </div>
-      </div>}
       <div className="flex items-center justify-between gap-2 mt-3">
         <span className="text-xs text-on-surface-variant" role="status">{busy ? 'Sending scenario request…' : 'Select a scenario to update live traffic'}</span>
         <button type="button" onClick={() => void refresh()} className="min-h-10 px-2 text-xs text-primary underline underline-offset-2">Refresh status</button>
