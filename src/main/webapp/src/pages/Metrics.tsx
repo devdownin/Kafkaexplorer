@@ -450,8 +450,10 @@ const Metrics: React.FC = () => {
   // only asked again once something can have changed (`forecastReadDue`). Written by the panel's
   // status callback and read by this timer, never during render.
   const forecastReads = useRef<{ lastAt: number | null; nextCycleAt: number | null }>({ lastAt: null, nextCycleAt: null });
+  // Risk badges depend on wall-clock time even when the metrics refresh interval
+  // is minutes long. No network request runs on this lightweight visibility-aware timer.
+  useEffect(() => startVisiblePolling(() => setForecastNow(Date.now()), 30_000), []);
   useEffect(() => startVisiblePolling(() => {
-    setForecastNow(Date.now());
     void fetchMetrics();
     void fetchRefreshCosts();
     if (forecastReadDue(Date.now(), forecastReads.current.nextCycleAt, forecastReads.current.lastAt)) setForecastClock(c => c + 1);
