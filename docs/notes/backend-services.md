@@ -5,6 +5,10 @@ This is the *why* behind the odd-looking choices in `service/`: almost every one
 fix, and the paragraph beside it is the defect it closes. Read the entry for a class
 before changing it.
 
+## Schema Registry Explorer (optional)
+
+`SchemaRegistryExplorerService` reads the backend's configured `kafka.schema-registry-url` via bounded HTTP requests; it does not accept upstream URLs from the browser. Only GET requests and the Confluent **non-mutating** `/compatibility` POST are exposed via `/api/schema-registry/**`. The candidate schema is re-read from a registered subject/version, not accepted from a free-text request. Response envelopes use Java records in `domain/` and `api/types.ts`. Registry downtime never blocks KafkaExplorer startup. See [operator guide](../SCHEMA-REGISTRY.md).
+
 ## Backend layers
 
 ```
