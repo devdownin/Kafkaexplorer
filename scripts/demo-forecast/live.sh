@@ -127,6 +127,9 @@ while :; do
   fi
   mode=${request%%|*}
   case "$mode" in normal|overload|incident|recover|seasonal) ;; *) mode=normal; request=normal ;; esac
+  if [ "$request" != "$previous_request" ]; then
+    echo "Demo traffic request: $mode (Kafka offset verification pending)"
+  fi
   if [ -n "$offsets" ]; then
     # A new request is only ACTIVE after a complete tick has been observed in Kafka.
     # Recheck every tick; a stalled producer never gets a success receipt.
@@ -151,6 +154,9 @@ while :; do
       fi
       printf 'v2|%s|%s|%s\n' "$request" "$now" "$started" > "$receipt_tmp"
       mv -f "$receipt_tmp" "$APPLIED_FILE"
+      if [ "$started" = "$now" ]; then
+        echo "Demo traffic verified: $mode at Kafka offsets ($now)"
+      fi
     fi
     printf '%s\n' "$PAIRS" | while read -r left right curve; do
       hold "$offsets" "$left" "$right" "$(signal "$now" "$curve" "$mode")" "$now"
