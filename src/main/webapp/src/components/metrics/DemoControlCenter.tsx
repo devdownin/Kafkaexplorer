@@ -18,8 +18,8 @@ const SCENARIOS: { key: Scenario; title: string; detail: string; icon: string }[
  * Mounted only for the opt-in demo API (404 is an ordinary production deployment).
  * Reuses the Metrics page's visible-tab clock — no independent polling loop.
  */
-export function DemoControlCenter({ metrics, forecast, clock }: {
-  metrics: MetricConfig[]; forecast: ForecastStatus | null; clock: number;
+export function DemoControlCenter({ metrics, forecast, clock, now }: {
+  metrics: MetricConfig[]; forecast: ForecastStatus | null; clock: number; now: number;
 }) {
   const [status, setStatus] = useState<DemoControlStatus | null>(null);
   const [available, setAvailable] = useState(true);
@@ -50,7 +50,7 @@ export function DemoControlCenter({ metrics, forecast, clock }: {
   const ready = demoSeries.filter(s => s.result?.state === 'READY' && s.result?.strategy === 'TIMESFM').length;
   const historyAvailable = demoSeries.some(s => (s.result?.context?.observedPoints ?? 0) >= 500);
   const trafficRecent = demoMetrics.some(m => m.lastUpdateTime != null
-    && Date.now() - m.lastUpdateTime < 120_000 && !m.errorMessage);
+    && now - m.lastUpdateTime < 120_000 && !m.errorMessage);
 
   if (!available || !status) return null;
 
