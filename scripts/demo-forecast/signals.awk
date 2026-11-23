@@ -90,3 +90,30 @@ function shift(t,    m, c, level) {
   else               level = 130 - 80 * (c - 174) / 6
   return level + 5 * noise(t)
 }
+
+# Scenario overrides affect live writes only; seeded historical observations remain the
+# baseline, so a manual incident is a genuine change that the forecast can miss.
+# Keep scenario values non-negative: they represent offsets between two Kafka topics.
+function scenario_value(curve, t, mode) {
+  if (mode == "overload") {
+    if (curve == "unshipped") return 480
+    if (curve == "backlog") return 185
+  } else if (mode == "incident") {
+    if (curve == "shift") return 195
+    if (curve == "jitter") return 180
+  } else if (mode == "recover") {
+    if (curve == "unshipped") return 20
+    if (curve == "backlog") return 20
+    if (curve == "creep") return 30
+    if (curve == "jitter") return 80
+    if (curve == "shift") return 50
+  } else if (mode == "seasonal" && curve == "backlog") {
+    return 100 + 90 * sin(2 * pi() * (t / 60) / 20)
+  }
+  if (curve == "unshipped") return unshipped(t)
+  if (curve == "backlog") return backlog(t)
+  if (curve == "creep") return creep(t)
+  if (curve == "jitter") return jitter(t)
+  if (curve == "shift") return shift(t)
+  return 0
+}
