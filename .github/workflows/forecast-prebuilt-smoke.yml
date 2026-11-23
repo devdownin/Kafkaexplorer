@@ -1,0 +1,62 @@
+name: Prebuilt Forecast demo smoke
+
+# The actual user entry point, against published registry images: no Maven, npm, or
+# docker build. Only the demo-related PRs pay the extra image pull; the scheduled
+# run catches an image being removed or made inaccessible after a release.
+on:
+  pull_request:
+    paths:
+      - demo.sh
+      - demo.ps1
+      - demo-forecast.sh
+      - demo-forecast.cmd
+      - compose/demo-forecast.yml
+      - compose/demo-forecast-prebuilt.yml
+      - compose/forecast-offline.yml
+      - scripts/demo-forecast/**
+      - .github/workflows/forecast-prebuilt-smoke.yml
+  workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * 2'
+
+permissions:
+  contents: read
+
+jobs:
+  real-published-images:
+    name: Launch and verify the real published-image forecast demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      TIMESFM_CPUS: '2.0'
+      TIMESFM_THREADS: '2'
+      TIMESFM_MEM_LIMIT: 6g
+      DEMO_FORECAST_READY_TIMEOUT: '900'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check launcher and generator syntax
+        run: |
+          bash -n demo.sh demo-forecast.sh
+          sh -n scripts/demo-forecast/live.sh scripts/demo-forecast/seed.sh
+      - name: Preflight using the exact no-build launcher
+        run: ./demo-forecast.sh doctor
+      - name: Pull released images and launch with no build
+        run: ./demo-forecast.sh up
+      - name: Assert demo is actually ready
+        run: ./demo-forecast.sh verify
+      - name: Exercise live scenarios through the public launcher
+        run: python3 ci/prebuilt-demo-scenarios.py
+      - name: Relaunch offline using only the images already pulled
+        run: |
+          ./demo-forecast.sh --offline doctor
+          ./demo-forecast.sh --offline up
+          ./demo-forecast.sh --offline verify
+      - name: Debug containers on failure
+        if: failure()
+        run: |
+          ./demo-forecast.sh ps || true
+          docker compose -f docker-compose.yml -f compose/schema-registry.yml -f compose/mcp.yml -f compose/forecasts.yml -f compose/demo-forecast.yml -f compose/forecast-offline.yml -f compose/demo-forecast-prebuilt.yml -f compose/image.yml logs --no-color --tail 100 demo-live demo-forecast-seed timesfm explorer || true
+          docker system df || true
+      - name: Remove disposable forecast stack
+        if: always()
+        run: ./demo-forecast.sh reset || true
