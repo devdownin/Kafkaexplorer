@@ -82,6 +82,26 @@ Les séries de production représentent des **différences d'offsets**, pas le n
 
 ## 7. Décision qualité
 
-**État : PR en brouillon jusqu'à CI complète verte sur le dernier commit et revue visuelle du rendu matériel.** Les correctifs de sûreté des mesures, du budget Kafka et de navigation sont intégrés. Les risques résiduels ci-dessus ne doivent pas être déclarés résolus sans preuve d'exécution.
+**État du périmètre initial : PR #661 fusionnée dans main le 23 novembre 2026.** Les correctifs de sûreté des mesures, du budget Kafka et de navigation sont intégrés. La revue GPU matérielle, l'accessibilité formelle et les essais de charge restent ouverts ; aucune certification n'est sous-entendue.
 
 Document à tenir à jour avec la [PR #661](https://github.com/devdownin/Kafkaexplorer/pull/661) et le [guide d'exploitation Strata](../STRATA-3D.md).
+
+
+## 8. Audit incrémental — lots D et E (23 novembre 2026)
+
+| Contrôle | Implantation | Vérification / limite |
+|---|---|---|
+| D — FPS et coût du rendu | Télémétrie locale toutes les 3 secondes : FPS seulement avec rendu soutenu, draw calls et objets Three.js, durée de reconstruction | Les compteurs de géométrie/texture ne sont **pas** une mesure de mémoire GPU. Scène immobile = rendu à la demande, pas 0 FPS |
+| D — Sûreté de l'instrumentation | Aucune télémétrie envoyée, aucune nouvelle lecture Kafka, timers arrêtés au démontage, pause pendant onglet masqué | Contrôler en conditions réelles la consommation d'un mobile |
+| D — Préférences d'accessibilité | Changement dynamique de la préférence système de réduction des animations, panneau natif HTML accessible au clavier | Pas de certification WCAG, test humain nécessaire |
+| E — Provenance des signaux | Déviations sur offsets horodatés et couverture complète pour l'intervalle, lag uniquement du groupe sélectionné | Indices d'exploration et non preuve de saturation ou de causalité |
+| E — Gestion de l'inconnu | Mesures incomplètes, indisponibles et obsolètes exclues des signaux de production | Aucune conclusion « groupe sain » en l'absence de mesures |
+| E — Captures | Export JSON manuel, versionné et allowlisté ; seuls données agrégées, contexte temporel, chemins Flink déclarés et groupe explicitement sélectionné | Pas d'enregistrement, clé Kafka, message ou trace brute ; les noms métier peuvent rester sensibles et requièrent une revue avant partage |
+| E — Navigation | Étapes natives clavier, sans scan additionnel, lien vers la trace volontaire | À contrôler sous 200 % de zoom et lecteur d'écran matériel |
+| Régressions | Vitest ciblé et extension du probe Chromium/WebGL | La conclusion CI doit être vérifiée sur la tête de la nouvelle PR ; aucune réussite de CI n'est présumée ici |
+
+**Critères de sortie :** lint, types, tests unitaires, docs, CI d'intégration,
+CodeQL et sécurité au vert sur le dernier commit. Vérifier le téléchargement
+local dans le navigateur, le suivi des changements de réduction de mouvement,
+les thèmes clair/sombre, le focus et les tailles tactiles. Les essais GPU sur
+matériel et l'audit WCAG externe restent **à réaliser** même après CI réussie.
