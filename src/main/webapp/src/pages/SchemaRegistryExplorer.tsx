@@ -93,7 +93,7 @@ export default function SchemaRegistryExplorer() {
       })
       .catch(error => { if (!abort.signal.aborted) { setLoaded(null); setDetailError(failureText(error)); } });
     return () => abort.abort();
-  }, [subject, pair.baseline, pair.candidate]);
+  }, [subject, pair]);
 
   const matches = useMemo(() => (catalog?.subjects ?? [])
     .filter(name => name.toLowerCase().includes(search.trim().toLowerCase())), [catalog, search]);
