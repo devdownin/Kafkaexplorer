@@ -1974,3 +1974,36 @@ export interface MetricRefreshCosts {
   /** Absent for a metric not refreshed yet in this process. */
   metrics: Record<string, MetricRefreshCost>;
 }
+
+/** @java RegistrySubjects */
+export interface RegistrySubjects {
+  subjects: string[];
+  total: number;
+  truncated: boolean;
+}
+
+/** @java RegistrySchemaReference */
+export interface RegistrySchemaReference {
+  name: string;
+  subject: string;
+  version: number;
+}
+
+/** @java RegistrySchemaVersion */
+export interface RegistrySchemaVersion {
+  subject: string;
+  version: number;
+  id: number;
+  schemaType: string;
+  schema: string;
+  references: RegistrySchemaReference[];
+}
+
+/** @java RegistryCompatibility */
+export interface RegistryCompatibility {
+  compatible: boolean;
+  baselineVersion: number;
+  candidateVersion: number;
+  level: string;
+  messages: string[];
+}

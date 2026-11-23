@@ -20,6 +20,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Optional Schema Registry Explorer:** read-only subject search, version history and schema
+  references, normalized side-by-side schema diffs, and explicit version-to-version compatibility
+  verification against the registry's policy. A missing registry does not block the application;
+  upstream response sizes, timeouts, errors and large UI diffs are bounded.
 - **Demo Forecast without a local build:** cross-platform launchers use only published,
   pinned Explorer and checkpoint-bundled TimesFM images; Compose verifies no build survives,
   pulls the images and fails rather than falling back to source builds. Secrets, live demo

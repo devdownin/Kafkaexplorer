@@ -14,6 +14,15 @@ Open **Observe → Strata 3D** (route `/strata`) to inspect up to 48 Kafka topic
 
 See the [Strata 3D operator guide](STRATA-3D.md) and the [technical audit](notes/strata-3d-audit.md). These features are present in the source tree; a tagged Docker image must be published before claiming availability in a particular image tag.
 
+## Schema Registry Explorer — optional schema contracts
+
+Open **Explore → Schema Registry** (route `/schema-registry`) to filter registered subjects,
+inspect schema IDs, formats and references, compare two saved versions side by side and
+check the candidate against a selected baseline using the registry's effective compatibility
+policy. The check is read-only: it does not register or delete any schema. When no registry
+is reachable, the page explains how to start the optional Compose overlay; other
+KafkaExplorer features continue to work. [Operator guide](SCHEMA-REGISTRY.md).
+
 ## 1. Dashboard & Navigation
 - **Topic List**: Overview of all topics available on the Kafka cluster.
 - **Advanced Filtering**:
