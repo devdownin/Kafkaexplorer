@@ -292,7 +292,7 @@ set_scenario() {
   [[ $DEMO_MODE == forecast ]] || { echo 'scenario is available in forecast mode only.' >&2; return 2; }
   local name=${1:-} file="${FORECAST_CONFIG_DIR}/demo-scenario.conf"
   if [[ -z $name ]]; then
-    if [[ -f $file ]]; then cat "$file"; else echo normal; fi
+    if [[ -f $file ]]; then IFS='|' read -r current _ < "$file" || true; echo "${current:-normal}"; else echo normal; fi
     return 0
   fi
   case $name in normal|overload|incident|recover|seasonal) ;; *)

@@ -7,14 +7,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
+import java.time.Instant;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * Opt-in, local-demo-only scenario control. Disabled by default and never exposes arbitrary
- * file paths or shell execution. The Kafka generator reads the same one-line file.
+ * Local, opt-in demo-only control. A write requests a scenario; only the generator,
+ * after reading back Kafka offsets on its next tick, can acknowledge its application.
+ * Not exposed in regular installations and never executes shell commands.
  */
 @RestController
 @RequestMapping("/api/demo-control")
@@ -28,20 +31,66 @@ public class DemoControlController {
   @Value("${explorer.demo-control.directory:/app/demo-control}")
   private String directory;
 
-  public record State(String scenario, boolean enabled) {}
+  /** An old acknowledgement must not advertise a dead traffic generator as active. */
+  @Value("${explorer.demo-control.ack-max-age-seconds:75}")
+  private long ackMaxAgeSeconds;
+
+  /**
+   * scenario is the last *confirmed* Kafka scenario, nullable when unverified.
+   * requestedScenario is the operator's request; phase is ACTIVE, APPLYING or STALE.
+   * appliedAt is epoch milliseconds of the generator's last verified tick.
+   */
+  public record State(boolean enabled, String scenario, String requestedScenario, String phase,
+                      Long appliedAt) {}
   public record Selection(String scenario) {}
 
   @GetMapping
   public ResponseEntity<State> status() {
     if (!enabled) return ResponseEntity.notFound().build();
     try {
-      Path file = Path.of(directory).resolve("demo-scenario.conf");
-      String value = Files.isRegularFile(file)
-          ? Files.readString(file, StandardCharsets.UTF_8).trim() : "normal";
-      return ResponseEntity.ok(new State(SCENARIOS.contains(value) ? value : "normal", true));
+      return ResponseEntity.ok(readState());
     } catch (IOException e) {
       return ResponseEntity.internalServerError().build();
     }
+  }
+
+  private State readState() throws IOException {
+    Path dir = Path.of(directory);
+    Path requestFile = dir.resolve("demo-scenario.conf");
+    Path appliedFile = dir.resolve("demo-scenario-applied.conf");
+    String request = Files.isRegularFile(requestFile)
+        ? Files.readString(requestFile, StandardCharsets.UTF_8).trim() : "normal";
+    String requested = scenarioOf(request);
+    if (requested == null) throw new IOException("Invalid demo scenario request");
+    if (!Files.isRegularFile(appliedFile))
+      return new State(true, null, requested, "APPLYING", null);
+
+    String receipt = Files.readString(appliedFile, StandardCharsets.UTF_8).trim();
+    int separator = receipt.lastIndexOf('|');
+    if (separator < 1) return new State(true, null, requested, "STALE", null);
+    String acknowledgedRequest = receipt.substring(0, separator);
+    String acknowledgedScenario = scenarioOf(acknowledgedRequest);
+    long epochSeconds;
+    try {
+      epochSeconds = Long.parseLong(receipt.substring(separator + 1));
+    } catch (NumberFormatException e) {
+      return new State(true, null, requested, "STALE", null);
+    }
+    long now = Instant.now().getEpochSecond();
+    if (acknowledgedScenario == null || epochSeconds <= 0 || epochSeconds > now + 5
+        || now - epochSeconds > ackMaxAgeSeconds)
+      return new State(true, null, requested, "STALE", null);
+
+    // A previous request may still be confirmed while a new one is in flight.
+    return new State(true, acknowledgedScenario, requested,
+        request.equals(acknowledgedRequest) ? "ACTIVE" : "APPLYING",
+        epochSeconds * 1000);
+  }
+
+  private static String scenarioOf(String request) {
+    int separator = request.indexOf('|');
+    String name = separator < 0 ? request : request.substring(0, separator);
+    return SCENARIOS.contains(name) ? name : null;
   }
 
   @PutMapping
@@ -49,20 +98,22 @@ public class DemoControlController {
       @RequestHeader(value = "Origin", required = false) String origin,
       @RequestHeader(value = "Host", required = false) String host) {
     if (!enabled) return ResponseEntity.notFound().build();
-    // Browser-driven changes must originate on the same host. The demo remains bound to
-    // loopback by default; do not enable this controller on a public deployment.
     if (origin != null && (host == null || !sameOrigin(origin, host)))
       return ResponseEntity.status(403).build();
     if (selection == null || !SCENARIOS.contains(selection.scenario()))
       return ResponseEntity.badRequest().build();
+
     try {
       Path dir = Path.of(directory);
       Files.createDirectories(dir);
       Path temp = Files.createTempFile(dir, ".demo-scenario-", ".tmp");
       try {
-        Files.writeString(temp, selection.scenario() + "\n", StandardCharsets.UTF_8);
-        // The host CLI also writes this single demo-only file (uid differs from the
-        // container's non-root uid). No other files or secrets share this directory.
+        // The UUID differentiates repeat requests and prevents a stale receipt from
+        // confirming an action that has not yet reached Kafka.
+        Files.writeString(temp, selection.scenario() + "|" + UUID.randomUUID() + "\n",
+            StandardCharsets.UTF_8);
+        // CLI and Explorer have different local UIDs. This directory is demo-only,
+        // never contains credentials, and is not mounted outside this stack.
         Files.setPosixFilePermissions(temp, Set.of(
             PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE,
             PosixFilePermission.GROUP_READ, PosixFilePermission.GROUP_WRITE,
@@ -72,7 +123,7 @@ public class DemoControlController {
       } finally {
         Files.deleteIfExists(temp);
       }
-      return ResponseEntity.ok(new State(selection.scenario(), true));
+      return ResponseEntity.ok(readState());
     } catch (IOException e) {
       return ResponseEntity.internalServerError().build();
     }

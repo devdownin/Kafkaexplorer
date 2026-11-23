@@ -336,7 +336,7 @@ function Set-ForecastScenario([string] $Name) {
     if (-not $forecastOnly) { throw 'scenario is available in forecast mode only.' }
     $file = Join-Path $env:FORECAST_CONFIG_DIR 'demo-scenario.conf'
     if (-not $Name) {
-        if (Test-Path -LiteralPath $file) { Write-Host ([IO.File]::ReadAllText((Resolve-Path $file).Path).Trim()) }
+        if (Test-Path -LiteralPath $file) { Write-Host (([IO.File]::ReadAllText((Resolve-Path $file).Path).Trim() -split '\\|', 2)[0]) }
         else { Write-Host 'normal' }
         return
     }

@@ -37,10 +37,11 @@ services:
         condition: service_healthy
     volumes:
       - ./scripts/demo-forecast:/demo-forecast:ro
-      # Writable only from the host CLI; read-only inside the traffic generator.
-      - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}:/demo-control:ro
+      # Generator publishes a verified scenario receipt after Kafka offsets catch up.
+      - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}:/demo-control:rw
     environment:
       DEMO_SCENARIO_FILE: /demo-control/demo-scenario.conf
+      DEMO_SCENARIO_APPLIED_FILE: /demo-control/demo-scenario-applied.conf
     entrypoint:
       - sh
       - -c

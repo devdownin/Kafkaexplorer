@@ -34,6 +34,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SIGNALS="${SIGNALS:-$HERE/signals.awk}"
 TICK="${DEMO_LIVE_TICK:-15}"
 SCENARIO_FILE="${DEMO_SCENARIO_FILE:-/demo-control/demo-scenario.conf}"
+APPLIED_FILE="${DEMO_SCENARIO_APPLIED_FILE:-/demo-control/demo-scenario-applied.conf}"
 
 # <first topic> <second topic> <curve in signals.awk>: one line per pair, the one place to add one.
 PAIRS="demo.live.orders demo.live.shipped unshipped
@@ -94,20 +95,47 @@ hold() { # <offsets> <left topic> <right topic> <target> <now>
     >"$FIFOS/$topic"
 }
 
+# Verify a previous tick against Kafka's *observed* log end offsets before acknowledging it.
+# Writing to the FIFOs alone does not prove the producer has persisted the messages.
+targets_reached() { # <offset snapshot> <epoch> <scenario>
+  printf '%s\n' "$PAIRS" | while read -r left right curve; do
+    wanted=$(signal "$2" "$curve" "$3")
+    actual=$(( $(count_of "$left" "$1") - $(count_of "$right" "$1") ))
+    [ "$actual" -eq "$wanted" ] || return 1
+  done
+}
+# A container restart invalidates a previous generator's heartbeat immediately.
+[ ! -d "${APPLIED_FILE%/*}" ] || rm -f "$APPLIED_FILE"
+previous_request=''
+previous_at=''
+previous_mode=''
 echo "Producing live traffic every ${TICK}s (five topic pairs: orders, requests, imports, events, tickets)."
 while :; do
   now=$(date +%s)
   offsets=$(end_offsets) || offsets=""
-  mode=normal
+  request=normal
   if [ -r "$SCENARIO_FILE" ]; then
-    IFS= read -r mode < "$SCENARIO_FILE" || true
-    mode=$(printf "%s" "$mode" | tr -d "\r")
+    IFS= read -r request < "$SCENARIO_FILE" || true
+    request=$(printf '%s' "$request" | tr -d "\r")
   fi
-  case "$mode" in normal|overload|incident|recover|seasonal) ;; *) mode=normal ;; esac
+  mode=${request%%|*}
+  case "$mode" in normal|overload|incident|recover|seasonal) ;; *) mode=normal; request=normal ;; esac
   if [ -n "$offsets" ]; then
+    # A new request is only ACTIVE after a complete tick has been observed in Kafka.
+    # Recheck every tick; a stalled producer never gets a success receipt.
+    if [ "$request" = "$previous_request" ] && [ -n "$previous_at" ] &&
+       [ -d "${APPLIED_FILE%/*}" ] &&
+       targets_reached "$offsets" "$previous_at" "$previous_mode"; then
+      receipt_tmp="${APPLIED_FILE}.$"
+      printf '%s|%s\n' "$request" "$now" > "$receipt_tmp"
+      mv -f "$receipt_tmp" "$APPLIED_FILE"
+    fi
     printf '%s\n' "$PAIRS" | while read -r left right curve; do
       hold "$offsets" "$left" "$right" "$(signal "$now" "$curve" "$mode")" "$now"
     done
+    previous_request=$request
+    previous_at=$now
+    previous_mode=$mode
   fi
   sleep "$TICK"
 done
