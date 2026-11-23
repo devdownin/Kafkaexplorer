@@ -50,6 +50,28 @@ describe('ForecastPanel', () => {
     expect(screen.getAllByText(/staging/).length).toBeGreaterThan(0);
   });
 
+  it('never overlays an old detailed history on a newer result when the detail read fails', async () => {
+    const initial = seriesWith(ready);
+    const first = { ...initial.series[0], result: { ...initial.series[0].result, key: 'v1',
+      context: { ...initial.series[0].result.context, points: [{ endAt: 1000, value: 999, imputed: false }] } } };
+    const second = { ...initial.series[0], result: { ...initial.series[0].result, key: 'v2' } };
+    let version = 1;
+    vi.mocked(axios.get).mockImplementation(async url => {
+      if (url === '/api/forecasts') return { data: { ...initial, series: [version === 1 ? first : second] } };
+      if (url === `/api/forecasts/${first.seriesId}`) {
+        if (version === 2) throw new Error('detail temporarily unavailable');
+        return { data: first };
+      }
+      return { status: 404, data: '' };
+    });
+    const view = render(<ForecastPanel clock={0} />);
+    await vi.waitFor(() => expect(screen.getByRole('img', { name: /1 observed points/ })).toBeTruthy());
+    version = 2;
+    view.rerender(<ForecastPanel clock={1} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Only its current summary is shown');
+    expect(screen.getByRole('img', { name: /0 observed points/ })).toBeTruthy();
+  });
+
   it('reports persistence outage rather than empty measurements', async () => {
     vi.mocked(axios.get).mockRejectedValue(new Error('503'));
     render(<ForecastPanel />);
