@@ -33,7 +33,9 @@ export function DemoControlCenter({ metricCount, forecasts }: {
   }, []);
   useEffect(() => {
     const controller = new AbortController();
-    void refresh(controller.signal);
+    // Schedule the HTTP synchronization outside the effect body; all state updates
+    // happen after its response, never synchronously during React's commit.
+    void Promise.resolve().then(() => refresh(controller.signal));
     return () => controller.abort();
   }, [refresh]);
 
