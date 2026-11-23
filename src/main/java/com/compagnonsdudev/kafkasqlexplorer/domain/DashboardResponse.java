@@ -31,5 +31,7 @@ public record DashboardResponse(
      * it became a setting. This is the one response every page already receives, through
      * {@code Layout}'s poll, so nothing extra is requested for it.
      */
-    String internalTopicPrefix
+    String internalTopicPrefix,
+    /** Topics whose retained-count measurement could not be completed; not proven empty. */
+    List<String> unmeasuredTopics
 ) {}
