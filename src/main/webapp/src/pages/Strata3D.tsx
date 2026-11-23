@@ -21,6 +21,8 @@ import {
   StrataHoverCard, StrataLayerMenu, StrataMiniMap, StrataResizeHandle, StrataTimelineDock,
 } from './StrataWorkspaceUI';
 import StrataShortcutDialog from './StrataShortcutDialog';
+import StrataPerformancePanel from './StrataPerformancePanel';
+import { summarizeStrataPerformance, type StrataPerformance } from './strataPerformance';
 import { strataShortcut } from './strataShortcuts';
 import axios from 'axios';
 import * as THREE from 'three';
@@ -169,7 +171,7 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
 
 function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect, onFocus,
   focused, partitionActivity, forecast,
-  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, onHover }: {
+  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, onHover, onPerformance }: {
   topics: Topic[];
   selected: string | null;
   compareWith: string | null;
@@ -189,11 +191,13 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   lensAvailable: boolean;
   layers: typeof DEFAULT_STRATA_LAYERS;
   onHover: (hover: { name: string; x: number; y: number } | null) => void;
+  onPerformance: (reading: StrataPerformance) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const onSelectRef = useRef(onSelect);
   const onFocusRef = useRef(onFocus);
   const onHoverRef = useRef(onHover);
+  const onPerformanceRef = useRef(onPerformance);
   const motionRef = useRef(motion);
   const budget = useMemo(() => strataRenderBudget(quality, topics.length, window.devicePixelRatio || 1), [quality, topics.length]);
   const budgetRef = useRef(budget);
@@ -201,6 +205,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
   useEffect(() => { onFocusRef.current = onFocus; }, [onFocus]);
   useEffect(() => { onHoverRef.current = onHover; }, [onHover]);
+  useEffect(() => { onPerformanceRef.current = onPerformance; }, [onPerformance]);
   const state = useRef<{
     scene: THREE.Scene;
     camera: THREE.OrthographicCamera;
@@ -210,6 +215,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     groups: THREE.Group[];
     lens: THREE.Mesh;
     signature: string;
+    rebuildMs: number | null;
     invalidate: () => void;
     fit: (items: Topic[]) => void;
     focus: (topic: string | null) => void;
@@ -282,6 +288,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       scene, camera, renderer, controls, content: contentGroup,
       groups: [] as THREE.Group[], lens, signature: topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000'),
       positions: new Map<string, THREE.Vector3>(),
+      rebuildMs: null as number | null,
       overview: { position: camera.position.clone(), target: controlsTarget.clone(), zoom: 1 },
       invalidate: () => {},
       fit: (_items: Topic[]) => {},
@@ -389,6 +396,22 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     let frame = 0;
     let last = 0;
     let contextLost = false;
+    let reportSince = performance.now();
+    let renderedFrames = 0;
+    const reportPerformance = () => {
+      if (document.visibilityState !== 'visible') { reportSince = performance.now(); renderedFrames = 0; return; }
+      const now = performance.now();
+      onPerformanceRef.current(summarizeStrataPerformance({
+        elapsedMs: now - reportSince, renderedFrames, contextLost,
+        drawCalls: renderer.info.render.calls, geometries: renderer.info.memory.geometries,
+        textures: renderer.info.memory.textures, pixelRatio: renderer.getPixelRatio(),
+        rebuildMs: current.rebuildMs, topics: current.groups.length,
+        measuredAtMs: Date.now(),
+      }));
+      reportSince = now;
+      renderedFrames = 0;
+    };
+    const reportTimer = window.setInterval(reportPerformance, 3000);
     const requestRender = () => {
       if (!contextLost && !frame && document.visibilityState === 'visible') frame = requestAnimationFrame(render);
     };
@@ -424,6 +447,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
         }
       }
       renderer.render(scene, camera);
+      renderedFrames++;
       if (transition || moving || cameraChanged) requestRender();
     };
     current.invalidate = requestRender;
@@ -440,6 +464,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       cancelAnimationFrame(frame);
       frame = 0;
       setWebglFailed(true);
+      reportPerformance();
     };
     const onContextRestored = () => { contextLost = false; setWebglFailed(false); requestRender(); };
     renderer.domElement.addEventListener('webglcontextlost', onContextLost);
@@ -449,6 +474,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     resize();
     requestRender();
     return () => {
+      window.clearInterval(reportTimer);
       cancelAnimationFrame(frame);
       observer.disconnect();
       document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -483,6 +509,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       current.fit(topics);
     }
     // Replace measured geometry without tearing down WebGL, orbit or pointer handlers.
+    const rebuildStarted = performance.now();
     disposeGroup(current.content);
     current.content.clear();
     const dark = document.documentElement.classList.contains('dark') ||
@@ -599,6 +626,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       const center = lookup.get(forecast.topic);
       if (center) current.content.add(createForecastCanopy(forecast, center, dark));
     }
+    current.rebuildMs = performance.now() - rebuildStarted;
     current.invalidate();
   }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments, layers]);
 
@@ -660,7 +688,14 @@ export default function Strata3D() {
   const [quality, setQuality] = useState<StrataQuality>(initialView.quality);
   const [shareNotice, setShareNotice] = useState<string | null>(null);
   const [shareLink, setShareLink] = useState<string | null>(null);
+  const [performanceStats, setPerformanceStats] = useState<StrataPerformance | null>(null);
   const [motion, setMotion] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  useEffect(() => {
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => setMotion(!preference.matches);
+    preference.addEventListener('change', onChange);
+    return () => preference.removeEventListener('change', onChange);
+  }, []);
   const [refresh, setRefresh] = useState(0);
   const [themeRevision, setThemeRevision] = useState(0);
   const [selectedBucket, setSelectedBucket] = useState(initialView.bucket);
@@ -1036,6 +1071,7 @@ export default function Strata3D() {
           ? 'Sampled ' + new Date(activitySnapshot.receivedAt).toLocaleTimeString()
           : 'Activity not measured yet'}</span>
       </div>
+      <StrataPerformancePanel reading={performanceStats} />
       {names.length > MAX_TOPICS && <p className="text-xs text-on-surface-variant">
         The view is limited to {MAX_TOPICS} topics. Filter by name to reach the others.
       </p>}
@@ -1093,7 +1129,7 @@ export default function Strata3D() {
               <StrataCanvas topics={topics} selected={selected} compareWith={activeCompareWith}
                 diagnosticMode={diagnosticMode} onSelect={chooseTopic} onFocus={focusTopic}
                 focused={activeFocus} partitionActivity={alignedPartitionActivity} forecast={visibleForecast} motion={motion}
-                quality={quality} layers={layers} onHover={updateHovered}
+                quality={quality} layers={layers} onHover={updateHovered} onPerformance={setPerformanceStats}
                 links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
                 selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
               <p className="p-8 text-sm text-on-surface-variant">{dashboard ? 'No matching topics.' : 'Loading cluster…'}</p>}
