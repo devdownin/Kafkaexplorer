@@ -9,6 +9,7 @@ describe('resolvePageName', () => {
     expect(resolvePageName('/')).toBe('Dashboard');
     expect(resolvePageName('/query')).toBe('SQL Editor');
     expect(resolvePageName('/topics/hierarchy')).toBe('Topic hierarchy');
+    expect(resolvePageName('/schema-registry')).toBe('Schema Registry');
     expect(resolvePageName('/config')).toBe('Settings');
     expect(resolvePageName('/mcp/guide')).toBe('MCP Guide');
   });
@@ -33,7 +34,7 @@ describe('groupNavItems', () => {
   it('groups consecutive items sharing a group label', () => {
     const sections = groupNavItems(NAV_ITEMS);
     const explore = sections.find((s) => s.group === 'Explore');
-    expect(explore?.items.map((i) => i.name)).toEqual(['Topic hierarchy', 'SQL Editor', 'Compare', 'Stream Flow']);
+    expect(explore?.items.map((i) => i.name)).toEqual(['Topic hierarchy', 'Schema Registry', 'SQL Editor', 'Compare', 'Stream Flow']);
     expect(explore?.items[0].path).toBe('/topics/hierarchy');
     // Every item ends up in exactly one section.
     const total = sections.reduce((n, s) => n + s.items.length, 0);
