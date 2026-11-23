@@ -31,6 +31,7 @@ import {
   PRODUCTION_SAMPLE_MS, appendProductionSnapshot, calculateProductionRate,
   type ProductionSnapshot,
 } from './dashboardProduction';
+import { topProducers, matchesQuickFilter, type QuickFilter } from './dashboardInsights';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 /*
@@ -89,6 +90,9 @@ const Dashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState(() => params.get('q') ?? '');
   const [page, setPage] = useState(0);
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
+  /** Frozen at click time: silence is only measured for the currently visible page. */
+  const [silentSelection, setSilentSelection] = useState<string[]>([]);
   const [pageSize, setPageSize] = useState(() => {
     const stored = Number(localStorage.getItem(PAGE_SIZE_KEY));
     return PAGE_SIZES.includes(stored) ? stored : 25;
@@ -363,8 +367,10 @@ const Dashboard: React.FC = () => {
     : 'populated', [data]);
 
   const filteredTopics = useMemo(() => {
+    const silentSet = new Set(silentSelection);
     if (!data) return [] as string[];
     return data.topics
+      .filter(t => matchesQuickFilter(t, quickFilter, data.topicSizes, data.unmeasuredTopics, silentSet))
       .filter(t => t.toLowerCase().includes(searchTerm.toLowerCase()))
       .filter(t => !hideEmpty || data.unmeasuredTopics?.includes(t) || (data.topicSizes[t] ?? 0) > 0)
       .filter(t => !hideDlt   || !isDeadLetterTopic(t))
@@ -391,7 +397,7 @@ const Dashboard: React.FC = () => {
         }
         return sortDir === 'asc' ? cmp : -cmp;
       });
-  }, [data, searchTerm, hideEmpty, hideDlt, hideInternal, internalPrefix, sortKey, sortDir, getState]);
+  }, [data, searchTerm, hideEmpty, hideDlt, hideInternal, internalPrefix, sortKey, sortDir, getState, quickFilter, silentSelection]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTopics.length / pageSize));
   const pagedTopics = useMemo(
@@ -528,9 +534,30 @@ const Dashboard: React.FC = () => {
   const measuredActivityCount = activity
     ? pagedTopics.filter(topic => activity.topics[topic]?.available).length
     : 0;
-  const silentCount = activity
-    ? pagedTopics.filter(topic => detectSilence(activity.topics[topic])).length
-    : 0;
+  const silentTopics = activity
+    ? pagedTopics.filter(topic => detectSilence(activity.topics[topic]))
+    : [];
+  const silentCount = silentTopics.length;
+  const rankedProducers = productionSamples.length >= 2
+    ? topProducers(productionSamples[productionSamples.length - 2],
+        productionSamples[productionSamples.length - 1])
+    : [];
+  const productionWindowSeconds = productionSamples.length >= 2
+    ? Math.round((productionSamples[productionSamples.length - 1].sampledAt
+      - productionSamples[productionSamples.length - 2].sampledAt) / 1000)
+    : null;
+  const activateQuickFilter = (filter: QuickFilter) => {
+    if (filter === 'silent' && (!activity || !silentCount)) return;
+    setSilentSelection(filter === 'silent' ? silentTopics : []);
+    setQuickFilter(filter);
+    setSearchTerm('');
+    // Do not silently hide requested rows with previously enabled exclusion switches.
+    setHideEmpty(false);
+    setHideDlt(false);
+    setHideInternal(false);
+    setPage(0);
+    document.getElementById('topics')?.scrollIntoView?.({ behavior: 'smooth' });
+  };
 
   function formatRate(value: number) {
     if (value >= 1000) return formatCount(value);
@@ -685,13 +712,16 @@ const Dashboard: React.FC = () => {
               <>
                 <div className={`font-semibold mt-1 tabular-nums ${silentCount ? 'text-warning' : ''}`}>{silentCount.toLocaleString()}</div>
                 <p className="text-xs mt-1 text-on-surface-variant">Among the {measuredActivityCount.toLocaleString()} topic{measuredActivityCount === 1 ? '' : 's'} measured on this page</p>
+                <button type="button" disabled={!silentCount}
+                  className="text-xs text-primary hover:underline mt-1 inline-flex items-center min-h-6 disabled:opacity-50"
+                  onClick={() => activateQuickFilter('silent')}>Show silent topics on this page</button>
               </>
             )}
           </div>
           <div className="rounded-md bg-surface-container p-3">
             <div className="text-xs text-on-surface-variant">Empty topics</div>
             <div className="font-semibold mt-1 tabular-nums">{data.topics.filter(t => !data.unmeasuredTopics?.includes(t) && (data.topicSizes[t] ?? 0) === 0).length.toLocaleString()}</div>
-            <button type="button" className="text-xs text-primary hover:underline mt-1 inline-flex items-center min-h-6" onClick={() => { setHideEmpty(false); setSearchTerm(''); document.getElementById('topics')?.scrollIntoView({ behavior: 'smooth' }); }}>Inspect topics</button>
+            <button type="button" className="text-xs text-primary hover:underline mt-1 inline-flex items-center min-h-6" onClick={() => activateQuickFilter('empty')}>Show empty topics</button>
           </div>
           <div className="rounded-md bg-surface-container p-3">
             <div className="text-xs text-on-surface-variant">Unmeasured topics</div>
@@ -704,6 +734,38 @@ const Dashboard: React.FC = () => {
             <Link to="/dead-letter" className="text-xs text-primary hover:underline inline-flex items-center min-h-6 mt-1">Open dead-letter explorer</Link>
           </div>
         </div>
+      </section>
+
+      {/* Top producers: all comparable topics, not just the paginated activity column. */}
+      <section aria-label="Top producing topics" className="kse-surface p-4 md:p-5 space-y-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold text-on-surface">Top producing topics</h2>
+          <span className="text-xs text-on-surface-variant">
+            {latestRate && productionWindowSeconds
+              ? `Produced offsets · ${productionWindowSeconds} s · ${latestRate.measuredTopics}/${latestRate.totalTopics} topics compared`
+              : 'Awaiting two comparable production samples'}
+          </span>
+        </div>
+        {latestRate && rankedProducers.length > 0 ? (
+          <ol className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-2" aria-label="Top five topics by observed production rate">
+            {rankedProducers.map(({ topic, messagesPerSecond }, index) => (
+              <li key={topic} className="kse-inset-panel rounded-xl p-3 min-w-0">
+                <div className="text-xs text-on-surface-variant">#{index + 1} · observed msg/s</div>
+                <Link to={`/topic/${encodeURIComponent(topic)}`}
+                  className="block truncate font-mono text-sm text-primary hover:underline mt-1"
+                  title={topic}>{topic}</Link>
+                <div className="font-semibold tabular-nums mt-1">{formatRate(messagesPerSecond)} msg/s</div>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="text-sm text-on-surface-variant" role="status">
+            {productionError ? 'Production measurements unavailable.'
+              : latestRate ? 'No comparable topics.'
+              : 'Ranking available after two valid production samples.'}
+          </p>
+        )}
+        <p className="text-xs text-on-surface-variant">Ranked by observed offset increases, including zero-rate topics. Incomplete or reset topics are excluded; this is not a retained-message ranking.</p>
       </section>
 
       {/* Topics */}
@@ -840,6 +902,14 @@ const Dashboard: React.FC = () => {
             </div>
         </div>
 
+        {quickFilter !== 'all' && (
+          <div role="status" className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant">
+            <Badge tone="primary">{quickFilter === 'empty' ? 'Empty topics' : 'Silent topics · sampled page'}</Badge>
+            <span>{filteredTopics.length} matching topic{filteredTopics.length === 1 ? '' : 's'}{quickFilter === 'silent' ? ' from the page measured when the filter was applied' : ''}</span>
+            <button type="button" onClick={() => activateQuickFilter('all')}
+              className="min-h-6 text-primary hover:underline">Clear quick filter</button>
+          </div>
+        )}
         <Table>
           <TableHead>
             <tr>
@@ -913,7 +983,7 @@ const Dashboard: React.FC = () => {
                   <EmptyState
                     icon="search_off"
                     title={searchTerm ? 'No matching topics' : 'No topics found'}
-                    description={searchTerm ? `Nothing matches “${searchTerm}”.` : 'This cluster has no topics yet.'}
+                    description={quickFilter !== 'all' ? 'No topics match this quick filter and the current table options.' : searchTerm ? `Nothing matches “${searchTerm}”.` : 'This cluster has no topics yet.'}
                   />
                 </td>
               </tr>

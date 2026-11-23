@@ -229,6 +229,83 @@ describe('Dashboard honest operational states', () => {
  * rien tourner, et que la page date ce qu'elle montre — sans quoi « off » afficherait des chiffres
  * vieux d'une heure sans un mot.
  */
+describe('Dashboard top producers and quick diagnostics', () => {
+  it('shows top producing topics from two offset samples and links to the topic explorer', async () => {
+    let clock = 1_700_000_000_000;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    let requests = 0;
+    try {
+      mockedAxios.get.mockImplementation((url: string) => {
+        if (url === '/api/dashboard') return Promise.resolve({ data: dashboard });
+        if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(topics.slice(0, 25)) });
+        if (url === '/api/dashboard/production') {
+          const first = requests++ === 0;
+          return Promise.resolve({ data: {
+            offsets: {
+              [topics[29]]: first ? 100 : 700,
+              [topics[0]]: first ? 200 : 350,
+              [topics[1]]: first ? 300 : 300,
+            },
+            totalTopics: topics.length, sampledAt: clock, available: true,
+          } });
+        }
+        return Promise.resolve({ data: {} });
+      });
+      renderPage();
+      const section = await screen.findByRole('region', { name: 'Top producing topics' });
+      await waitFor(() => expect(requests).toBe(1));
+      expect(within(section).getByText('Ranking available after two valid production samples.')).toBeInTheDocument();
+      clock += 30_000;
+      window.dispatchEvent(new Event('focus'));
+      await waitFor(() => expect(within(section).getByText('20 msg/s')).toBeInTheDocument());
+      const links = within(section).getAllByRole('link');
+      expect(links[0]).toHaveTextContent(topics[29]);
+      expect(links[0]).toHaveAttribute('href', `/topic/${topics[29]}`);
+      expect(section).toHaveTextContent('3/30 topics compared');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('filters only truly measured empty topics, resets exclusions, and can clear', async () => {
+    const user = userEvent.setup();
+    const sizes = { ...dashboard.topicSizes, [topics[0]]: 0, [topics[1]]: 0 };
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/dashboard') return Promise.resolve({
+        data: { ...dashboard, topicSizes: sizes, unmeasuredTopics: [topics[1]] },
+      });
+      if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(topics.slice(0, 25)) });
+      return Promise.resolve({ data: {} });
+    });
+    renderPage();
+    await screen.findByText(topics[0]);
+    await user.click(screen.getByRole('switch', { name: 'Hide empty' }));
+    await user.click(screen.getByRole('button', { name: 'Show empty topics' }));
+    const table = screen.getByRole('table');
+    expect(within(table).getByText(topics[0])).toBeInTheDocument();
+    expect(within(table).queryByText(topics[1])).toBeNull();
+    expect(within(table).queryByText(topics[2])).toBeNull();
+    expect(screen.getByText('1 matching topic')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Clear quick filter' }));
+    expect(within(table).getByText(topics[1])).toBeInTheDocument();
+  });
+
+  it('freezes silence only for the currently measured page and labels its scope', async () => {
+    const user = userEvent.setup();
+    const response = activityFor(topics.slice(0, 25));
+    response.topics[topics[0]] = series(topics[0], [10, 10, 0, 0]);
+    stubApi(response);
+    renderPage();
+    const action = await screen.findByRole('button', { name: 'Show silent topics on this page' });
+    await waitFor(() => expect(action).toBeEnabled());
+    await user.click(action);
+    expect(screen.getByText(/from the page measured when the filter was applied/)).toBeInTheDocument();
+    const table = screen.getByRole('table');
+    expect(within(table).getByText(topics[0])).toBeInTheDocument();
+    expect(within(table).queryByText(topics[1])).toBeNull();
+  });
+});
+
 describe('Dashboard auto-refresh', () => {
   it('states when it read and what it will do next', async () => {
     stubApi();
