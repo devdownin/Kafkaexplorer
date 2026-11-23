@@ -53,8 +53,9 @@ try {
   if (before.equals(after)) throw new Error('Orbit gesture produced no new rendered frame');
 
   await page.getByRole('combobox', { name: '3D render quality' }).selectOption('detail');
-  await page.locator('section[aria-label="Spatial view presets"]')
-    .getByRole('button', { name: 'Copy view link' }).click();
+  // Copy is a workspace action adjacent to, not inside, the view-presets group.
+  // Target its accessible name instead of coupling the probe to that layout detail.
+  await page.getByRole('button', { name: 'Copy view link', exact: true }).click();
   const shared = page.url();
   if (!shared.includes('sv.quality=detail') || !shared.includes('sv.peer=demo.orders.2.validated')) {
     throw new Error('The shareable view URL did not encode visible controls');
