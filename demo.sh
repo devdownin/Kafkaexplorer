@@ -313,6 +313,12 @@ up() {
     echo 'WARN: OPENROUTER_API_KEY is empty — Process Mining answers without its LLM half and the' >&2
     echo '      agent starts DEGRADED. Export it (or put it in .env) and rerun ./demo.sh.' >&2
   fi
+  if [[ $DEMO_MODE == forecast ]]; then
+    # The Explorer image runs as uid 10001; the host CLI and the generator also
+    # access this one demo-only directory. Keep the rest of .forecast-stack private.
+    mkdir -p "$FORECAST_CONFIG_DIR"
+    chmod 0777 "$FORECAST_CONFIG_DIR"
+  fi
   if [[ $DEMO_PREBUILT == true ]]; then
     for secret in FORECAST_POSTGRES_PASSWORD TIMESFM_TOKEN EXPLORER_MCP_AUTH_TOKEN; do
       [[ -n ${!secret:-} ]] || { echo "Missing $secret. Check .env and .forecast-stack/.env." >&2; exit 1; }
