@@ -31,8 +31,9 @@ param(
     [switch] $NoSpectra,
     [switch] $Forecast,
     [switch] $Prebuilt,
+    [switch] $Offline,
     [Parameter(Position = 0)]
-    [ValidateSet('up', 'down', 'reset', 'ps', 'logs', 'probe')]
+    [ValidateSet('up', 'down', 'reset', 'ps', 'logs', 'probe', 'doctor', 'verify', 'scenario')]
     [string] $Command = 'up',
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
     [string[]] $Services = @()
@@ -124,6 +125,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Docker Compose v2 is required: update Docker D
 if ($NoSpectra) { $env:DEMO_SPECTRA = 'false' }
 if ($Forecast) { $env:DEMO_MODE = 'forecast' }
 if ($Prebuilt) { $env:DEMO_PREBUILT = 'true'; $env:DEMO_PUBLISHED_IMAGE = 'true' }
+if ($Offline) { $env:DEMO_MODE = 'forecast'; $env:DEMO_PREBUILT = 'true'; $env:DEMO_PUBLISHED_IMAGE = 'true'; $env:DEMO_OFFLINE = 'true' }
 
 Initialize-ForecastStack
 Import-EnvFile '.env'
@@ -137,8 +139,12 @@ if ($env:DEMO_MODE -notin @('full', 'forecast')) {
 $forecastOnly = $env:DEMO_MODE -eq 'forecast'
 if ($forecastOnly) { $env:DEMO_SPECTRA = 'false' }
 Set-Default DEMO_PREBUILT 'false'
+Set-Default DEMO_OFFLINE 'false'
+if ($env:DEMO_OFFLINE -notin @('true', 'false')) { throw 'DEMO_OFFLINE must be true or false.' }
+if ($env:DEMO_OFFLINE -eq 'true' -and $env:DEMO_PREBUILT -ne 'true') { throw 'Offline mode requires prebuilt forecast demo.' }
 if ($env:DEMO_PREBUILT -notin @('true', 'false')) { throw 'DEMO_PREBUILT must be true or false.' }
 $prebuilt = $env:DEMO_PREBUILT -eq 'true'
+$offline = $env:DEMO_OFFLINE -eq 'true'
 if ($prebuilt -and -not $forecastOnly) { throw '-Prebuilt is supported only with -Forecast.' }
 if ($prebuilt) { $env:DEMO_PUBLISHED_IMAGE = 'true' }
 
@@ -233,10 +239,11 @@ function Start-Demo {
         foreach ($name in @('FORECAST_POSTGRES_PASSWORD', 'TIMESFM_TOKEN', 'EXPLORER_MCP_AUTH_TOKEN')) {
             if (-not (Test-EnvSet $name)) { throw "Missing $name. Check .env or .forecast-stack/.env." }
         }
-        Write-Host 'Prebuilt forecast demo: pulling pinned images, without compiling or downloading model weights.'
+        Test-ForecastPreflight
+        Write-Host 'Prebuilt forecast demo: published images, no build or model download.'
         Write-Host "TimesFM resources: $($env:TIMESFM_CPUS) CPUs / $($env:TIMESFM_MEM_LIMIT). Licence: services/timesfm/licenses/NOTICE.md"
         Invoke-Compose config --quiet
-        Invoke-Compose pull --quiet --ignore-buildable
+        if (-not $offline) { Invoke-Compose pull --quiet --ignore-buildable }
         Invoke-Compose up -d --no-build --pull never --remove-orphans
     } else {
         Write-Host "First run: Maven build of the Explorer and the pinned TimesFM checkpoint ($($env:TIMESFM_CPUS) CPUs / $($env:TIMESFM_MEM_LIMIT))."
@@ -247,8 +254,9 @@ function Start-Demo {
     }
 
     $explorerReady = Wait-Http 'Kafka Explorer' "http://127.0.0.1:$($env:EXPLORER_PORT)/actuator/health" 900
-    if ($prebuilt -and -not $explorerReady) { throw 'Kafka Explorer did not become healthy. See: .\demo-forecast.cmd logs explorer timesfm' }
+    if ($forecastOnly -and -not $explorerReady) { throw 'Kafka Explorer did not become healthy. See: .\demo-forecast.cmd logs explorer timesfm' }
     if ($forecastOnly) {
+        Wait-ForecastReady
         Write-Host @"
 
 Kafka SQL Explorer .... http://localhost:$($env:EXPLORER_PORT)   -> Metrics
@@ -298,7 +306,7 @@ Forecast: Metrics -> the five demo.live.* metrics have 9 h of seeded history (li
 "@
 }
 
-if ($Services.Count -gt 0 -and $Command -ne 'logs') {
+if ($Services.Count -gt 0 -and $Command -notin @('logs', 'scenario')) {
     throw "Only 'logs' takes service names. Usage: .\demo.cmd [-NoSpectra|-Forecast] [up|down|reset|ps|logs [service]|probe]"
 }
 
@@ -309,6 +317,13 @@ switch ($Command) {
     'reset' { Invoke-Compose down -v --remove-orphans }
     'ps'    { Invoke-Compose ps }
     'logs'  { Invoke-Compose logs -f --tail 200 @Services }
+    'doctor' { Test-ForecastPreflight }
+    'verify' { Assert-ForecastReady }
+    'scenario' {
+        if ($Services.Count -gt 1) { throw 'scenario accepts at most one name.' }
+        $name = if ($Services.Count) { $Services[0] } else { '' }
+        Set-ForecastScenario $name
+    }
     'probe' {
         Invoke-Compose --profile probe run --rm mcp-probe
         if ($spectraOn) { Invoke-Compose --profile probe run --rm spectra-mcp-probe }
