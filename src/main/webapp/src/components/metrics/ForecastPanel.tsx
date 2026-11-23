@@ -419,7 +419,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
     {status?.enabled && status.modelAvailable !== false && status.series.length === 0 && <p>Forecast pilot enabled. Configure approved series, PostgreSQL history and TimesFM inference to calculate forecasts.</p>}
     {status?.enabled && status.series.length > 0 && <>
       <div className="flex flex-wrap items-end gap-3">
-        {status.series.length > 1 && <Field label="Forecast series" className="w-full sm:w-80">
+        {status.series.length > 1 && <Field label="Choose forecast" className="w-full sm:w-80">
           {p => <Select {...p} value={seriesId ?? ''} onChange={e => {
             setSelected(e.target.value);
             setWhatIf(''); setWhatIfBelow(null); setCompare(false); setAction(null);
