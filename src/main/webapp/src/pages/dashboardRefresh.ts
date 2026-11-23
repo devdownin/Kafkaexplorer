@@ -163,3 +163,17 @@ export function describeRefreshStatus(
     ? `Updated ${age} · refreshing ${option.label.replace(/^Every /, 'every ')}`
     : `Updated ${age} · auto-refresh off`;
 }
+
+/**
+ * A failed refresh makes the displayed snapshot stale immediately. Otherwise
+ * allow two polling cycles plus jitter, with a 60-second floor for the
+ * dashboard cache. An intentional pause is not a polling failure.
+ */
+export function isDashboardStale(
+  choice: RefreshChoice, fetchedAt: number, now: number, lastRefreshFailed: boolean,
+): boolean {
+  if (lastRefreshFailed) return true;
+  const period = refreshIntervalMs(choice);
+  if (period === null) return false;
+  return now - fetchedAt > Math.max(60_000, period * 2 + 10_000);
+}
