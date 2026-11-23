@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Optional Schema Registry Explorer:** read-only subject search, version history and schema
+  references, normalized side-by-side schema diffs, and explicit version-to-version compatibility
+  verification against the registry's policy. A missing registry does not block the application;
+  upstream response sizes, timeouts, errors and large UI diffs are bounded.
+
 - **Metrics / Forecast operational reliability (P0/P1):** ignore elapsed or stale forecast
   threshold predictions; calculate threshold ETA from future timestamps; refresh risk badges
   independently of the metrics collection cadence. The forecast panel exposes every series,
