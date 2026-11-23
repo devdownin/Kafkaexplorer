@@ -243,7 +243,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   const series = currentDetail ?? listed;
   const result = currentDetail?.result ?? (listed?.result?.forecast ? null : listed?.result);
   const displayedStatus = listed?.result ?? result;
-  const currentDetailError = detailError?.seriesId === seriesId
+  const currentDetailError = detailError !== null && detailError.seriesId === seriesId
     && detailError.resultKey === (latestKey ?? null);
   // Only the windows the context can fill (METRICS-FORECAST-AUDIT-2.md U1): "Last 512 points" over a
   // series still collecting its first 130 drew 130 and said 512.
