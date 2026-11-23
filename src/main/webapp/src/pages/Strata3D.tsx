@@ -936,12 +936,12 @@ export default function Strata3D() {
   const selectedTopic = topics.find(t => t.name === selected);
   const receivedAt = activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null;
   const selectedEvidence = topicEvidence(selectedTopic?.activity, selectedBucket, receivedAt);
-  const inspection = useMemo(() => selectedTopic ? strataInspection(selectedTopic.name,
-    selectedTopic.activity, selectedBucket, receivedAt, links, selectedGroup) : null,
-  [selectedTopic, selectedBucket, receivedAt, links, selectedGroup]);
-  const leads = useMemo(() => strataLeads(topics, selectedBucket, receivedAt,
-    selectedTopic?.name ?? null, selectedGroup),
-  [topics, selectedBucket, receivedAt, selectedTopic, selectedGroup]);
+  // Cheap, bounded derived views; avoid memoizing mutable Kafka snapshot objects.
+  // React Compiler cannot safely preserve memoization around these inputs.
+  const inspection = selectedTopic ? strataInspection(selectedTopic.name,
+    selectedTopic.activity, selectedBucket, receivedAt, links, selectedGroup) : null;
+  const leads = strataLeads(topics, selectedBucket, receivedAt,
+    selectedTopic?.name ?? null, selectedGroup);
   const saveInvestigation = useCallback(() => {
     if (!inspection) return;
     const contents = strataInvestigationSnapshot(inspection, { filter: filteredQuery, quality, layers }, Date.now());
