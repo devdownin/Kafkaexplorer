@@ -175,6 +175,9 @@ const Metrics: React.FC = () => {
   const [forecastRevision, setForecastRevision] = useState(0);
   // The page's one clock, handed to the forecast panel so both read on the same tick.
   const [forecastClock, setForecastClock] = useState(0);
+  // Expired threshold predictions must leave the list and its badges even if no new
+  // forecast is generated. Refresh this clock with the page's existing visible poll.
+  const [forecastNow, setForecastNow] = useState(() => Date.now());
   // What each metric's last refresh cost, and the loop's tick the page polls at.
   const [refreshCosts, setRefreshCosts] = useState<MetricRefreshCosts | null>(null);
   // The series the assistant just started: the panel shows it, not whichever series is first.
@@ -447,6 +450,9 @@ const Metrics: React.FC = () => {
   // only asked again once something can have changed (`forecastReadDue`). Written by the panel's
   // status callback and read by this timer, never during render.
   const forecastReads = useRef<{ lastAt: number | null; nextCycleAt: number | null }>({ lastAt: null, nextCycleAt: null });
+  // Risk badges depend on wall-clock time even when the metrics refresh interval
+  // is minutes long. No network request runs on this lightweight visibility-aware timer.
+  useEffect(() => startVisiblePolling(() => setForecastNow(Date.now()), 30_000), []);
   useEffect(() => startVisiblePolling(() => {
     void fetchMetrics();
     void fetchRefreshCosts();
@@ -982,11 +988,11 @@ const Metrics: React.FC = () => {
   const forecastReaches = useMemo(() => {
     const reaches = new Map<string, MetricForecastReach>();
     for (const m of metrics) {
-      const reach = forecastReachFor(m, forecastSeriesByMetric.get(m.id));
+      const reach = forecastReachFor(m, forecastSeriesByMetric.get(m.id), forecastNow);
       if (reach) reaches.set(m.id, reach);
     }
     return reaches;
-  }, [metrics, forecastSeriesByMetric]);
+  }, [metrics, forecastSeriesByMetric, forecastNow]);
   /*
    * Why each metric has no forecast to create, or undefined when it can be created now — one
    * reading for the card's disabled button and for the summary the "No forecast" filter shows.
@@ -1298,7 +1304,8 @@ const Metrics: React.FC = () => {
               <MetricRow key={metric.id} metric={metric} refreshing={refreshingId === metric.id}
                 onEdit={onEditCard} onRefresh={onRefreshCard}
                 onShowForecast={forecastSeriesByMetric.has(metric.id) ? onShowCard : undefined}
-                forecast={forecastStages.get(metric.id)} forecastSeries={forecastSeriesByMetric.get(metric.id)} />
+                forecast={forecastStages.get(metric.id)} forecastSeries={forecastSeriesByMetric.get(metric.id)}
+                forecastNow={forecastReaches.has(metric.id) ? forecastNow : undefined} />
             ))}
           </ul>
         ) : (
@@ -1320,6 +1327,7 @@ const Metrics: React.FC = () => {
               forecastUnavailableReason={forecastReasons.get(metric.id)}
               forecast={forecastStages.get(metric.id) ?? (createdForecastMetricId === metric.id ? STARTED_STAGE : undefined)}
               forecastSeries={forecastSeriesByMetric.get(metric.id)}
+              forecastNow={forecastReaches.has(metric.id) ? forecastNow : undefined}
               nextForecastAt={forecastSeriesByMetric.has(metric.id) ? forecastStatus?.nextCycleAt ?? null : null}
               refreshDurationMs={refreshCosts?.metrics[metric.id]?.lastDurationMs}
               refreshTickMs={refreshCosts?.tickMs}
@@ -1428,7 +1436,7 @@ const Metrics: React.FC = () => {
               `dialog` sur un formulaire, et le formulaire garde le sien à l'intérieur. */}
           <div
             role="dialog" aria-modal="true" aria-labelledby="metric-editor-title"
-            className="bg-surface-container border border-outline-variant rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
+            className="bg-surface-container border border-outline-variant rounded-2xl w-full max-w-5xl h-[92dvh] md:h-[min(92vh,800px)] overflow-hidden flex flex-col shadow-2xl"
             onInputCapture={() => { editorTouched.current = true; }}
             onChangeCapture={() => { editorTouched.current = true; }}
             onClick={e => e.stopPropagation()}>
@@ -1457,10 +1465,11 @@ const Metrics: React.FC = () => {
               )}
 
               {/* Modal body */}
-              <div className="flex flex-1 overflow-hidden">
+              <div className="flex flex-1 min-h-0 flex-col md:flex-row overflow-hidden">
 
-                {/* Left: form */}
-                <div className="w-72 border-r border-outline-variant/60 flex flex-col shrink-0 overflow-y-auto p-5 space-y-4">
+                {/* On narrow screens the options stack above the SQL editor instead of
+                    stealing most of its width. Both regions keep independent scrolling. */}
+                <div className="w-full md:w-72 max-h-[34dvh] md:max-h-none border-b md:border-b-0 md:border-r border-outline-variant/60 flex flex-col shrink-0 overflow-y-auto p-4 md:p-5 space-y-4">
 
                   {/* Name */}
                   <div className="space-y-1.5">
@@ -1755,7 +1764,7 @@ const Metrics: React.FC = () => {
                 </div>
 
                 {/* Right: tabbed editors */}
-                <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+                <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
 
                   {/* Tabs */}
                   <div role="tablist" aria-label="Metric definition" className="flex min-w-0 items-center overflow-x-auto border-b border-outline-variant/60 bg-primary/5 px-2 sm:px-4 gap-1">

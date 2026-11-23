@@ -214,12 +214,13 @@ describe('Metrics page', () => {
   it('filters the list to the metrics whose forecast reaches a threshold, and sorts by the soonest', async () => {
     const other = { ...templateMetric, id: 'm-2', name: 'gauge_other', warningThreshold: 5000, criticalThreshold: 9000 };
     const later = { ...templateMetric, id: 'm-3', name: 'gauge_later', warningThreshold: 800, criticalThreshold: 1600 };
+    const forecastBase = Date.now();
     const mk = (metricId: string, first: number) => ({ seriesId: metricId.padEnd(64, 'x'), metricId, environment: 'e', stepMillis: 60000,
       minimumContextPoints: 128, withdrawable: true, thresholdConfigured: false,
       activation: { eligible: false, reason: 'not yet', blockPoints: 0, blockPointsRequired: 30, lastBlockPassed: null, failedBlocks: 0, failedBlocksToDegrade: 2 },
       result: { key: metricId, state: 'READY', strategy: 'TIMESFM', visibility: 'SHADOW', reason: 'ok', quality: null,
         context: { status: 'READY', observedPoints: 512, outputUnit: 'ms', profile: { transformation: 'GAUGE_MEAN' }, points: [] },
-        forecast: { historyEndAt: 0, points: [1, 2, 3, 4].map(i => ({ at: i * 60000, central: first, q10: first - 5, q50: i >= first / 100 ? 900 : 100, q90: first + 5 })) } } });
+        forecast: { historyEndAt: forecastBase, points: [1, 2, 3, 4].map(i => ({ at: forecastBase + i * 60000, central: first, q10: first - 5, q50: i >= first / 100 ? 900 : 100, q90: first + 5 })) } } });
     stubApi([templateMetric, other, later], [suggestion],
       { ...READY_FORECASTS, series: [mk('m-1', 400), mk('m-2', 400), mk('m-3', 200)] });
     const user = userEvent.setup(); await renderPage();

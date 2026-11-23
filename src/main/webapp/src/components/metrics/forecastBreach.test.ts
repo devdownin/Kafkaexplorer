@@ -47,8 +47,25 @@ describe('predictedPoints and forecastReachFor', () => {
   });
 
   it('measures the wait in milliseconds, from the series step', () => {
-    expect(forecastReachFor({ warningThreshold: 800, criticalThreshold: 1600 }, series()))
+    expect(forecastReachFor({ warningThreshold: 800, criticalThreshold: 1600 }, series(), -59000))
       .toMatchObject({ level: 'warning', steps: 2, inMillis: 120000 });
+  });
+
+  it('never announces an elapsed breach, even when an earlier prediction crossed the threshold', () => {
+    const elapsed = series();
+    elapsed.result!.forecast!.points = points([700, 900, 700]);
+    expect(forecastReachFor({ warningThreshold: 800, criticalThreshold: 1600 }, elapsed, 61000)).toBeNull();
+    expect(forecastReachFor({ warningThreshold: 800, criticalThreshold: 1600 }, series(), 61000))
+      .toMatchObject({ level: 'warning', steps: 1, inMillis: 60000 });
+    expect(forecastReachFor({ warningThreshold: 800, criticalThreshold: 1600 }, series(), 121000)).toBeNull();
+  });
+
+  it('does not issue actionable breach predictions for stale or degraded results', () => {
+    for (const state of ['STALE', 'DEGRADED'] as const) {
+      const obsolete = series();
+      obsolete.result!.state = state;
+      expect(forecastReachFor({ warningThreshold: 800, criticalThreshold: 1600 }, obsolete, -59000)).toBeNull();
+    }
   });
 
   it('never compares the counter thresholds with a rate forecast, and says nothing without a forecast', () => {
