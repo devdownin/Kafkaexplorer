@@ -119,6 +119,8 @@ Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deu
 
 Sous Windows : `.\\demo-forecast.cmd` (mêmes commandes `ps`, `logs`, `down` et `reset`).
 
+**Démo Forecast P2 :** la page Metrics propose un Demo Control Center activé uniquement pour la démo, avec scénarios Kafka pilotables et export de rapports JSON/HTML. Le panneau reste masqué dans les déploiements standards et avec les anciennes images publiées. Voir [les scénarios de démo](docs/metrics-demo-scenarios.md#demo-control-center--p2-source-builds-and-subsequent-releases).
+
 Le lanceur contrôle d'abord Docker, Compose >= 2.24, les ports, la mémoire et
 les images. Il annonce la démo **prête** seulement après l'injection des cinq
 historiques et l'obtention d'une prévision TimesFM réelle (`READY`).

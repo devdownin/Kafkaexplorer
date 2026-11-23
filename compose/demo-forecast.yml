@@ -21,15 +21,36 @@
 # `sed` first, as the seeders' entrypoints do, so a CRLF checkout on Windows does not break it.
 services:
 
+  # Dedicated named volume: the UI runs as UID 10001, the live generator only reads it.
+  # No Docker socket and no writable host mount. The helper uses the Kafka image already pulled.
+  demo-control-init:
+    image: ${KAFKA_IMAGE:-apache/kafka:4.4.0}
+    user: "0:0"
+    volumes:
+      - demo_control:/demo-control
+      # Compatibility with scenario commands issued before the first stack startup.
+      - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}:/legacy:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        if [ ! -f /demo-control/demo-scenario.conf ] && [ -f /legacy/demo-scenario.conf ]; then
+          cp /legacy/demo-scenario.conf /demo-control/demo-scenario.conf
+        fi
+        chown -R 10001:10001 /demo-control
+    restart: "no"
+
   demo-live:
     image: ${KAFKA_IMAGE:-apache/kafka:4.4.0}
     depends_on:
       kafka:
         condition: service_healthy
+      demo-control-init:
+        condition: service_completed_successfully
     volumes:
       - ./scripts/demo-forecast:/demo-forecast:ro
-      # Writable only from the host CLI; read-only inside the traffic generator.
-      - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}:/demo-control:ro
+      # The generator cannot modify the control selected by the UI/CLI.
+      - demo_control:/demo-control:ro
     environment:
       DEMO_SCENARIO_FILE: /demo-control/demo-scenario.conf
     entrypoint:
@@ -68,6 +89,20 @@ services:
       - default
       - timesfm_private
 
+  explorer:
+    depends_on:
+      demo-control-init:
+        condition: service_completed_successfully
+    environment:
+      # Not defined in the normal application; only a deliberate demo Compose stack exposes it.
+      EXPLORER_DEMO_CONTROL_ENABLED: ${DEMO_CONTROL_ENABLED:-true}
+      EXPLORER_DEMO_CONTROL_FILE: /app/demo-control/demo-scenario.conf
+    volumes:
+      - demo_control:/app/demo-control
+
 networks:
   timesfm_private:
     internal: true
+
+volumes:
+  demo_control:

@@ -120,6 +120,8 @@ The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPO
 
 On Windows: `.\\demo-forecast.cmd` (same `ps`, `logs`, `down` and `reset` commands).
 
+**Forecast demo (P2):** the Metrics page includes an opt-in Demo Control Center for switching live Kafka scenarios and exporting JSON/HTML forecast reports, when the selected Explorer image contains this feature. It stays hidden on standard deployments and older published images. See [Metrics demo scenarios](docs/metrics-demo-scenarios.md#demo-control-center--p2-source-builds-and-subsequent-releases).
+
 The launcher first checks Docker, Compose >= 2.24, ports, memory and images, then
 waits until the five historical metrics and a real **READY TimesFM forecast** exist
 before announcing the demo is ready. Diagnostics: `./demo-forecast.sh doctor`,

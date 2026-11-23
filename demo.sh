@@ -85,6 +85,13 @@ fi
 
 # ── Defaults ─────────────────────────────────────────────────────────────────────
 export BIND_ADDR=${BIND_ADDR:-127.0.0.1}
+export DEMO_CONTROL_ENABLED=${DEMO_CONTROL_ENABLED:-true}
+[[ $DEMO_CONTROL_ENABLED == true || $DEMO_CONTROL_ENABLED == false ]] ||
+  { echo 'DEMO_CONTROL_ENABLED must be true or false.' >&2; exit 2; }
+if [[ $DEMO_CONTROL_ENABLED == true && $BIND_ADDR != 127.0.0.1 && $BIND_ADDR != ::1 ]]; then
+  echo 'Demo Control Center requires loopback BIND_ADDR; use DEMO_CONTROL_ENABLED=false for an exposed demo.' >&2
+  exit 2
+fi
 export EXPLORER_PORT=${EXPLORER_PORT:-8080}
 export KAFKA_PORT=${KAFKA_PORT:-9092}
 export KAFKA_IMAGE=${KAFKA_IMAGE:-apache/kafka:4.4.0}
@@ -281,15 +288,30 @@ wait_forecast_ready() {
 }
 set_scenario() {
   [[ $DEMO_MODE == forecast ]] || { echo 'scenario is available in forecast mode only.' >&2; return 2; }
-  local name=${1:-} file="${FORECAST_CONFIG_DIR}/demo-scenario.conf"
+  local name=${1:-} file="${FORECAST_CONFIG_DIR}/demo-scenario.conf" running
+  # The browser and the live generator share a Docker volume. Retain a host fallback for
+  # a scenario selected before the first startup (the volume initializer imports it once).
+  running=$(compose ps -q explorer 2>/dev/null || true)
   if [[ -z $name ]]; then
-    if [[ -f $file ]]; then cat "$file"; else echo normal; fi
+    if [[ -n $running ]]; then
+      compose exec -T explorer sh -c 'cat /app/demo-control/demo-scenario.conf 2>/dev/null || echo normal'
+    elif [[ -f $file ]]; then
+      cat "$file"
+    else
+      echo normal
+    fi
     return 0
   fi
   case $name in normal|overload|incident|recover|seasonal) ;; *)
     echo 'Usage: scenario [normal|overload|incident|recover|seasonal]' >&2; return 2 ;; esac
-  mkdir -p "$FORECAST_CONFIG_DIR"
-  printf '%s\n' "$name" > "$file"
+  if [[ -n $running ]]; then
+    # The value has already passed the fixed allowlist; no shell expansion of arbitrary input.
+    compose exec -T explorer sh -c 'printf "%s\\n" "$1" > /app/demo-control/demo-scenario.conf' -- "$name"
+  else
+    mkdir -p "$FORECAST_CONFIG_DIR"
+    printf '%s\n' "$name" > "$file"
+    echo 'Scenario stored for initial startup. An existing stopped stack retains its Docker-volume state.'
+  fi
   echo "Live Kafka scenario set to $name (next generator tick, default 15 s)."
 }
 

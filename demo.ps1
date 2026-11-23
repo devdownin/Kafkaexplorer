@@ -150,6 +150,11 @@ if ($prebuilt) { $env:DEMO_PUBLISHED_IMAGE = 'true' }
 
 # -- Defaults: the same values as demo.sh ---------------------------------------------------
 Set-Default BIND_ADDR '127.0.0.1'
+Set-Default DEMO_CONTROL_ENABLED 'true'
+if ($env:DEMO_CONTROL_ENABLED -notin @('true', 'false')) { throw 'DEMO_CONTROL_ENABLED must be true or false.' }
+if ($env:DEMO_CONTROL_ENABLED -eq 'true' -and $env:BIND_ADDR -notin @('127.0.0.1', '::1')) {
+    throw 'Demo Control Center requires loopback BIND_ADDR; set DEMO_CONTROL_ENABLED=false for an exposed demo.'
+}
 Set-Default EXPLORER_PORT '8080'
 Set-Default KAFKA_PORT '9092'
 Set-Default KAFKA_IMAGE 'apache/kafka:4.4.0'
@@ -327,17 +332,27 @@ function Wait-ForecastReady {
 function Set-ForecastScenario([string] $Name) {
     if (-not $forecastOnly) { throw 'scenario is available in forecast mode only.' }
     $file = Join-Path $env:FORECAST_CONFIG_DIR 'demo-scenario.conf'
+    $running = [string]((Invoke-Compose ps -q explorer) | Select-Object -First 1)
     if (-not $Name) {
-        if (Test-Path -LiteralPath $file) { Write-Host ([IO.File]::ReadAllText((Resolve-Path $file).Path).Trim()) }
-        else { Write-Host 'normal' }
+        if ($running) {
+            Invoke-Compose exec -T explorer sh -c 'cat /app/demo-control/demo-scenario.conf 2>/dev/null || echo normal'
+        } elseif (Test-Path -LiteralPath $file) {
+            Write-Host ([IO.File]::ReadAllText((Resolve-Path $file).Path).Trim())
+        } else { Write-Host 'normal' }
         return
     }
     if ($Name -notin @('normal', 'overload', 'incident', 'recover', 'seasonal')) {
         throw 'Valid scenarios: normal, overload, incident, recover, seasonal.'
     }
-    New-Item -ItemType Directory -Path $env:FORECAST_CONFIG_DIR -Force | Out-Null
-    [IO.File]::WriteAllText((Join-Path (Resolve-Path $env:FORECAST_CONFIG_DIR).Path 'demo-scenario.conf'),
-        "$Name`n", $Utf8NoBom)
+    if ($running) {
+        # The selected name is allowlisted. The volume is shared with the browser controller.
+        Invoke-Compose exec -T explorer sh -c 'printf "%s\n" "$0" > /app/demo-control/demo-scenario.conf' $Name | Out-Null
+    } else {
+        New-Item -ItemType Directory -Path $env:FORECAST_CONFIG_DIR -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path (Resolve-Path $env:FORECAST_CONFIG_DIR).Path 'demo-scenario.conf'),
+            "$Name`n", $Utf8NoBom)
+        Write-Host 'Scenario saved for the first startup; an existing stopped demo keeps its Docker-volume state.'
+    }
     Write-Host "Live Kafka scenario: $Name (applied at the next tick, default 15 s)."
 }
 
