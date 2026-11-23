@@ -19,6 +19,7 @@ import { about, forecastStage } from './forecastStage';
 import { FORECAST_COLORS, THRESHOLD_COLORS } from './forecastColors';
 import { placeThresholds } from './thresholdPlacement';
 import { predictedPoints, whatIfReach } from './forecastBreach';
+import { forecastCsv } from './forecastCsv';
 
 /**
  * READY only says a forecast was produced, not that it can be approved: a green badge beside a
@@ -124,7 +125,10 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   // Followed during render rather than in an effect: it takes hold once the list carries the series.
-  if (focus !== seenFocus) { setSeenFocus(focus); if (focus) { setSelected(focus); setCopied(false); setAction(null); } }
+  if (focus !== seenFocus) { setSeenFocus(focus); if (focus) {
+    setSelected(focus); setCopied(false); setAction(null);
+    setWhatIf(''); setWhatIfBelow(null); setCompare(false);
+  } }
   const [revision, setRevision] = useState(0);
   /*
    * Whether the panel is on screen. It sits at the bottom of the page and read the shown series'
@@ -148,6 +152,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   /** P4: the preparation checks are read when their section is opened, not on every visit. */
   const [preparationOpen, setPreparationOpen] = useState(false);
   const [detail, setDetail] = useState<ForecastSeriesView | null>(null);
+  const [detailError, setDetailError] = useState<{ seriesId: string; resultKey: string | null } | null>(null);
   const confirm = useConfirm();
   /*
    * Two loops on one clock (METRICS-FORECAST-UX-AUDIT.md P1, P3). The list carries no history
@@ -176,6 +181,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   // the browser wrote into the console of every Metrics page (PAGES-SIMPLICITY-AUDIT.md X1).
   const shadowConfigured = status?.shadowEnabled !== false;
   const wantProgress = summaryOpen || Boolean(status?.series.find(s => s.seriesId === seriesId)?.thresholdConfigured);
+  const latestKey = status?.series.find(s => s.seriesId === seriesId)?.result?.key;
   useEffect(() => {
     if (!seriesId || !onScreen) return;
     // A series that answered 404 has no shadow configured: asking again every tick answers the same.
@@ -185,8 +191,13 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
       try {
         const { data } = await axios.get<ForecastSeriesView>(path, { signal, timeout: 10000 });
         // Anything else keeps the list's summary on screen rather than a blank panel.
-        if (data?.seriesId === seriesId && data.activation && !signal.aborted) setDetail(data);
-      } catch { /* the summary from the list stays */ }
+        if (data?.seriesId === seriesId && data.activation && !signal.aborted) {
+          setDetail(data);
+          setDetailError(null);
+        }
+      } catch {
+        if (!signal.aborted) setDetailError({ seriesId, resultKey: latestKey ?? null });
+      }
       if (wantProgress) try {
         const { data: next } = await axios.get<Progress>(`${path}/progress`, { signal, timeout: 10000 });
         if (!isProgress(next, seriesId)) throw new Error('Invalid progress response');
@@ -208,8 +219,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
       }
       if (!signal.aborted) setShadow({ seriesId, view });
     }, clock === undefined);
-  }, [seriesId, revision, refresh, clock, shadowConfigured, wantProgress, onScreen]);
-  const latestKey = status?.series.find(s => s.seriesId === seriesId)?.result?.key;
+  }, [seriesId, revision, refresh, clock, shadowConfigured, wantProgress, onScreen, latestKey]);
   const previousKey = `${seriesId}|${latestKey}`;
   useEffect(() => {
     if (!compare || !seriesId || !latestKey) return;
@@ -225,9 +235,15 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
     return () => controller.abort();
   }, [compare, seriesId, latestKey]);
   const listed = status?.series.find(s => s.seriesId === seriesId);
-  // The detail is the same row with its history: preferred once it is about the series shown.
-  const series = listed && detail?.seriesId === listed.seriesId ? detail : listed;
-  const result = series?.result;
+  // A same-series detail can still be a different result version. Never present an old
+  // curve under a newer status: wait for a matching detail, and show a read failure.
+  const currentDetail = listed && detail?.seriesId === listed.seriesId
+    && detail.result?.key === listed.result?.key ? detail : null;
+  const series = currentDetail ?? listed;
+  const result = currentDetail?.result ?? (listed?.result?.forecast ? null : listed?.result);
+  const displayedStatus = listed?.result ?? result;
+  const currentDetailError = detailError?.seriesId === seriesId
+    && detailError.resultKey === (latestKey ?? null);
   // Only the windows the context can fill (METRICS-FORECAST-AUDIT-2.md U1): "Last 512 points" over a
   // series still collecting its first 130 drew 130 and said 512.
   const windows = [60, 180, 512].filter(n => n === 60 || n <= (result?.context.points.length ?? 0));
@@ -331,11 +347,10 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
         value: null, q10: p.q10, q50: p.q50, q90: p.q90,
       })),
     ];
-    const columns = ['timestamp', 'kind', 'value', 'q10', 'q50', 'q90'] as const;
     const content = format === 'json'
       ? JSON.stringify({ seriesId: series.seriesId, metricId: series.metricId,
           unit: result.context.outputUnit, strategy: result.strategy, points: rows }, null, 2)
-      : [columns.join(','), ...rows.map(row => columns.map(key => row[key] ?? '').join(','))].join('\\n');
+      : forecastCsv(rows);
     const blob = new Blob([content], { type: format === 'json' ? 'application/json' : 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -401,22 +416,38 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
     {status?.enabled && status.modelAvailable !== false && status.series.length === 0 && <p>Forecast pilot enabled. Configure approved series, PostgreSQL history and TimesFM inference to calculate forecasts.</p>}
     {status?.enabled && status.series.length > 0 && <>
       <div className="flex flex-wrap items-end gap-3">
+        {status.series.length > 1 && <Field label="Forecast series" className="w-full sm:w-80">
+          {p => <Select {...p} value={seriesId ?? ''} onChange={e => {
+            setSelected(e.target.value);
+            setWhatIf(''); setWhatIfBelow(null); setCompare(false); setAction(null);
+          }}>
+            {status.series.map(item => <option key={item.seriesId} value={item.seriesId}>
+              {metricNames[item.metricId] ?? item.metricId} · {item.environment} · {item.seriesId.slice(-8)}
+            </option>)}
+          </Select>}
+        </Field>}
         {series && <div className="min-w-64 pb-1">
           <h3 className="font-semibold font-mono break-all" aria-label="Forecast series">{metricNames[series.metricId] ?? series.metricId}</h3>
           <p className="text-xs text-on-surface-variant">{series.environment}{status.series.length > 1
             ? ` · ${status.series.length} forecasts — Details on a metric card shows its own` : ''}</p>
         </div>}
-        {result && <span className="flex flex-wrap gap-1 pb-1.5" aria-label="Forecast status">
-          <Badge tone={STATE_TONE[result.state] ?? 'warning'} title={result.state}>{STATE_LABEL[result.state] ?? result.state}</Badge>
-          <Badge tone={NEUTRAL_STRATEGIES.has(result.strategy) ? 'neutral' : 'warning'} title={result.strategy}>
-            {STRATEGY_LABEL[result.strategy] ?? 'Baseline fallback'}</Badge>
-          <Badge tone={result.visibility === 'ACTIVE' ? 'primary' : 'neutral'} title={result.visibility}>
-            {VISIBILITY_LABEL[result.visibility] ?? result.visibility}</Badge>
-          <Badge>{result.context.outputUnit}</Badge>
+        {displayedStatus && <span className="flex flex-wrap gap-1 pb-1.5" aria-label="Forecast status">
+          <Badge tone={STATE_TONE[displayedStatus.state] ?? 'warning'} title={displayedStatus.state}>{STATE_LABEL[displayedStatus.state] ?? displayedStatus.state}</Badge>
+          <Badge tone={NEUTRAL_STRATEGIES.has(displayedStatus.strategy) ? 'neutral' : 'warning'} title={displayedStatus.strategy}>
+            {STRATEGY_LABEL[displayedStatus.strategy] ?? 'Baseline fallback'}</Badge>
+          <Badge tone={displayedStatus.visibility === 'ACTIVE' ? 'primary' : 'neutral'} title={displayedStatus.visibility}>
+            {VISIBILITY_LABEL[displayedStatus.visibility] ?? displayedStatus.visibility}</Badge>
+          <Badge>{displayedStatus.context.outputUnit}</Badge>
         </span>}
       </div>
       {series?.error && <p role="alert">{series.error}</p>}
 
+      {listed?.result?.forecast && !currentDetail && <p role={currentDetailError ? 'alert' : 'status'}
+        className="text-sm text-on-surface-variant">
+        {currentDetailError
+          ? 'The latest forecast could not be loaded. Its previous graph is hidden to avoid showing outdated values; retry on the next refresh.'
+          : 'Loading the latest forecast history and chart…'}
+      </p>}
       {result?.forecast ? <>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-wrap gap-2" aria-label="Forecast export">
@@ -534,7 +565,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
         </div>}
         <p className="text-xs text-on-surface-variant"><span>{result.reason}</span> {result.strategy === 'TIMESFM'
           ? 'The 80 % interval is nominal, not a guarantee.' : 'A baseline forecast has no interval.'} No alert is sent.</p>
-      </> : <p>{result ? result.reason : series?.error ? null : 'No persisted forecast yet.'}</p>}
+      </> : !listed?.result?.forecast && <p>{result ? result.reason : series?.error ? null : 'No persisted forecast yet.'}</p>}
 
       {/* The decision, beside the sentence that says where the series stands (U5: stopping and
           approving were at the two ends of the panel). */}
