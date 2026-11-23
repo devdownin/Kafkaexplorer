@@ -73,7 +73,7 @@ export default function SchemaRegistryExplorer() {
       .then(({ data }) => {
         const sorted = [...data].sort((a, b) => a - b);
         setVersions(sorted);
-        setPair({ baseline: sorted.at(-2) ?? sorted.at(-1) ?? 0, candidate: sorted.at(-1) ?? 0 });
+        setPair({ baseline: sorted[sorted.length - 2] ?? sorted[sorted.length - 1] ?? 0, candidate: sorted[sorted.length - 1] ?? 0 });
         setVersionError('');
       })
       .catch(error => { if (!abort.signal.aborted) { setVersions([]); setVersionError(failureText(error)); } });
@@ -237,14 +237,14 @@ export default function SchemaRegistryExplorer() {
                 Baseline version
                 <select aria-label="Baseline version" value={pair.baseline} onChange={event => chooseVersion('baseline', Number(event.target.value))}
                   className="mt-1 block w-full h-10 rounded-lg border border-outline-variant/70 bg-surface-container px-3 text-[13px] text-on-surface">
-                  {versions.map(v => <option key={v} value={v}>v{v}{v === versions.at(-1) ? ' · latest' : ''}</option>)}
+                  {versions.map(v => <option key={v} value={v}>v{v}{v === versions[versions.length - 1] ? ' · latest' : ''}</option>)}
                 </select>
               </label>
               <label className="block text-[12px] font-medium text-on-surface-variant">
                 Candidate version
                 <select aria-label="Candidate version" value={pair.candidate} onChange={event => chooseVersion('candidate', Number(event.target.value))}
                   className="mt-1 block w-full h-10 rounded-lg border border-outline-variant/70 bg-surface-container px-3 text-[13px] text-on-surface">
-                  {versions.map(v => <option key={v} value={v}>v{v}{v === versions.at(-1) ? ' · latest' : ''}</option>)}
+                  {versions.map(v => <option key={v} value={v}>v{v}{v === versions[versions.length - 1] ? ' · latest' : ''}</option>)}
                 </select>
               </label>
             </div>}
