@@ -376,3 +376,9 @@ Typed process stages are the preferred contract for process-level diagnostics: e
 binds its Kafka topic and, when applicable, the consumer group that consumes that stage. This avoids
 guessing which group belongs to which topic. The legacy `topics + groupIds` form remains accepted
 for compatibility but cannot be mixed with typed stages in the same call.
+
+### Dashboard — Top producers and diagnostic quick filters
+
+The **Top producing topics** panel ranks up to five topics by observed produced-offset delta per second, using the same pair of cluster-wide production snapshots as the Dashboard throughput KPI. Each entry links directly to its topic explorer. It displays the actual measurement interval and the number of topics compared. Topics with missing or reset offset measurements are excluded; the panel shows an unavailable state until two comparable snapshots exist. The list is not a ranking by retained message count, and a zero-rate topic can appear when fewer than five topics produced messages.
+
+The **Empty topics** diagnostic action filters the table to topics with a complete, measured retained count of zero, rather than merely revealing all topics. Unreadable counts are excluded. The **Topics that went silent** action filters to topics detected as silent **on the currently measured page**; the selection is frozen when clicked and explicitly labelled as page-scoped, not cluster-wide. Both actions clear conflicting search/hide switches, reset pagination and scroll to the topic table. A visible **Clear quick filter** action restores the full table view. These are in-session shortcuts; they do not overwrite the user's saved topic view.
