@@ -43,8 +43,7 @@ describe('Forecast Demo Control Center', () => {
     const user = userEvent.setup();
     render(<DemoControlCenter metricCount={5} metricsLoading={false}
       forecasts={emptyForecast} forecastsQueried />);
-    await screen.findByText('Normal');
-    await user.click(screen.getByRole('button', { name: /Manage scenarios/ }));
+    await user.click(await screen.findByRole('button', { name: /Manage scenarios/ }));
     await user.click(screen.getByRole('button', { name: /Incident/ }));
     const dialog = screen.getByRole('group', { name: 'Confirm traffic scenario' });
     expect(within(dialog).getByText(/Tickets and unarchived events/)).toBeTruthy();
