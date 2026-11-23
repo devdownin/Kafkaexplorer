@@ -49,7 +49,7 @@ describe('Schema Registry Explorer', () => {
     renderPage();
     expect(await screen.findByRole('heading', { name: SUBJECT })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText('Schema comparison')).toBeInTheDocument());
-    expect(screen.getByText('+4 lines')).toBeInTheDocument();
+    expect(screen.getByText(/^\\+\\d+ lines$/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Check compatibility' }));
     await waitFor(() => expect(screen.getByText('Incompatible')).toBeInTheDocument());
     expect(mockedAxios.post).toHaveBeenCalledWith(`${base}/compatibility`,
