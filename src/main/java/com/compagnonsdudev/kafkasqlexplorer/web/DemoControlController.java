@@ -63,7 +63,7 @@ public class DemoControlController {
     if (!"change-scenario".equals(intent)) {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Demo control intent header required");
     }
-    if (request == null || !SCENARIOS.contains(request.scenario())) {
+    if (request == null || request.scenario() == null || !SCENARIOS.contains(request.scenario())) {
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown demo scenario");
     }
     Path parent = scenarioFile.getParent();
