@@ -241,7 +241,9 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
   const currentDetail = listed && detail?.seriesId === listed.seriesId
     && detail.result?.key === listed.result?.key ? detail : null;
   const series = currentDetail ?? listed;
-  const result = currentDetail?.result ?? (listed?.result?.forecast ? null : listed?.result);
+  // The summary is current by definition: it can show predicted points while the
+  // matching full history is loading, but an earlier detail must never take precedence.
+  const result = series?.result;
   const displayedStatus = listed?.result ?? result;
   const currentDetailError = detailError !== null && detailError.seriesId === seriesId
     && detailError.resultKey === (latestKey ?? null);
@@ -446,8 +448,8 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
       {listed?.result?.forecast && !currentDetail && <p role={currentDetailError ? 'alert' : 'status'}
         className="text-sm text-on-surface-variant">
         {currentDetailError
-          ? 'The latest forecast could not be loaded. Its previous graph is hidden to avoid showing outdated values; retry on the next refresh.'
-          : 'Loading the latest forecast history and chart…'}
+          ? 'Full history for the latest forecast is unavailable. Only its current summary is shown; older detailed data is hidden. Retry on the next refresh.'
+          : 'Loading the full history for this forecast; its current summary is shown below.'}
       </p>}
       {result?.forecast ? <>
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -566,7 +568,7 @@ export function ForecastPanel({ onStatus, refresh = 0, clock, focus = '', metric
         </div>}
         <p className="text-xs text-on-surface-variant"><span>{result.reason}</span> {result.strategy === 'TIMESFM'
           ? 'The 80 % interval is nominal, not a guarantee.' : 'A baseline forecast has no interval.'} No alert is sent.</p>
-      </> : !listed?.result?.forecast && <p>{result ? result.reason : series?.error ? null : 'No persisted forecast yet.'}</p>}
+      </> : <p>{result ? result.reason : series?.error ? null : 'No persisted forecast yet.'}</p>}
 
       {/* The decision, beside the sentence that says where the series stands (U5: stopping and
           approving were at the two ends of the panel). */}
