@@ -151,6 +151,10 @@ export interface DashboardResponse {
   topics: string[];
   topicSizes: Record<string, number>;
   totalMessages: number;
+  /** Topics for which a retained-count measurement was incomplete. */
+  unmeasuredTopics?: string[];
+  /** A metadata snapshot can succeed even if the separate broker ping is degraded. */
+  snapshotAvailable?: boolean;
   tables: string[];
   health: boolean;
   /** Nom d'affichage choisi au déploiement — pas une information sur le broker. */

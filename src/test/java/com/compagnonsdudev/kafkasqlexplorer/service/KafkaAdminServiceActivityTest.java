@@ -397,4 +397,38 @@ class KafkaAdminServiceActivityTest {
         topicsExist(TOPIC);
         assertNull(service.getProducedOffsets(TOPIC));
     }
+    @Test
+    void batchedProducedOffsetsRequireEveryPartitionAndIgnoreRetention() {
+        partition(0, 100, START, START + 1);
+        partition(1, 0, START, START + 1, START + 2);
+        topicsExist(TOPIC);
+        assertEquals(Map.of(TOPIC, 105L), service.getProducedOffsetsTotals(List.of(TOPIC)));
+        org.mockito.Mockito.verify(admin, org.mockito.Mockito.times(1)).listOffsets(any(Map.class));
+    }
+
+    @Test
+    void batchedProducedOffsetsOmitIncompleteTopicsInsteadOfReturningZero() {
+        partition(0, 0, START, START + 1);
+        unreadablePartition(1);
+        topicsExist(TOPIC);
+        assertTrue(service.getProducedOffsetsTotals(List.of(TOPIC)).isEmpty());
+    }
+
+    @Test
+    void dashboardCountsRequireAllPartitionsEvenWhenThePartialFloorIsPositive() {
+        partition(0, 0, START, START + 1);
+        unreadablePartition(1);
+        topicsExist(TOPIC);
+
+        assertEquals(Map.of(TOPIC, 2L), service.getTopicRecordCounts(List.of(TOPIC)));
+        assertTrue(service.getDashboardTopicCounts(List.of(TOPIC)).isEmpty());
+    }
+
+    @Test
+    void dashboardCountsKeepMeasuredZeroSeparateFromUnmeasured() {
+        partition(0, 0);
+        topicsExist(TOPIC);
+        assertEquals(Map.of(TOPIC, 0L), service.getDashboardTopicCounts(List.of(TOPIC)));
+    }
+
 }

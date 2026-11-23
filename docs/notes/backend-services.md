@@ -208,3 +208,11 @@ of an existing template rather than a template of its own: it has the same shape
 a descriptor, an editor and a forecast unit for one number. An empty topic and a failed read are
 both errors, never zero: a silence of zero is "a record just arrived", the opposite of both.
 `MetricObservation.unit` reports it in milliseconds.
+
+## Dashboard production snapshots and count coverage (2026-11-23)
+
+`GET /api/dashboard` now reads `KafkaAdminService.getDashboardTopicCounts` (strict, full-partition-coverage counts, cached for 30 s) rather than the zero-filling `getTopicsSize` adapter. It keeps `topicSizes` compatible for existing pages and returns `unmeasuredTopics` separately: zero is a measured empty log, whereas absent is a failed offset read.
+
+`GET /api/dashboard/production` reads one batched latest-offset request across the cluster through `getProducedOffsetsTotals`; an incomplete topic is omitted instead of summed partially. Response: `{ offsets: {topic: totalLatestOffset}, sampledAt: epochMillis, totalTopics, available }`. The browser samples this at most every 30 seconds (or at the slower selected cadence), derives a difference-per-second only for topics in consecutive valid samples, and discloses coverage and time window. This observes **produced offsets**, not retained message counts; retention and compaction cannot masquerade as negative ingest. The endpoint remains bounded by the shared ten-second AdminClient deadline, and rate history is session-local only.
+
+`snapshotAvailable` in the dashboard response distinguishes a complete metadata read from the independent `ping()` verdict. The browser retains the last valid catalogue only when the read itself failed; a successful snapshot with degraded broker ping still updates the data and displays the degraded health tile.

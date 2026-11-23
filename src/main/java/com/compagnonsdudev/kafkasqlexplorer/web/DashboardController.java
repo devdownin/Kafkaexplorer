@@ -4,6 +4,7 @@ package com.compagnonsdudev.kafkasqlexplorer.web;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -44,20 +45,30 @@ public class DashboardController {
     public DashboardResponse getDashboardData() {
         List<String> topics;
         Map<String, Long> topicSizes;
+        List<String> unmeasuredTopics;
         Map<String, Long> topicLastMessages;
         boolean health;
+        boolean snapshotAvailable;
 
         try {
             topics = kafkaAdminService.listTopics();
-            topicSizes = kafkaAdminService.getTopicsSize(topics);
+            // The lenient getTopicsSize() fills missing measurements with zero. Keep the
+            // visible counts compatible, but do not call an unreadable topic "empty".
+            Map<String, Long> measured = kafkaAdminService.getDashboardTopicCounts(topics);
+            topicSizes = new HashMap<>();
+            for (String topic : topics) topicSizes.put(topic, measured.getOrDefault(topic, 0L));
+            unmeasuredTopics = topics.stream().filter(topic -> !measured.containsKey(topic)).toList();
             topicLastMessages = kafkaAdminService.getTopicsLastMessageTimestamps(topics);
             health = kafkaAdminService.ping();
+            snapshotAvailable = true;
         } catch (Exception e) {
             logger.warn("Failed to fetch Kafka metadata, returning empty defaults: {}", e.getMessage());
             topics = Collections.emptyList();
             topicSizes = Collections.emptyMap();
+            unmeasuredTopics = Collections.emptyList();
             topicLastMessages = Collections.emptyMap();
             health = false;
+            snapshotAvailable = false;
         }
 
         long totalMessages = topicSizes.values().stream().mapToLong(Long::longValue).sum();
@@ -71,8 +82,27 @@ public class DashboardController {
                 explorerConfig.getClusterName(),
                 kafkaConfig.getBootstrapServers(),
                 topicLastMessages,
-                explorerConfig.getResolvedInternalTopicPrefix()
+                explorerConfig.getResolvedInternalTopicPrefix(),
+                unmeasuredTopics,
+                snapshotAvailable
         );
+    }
+
+    /** A fresh, bounded batch of cumulative produced offsets for rate estimation. */
+    public record ProductionSnapshot(Map<String, Long> offsets, long sampledAt,
+                                     int totalTopics, boolean available) {}
+
+    @GetMapping("/production")
+    public ProductionSnapshot getProductionSnapshot() {
+        try {
+            List<String> topics = kafkaAdminService.listTopics();
+            Map<String, Long> offsets = kafkaAdminService.getProducedOffsetsTotals(topics);
+            return new ProductionSnapshot(offsets, System.currentTimeMillis(), topics.size(),
+                    topics.isEmpty() || !offsets.isEmpty());
+        } catch (Exception e) {
+            logger.warn("Failed to sample produced offsets: {}", e.getMessage());
+            return new ProductionSnapshot(Map.of(), System.currentTimeMillis(), 0, false);
+        }
     }
 
     /**
