@@ -1,0 +1,20 @@
+# Prebuilt-only overlay for demo-forecast.sh / demo-forecast.cmd.
+# Compose order:
+#   docker-compose.yml, schema-registry, mcp, forecasts, demo-forecast,
+#   forecast-offline, demo-forecast-prebuilt, image
+#
+# The offline forecast overlay supplies the published, checkpoint-bundled image,
+# so there is no Hugging Face download at startup. This final overlay removes
+# build definitions for *both* worker services. The launchers also use no-build:
+# a missing image is an explicit error.
+# Do not use this without compose/forecasts.yml and compose/forecast-offline.yml.
+#
+# Timestral-28M is present in the published image even if shadow scoring is
+# disabled. Its modified MIT licence has business restrictions:
+# services/timesfm/licenses/NOTICE.md.
+services:
+  timesfm:
+    build: !reset null
+  forecast-model-prefetch:
+    build: !reset null
+    image: ghcr.io/devdownin/kex-forecast:${FORECAST_IMAGE_TAG:-0.3.0}

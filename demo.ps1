@@ -9,7 +9,8 @@
 #
 #   $env:OPENROUTER_API_KEY = 'sk-or-...'; .\demo.cmd          # build, start, wait, print the endpoints
 #   .\demo.cmd -NoSpectra                                      # the same without SpectraLLM
-#   .\demo.cmd -Forecast                                       # the forecast demo alone, nothing to configure
+#   .\demo.cmd -Forecast                                       # forecast demo with local builds
+#   .\demo-forecast.cmd                                        # forecast demo from images, without builds
 #   .\demo.cmd [-NoSpectra|-Forecast] down | reset | ps | logs [service] | probe
 #
 # -Forecast (DEMO_MODE=forecast) is the stack the forecast demo needs and nothing else: Kafka and the
@@ -29,6 +30,7 @@
 param(
     [switch] $NoSpectra,
     [switch] $Forecast,
+    [switch] $Prebuilt,
     [Parameter(Position = 0)]
     [ValidateSet('up', 'down', 'reset', 'ps', 'logs', 'probe')]
     [string] $Command = 'up',
@@ -121,6 +123,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Docker Compose v2 is required: update Docker D
 # Before the env files, so a switch outranks a DEMO_SPECTRA / DEMO_MODE they set.
 if ($NoSpectra) { $env:DEMO_SPECTRA = 'false' }
 if ($Forecast) { $env:DEMO_MODE = 'forecast' }
+if ($Prebuilt) { $env:DEMO_PREBUILT = 'true'; $env:DEMO_PUBLISHED_IMAGE = 'true' }
 
 Initialize-ForecastStack
 Import-EnvFile '.env'
@@ -133,11 +136,17 @@ if ($env:DEMO_MODE -notin @('full', 'forecast')) {
 }
 $forecastOnly = $env:DEMO_MODE -eq 'forecast'
 if ($forecastOnly) { $env:DEMO_SPECTRA = 'false' }
+Set-Default DEMO_PREBUILT 'false'
+if ($env:DEMO_PREBUILT -notin @('true', 'false')) { throw 'DEMO_PREBUILT must be true or false.' }
+$prebuilt = $env:DEMO_PREBUILT -eq 'true'
+if ($prebuilt -and -not $forecastOnly) { throw '-Prebuilt is supported only with -Forecast.' }
+if ($prebuilt) { $env:DEMO_PUBLISHED_IMAGE = 'true' }
 
 # -- Defaults: the same values as demo.sh ---------------------------------------------------
 Set-Default BIND_ADDR '127.0.0.1'
 Set-Default EXPLORER_PORT '8080'
 Set-Default KAFKA_PORT '9092'
+Set-Default KAFKA_IMAGE 'apache/kafka:4.4.0'
 Set-Default KEX_AGENT_PORT '8081'
 # 8081 belongs to the agent in the shared port plan; Schema Registry moves aside.
 Set-Default SCHEMA_REGISTRY_PORT '8085'
@@ -173,15 +182,20 @@ Set-Default FORECAST_ENVIRONMENTS 'local'
 Set-Default FORECAST_CLUSTER_ID 'local'
 Set-Default FORECAST_COLLECTOR_ID 'kafkaexplorer'
 Set-Default FORECAST_RUNTIME_APPROVAL 'true'
+Set-Default FORECAST_CONFIG_DIR './.forecast-stack/config'
+Set-Default FORECAST_IMAGE_TAG '0.3.0'
 Set-Default TIMESFM_THREADS '4'
 Set-Default TIMESFM_CPUS '4.0'
 Set-Default TIMESFM_MEM_LIMIT '8g'
 Set-Default TIMESFM_TIMEOUT '35s'
+Set-Default TIMESTRAL_SHADOW_ENABLED 'false'
+Set-Default TIMESTRAL_TIMEOUT '15s'
+Set-Default TIMESTRAL_THREADS '1'
 
 # Explorer image: built from this checkout by default; DEMO_PUBLISHED_IMAGE=true pulls the release.
 Set-Default DEMO_PUBLISHED_IMAGE 'false'
 Set-Default EXPLORER_IMAGE_NAMESPACE 'compagnonsdudev'
-Set-Default EXPLORER_IMAGE_TAG '2.3.3'
+Set-Default EXPLORER_IMAGE_TAG '2.9.1'
 
 # SpectraLLM on by default; false drops its seven services and their ~4.8 GB first download.
 Set-Default DEMO_SPECTRA 'true'
@@ -194,6 +208,9 @@ Set-Default COMPOSE_PROJECT_NAME 'kafka-explorer-demo'
 
 $script:ComposeFiles = @('-f', 'docker-compose.yml', '-f', 'compose/schema-registry.yml',
     '-f', 'compose/mcp.yml', '-f', 'compose/forecasts.yml', '-f', 'compose/demo-forecast.yml')
+if ($prebuilt) {
+    $script:ComposeFiles += @('-f', 'compose/forecast-offline.yml', '-f', 'compose/demo-forecast-prebuilt.yml')
+}
 if ($env:DEMO_PUBLISHED_IMAGE -eq 'true') { $script:ComposeFiles += @('-f', 'compose/image.yml') }
 # The forecast demo stops here: the agent (compose/demo*.yml, ecosystem) and the hosted model
 # (demo-llm.yml) are what want a key, and nothing it shows uses them.
@@ -212,16 +229,25 @@ function Start-Demo {
         Write-Warning ('OPENROUTER_API_KEY is empty - Process Mining answers without its LLM half and the ' +
             "agent starts DEGRADED. Set it (`$env:OPENROUTER_API_KEY = 'sk-or-...', or in .env) and rerun.")
     }
-    Write-Host "First run: Maven build of the Explorer and the pinned TimesFM checkpoint ($($env:TIMESFM_CPUS) CPUs / $($env:TIMESFM_MEM_LIMIT))."
-    if ($spectraOn) { Write-Host 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.' }
-    # Docker Desktop gives the WSL 2 VM half the host's memory by default; TimesFM alone is capped
-    # at 8 GB, so on a 16 GB machine raise `memory=` in %UserProfile%\.wslconfig or pass -NoSpectra.
-    Write-Host 'Docker Desktop memory: see the [wsl2] memory= setting in %UserProfile%\.wslconfig. Later runs start in seconds.'
-    if ($env:DEMO_PUBLISHED_IMAGE -eq 'true') { Invoke-Compose pull --quiet --ignore-buildable }
-    # --remove-orphans: switching to -NoSpectra stops the SpectraLLM containers a previous run left.
-    Invoke-Compose up -d --build --remove-orphans
+    if ($prebuilt) {
+        foreach ($name in @('FORECAST_POSTGRES_PASSWORD', 'TIMESFM_TOKEN', 'EXPLORER_MCP_AUTH_TOKEN')) {
+            if (-not (Test-EnvSet $name)) { throw "Missing $name. Check .env or .forecast-stack/.env." }
+        }
+        Write-Host 'Prebuilt forecast demo: pulling pinned images, without compiling or downloading model weights.'
+        Write-Host "TimesFM resources: $($env:TIMESFM_CPUS) CPUs / $($env:TIMESFM_MEM_LIMIT). Licence: services/timesfm/licenses/NOTICE.md"
+        Invoke-Compose config --quiet
+        Invoke-Compose pull --quiet --ignore-buildable
+        Invoke-Compose up -d --no-build --pull never --remove-orphans
+    } else {
+        Write-Host "First run: Maven build of the Explorer and the pinned TimesFM checkpoint ($($env:TIMESFM_CPUS) CPUs / $($env:TIMESFM_MEM_LIMIT))."
+        if ($spectraOn) { Write-Host 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.' }
+        Write-Host 'Docker Desktop memory: see the [wsl2] memory= setting in %UserProfile%\.wslconfig. Later runs start in seconds.'
+        if ($env:DEMO_PUBLISHED_IMAGE -eq 'true') { Invoke-Compose pull --quiet --ignore-buildable }
+        Invoke-Compose up -d --build --remove-orphans
+    }
 
-    Wait-Http 'Kafka Explorer' "http://127.0.0.1:$($env:EXPLORER_PORT)/actuator/health" 900 | Out-Null
+    $explorerReady = Wait-Http 'Kafka Explorer' "http://127.0.0.1:$($env:EXPLORER_PORT)/actuator/health" 900
+    if ($prebuilt -and -not $explorerReady) { throw 'Kafka Explorer did not become healthy. See: .\demo-forecast.cmd logs explorer timesfm' }
     if ($forecastOnly) {
         Write-Host @"
 

@@ -110,6 +110,22 @@ The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPO
 
 </details>
 
+### Forecast demo without a local build
+
+```bash
+./demo-forecast.sh             # Docker Compose pulls published images, initializes secrets and starts live metrics
+./demo-forecast.sh logs demo-forecast-seed
+./demo-forecast.sh down        # keep data; reset deletes volumes
+```
+
+On Windows: `.\demo-forecast.cmd` (same `ps`, `logs`, `down` and `reset` commands).
+No Maven, npm, local Docker image build or model-weight download is required; Docker Compose 2.24+
+and image pulls are required. The stack includes Kafka, Schema Registry, MCP,
+PostgreSQL, TimesFM and five continuously updated demo metrics with seeded history.
+The pinned forecast image bundles Timestral-28M under a [restricted model license](services/timesfm/licenses/NOTICE.md);
+review it even if Timestral shadow mode is disabled. See the
+[forecast demo scenarios](docs/metrics-demo-scenarios.md) for defaults and walkthroughs.
+
 ### 🎬 The whole suite in one command: `demo.sh`
 
 To try everything at once — Avro topics and Schema Registry, the MCP server, TimesFM forecasting, SpectraLLM and the Kex-anHarness agent, the Explorer and the agent on [OpenRouter](https://openrouter.ai/models):

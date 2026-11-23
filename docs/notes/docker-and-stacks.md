@@ -718,6 +718,24 @@ overlay on the real stack, the seeded rows beside the recorded ones, a TimesFM r
 The seeder's SQL was also run against a real PostgreSQL and its rows read back through the real
 `MetricSeriesPreparer` (512 observed points, none missing) before it shipped.
 
+## No-build forecast demo: the published images
+
+`./demo-forecast.sh` / `.\demo-forecast.cmd` wrap `demo.sh --forecast --prebuilt`
+and `demo.ps1 -Forecast -Prebuilt`. They reuse the existing generated secrets,
+defaults, live traffic and history seeding, but layer
+`compose/forecast-offline.yml`, `compose/demo-forecast-prebuilt.yml` and
+`compose/image.yml` in that order after the standard forecast stack.
+The prebuilt-specific overlay removes the `build:` of both TimesFM and the
+profiled prefetch helper; `compose/image.yml` does the same for Explorer.
+The launcher runs `config --quiet`, then `pull`, then
+`up -d --no-build --pull never` — a missing image stops the operation rather
+than silently building one. `docs/forecast-prebuilt-check.py`, run by
+`compose-lint`, asserts the effective Compose model has no active build
+definitions, retains the live-history services, and keeps model prefetch disabled.
+The pinned image includes Timestral with a restricted licence; see
+`services/timesfm/licenses/NOTICE.md` and
+[metrics demo scenarios](../metrics-demo-scenarios.md).
+
 ## The forecast stack with no download at start
 
 `compose/forecast-offline.yml` is an overlay of `compose/forecasts.yml` (like `local-ai.yml`, it
