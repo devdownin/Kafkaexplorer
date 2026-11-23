@@ -85,6 +85,13 @@ fi
 
 # ── Defaults ─────────────────────────────────────────────────────────────────────
 export BIND_ADDR=${BIND_ADDR:-127.0.0.1}
+export DEMO_CONTROL_ENABLED=${DEMO_CONTROL_ENABLED:-true}
+[[ $DEMO_CONTROL_ENABLED == true || $DEMO_CONTROL_ENABLED == false ]] ||
+  { echo 'DEMO_CONTROL_ENABLED must be true or false.' >&2; exit 2; }
+if [[ $DEMO_CONTROL_ENABLED == true && $BIND_ADDR != 127.0.0.1 && $BIND_ADDR != ::1 ]]; then
+  echo 'Demo Control Center requires loopback BIND_ADDR; use DEMO_CONTROL_ENABLED=false for an exposed demo.' >&2
+  exit 2
+fi
 export EXPLORER_PORT=${EXPLORER_PORT:-8080}
 export KAFKA_PORT=${KAFKA_PORT:-9092}
 export KAFKA_IMAGE=${KAFKA_IMAGE:-apache/kafka:4.4.0}
