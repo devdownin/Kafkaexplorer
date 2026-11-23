@@ -30,6 +30,26 @@ describe('ForecastPanel', () => {
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(axios.put).not.toHaveBeenCalled();
   });
+  it('lets an operator navigate every series, including two forecasts of the same metric', async () => {
+    const first = seriesWith(ready);
+    const second = { ...first.series[0], seriesId: 'b'.repeat(64), environment: 'staging' };
+    const status = { ...first, series: [...first.series, second] };
+    vi.mocked(axios.get).mockImplementation(async url => {
+      if (url === '/api/forecasts') return { data: status };
+      const chosen = status.series.find(item => url === `/api/forecasts/${item.seriesId}`);
+      return { status: chosen ? 200 : 404, data: chosen ?? '' };
+    });
+    const user = userEvent.setup();
+    render(<ForecastPanel />);
+    const selector = await screen.findByRole('combobox', { name: 'Forecast series' });
+    expect(screen.getAllByRole('option')).toHaveLength(2);
+    await user.selectOptions(selector, second.seriesId);
+    expect(selector).toHaveValue(second.seriesId);
+    await vi.waitFor(() => expect(vi.mocked(axios.get).mock.calls.map(call => call[0]))
+      .toContain(`/api/forecasts/${second.seriesId}`));
+    expect(screen.getByText('staging', { exact: false })).toBeTruthy();
+  });
+
   it('reports persistence outage rather than empty measurements', async () => {
     vi.mocked(axios.get).mockRejectedValue(new Error('503'));
     render(<ForecastPanel />);
