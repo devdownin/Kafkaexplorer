@@ -29,9 +29,9 @@ import org.springframework.stereotype.Component;
  *
  * <p>A series exists only while there is a reach: absent means no threshold is predicted within the
  * horizon (or the metric has no forecast, or a counter's rate forecast, which is never compared with
- * its thresholds). The value is measured at scrape time from the predicted instant, and never goes
- * below zero — a forecast that is no longer refreshed keeps saying zero, so pair the alert with
- * {@code explorer_metric_last_success_timestamp_seconds} as the card's own rule already does.
+ * its thresholds). The value is measured at scrape time from the predicted instant. Once a
+ * published reach expires it becomes NaN until the next pilot cycle republishes or removes the row:
+ * an old prediction must never look like an imminent zero-second breach.
  *
  * <p>Labels: {@code metric_id} (the same label every per-metric series here carries), {@code level}
  * ({@code warning} or {@code critical}) and {@code likelihood} ({@code expected} on the median,
@@ -82,13 +82,13 @@ public class ForecastThresholdMetrics {
         } catch (Exception e) {
           continue; // one unreadable series must not take the others' rows with it
         }
-        var reach = ForecastThresholdReach.reachFor(record, metric.warningThreshold(), metric.criticalThreshold());
+        var reach = ForecastThresholdReach.reachFor(record, metric.warningThreshold(), metric.criticalThreshold(), clock.getAsLong());
         if (reach == null) continue;
         rows.add(MultiGauge.Row.of(
             Tags.of("metric_id", metric.id(),
                 "level", reach.level().name().toLowerCase(Locale.ROOT),
                 "likelihood", reach.likelihood().name().toLowerCase(Locale.ROOT)),
-            reach, r -> Math.max(0, (r.at() - clock.getAsLong()) / 1000.0)));
+            reach, r -> r.at() > clock.getAsLong() ? (r.at() - clock.getAsLong()) / 1000.0 : Double.NaN));
       }
       failureReported = false;
     } catch (RuntimeException e) {
