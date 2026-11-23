@@ -22,6 +22,8 @@ import {
 } from './StrataWorkspaceUI';
 import StrataShortcutDialog from './StrataShortcutDialog';
 import StrataPerformancePanel from './StrataPerformancePanel';
+import StrataInvestigationPanel from './StrataInvestigationPanel';
+import { strataInspection, strataInvestigationSnapshot, strataLeads } from './strataInvestigation';
 import { summarizeStrataPerformance, type StrataPerformance } from './strataPerformance';
 import { strataShortcut } from './strataShortcuts';
 import axios from 'axios';
@@ -932,8 +934,27 @@ export default function Strata3D() {
   })), [scoped, dashboard, activity, layoutIndices]);
   const links = useMemo(() => lineage ? deriveStrataLinks(lineage, scoped) : [], [lineage, scoped]);
   const selectedTopic = topics.find(t => t.name === selected);
-  const selectedEvidence = topicEvidence(selectedTopic?.activity, selectedBucket,
-    activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null);
+  const receivedAt = activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null;
+  const selectedEvidence = topicEvidence(selectedTopic?.activity, selectedBucket, receivedAt);
+  const inspection = useMemo(() => selectedTopic ? strataInspection(selectedTopic.name,
+    selectedTopic.activity, selectedBucket, receivedAt, links, selectedGroup) : null,
+  [selectedTopic, selectedBucket, receivedAt, links, selectedGroup]);
+  const leads = useMemo(() => strataLeads(topics, selectedBucket, receivedAt,
+    selectedTopic?.name ?? null, selectedGroup),
+  [topics, selectedBucket, receivedAt, selectedTopic, selectedGroup]);
+  const saveInvestigation = useCallback(() => {
+    if (!inspection) return;
+    const contents = strataInvestigationSnapshot(inspection, { filter: filteredQuery, quality, layers }, Date.now());
+    const blob = new Blob([JSON.stringify(contents, null, 2)], { type: 'application/json' });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = 'strata-investigation-' + Date.now() + '.json';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
+  }, [inspection, filteredQuery, quality, layers]);
   const hoveredTopic = hovered && topics.find(t => t.name === hovered.name);
   const setLayer = useCallback((layer: StrataLayer, enabled: boolean) => {
     setLayers(current => ({ ...current, [layer]: enabled }));
@@ -1170,6 +1191,12 @@ export default function Strata3D() {
             compareWith={activeCompareWith} topics={scoped} snapshot={activity} links={links}
             trace={activeTrace} selectedBucket={selectedBucket} selectedGroup={selectedGroup}
             onChooseTopic={chooseTopic} onCompareWith={setCompareWith} />
+          {diagnosticMode === 'investigate' && <StrataInvestigationPanel inspection={inspection} leads={leads}
+            onChooseTopic={chooseTopic} onFocus={() => { if (selectedTopic) focusTopic(selectedTopic.name); }}
+            onEvidence={() => document.getElementById('strata-evidence-details')?.scrollIntoView({
+              behavior: motion ? 'smooth' : 'auto', block: 'start',
+            })}
+            onSnapshot={saveInvestigation} />}
         <aside className="rounded-xl border border-outline-variant bg-surface p-4" aria-live="polite">
           <h2 className="font-semibold text-on-surface mb-3">Topic inspector</h2>
           {selectedTopic ? <>
@@ -1205,7 +1232,7 @@ export default function Strata3D() {
         </aside>
         </aside>}
       </div>
-      <section className="space-y-4 rounded-2xl border border-outline-variant bg-surface-container-low p-3 sm:p-5"
+      <section id="strata-evidence-details" className="space-y-4 rounded-2xl border border-outline-variant bg-surface-container-low p-3 sm:p-5"
         aria-label="Detailed evidence and traces">
         <div>
           <h2 className="text-base font-semibold text-on-surface">Evidence details</h2>
