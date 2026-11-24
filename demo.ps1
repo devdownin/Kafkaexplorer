@@ -11,12 +11,19 @@
 #   .\demo.cmd -NoSpectra                                      # the same without SpectraLLM
 #   .\demo.cmd -Forecast                                       # forecast demo with local builds
 #   .\demo-forecast.cmd                                        # forecast demo from images, without builds
+#   .\demo-forecast.cmd -Agent                                 # + the agent; every image latest, no build
 #   .\demo.cmd [-NoSpectra|-Forecast] down | reset | ps | logs [service] | probe
 #
 # -Forecast (DEMO_MODE=forecast) is the stack the forecast demo needs and nothing else: Kafka and the
 # demo topics, Schema Registry, the Explorer with MCP, PostgreSQL, TimesFM, the live traffic and its
 # seeded history (compose/demo-forecast.yml). No LLM key, no SpectraLLM, no agent: every variable has
 # a default, so `.\demo.cmd -Forecast` is the whole command. Same as `./demo.sh --forecast`.
+#
+# -Agent (DEMO_AGENT=true) adds the Kex-anHarness agent to the forecast demo, on OpenRouter, and the
+# Explorer's LLM half with it (compose/demo-no-spectra.yml + compose/demo-llm.yml, the shape
+# -NoSpectra already runs). With -Prebuilt the agent follows `latest` like the Explorer and the
+# forecast image, so nothing is compiled: `.\demo.cmd -Forecast -Prebuilt -Agent`, or
+# `.\demo-forecast.cmd -Agent`. The full suite already has the agent: -Agent is for -Forecast only.
 #
 # demo.cmd only runs this file with -ExecutionPolicy Bypass, which Windows 11's default policy
 # would otherwise refuse. Runs on Windows PowerShell 5.1 and PowerShell 7; Docker Desktop with the
@@ -32,6 +39,7 @@ param(
     [switch] $Forecast,
     [switch] $Prebuilt,
     [switch] $Offline,
+    [switch] $Agent,
     [Parameter(Position = 0)]
     [ValidateSet('up', 'down', 'reset', 'ps', 'logs', 'probe', 'doctor', 'verify', 'scenario')]
     [string] $Command = 'up',
@@ -126,6 +134,7 @@ if ($NoSpectra) { $env:DEMO_SPECTRA = 'false' }
 if ($Forecast) { $env:DEMO_MODE = 'forecast' }
 if ($Prebuilt) { $env:DEMO_PREBUILT = 'true'; $env:DEMO_PUBLISHED_IMAGE = 'true' }
 if ($Offline) { $env:DEMO_MODE = 'forecast'; $env:DEMO_PREBUILT = 'true'; $env:DEMO_PUBLISHED_IMAGE = 'true'; $env:DEMO_OFFLINE = 'true' }
+if ($Agent) { $env:DEMO_AGENT = 'true' }
 
 Initialize-ForecastStack
 Import-EnvFile '.env'
@@ -147,6 +156,10 @@ $prebuilt = $env:DEMO_PREBUILT -eq 'true'
 $offline = $env:DEMO_OFFLINE -eq 'true'
 if ($prebuilt -and -not $forecastOnly) { throw '-Prebuilt is supported only with -Forecast.' }
 if ($prebuilt) { $env:DEMO_PUBLISHED_IMAGE = 'true' }
+Set-Default DEMO_AGENT 'false'
+if ($env:DEMO_AGENT -notin @('true', 'false')) { throw 'DEMO_AGENT must be true or false.' }
+$agentOn = $env:DEMO_AGENT -eq 'true'
+if ($agentOn -and -not $forecastOnly) { throw '-Agent is for the forecast demo (-Forecast); the full suite already runs the agent.' }
 
 # -- Defaults: the same values as demo.sh ---------------------------------------------------
 Set-Default BIND_ADDR '127.0.0.1'
@@ -161,11 +174,13 @@ Set-Default SCHEMA_REGISTRY_PORT '8085'
 Set-Default OPENROUTER_MODEL 'openai/gpt-4o-mini'
 Set-Default KEX_AGENT_LLM_PROVIDER 'openai'
 # The SQL & metric assistant, on the same OpenRouter model (false turns it off). It needs that model,
-# which the forecast demo does not have: off there.
-Set-Default EXPLORER_ASSISTANT_ENABLED $(if ($forecastOnly) { 'false' } else { 'true' })
+# which the forecast demo has only with -Agent: off there otherwise.
+Set-Default EXPLORER_ASSISTANT_ENABLED $(if ($forecastOnly -and -not $agentOn) { 'false' } else { 'true' })
 
 # Agent and MCP. The MCP token defaults to the generated one from .forecast-stack/.env.
 Set-Default KEX_AGENT_IMAGE_NAMESPACE 'compagnonsdudev'
+# The prebuilt forecast demo with -Agent follows `latest`, like the Explorer and forecast images below.
+if ($prebuilt -and $agentOn) { Set-Default KEX_AGENT_IMAGE_TAG 'latest' }
 Set-Default KEX_AGENT_IMAGE_TAG '0.10.0'
 Set-Default KEX_AGENT_API_KEY 'dev-only-agent-key'
 Set-Default EXPLORER_MCP_AUTH_TOKEN 'dev-only-mcp-token'
@@ -225,9 +240,11 @@ if ($prebuilt) {
     $script:ComposeFiles += @('-f', 'compose/forecast-offline.yml', '-f', 'compose/demo-forecast-prebuilt.yml')
 }
 if ($env:DEMO_PUBLISHED_IMAGE -eq 'true') { $script:ComposeFiles += @('-f', 'compose/image.yml') }
-# The forecast demo stops here: the agent (compose/demo*.yml, ecosystem) and the hosted model
-# (demo-llm.yml) are what want a key, and nothing it shows uses them.
-if (-not $forecastOnly) {
+# The forecast demo stops here unless -Agent: the agent (compose/demo*.yml, ecosystem) and the
+# hosted model (demo-llm.yml) are what want a key, and nothing else it shows uses them.
+if ($agentOn) {
+    $script:ComposeFiles += @('-f', 'compose/demo-no-spectra.yml', '-f', 'compose/demo-llm.yml')
+} elseif (-not $forecastOnly) {
     if ($spectraOn) {
         $script:ComposeFiles += @('-f', 'compose/demo.yml', '-f', 'compose/spectra-hub.mcp.yml',
             '-f', 'compose/spectra-hub.ingest.yml', '-f', 'compose/ecosystem.yml')
@@ -254,15 +271,16 @@ function Test-ForecastPreflight {
         if (-not (Test-EnvSet $secret)) { throw "Required variable is empty: $secret" }
     }
     $publishedPorts = @($env:EXPLORER_PORT, $env:SCHEMA_REGISTRY_PORT, $env:KAFKA_PORT)
-    if (@($publishedPorts | Sort-Object -Unique).Count -ne 3) {
-        throw 'Explorer, Schema Registry and Kafka host ports must be different.'
+    if ($agentOn) { $publishedPorts += $env:KEX_AGENT_PORT }
+    if (@($publishedPorts | Sort-Object -Unique).Count -ne $publishedPorts.Count) {
+        throw 'Explorer, Schema Registry, Kafka (and agent) host ports must be different.'
     }
     $memoryText = [string]((& docker info --format '{{.MemTotal}}') | Select-Object -First 1)
     $memoryMb = [math]::Floor(([double]$memoryText) / 1MB)
     Write-Host "Docker: Compose $versionText; $memoryMb MiB RAM (TimesFM limit $($env:TIMESFM_MEM_LIMIT))."
     if ($memoryMb -lt 8192) { Write-Warning 'Less than 8 GiB assigned to Docker; forecasting may be slow or OOM.' }
     $running = @((Invoke-Compose ps -q) | Where-Object { $_ }).Count -gt 0
-    foreach ($portText in @($env:EXPLORER_PORT, $env:SCHEMA_REGISTRY_PORT, $env:KAFKA_PORT)) {
+    foreach ($portText in $publishedPorts) {
         $port = 0
         if (-not [int]::TryParse($portText, [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
             throw "Invalid port: $portText"
@@ -285,6 +303,7 @@ function Test-ForecastPreflight {
     }
     if ($offline) { Write-Host 'Offline check: all images are local.' }
     Write-Host "Demo images: $($env:EXPLORER_IMAGE_NAMESPACE)/kafkaexplorer:$($env:EXPLORER_IMAGE_TAG); ghcr.io/devdownin/kex-forecast:$($env:FORECAST_IMAGE_TAG)"
+    if ($agentOn) { Write-Host "Agent image: $($env:KEX_AGENT_IMAGE_NAMESPACE)/kex-agent-ai:$($env:KEX_AGENT_IMAGE_TAG)" }
     Write-Host 'Preflight OK.'
 }
 
@@ -355,7 +374,7 @@ function Start-Demo {
         # Isolate the writable scenario receipts from the private forecast config.
         New-Item -ItemType Directory -Path (Join-Path $env:FORECAST_CONFIG_DIR 'demo-control') -Force | Out-Null
     }
-    if (-not $forecastOnly -and -not (Test-EnvSet 'OPENROUTER_API_KEY')) {
+    if ((-not $forecastOnly -or $agentOn) -and -not (Test-EnvSet 'OPENROUTER_API_KEY')) {
         Write-Warning ('OPENROUTER_API_KEY is empty - Process Mining answers without its LLM half and the ' +
             "agent starts DEGRADED. Set it (`$env:OPENROUTER_API_KEY = 'sk-or-...', or in .env) and rerun.")
     }
@@ -364,7 +383,7 @@ function Start-Demo {
             if (-not (Test-EnvSet $name)) { throw "Missing $name. Check .env or .forecast-stack/.env." }
         }
         Test-ForecastPreflight
-        Write-Host 'Prebuilt forecast demo: published images, no build or model download.'
+        Write-Host "Prebuilt forecast demo: published images$(if ($agentOn) { ' (agent included)' }), no build or model download."
         Write-Host "TimesFM resources: $($env:TIMESFM_CPUS) CPUs / $($env:TIMESFM_MEM_LIMIT). Licence: services/timesfm/licenses/NOTICE.md"
         Invoke-Compose config --quiet
         if (-not $offline) { Invoke-Compose pull --quiet --ignore-buildable }
@@ -381,13 +400,21 @@ function Start-Demo {
     if ($forecastOnly -and -not $explorerReady) { throw 'Kafka Explorer did not become healthy. See: .\demo-forecast.cmd logs explorer timesfm' }
     if ($forecastOnly) {
         Wait-ForecastReady
+        $agentLine = 'LLM, agent, SpectraLLM  not started (-Forecast): nothing to configure'
+        if ($agentOn) {
+            Wait-Http 'Kex-anHarness' "http://127.0.0.1:$($env:KEX_AGENT_PORT)/api/agent/mcp/servers" 300 `
+                @{ Authorization = "Bearer $($env:KEX_AGENT_API_KEY)" } | Out-Null
+            $agentLine = "Kex-anHarness ......... http://localhost:$($env:KEX_AGENT_PORT)     (Bearer $($env:KEX_AGENT_API_KEY); " +
+                "$($env:KEX_AGENT_IMAGE_NAMESPACE)/kex-agent-ai:$($env:KEX_AGENT_IMAGE_TAG))`n" +
+                "LLM ................... OpenRouter $($env:OPENROUTER_MODEL) (Explorer, agent); SpectraLLM not started"
+        }
         Write-Host @"
 
 Kafka SQL Explorer .... http://localhost:$($env:EXPLORER_PORT)   -> Metrics
   MCP ................. http://localhost:$($env:EXPLORER_PORT)/mcp   (Bearer in .forecast-stack\.env or EXPLORER_MCP_AUTH_TOKEN)
 Schema Registry ....... http://localhost:$($env:SCHEMA_REGISTRY_PORT)
 Kafka ................. localhost:$($env:KAFKA_PORT)
-LLM, agent, SpectraLLM  not started (-Forecast): nothing to configure
+$agentLine
 
 The forecast demo: Metrics has five live metrics (demo.live.*: orders, requests, imports, events, tickets; each minus its second topic).
   Their history is seeded in the first minutes (.\demo.cmd -Forecast logs demo-forecast-seed), then:
@@ -431,7 +458,7 @@ Forecast: Metrics -> the five demo.live.* metrics have 9 h of seeded history (li
 }
 
 if ($Services.Count -gt 0 -and $Command -notin @('logs', 'scenario')) {
-    throw "Only 'logs' takes service names. Usage: .\demo.cmd [-NoSpectra|-Forecast] [up|down|reset|ps|logs [service]|probe]"
+    throw "Only 'logs' takes service names. Usage: .\demo.cmd [-NoSpectra|-Forecast [-Prebuilt] [-Agent]] [up|down|reset|ps|logs [service]|probe]"
 }
 
 switch ($Command) {

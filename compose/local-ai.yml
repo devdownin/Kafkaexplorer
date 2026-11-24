@@ -40,13 +40,17 @@ services:
   # The pin, on both services that read it: the one-shot that downloads and verifies the weights,
   # and the worker that loads them. A 40-hex Hub commit and the SHA-256 of `model.safetensors`
   # at that commit — the pair `services/timesfm` refuses to start with only half of.
+  # The model is written out with it: the pin was read for this checkpoint and no other, so a
+  # TIMESTRAL_MODEL exported for another stack must not reach this one.
   forecast-model-prefetch:
     environment:
+      TIMESTRAL_MODEL: mistralai/Timestral-28M
       TIMESTRAL_REVISION: 49b26409ac87b5935539a5d8ffe7f397b720db47
       TIMESTRAL_SHA256: dfc83c6220937ce5fc6687b35a4df94cd25e28a2cfe6fb92a23dad6301b2015d
 
   timesfm:
     environment:
+      TIMESTRAL_MODEL: mistralai/Timestral-28M
       TIMESTRAL_REVISION: 49b26409ac87b5935539a5d8ffe7f397b720db47
       TIMESTRAL_SHA256: dfc83c6220937ce5fc6687b35a4df94cd25e28a2cfe6fb92a23dad6301b2015d
 
@@ -56,3 +60,4 @@ services:
       - CLAUDE_MODEL=qwen2.5-7b-instruct
       # The application scores the shadow only when told to; the service above now carries its pin.
       - EXPLORER_FORECASTING_INFERENCE_SHADOW_ENABLED=true
+      - EXPLORER_FORECASTING_INFERENCE_SHADOW_MODEL_ID=mistralai/Timestral-28M

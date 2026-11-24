@@ -90,6 +90,8 @@ explorer:
       shadow:
         enabled: false
         timeout: 15s
+        # The Timestral checkpoint the service loads (its TIMESTRAL_MODEL); every shadow answer must name it.
+        model-id: mistralai/Timestral-28M
     history:
       enabled: false
       cluster-id: ""

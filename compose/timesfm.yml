@@ -30,6 +30,9 @@ services:
       TIMESTRAL_REVISION: ${TIMESTRAL_REVISION:-}
       TIMESTRAL_SHA256: ${TIMESTRAL_SHA256:-}
       TIMESTRAL_THREADS: ${TIMESTRAL_THREADS:-1}
+      # Which checkpoint (5M, 28M, 123M, 209M, or a compatible fine-tune). The pin above is read for
+      # it, so change the three together. The Explorer below reads the same variable.
+      TIMESTRAL_MODEL: ${TIMESTRAL_MODEL:-mistralai/Timestral-28M}
     cpus: ${TIMESFM_CPUS:-4.0}
     mem_limit: ${TIMESFM_MEM_LIMIT:-8g}
     healthcheck:
@@ -52,6 +55,8 @@ services:
       EXPLORER_FORECASTING_INFERENCE_TIMEOUT: ${TIMESFM_TIMEOUT:-35s}
       # Score Timestral beside TimesFM; turn on only once the service carries its TIMESTRAL_* pin.
       EXPLORER_FORECASTING_INFERENCE_SHADOW_ENABLED: ${TIMESTRAL_SHADOW_ENABLED:-false}
+      # The model every shadow answer must name: the same variable the service loads.
+      EXPLORER_FORECASTING_INFERENCE_SHADOW_MODEL_ID: ${TIMESTRAL_MODEL:-mistralai/Timestral-28M}
       EXPLORER_FORECASTING_INFERENCE_SHADOW_TIMEOUT: ${TIMESTRAL_TIMEOUT:-15s}
     networks:
       - timesfm_private

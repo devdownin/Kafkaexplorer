@@ -20,6 +20,22 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The Timestral shadow model is a setting.** `TIMESTRAL_MODEL` (default `mistralai/Timestral-28M`)
+  chooses the checkpoint the forecast service loads; the compose stacks hand the same variable to
+  the Explorer as `explorer.forecasting.inference.shadow.model-id`, which every shadow answer must
+  name. Mistral AI's 5M, 123M and 209M load through the same adapter. The pin
+  (`TIMESTRAL_REVISION`, `TIMESTRAL_SHA256`) is read for one model, so changing the model means
+  changing the pin; a mismatch is refused with the model and revision named. The 28M keeps its
+  adapter version `kex-timestral-28m-v1`, so existing shadow records keep their identity. The
+  published forecast image still bakes only the 28M.
+
+- **Forecast demo with the agent, from published images.** `./demo.sh --forecast --prebuilt --agent`
+  (`.\demo-forecast.cmd -Agent` on Windows) adds the Kex-anHarness agent and the Explorer's
+  OpenRouter model to the forecast demo, through the overlays `--no-spectra` already uses. The
+  Explorer, forecast and agent images all follow `latest` and nothing is compiled; an explicit tag
+  in the environment or `.env` still wins. `--agent` is refused outside `--forecast`, the full
+  suite already running the agent.
+
 - **llama.cpp 1.0.0.** Every llama.cpp image (local LLM overlay, SpectraLLM hub, CUDA overlay,
   `kex-llm`) moves from `server-b9828` to `server-v1.0.0-b12359-b1b770d`, the CPU and CUDA tags
   still naming one build; the `kex-llm` base is pinned by its new digest. What it brings to this
@@ -132,6 +148,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on tablets. GitHub Pages now actually loads the external interactive controller,
   restores filters, zoom, deep links, copy actions and accessible mobile navigation;
   a PR preflight guard catches missing DOM controls or script inclusion.
+
+## [2.9.4] — 2026-11-24
+
+See [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.9.4).
 
 ## [2.9.3] — 2026-11-24
 
@@ -3163,7 +3183,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.3...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.4...HEAD
+[2.9.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.3...v2.9.4
 [2.9.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.2...v2.9.3
 [2.9.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.1...v2.9.2
 [2.9.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.0...v2.9.1

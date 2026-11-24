@@ -11,6 +11,7 @@
 #   ./demo.sh --no-spectra                           # the same without SpectraLLM (DEMO_SPECTRA=false)
 #   ./demo.sh --forecast                             # the forecast demo alone, builds local images
 #   ./demo.sh --forecast --prebuilt                  # demo from published images, no build
+#   OPENROUTER_API_KEY=sk-or-... ./demo.sh --forecast --prebuilt --agent   # + the agent, every image latest, no build
 #   ./demo-forecast.sh [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]] # prebuilt shorthand
 #   ./demo.sh [--no-spectra|--forecast|--prebuilt] down | reset | ps | logs [service] | probe | doctor | verify | scenario [name]
 #
@@ -18,6 +19,12 @@
 # demo topics, Schema Registry, the Explorer with MCP, PostgreSQL, TimesFM, the live traffic and its
 # seeded history (compose/demo-forecast.yml). No LLM key, no SpectraLLM, no agent: every variable has
 # a default, so `./demo.sh --forecast` is the whole command. See docs/metrics-demo-scenarios.md.
+#
+# --agent (DEMO_AGENT=true) adds the Kex-anHarness agent to the forecast demo, on OpenRouter, and
+# the Explorer's LLM half with it (compose/demo-no-spectra.yml + compose/demo-llm.yml, the shape
+# --no-spectra already runs). With --prebuilt, the agent follows `latest` like the Explorer and the
+# forecast image, so nothing is compiled. The full suite already has the agent: --agent is for
+# --forecast only.
 #
 # Precedence: exported variable > .env at the root > .forecast-stack/.env > default below.
 # Requires Docker Compose v2, curl and openssl (credentials are generated on the first run).
@@ -27,7 +34,7 @@ repo_dir=$(cd "$(dirname "$0")" && pwd)
 cd "$repo_dir"
 
 usage() {
-  echo 'Usage: ./demo.sh [--no-spectra|--forecast|--prebuilt|--offline] [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]]' >&2
+  echo 'Usage: ./demo.sh [--no-spectra|--forecast|--prebuilt|--offline|--agent] [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]]' >&2
   exit 2
 }
 
@@ -39,6 +46,7 @@ while [[ ${1:-} == --* ]]; do
     --forecast) export DEMO_MODE=forecast DEMO_SPECTRA=false ;;
     --prebuilt) export DEMO_PREBUILT=true DEMO_PUBLISHED_IMAGE=true ;;
     --offline) export DEMO_MODE=forecast DEMO_SPECTRA=false DEMO_PREBUILT=true DEMO_PUBLISHED_IMAGE=true DEMO_OFFLINE=true ;;
+    --agent) export DEMO_AGENT=true ;;
     *) usage ;;
   esac
   shift
@@ -82,6 +90,12 @@ if [[ $DEMO_PREBUILT == true ]]; then
   [[ $DEMO_MODE == forecast ]] || { echo '--prebuilt is supported only for the forecast demo (--forecast).' >&2; exit 2; }
   export DEMO_PUBLISHED_IMAGE=true
 fi
+export DEMO_AGENT=${DEMO_AGENT:-false}
+[[ $DEMO_AGENT == true || $DEMO_AGENT == false ]] || { echo 'DEMO_AGENT must be true or false.' >&2; exit 2; }
+if [[ $DEMO_AGENT == true && $DEMO_MODE != forecast ]]; then
+  echo '--agent is for the forecast demo (--forecast); the full suite already runs the agent.' >&2
+  exit 2
+fi
 
 # ── Defaults ─────────────────────────────────────────────────────────────────────
 export BIND_ADDR=${BIND_ADDR:-127.0.0.1}
@@ -98,8 +112,8 @@ export OPENROUTER_MODEL=${OPENROUTER_MODEL:-openai/gpt-4o-mini}
 export KEX_AGENT_LLM_PROVIDER=${KEX_AGENT_LLM_PROVIDER:-openai}
 export ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 # The SQL & metric assistant, on the same OpenRouter model (false turns it off). It needs that model,
-# which the forecast demo does not have: off there.
-if [[ $DEMO_MODE == forecast ]]; then
+# which the forecast demo has only with --agent: off there otherwise.
+if [[ $DEMO_MODE == forecast && $DEMO_AGENT != true ]]; then
   export EXPLORER_ASSISTANT_ENABLED=${EXPLORER_ASSISTANT_ENABLED:-false}
 else
   export EXPLORER_ASSISTANT_ENABLED=${EXPLORER_ASSISTANT_ENABLED:-true}
@@ -107,6 +121,10 @@ fi
 
 # Agent and MCP. The MCP token defaults to the generated one from .forecast-stack/.env.
 export KEX_AGENT_IMAGE_NAMESPACE=${KEX_AGENT_IMAGE_NAMESPACE:-compagnonsdudev}
+# The prebuilt forecast demo with --agent follows `latest`, like the Explorer and forecast images below.
+if [[ $DEMO_PREBUILT == true && $DEMO_AGENT == true ]]; then
+  export KEX_AGENT_IMAGE_TAG=${KEX_AGENT_IMAGE_TAG:-latest}
+fi
 export KEX_AGENT_IMAGE_TAG=${KEX_AGENT_IMAGE_TAG:-0.10.0}
 export KEX_AGENT_API_KEY=${KEX_AGENT_API_KEY:-dev-only-agent-key}
 export EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
@@ -164,9 +182,11 @@ if [[ $DEMO_PREBUILT == true ]]; then
   files+=(-f compose/forecast-offline.yml -f compose/demo-forecast-prebuilt.yml)
 fi
 [[ $DEMO_PUBLISHED_IMAGE == true ]] && files+=(-f compose/image.yml)
-# The forecast demo stops here: the agent (compose/demo*.yml, ecosystem) and the hosted model
-# (demo-llm.yml) are what want a key, and nothing it shows uses them.
-if [[ $DEMO_MODE == full ]]; then
+# The forecast demo stops here unless --agent: the agent (compose/demo*.yml, ecosystem) and the
+# hosted model (demo-llm.yml) are what want a key, and nothing else it shows uses them.
+if [[ $DEMO_AGENT == true ]]; then
+  files+=(-f compose/demo-no-spectra.yml -f compose/demo-llm.yml)
+elif [[ $DEMO_MODE == full ]]; then
   if [[ $DEMO_SPECTRA == true ]]; then
     files+=(-f compose/demo.yml -f compose/spectra-hub.mcp.yml -f compose/spectra-hub.ingest.yml
       -f compose/ecosystem.yml)
@@ -201,7 +221,13 @@ doctor() {
   ram_mb=$(( $(docker info --format '{{.MemTotal}}') / 1024 / 1024 ))
   echo "Docker: Compose $version; ${ram_mb} MiB RAM (TimesFM limit $TIMESFM_MEM_LIMIT)."
   (( ram_mb >= 8192 )) || echo 'WARN: less than 8 GiB allocated to Docker; forecasting may be slow or OOM.' >&2
-  for port in "$EXPLORER_PORT" "$SCHEMA_REGISTRY_PORT" "$KAFKA_PORT"; do
+  local ports=("$EXPLORER_PORT" "$SCHEMA_REGISTRY_PORT" "$KAFKA_PORT")
+  if [[ $DEMO_AGENT == true ]]; then
+    [[ $KEX_AGENT_PORT != "$EXPLORER_PORT" && $KEX_AGENT_PORT != "$SCHEMA_REGISTRY_PORT" && $KEX_AGENT_PORT != "$KAFKA_PORT" ]] ||
+      { echo 'ERROR: the agent host port must differ from the Explorer, Schema Registry and Kafka ports.' >&2; return 1; }
+    ports+=("$KEX_AGENT_PORT")
+  fi
+  for port in "${ports[@]}"; do
     [[ $port =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) ||
       { echo "ERROR: invalid port $port." >&2; return 1; }
     if (echo >/dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1; then
@@ -229,6 +255,7 @@ doctor() {
   (( missing == 0 )) || return 1
   [[ $DEMO_OFFLINE != true ]] || echo 'Offline check: all images are available locally.'
   echo "Demo images: ${EXPLORER_IMAGE_NAMESPACE}/kafkaexplorer:${EXPLORER_IMAGE_TAG}; ghcr.io/devdownin/kex-forecast:${FORECAST_IMAGE_TAG}"
+  [[ $DEMO_AGENT != true ]] || echo "Agent image: ${KEX_AGENT_IMAGE_NAMESPACE}/kex-agent-ai:${KEX_AGENT_IMAGE_TAG}"
   echo 'Preflight OK.'
 }
 
@@ -319,7 +346,7 @@ wait_for_http() {
 }
 
 up() {
-  if [[ $DEMO_MODE == full && -z $OPENROUTER_API_KEY ]]; then
+  if [[ ($DEMO_MODE == full || $DEMO_AGENT == true) && -z $OPENROUTER_API_KEY ]]; then
     echo 'WARN: OPENROUTER_API_KEY is empty — Process Mining answers without its LLM half and the' >&2
     echo '      agent starts DEGRADED. Export it (or put it in .env) and rerun ./demo.sh.' >&2
   fi
@@ -335,7 +362,9 @@ up() {
       [[ -n ${!secret:-} ]] || { echo "Missing $secret. Check .env and .forecast-stack/.env." >&2; exit 1; }
     done
     doctor
-    echo "Prebuilt forecast demo: published KafkaExplorer and TimesFM images; no local build or model download."
+    local with_agent=''
+    [[ $DEMO_AGENT != true ]] || with_agent=' and the agent'
+    echo "Prebuilt forecast demo: published KafkaExplorer and TimesFM images${with_agent}; no local build or model download."
     echo "TimesFM resources: ${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT}. Model licence: services/timesfm/licenses/NOTICE.md"
     compose config --quiet
     if [[ $DEMO_OFFLINE != true ]]; then compose pull --quiet --ignore-buildable; fi
@@ -351,13 +380,20 @@ up() {
   wait_for_http 'Kafka Explorer' "http://127.0.0.1:${EXPLORER_PORT}/actuator/health" 900
   if [[ $DEMO_MODE == forecast ]]; then
     wait_forecast_ready
+    local agent_line='LLM, agent, SpectraLLM  not started (--forecast): nothing to configure'
+    if [[ $DEMO_AGENT == true ]]; then
+      wait_for_http 'Kex-anHarness' "http://127.0.0.1:${KEX_AGENT_PORT}/api/agent/mcp/servers" 300 \
+        -H "Authorization: Bearer ${KEX_AGENT_API_KEY}" || true
+      agent_line="Kex-anHarness ......... http://localhost:${KEX_AGENT_PORT}     (Bearer ${KEX_AGENT_API_KEY}; ${KEX_AGENT_IMAGE_NAMESPACE}/kex-agent-ai:${KEX_AGENT_IMAGE_TAG})
+LLM ................... OpenRouter ${OPENROUTER_MODEL} (Explorer, agent); SpectraLLM not started"
+    fi
     cat <<EOF
 
 Kafka SQL Explorer .... http://localhost:${EXPLORER_PORT}   -> Metrics
   MCP ................. http://localhost:${EXPLORER_PORT}/mcp   (Bearer in .forecast-stack/.env or EXPLORER_MCP_AUTH_TOKEN)
 Schema Registry ....... http://localhost:${SCHEMA_REGISTRY_PORT}
 Kafka ................. localhost:${KAFKA_PORT}
-LLM, agent, SpectraLLM  not started (--forecast): nothing to configure
+${agent_line}
 
 The forecast demo: Metrics has five live metrics (demo.live.*: orders, requests, imports, events, tickets; each minus its second topic).
   Their history is seeded in the first minutes (./demo.sh --forecast logs demo-forecast-seed), then:

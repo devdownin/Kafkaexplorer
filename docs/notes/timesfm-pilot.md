@@ -254,6 +254,29 @@ request contract on `POST /v1/shadow/forecast`, the same bearer token and body b
 (`kex-timestral-28m-v1`), and each client refuses the other's identity
 (`TimesFmClient.Model`), so a shadow answer cannot be stored or activated as a TimesFM forecast.
 
+**Which Timestral is a setting** — `TIMESTRAL_MODEL` on the service,
+`explorer.forecasting.inference.shadow.model-id` in the application, one variable feeding both in
+the compose stacks. Both default to `mistralai/Timestral-28M`; Mistral AI also publishes 5M,
+123M and 209M under the same licence, and the adapter loads any checkpoint with the same 21
+quantiles and covariate support. Three rules hold it together:
+
+- **The pin belongs to one model.** `TIMESTRAL_REVISION` and `TIMESTRAL_SHA256` are read for a
+  given checkpoint, so a new model with the old pin fails the digest, and the service names the
+  model and the revision in its refusal rather than a bare integrity failure.
+- **The application checks the name it was given.** A client configured for one model refuses
+  an answer from another, exactly as it refuses TimesFM's. A service left on the default while
+  the application was moved therefore reads as invalid output, not as a silently relabelled
+  score. The primary's id is refused as a shadow model outright.
+- **The adapter version is derived, on both sides, the same way**
+  (`timestral.adapter_version` and `TimesFmClient.Model.shadow`): the name after `Timestral-`,
+  lower-cased, so the 28M keeps `kex-timestral-28m-v1` and the records already written keep their
+  identity. Edit the two together.
+
+The published forecast image bakes the 28M alone, and starts with the Hub unreachable, so another
+model there needs `compose/forecasts.yml`, which downloads at first start, or an image built with
+`--build-arg TIMESTRAL_MODEL` and its pin. `compose/local-ai.yml` writes the model out beside its
+literal pin, so a `TIMESTRAL_MODEL` exported for another stack cannot reach it.
+
 **The application scores it** when `explorer.forecasting.inference.shadow.enabled` is true
 (`TIMESTRAL_SHADOW_ENABLED` in the compose stacks; `shadow.timeout`, 15 s, 1–30 s):
 
