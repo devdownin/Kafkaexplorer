@@ -904,12 +904,108 @@ sentence: the sentence is replaced by content of another height, which pushes ev
 and a skeleton of the right shape does not. The skeleton carries `role="status"` and a label; the
 shimmer itself is hidden from assistive technology.
 
-## Strata 3D — what the scene owes the operator
+## Strata 3D — a spatial reading of offset production
 
-`pages/Strata3D.tsx` (the `StrataCanvas` inside it owns the Three.js scene) with its pure helpers in
-`pages/strata*.ts`; `docs/STRATA-3D.md` is the operator guide. `Strata3D.test.tsx` drives the page
-against a stand-in `WebGLRenderer` that keeps the scene and camera it is asked to draw — the rest of
-Three.js is real — and each of its cases fails on the code it replaced. What each rule below cost:
+**Route** `/strata`, **Observe → Strata 3D** (`navigation.ts`), lazy-loaded like every page, so
+Three.js and `OrbitControls` are fetched only when someone opens it. `docs/STRATA-3D.md` is the
+operator guide; this entry is what a change to the code must not undo.
+
+**What it is for.** One glance at which topics produce, when, and what is wired to what — then a
+drill-down into one topic without leaving the page. It is a *reading* of measurements the backend
+already makes, never a new measurement, and every figure it draws obeys the same coverage rule as the
+dashboard: a bucket that could not be measured is *unknown*, never zero.
+
+### Files
+
+| File | Holds |
+|---|---|
+| `pages/Strata3D.tsx` | The page: polling, URL state, layout, keyboard; and `StrataCanvas`, which owns the Three.js scene (`StrataAssets`, `applyEmphasis`, `createTopic`, `createGround`) |
+| `pages/StrataWorkspaceUI.tsx` | Layer menu, mini-map, temporal-lens dock, hover card, resize handles |
+| `pages/Strata{Consumer,Diagnostic,Forecast,Investigation,Trace,Performance}Panel.tsx`, `StrataShortcutDialog.tsx` | The inspector panels, the trace form, the telemetry drawer, the keyboard help |
+| `pages/strataTime.ts` | `bucketReading` (the coverage rule) and `detectActivityAnomaly` |
+| `pages/strataWorkspace.ts` | `topicEvidence`, `stableLayout`, `shouldRefit`, `activityScaleMax`, `isDoubleTap`, mini-map positions |
+| `pages/strataImmersive.ts` | Partition ribbons, the forecast canopy and its axis labels (`textSprite`, `axisValue`) |
+| `pages/strataView.ts` | URL view state (`sv.*`), the share link, the render budget |
+| `pages/strataLineage.ts`, `strataDiagnostics.ts`, `strataInvestigation.ts`, `strataForecast.ts`, `strataPerformance.ts`, `strataShortcuts.ts` | Declared links, comparison and investigation logic, forecast projection, telemetry summary, shortcut mapping |
+
+### Data — every read is bounded, read-only and paused while the tab is hidden
+
+| Read | Cadence | Notes |
+|---|---|---|
+| `GET /api/dashboard` | 60 s | Topic list and sizes. The view shows at most 48 topics (`MAX_TOPICS`), filtered by name |
+| `POST /api/dashboard/activity` | 30 s | 12 buckets × 2.5 min over the visible topics; topics in the body (see below) |
+| `GET /api/lineage?connectedOnly=true` | 120 s | Declared Flink `INSERT` paths, drawn as dashed arcs — not observed message hops |
+| `GET /api/dashboard/partition-activity` | 30 s, focused topic only | Per-partition ribbons; drawn only when its window matches the topic sample's (`partitionFrameMatches`) |
+| `GET /api/topic/{t}/consumers` | 30 s, selected topic only | Consumer groups; a chosen group's per-partition lag becomes markers round the column |
+| `GET /api/forecasts`, then the series | 60 s, focused topic only | A ready TimesFM forecast scoped to exactly that topic becomes the canopy (`spatialProjection`) |
+| `POST /api/stream-flow/stream` | On demand | Key trace, operator-initiated; matches are drawn as chronological arcs, not causality |
+
+Each poller has its own `AbortController`, a `busy` guard against overlap, and a `visibilitychange`
+listener that refetches on return. **Refresh** restarts them all.
+
+### The scene
+
+One column per topic on a sunflower spiral, its slot from `stableLayout`. Twelve rings stack the
+buckets bottom (oldest) to top (latest): width is offsets produced, on a log scale, against the
+largest bucket in view, which the legend quotes; a thin grey ring is a bucket not measured. A
+horizontal lens plane marks the selected bucket, which `applyEmphasis` brightens on every column
+while dimming the others; a candidate deviation in that bucket turns amber. A glow travels up a
+column that produced something, unless motion is off. Orthographic camera, `OrbitControls`,
+render-on-demand: no animation frame is requested while nothing moves, and the continuous pulse is
+throttled by the render budget (`strataRenderBudget`: pixel ratio, frame interval and ring segments,
+lowered on dense scenes or by the **Render quality** select).
+
+**Layers** (`StrataLayerMenu`): activity, lineage, key matches, consumer lag, deviations, forecast.
+Hiding one changes what is drawn, never what is measured, and starts no read.
+
+### The workspace
+
+Header (quality, motion, refresh) → presets (**Overview**, **Focus selected**, **Compare**), panel
+toggles, **Copy view link**, shortcuts → a status line (visible / measured / partial topics, declared
+paths, deviations, sample time) → a three-column grid from `2xl` (navigator, scene, inspector, with
+keyboard-resizable widths) that stacks below it with the scene first → **Evidence details** (partition
+table, forecast panel, trace form, deviations, a stalled-group notice, warnings).
+
+- **Select** a topic (click, list, mini-map) to fill the inspector; **focus** it (double-click,
+  double-tap, `F`, **Focus selected**) to fly the camera there and add partitions and forecast.
+- **Compare** puts a second topic beside the first (violet halo) and shows the synchronised curves
+  and their bucket-shift association in `StrataDiagnosticPanel`.
+- **Investigate** (`StrataInvestigationPanel`) walks four stages over bounded leads and can save a
+  local JSON snapshot, which never contains trace keys, headers or payloads.
+
+### State in the URL
+
+`sv.mode`, `sv.topic`, `sv.peer`, `sv.focus`, `sv.filter`, `sv.bucket`, `sv.quality` are written with
+`history.replaceState` (no history spam) and read back as hints: lengths and characters are
+checked, a focus must be the selected topic, a peer must differ from it. **Copy view link** keeps only
+those keys and drops every other query parameter and the hash, which can carry another page's
+state; a trace key is never put in a URL.
+
+### Input and accessibility
+
+- **Mouse**: drag to orbit, wheel to zoom, right-drag to pan, double-click to focus.
+- **Touch** (`(pointer: coarse)`): one finger scrolls the page, two fingers orbit and zoom, a double
+  tap focuses.
+- **Keyboard** (`strataShortcut`, ignored inside controls): `?` help, `/` topic search, `F` focus,
+  `O` overview, `C` compare, Space replay, Escape steps back — focus first, then comparison. Ctrl/⌘+K
+  stays the application's palette.
+- The canvas is a `role="img"` with instructions; everything it shows is also reachable without it —
+  the topic list, mini-map buttons, timeline buttons and slider, the inspector. Without WebGL (or after
+  a lost context) the page says so and keeps working. `prefers-reduced-motion` turns motion off.
+- Nothing polled is a live region; one-off failures are `role="alert"`.
+
+### Tests
+
+`Strata3D.test.tsx` drives the page against a stand-in `WebGLRenderer` that keeps the scene and
+camera it is asked to draw — the rest of Three.js is real — so it can assert on ring opacities,
+column positions, shared geometries and the camera. Each of its cases was checked to fail on the code
+it replaced. The pure modules have their own `strata*.test.ts`. In CI, `strata-webgl-probe.mjs`
+(`docs/screenshots/`) opens the built SPA in Chromium with a real WebGL context against the stub
+server: live context, orbit, URL restore, focus and partitions, keyboard, layers, telemetry,
+snapshot, and the 390 px layout. A change to the page's requests needs the matching stub in
+`docs/screenshots/server.mjs` and `fixtures.mjs`, or that step fails on an unstubbed route.
+
+### Rules, and what breaking them cost
 
 - **Emphasis is re-applied after every rebuild** (`applyEmphasis`). The time lens, the deviation
   colour and the selection scale lived in an effect whose dependencies differed from the rebuild's,
@@ -917,18 +1013,21 @@ Three.js is real — and each of its cases fails on the code it replaced. What e
 - **A topic keeps its slot and its colour** (`stableLayout`, `columnHue`). Positions were the rank in
   the alphabetical list, so a topic created elsewhere moved every one after it and the camera
   re-framed on the next metadata poll; colours were the rank among the *visible* topics, so filtering
-  repainted them. The camera re-frames only when `shouldRefit` says so.
-- **A failed activity refresh keeps the last sample** and says so; `topicEvidence` turns it stale.
-  Blanking it showed neutral rings under "Activity not measured yet", the wrong sentence.
+  repainted them. The camera re-frames only when `shouldRefit` says so, and a change of scope moves a
+  camera only when a topic is focused.
+- **A failed activity refresh keeps the last sample** and says so; `topicEvidence` turns it stale
+  after 90 s. Blanking it showed neutral rings under "Activity not measured yet", the wrong sentence.
 - **Nothing polled is a live region.** The inspector was `aria-live` around the consumer panel and
   the status bar was `role="status"`: a screen reader was interrupted every 30 s.
-- **Geometries and label textures are shared** (`StrataAssets`), rings per 1/32 of the scale. Each
-  rebuild used to allocate and upload ~17 geometries per column and re-rasterise every label. Draw
-  calls are unchanged: a mesh still owns its material, because its opacity is its own.
-- **One finger scrolls on a touch screen**; two orbit and zoom, a double tap focuses. OrbitControls
-  sets `touch-action: none` on a canvas at least 510 px tall, which left a phone almost nothing to
-  scroll with.
-- **The scale is stated.** The legend quotes the largest bucket in view (`activityScaleMax`, the
-  same number the rings are scaled against); the forecast canopy carries its values and unit.
+- **Geometries and label textures are shared** (`StrataAssets`), rings per 1/32 of the scale; shared
+  objects are marked `userData.shared` and only `StrataAssets.dispose` frees them. Each rebuild used to
+  allocate and upload ~17 geometries per column and re-rasterise every label. Draw calls are
+  unchanged: a mesh still owns its material, because its opacity is its own.
+- **One finger scrolls on a touch screen.** OrbitControls sets `touch-action: none` on a canvas at
+  least 510 px tall, which left a phone almost nothing to scroll with.
+- **The scale is stated.** The legend quotes `activityScaleMax`, the same number the rings are scaled
+  against; the forecast canopy carries its values and unit.
 - **The activity is asked by `POST`.** 48 names of up to 249 characters overflow the 8 KB request
-  line of a default Tomcat, which answers 400 before the controller is reached.
+  line of a default Tomcat, which answers 400 before the controller is reached. The screenshot stub
+  turns the body back into the URL its fixture reads — through a `Map`, since writing request-chosen
+  names as properties of a plain object is the prototype pollution CodeQL flagged.
