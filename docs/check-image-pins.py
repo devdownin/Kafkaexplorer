@@ -16,7 +16,8 @@ Three checks, all offline, all on facts already in the repository.
    kind that decays unread.
 
 2. **The llama.cpp CPU and CUDA images are the same build.** `compose/spectra-hub.gpu.yml`
-   swaps `server-bNNNN` for `server-cuda-bNNNN`; if the two build numbers drift apart, turning
+   swaps `server-…-bNNNN` for `server-cuda-…-bNNNN` (since llama.cpp 1.0 the tags read
+   `server-v1.0.0-b12359-b1b770d`: release, build number, commit); if the two build numbers drift apart, turning
    on the GPU overlay quietly changes the inference engine's revision underneath a stack that
    pins everything else — which is the whole reason that tag is pinned at all.
 
@@ -239,7 +240,9 @@ def main() -> int:
         if "llama.cpp" not in resolved:
             continue
         tag = tag_of(resolved) or ""
-        match = re.search(r"(b\d+)$", tag)
+        # `server-b9828` before llama.cpp 1.0, `server-v1.0.0-b12359-b1b770d` since: the build
+        # number is the `-bNNNN` that ends the tag or is followed only by the commit.
+        match = re.search(r"\b(b\d+)(?:-[0-9a-f]{7,40})?$", tag)
         if not match:
             problems.append(
                 f"{path.relative_to(ROOT)}: llama.cpp is tagged `{tag}`, which names no build "

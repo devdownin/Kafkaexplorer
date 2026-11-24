@@ -18,7 +18,8 @@
 #   * One slot over a larger window. The `@McpTool` descriptions alone are ~26k characters
 #     (~6.5k tokens) before a parameter schema, the system prompt or the first tool result; the
 #     hub's 16384/2 = 8192 per slot leaves no room for a transcript, and llama-server truncates
-#     silently. The harness sends one request at a time, so a second slot buys nothing here.
+#     silently. The harness sends one request at a time, so a second slot buys nothing here,
+#     and the hub's per-request cap (LLM_KV_PER_SLOT) is cleared so it cannot bind below the window.
 #   * A published port, on the LOOPBACK, written flat rather than through BIND_ADDR. The hub
 #     keeps llama-server unpublished because it has no authentication; the harness needs to reach
 #     it from the host, and a BIND_ADDR=0.0.0.0 set for the UIs must not offer an open inference
@@ -32,4 +33,6 @@ services:
     environment:
       - LLM_CONTEXT=${AGENT_EVAL_LLM_CONTEXT:-32768}
       - LLM_PARALLEL=1
+      # No per-request cap: one slot owns the whole window, and the hub's 12288 would cut it.
+      - LLM_KV_PER_SLOT=
       - LLM_CHAT_EXTRA_ARGS=--jinja ${LLM_CHAT_EXTRA_ARGS:-}

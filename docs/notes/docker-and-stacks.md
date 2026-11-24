@@ -177,9 +177,15 @@ file wires the pair. There were two, and the deletion of the other is the point:
   appends blindly when the server ignores a Range request, which yields the right size and the
   wrong bytes. The two llama.cpp containers poll until the file they serve appears — so the Explorer, the broker and the Spectra UI are up in seconds, and
   `up --wait` is the one thing not to use. **And the two prompt budgets are sized against each
-  other**: `LLM_CONTEXT` (16384, split across 2 slots = 8192 tokens per request) against the
+  other**: `LLM_CONTEXT` (16384 over 2 slots = 8192 tokens a request is sure of) against the
   Explorer's `PROCESS_MINING_PROMPT_CHAR_BUDGET`, lowered to 16 000 from the shipped 120 000 —
   ~30k tokens does not fit in that window, and what a model cannot see it does not say it missed.
+  Since llama.cpp 1.0 the two slots share one pool (`LLM_KV_PER_SLOT`, 12288:
+  `--kv-unified --kv-unified-per-slot`), so a request may run past 8192 while the other slot
+  leaves room, at the same memory. The budget stays sized to the 8192 floor: when the pool runs
+  out llama-server fails *every* active request ("Context size has been exceeded"), so a budget
+  sized to the cap would turn two concurrent analyses into two failures. Empty restores the
+  fixed split, and the agent-eval overlay clears it so its single slot keeps the whole window.
   The request timeouts follow (`CLAUDE_REQUEST_TIMEOUT_SECONDS` / Spectra's generation timeout,
   300 s each): a 7B Q4 model on CPU takes minutes, and a request timeout is *terminal* on that
   path. Every image is pinned and overridable (`SPECTRA_IMAGE_TAG`, `EXPLORER_IMAGE_TAG`,
@@ -193,7 +199,7 @@ file wires the pair. There were two, and the deletion of the other is the point:
 
   **Three overlays sit beside it**, and each survives for one reason: what it changes cannot be expressed as a variable, which is the test the fourth failed.
   `compose/spectra-hub.gpu.yml` swaps both llama.cpp servers for the CUDA image *pinned to
-  the same build number* (`server-cuda-b9828` against `server-b9828` — a floating `server-cuda`
+  the same build number* (`server-cuda-v1.0.0-b12359-b1b770d` against `server-v1.0.0-b12359-b1b770d` — a floating `server-cuda`
   would put a different engine revision under a stack that pins everything else) and requests the
   devices; it is not safe to leave on where there is no GPU, which is precisely why it is an
   overlay. `compose/spectra-hub.limits.yml` is this stack's own limits file rather than a

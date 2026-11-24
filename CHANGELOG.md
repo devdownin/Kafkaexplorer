@@ -20,6 +20,26 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **llama.cpp 1.0.0.** Every llama.cpp image (local LLM overlay, SpectraLLM hub, CUDA overlay,
+  `kex-llm`) moves from `server-b9828` to `server-v1.0.0-b12359-b1b770d`, the CPU and CUDA tags
+  still naming one build; the `kex-llm` base is pinned by its new digest. What it brings to this
+  stack: much faster prompt processing for Gemma 4 E2B/E4B, the model the assistant and Process
+  Mining use (upstream #31356); JSON Schema fixes behind `response_format` (empty objects, `allOf`
+  on plain types, a fallback on unsupported regex patterns); a cap on the prompt cache's RAM; and
+  SSRF / DNS-rebinding hardening of a server that has no authentication. Its one breaking change,
+  the default port moving from 8080 to 9931, does not reach this tree: every `llama-server` is
+  started with an explicit `--port`, now commented as load-bearing in `serve.sh`.
+  `check-image-pins.py` reads the build number out of the new tag format as well as the old one.
+  The Explorer image pin moves to 2.9.3, the release Docker Hub now serves.
+
+- **SpectraLLM's chat server shares one KV pool across its two slots** (`LLM_KV_PER_SLOT`,
+  default 12288 → `--kv-unified --kv-unified-per-slot`, new in llama.cpp 1.0). A request may take
+  up to 12 288 tokens instead of a fixed 8 192, at the same memory: the pool is still
+  `LLM_CONTEXT`. Under contention, llama-server fails every active request when the pool runs
+  out, which needs one of them past 8 192 at that moment. The Explorer's prompt budget therefore
+  stays sized to 8 192. Empty `LLM_KV_PER_SLOT` restores the fixed split; the agent-eval overlay
+  clears it so its single slot keeps its 32 768-token window.
+
 - **CI release and Pages reliability:** update the published Explorer image pins to v2.9.2;
   wait for GitHub Pages artifact indexing before deployment and back off before a retry.
 
@@ -112,6 +132,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on tablets. GitHub Pages now actually loads the external interactive controller,
   restores filters, zoom, deep links, copy actions and accessible mobile navigation;
   a PR preflight guard catches missing DOM controls or script inclusion.
+
+## [2.9.3] — 2026-11-24
+
+See [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.9.3).
 
 ## [2.9.2] — 2026-11-24
 
@@ -3139,7 +3163,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.2...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.3...HEAD
+[2.9.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.2...v2.9.3
 [2.9.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.1...v2.9.2
 [2.9.1]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/devdownin/Kafkaexplorer/compare/v2.8.3...v2.9.0

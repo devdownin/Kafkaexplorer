@@ -13,7 +13,7 @@
 # The download happens here, once, at build time, and is checked against a SHA-256 taken from the
 # Hub at the pinned revision: a file that does not match fails the build, not a start. The base is
 # the build compose/llama-cpp.yml pins (`LLAMA_CPP_IMAGE_TAG`), by digest; change them together.
-FROM ghcr.io/ggml-org/llama.cpp:server-b9828@sha256:565c0f60c9357967aa2af3d3b90d9905bc04a3b5ff469bc322aa801086bc3f5e
+FROM ghcr.io/ggml-org/llama.cpp:server-v1.0.0-b12359-b1b770d@sha256:e3032ea0712da96dec820c770626385de4322dd06619fb5829256a504bbc9375
 
 ARG MODEL_FILE=gemma-4-E4B-it-Q4_K_M.gguf
 ARG MODEL_URL=https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/bfc15c382204943c3a8fff0c750b94ae2364d7a3/gemma-4-E4B-it-Q4_K_M.gguf

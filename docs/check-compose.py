@@ -128,7 +128,9 @@ def budget_vs_window(path: Path, text: str) -> tuple[str | None, int]:
         return None, 0
 
     # llama-server splits its window across `--parallel` slots, so the window a single request
-    # gets is the quotient. Two stacks serve one, each under its own pair of variables. A stack
+    # is sure of is the quotient. A shared pool (`LLM_KV_PER_SLOT`, `--kv-unified-per-slot`) lets
+    # one request run past it, but only while the other slot leaves room, so the quotient is
+    # still the floor a budget must fit. Two stacks serve one, each under its own pair of variables. A stack
     # that names no window (the developer SpectraLLM one) takes it from a checkout this file
     # cannot read — not checkable rather than assumed fine.
     window = setting('LLAMA_CPP_CONTEXT')

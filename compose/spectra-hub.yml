@@ -122,7 +122,7 @@ services:
   # ═══ Kafka Explorer ═════════════════════════════════════════════════════════
 
   explorer:
-    image: ${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}/kafkaexplorer:${EXPLORER_IMAGE_TAG:-2.9.2}
+    image: ${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}/kafkaexplorer:${EXPLORER_IMAGE_TAG:-2.9.3}
     ports:
       # Loopback only. This application has no authentication and `POST /api/config` can
       # repoint the Kafka cluster at runtime, so the Docker default of 0.0.0.0 would offer it
@@ -303,7 +303,7 @@ services:
   # master several times a day, and a broken build there killed containers at startup while
   # machines running an older cached pull stayed green.
   llm-chat:
-    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-b9828}
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-v1.0.0-b12359-b1b770d}
     depends_on:
       spectra-data-init:
         condition: service_completed_successfully
@@ -315,10 +315,19 @@ services:
     environment:
       - LLM_CHAT_MODEL_FILE=${LLM_CHAT_MODEL_FILE:-Qwen2.5-7B-Instruct-Q4_K_M.gguf}
       - LLM_CHAT_MODEL_NAME=${LLM_CHAT_MODEL_NAME:-qwen2.5-7b-instruct}
-      # TOTAL context, divided by the slot count: 16384/2 = 8192 tokens per request. That is
-      # what the Explorer's prompt budget above is sized against; move the two together.
+      # TOTAL context, shared by the slots. 16384/2 = 8192 tokens is what a request is sure to get
+      # when both slots are busy, and what the Explorer's prompt budget above is sized against;
+      # move the two together.
       - LLM_CONTEXT=${LLM_CONTEXT:-16384}
       - LLM_PARALLEL=${LLM_PARALLEL:-2}
+      # One shared KV pool instead of two fixed halves (`--kv-unified --kv-unified-per-slot`,
+      # llama.cpp 1.0): a request may now take up to 12288 tokens, a long RAG context or a
+      # Process Mining prompt that used to be refused at 8192, for the same memory, the pool
+      # still being LLM_CONTEXT. The cost, under contention only: llama-server answers "Context
+      # size has been exceeded" to EVERY active request when the pool runs out, so the second
+      # request fails only when the first takes past 8192 at the same moment.
+      # Empty = the fixed split. See scripts/spectra-hub/llm-chat.sh.
+      - LLM_KV_PER_SLOT=${LLM_KV_PER_SLOT:-12288}
       # e.g. --n-gpu-layers 99 to offload. Threads are left to llama-server's own detection.
       - LLM_CHAT_EXTRA_ARGS=${LLM_CHAT_EXTRA_ARGS:-}
     # The shell lives in scripts/spectra-hub/llm-chat.sh — see its header for why it is not
@@ -340,7 +349,7 @@ services:
   # --embedding and its own batch sizing, and sharing one process would make each ingestion
   # batch compete with the chat for the same slots.
   llm-embed:
-    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-b9828}
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-v1.0.0-b12359-b1b770d}
     depends_on:
       spectra-data-init:
         condition: service_completed_successfully
