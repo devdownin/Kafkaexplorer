@@ -15,7 +15,7 @@ services:
     # The same pinned build as compose/spectra-hub.yml, read from the same variable: the `server`
     # tag is rebuilt from llama.cpp's master several times a day, and docs/check-image-pins.py
     # holds every llama.cpp image of this tree to one build.
-    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-b9828}
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-v1.0.0-b12359-b1b770d}
     # Loopback whatever BIND_ADDR says: llama-server has no authentication. 8083 on the host
     # because llama-server's own default, 8080, is the Explorer's.
     ports:
@@ -64,7 +64,7 @@ services:
   llama-cpp-model:
     # The llama.cpp image again rather than a curl image: it carries curl (its healthcheck is
     # one), it runs as root so it can write the volume, and it is one pin instead of two.
-    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-b9828}
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-v1.0.0-b12359-b1b770d}
     volumes:
       - ./scripts/llama-cpp/fetch-model.sh:/opt/llama-cpp/fetch-model.sh:ro
       - llama_cpp_models:/models

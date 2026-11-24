@@ -20,6 +20,17 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **llama.cpp 1.0.0.** Every llama.cpp image (local LLM overlay, SpectraLLM hub, CUDA overlay,
+  `kex-llm`) moves from `server-b9828` to `server-v1.0.0-b12359-b1b770d`, the CPU and CUDA tags
+  still naming one build; the `kex-llm` base is pinned by its new digest. What it brings to this
+  stack: much faster prompt processing for Gemma 4 E2B/E4B, the model the assistant and Process
+  Mining use (upstream #31356); JSON Schema fixes behind `response_format` (empty objects, `allOf`
+  on plain types, a fallback on unsupported regex patterns); a cap on the prompt cache's RAM; and
+  SSRF / DNS-rebinding hardening of a server that has no authentication. Its one breaking change,
+  the default port moving from 8080 to 9931, does not reach this tree: every `llama-server` is
+  started with an explicit `--port`, now commented as load-bearing in `serve.sh`.
+  `check-image-pins.py` reads the build number out of the new tag format as well as the old one.
+
 - **CI release and Pages reliability:** update the published Explorer image pins to v2.9.2;
   wait for GitHub Pages artifact indexing before deployment and back off before a retry.
 

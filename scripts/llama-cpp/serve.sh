@@ -21,5 +21,7 @@ for c in /app/llama-server /llama-server /usr/local/bin/llama-server; do
 done
 if [ -z "${SERVER}" ]; then echo "[llama-cpp] no llama-server binary in this image"; exit 1; fi
 echo "[llama-cpp] serving ${LLAMA_CPP_MODEL_FILE} as ${LLAMA_CPP_MODEL_NAME}, ${LLAMA_CPP_CONTEXT} tokens, ${LLAMA_CPP_PARALLEL} slot(s)"
+# --port is load-bearing: llama.cpp 1.0 moved the default from 8080 to 9931, and the healthcheck
+# and CLAUDE_BASE_URL both name 8080.
 exec "${SERVER}" --host 0.0.0.0 --port 8080 --model "${FILE}" --alias "${LLAMA_CPP_MODEL_NAME}" \
   -c "${LLAMA_CPP_CONTEXT}" --parallel "${LLAMA_CPP_PARALLEL}" ${LLAMA_CPP_EXTRA_ARGS}

@@ -303,7 +303,7 @@ services:
   # master several times a day, and a broken build there killed containers at startup while
   # machines running an older cached pull stayed green.
   llm-chat:
-    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-b9828}
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-v1.0.0-b12359-b1b770d}
     depends_on:
       spectra-data-init:
         condition: service_completed_successfully
@@ -340,7 +340,7 @@ services:
   # --embedding and its own batch sizing, and sharing one process would make each ingestion
   # batch compete with the chat for the same slots.
   llm-embed:
-    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-b9828}
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_IMAGE_TAG:-server-v1.0.0-b12359-b1b770d}
     depends_on:
       spectra-data-init:
         condition: service_completed_successfully

@@ -14,13 +14,13 @@
 # falls back layer by layer rather than failing, so the number is a ceiling and not a promise;
 # lower it if llama-server reports an out-of-memory during the load.
 #
-# The CUDA image is pinned to the SAME llama.cpp build as the CPU one (`server-cuda-b9828`
-# against `server-b9828`) — a floating `server-cuda` would silently put a different revision of
+# The CUDA image is pinned to the SAME llama.cpp build as the CPU one (`server-cuda-v1.0.0-b12359-b1b770d`
+# against `server-v1.0.0-b12359-b1b770d`) — a floating `server-cuda` would silently put a different revision of
 # the engine under a stack that pins everything else, which is the whole reason the base file
 # pins that tag at all. Bump the two together.
 services:
   llm-chat:
-    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_CUDA_IMAGE_TAG:-server-cuda-b9828}
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_CUDA_IMAGE_TAG:-server-cuda-v1.0.0-b12359-b1b770d}
     environment:
       - LLM_CHAT_EXTRA_ARGS=${LLM_CHAT_EXTRA_ARGS:---n-gpu-layers 99}
     deploy:
@@ -36,7 +36,7 @@ services:
   # costs an embedding — and leaving it on the CPU while the chat holds the GPU would make the
   # two compete for the host's cores instead.
   llm-embed:
-    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_CUDA_IMAGE_TAG:-server-cuda-b9828}
+    image: ghcr.io/ggml-org/llama.cpp:${LLAMA_CPP_CUDA_IMAGE_TAG:-server-cuda-v1.0.0-b12359-b1b770d}
     environment:
       - LLM_EMBED_EXTRA_ARGS=${LLM_EMBED_EXTRA_ARGS:---n-gpu-layers 99}
     deploy:

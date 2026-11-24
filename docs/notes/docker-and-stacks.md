@@ -193,7 +193,7 @@ file wires the pair. There were two, and the deletion of the other is the point:
 
   **Three overlays sit beside it**, and each survives for one reason: what it changes cannot be expressed as a variable, which is the test the fourth failed.
   `compose/spectra-hub.gpu.yml` swaps both llama.cpp servers for the CUDA image *pinned to
-  the same build number* (`server-cuda-b9828` against `server-b9828` — a floating `server-cuda`
+  the same build number* (`server-cuda-v1.0.0-b12359-b1b770d` against `server-v1.0.0-b12359-b1b770d` — a floating `server-cuda`
   would put a different engine revision under a stack that pins everything else) and requests the
   devices; it is not safe to leave on where there is no GPU, which is precisely why it is an
   overlay. `compose/spectra-hub.limits.yml` is this stack's own limits file rather than a
