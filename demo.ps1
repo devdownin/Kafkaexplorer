@@ -9,7 +9,8 @@
 #
 #   $env:OPENROUTER_API_KEY = 'sk-or-...'; .\demo.cmd          # build, start, wait, print the endpoints
 #   .\demo.cmd -NoSpectra                                      # the same without SpectraLLM
-#   .\demo.cmd -Forecast                                       # the forecast demo alone, nothing to configure
+#   .\demo.cmd -Forecast                                       # forecast demo with local builds
+#   .\demo-forecast.cmd                                        # forecast demo from images, without builds
 #   .\demo.cmd [-NoSpectra|-Forecast] down | reset | ps | logs [service] | probe
 #
 # -Forecast (DEMO_MODE=forecast) is the stack the forecast demo needs and nothing else: Kafka and the
@@ -29,8 +30,10 @@
 param(
     [switch] $NoSpectra,
     [switch] $Forecast,
+    [switch] $Prebuilt,
+    [switch] $Offline,
     [Parameter(Position = 0)]
-    [ValidateSet('up', 'down', 'reset', 'ps', 'logs', 'probe')]
+    [ValidateSet('up', 'down', 'reset', 'ps', 'logs', 'probe', 'doctor', 'verify', 'scenario')]
     [string] $Command = 'up',
     [Parameter(Position = 1, ValueFromRemainingArguments = $true)]
     [string[]] $Services = @()
@@ -121,6 +124,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Docker Compose v2 is required: update Docker D
 # Before the env files, so a switch outranks a DEMO_SPECTRA / DEMO_MODE they set.
 if ($NoSpectra) { $env:DEMO_SPECTRA = 'false' }
 if ($Forecast) { $env:DEMO_MODE = 'forecast' }
+if ($Prebuilt) { $env:DEMO_PREBUILT = 'true'; $env:DEMO_PUBLISHED_IMAGE = 'true' }
+if ($Offline) { $env:DEMO_MODE = 'forecast'; $env:DEMO_PREBUILT = 'true'; $env:DEMO_PUBLISHED_IMAGE = 'true'; $env:DEMO_OFFLINE = 'true' }
 
 Initialize-ForecastStack
 Import-EnvFile '.env'
@@ -133,11 +138,26 @@ if ($env:DEMO_MODE -notin @('full', 'forecast')) {
 }
 $forecastOnly = $env:DEMO_MODE -eq 'forecast'
 if ($forecastOnly) { $env:DEMO_SPECTRA = 'false' }
+Set-Default DEMO_PREBUILT 'false'
+Set-Default DEMO_OFFLINE 'false'
+if ($env:DEMO_OFFLINE -notin @('true', 'false')) { throw 'DEMO_OFFLINE must be true or false.' }
+if ($env:DEMO_OFFLINE -eq 'true' -and $env:DEMO_PREBUILT -ne 'true') { throw 'Offline mode requires prebuilt forecast demo.' }
+if ($env:DEMO_PREBUILT -notin @('true', 'false')) { throw 'DEMO_PREBUILT must be true or false.' }
+$prebuilt = $env:DEMO_PREBUILT -eq 'true'
+$offline = $env:DEMO_OFFLINE -eq 'true'
+if ($prebuilt -and -not $forecastOnly) { throw '-Prebuilt is supported only with -Forecast.' }
+if ($prebuilt) { $env:DEMO_PUBLISHED_IMAGE = 'true' }
 
 # -- Defaults: the same values as demo.sh ---------------------------------------------------
 Set-Default BIND_ADDR '127.0.0.1'
+Set-Default DEMO_CONTROL_ENABLED 'true'
+if ($env:DEMO_CONTROL_ENABLED -notin @('true', 'false')) { throw 'DEMO_CONTROL_ENABLED must be true or false.' }
+if ($env:DEMO_CONTROL_ENABLED -eq 'true' -and $env:BIND_ADDR -notin @('127.0.0.1', '::1')) {
+    throw 'Demo Control Center requires loopback BIND_ADDR; set DEMO_CONTROL_ENABLED=false for an exposed demo.'
+}
 Set-Default EXPLORER_PORT '8080'
 Set-Default KAFKA_PORT '9092'
+Set-Default KAFKA_IMAGE 'apache/kafka:4.4.0'
 Set-Default KEX_AGENT_PORT '8081'
 # 8081 belongs to the agent in the shared port plan; Schema Registry moves aside.
 Set-Default SCHEMA_REGISTRY_PORT '8085'
@@ -173,15 +193,20 @@ Set-Default FORECAST_ENVIRONMENTS 'local'
 Set-Default FORECAST_CLUSTER_ID 'local'
 Set-Default FORECAST_COLLECTOR_ID 'kafkaexplorer'
 Set-Default FORECAST_RUNTIME_APPROVAL 'true'
+Set-Default FORECAST_CONFIG_DIR './.forecast-stack/config'
+Set-Default FORECAST_IMAGE_TAG '0.3.0'
 Set-Default TIMESFM_THREADS '4'
 Set-Default TIMESFM_CPUS '4.0'
 Set-Default TIMESFM_MEM_LIMIT '8g'
 Set-Default TIMESFM_TIMEOUT '35s'
+Set-Default TIMESTRAL_SHADOW_ENABLED 'false'
+Set-Default TIMESTRAL_TIMEOUT '15s'
+Set-Default TIMESTRAL_THREADS '1'
 
 # Explorer image: built from this checkout by default; DEMO_PUBLISHED_IMAGE=true pulls the release.
 Set-Default DEMO_PUBLISHED_IMAGE 'false'
 Set-Default EXPLORER_IMAGE_NAMESPACE 'compagnonsdudev'
-Set-Default EXPLORER_IMAGE_TAG '2.3.3'
+Set-Default EXPLORER_IMAGE_TAG '2.9.1'
 
 # SpectraLLM on by default; false drops its seven services and their ~4.8 GB first download.
 Set-Default DEMO_SPECTRA 'true'
@@ -194,6 +219,9 @@ Set-Default COMPOSE_PROJECT_NAME 'kafka-explorer-demo'
 
 $script:ComposeFiles = @('-f', 'docker-compose.yml', '-f', 'compose/schema-registry.yml',
     '-f', 'compose/mcp.yml', '-f', 'compose/forecasts.yml', '-f', 'compose/demo-forecast.yml')
+if ($prebuilt) {
+    $script:ComposeFiles += @('-f', 'compose/forecast-offline.yml', '-f', 'compose/demo-forecast-prebuilt.yml')
+}
 if ($env:DEMO_PUBLISHED_IMAGE -eq 'true') { $script:ComposeFiles += @('-f', 'compose/image.yml') }
 # The forecast demo stops here: the agent (compose/demo*.yml, ecosystem) and the hosted model
 # (demo-llm.yml) are what want a key, and nothing it shows uses them.
@@ -207,22 +235,154 @@ if (-not $forecastOnly) {
     $script:ComposeFiles += @('-f', 'compose/demo-llm.yml')
 }
 
+
+# No Java, Python, jq, Node or local build is required on Windows.
+Set-Default DEMO_FORECAST_READY_TIMEOUT '900'
+
+function Test-ForecastPreflight {
+    if (-not $prebuilt -or -not $forecastOnly) { throw 'doctor requires the prebuilt forecast demo.' }
+    $versionText = [string]((& docker compose version --short) | Select-Object -First 1)
+    if ($versionText -notmatch '^v?(\d+)\.(\d+)') { throw "Cannot identify Docker Compose version: $versionText" }
+    $major = [int]$Matches[1]; $minor = [int]$Matches[2]
+    if ($major -lt 2 -or ($major -eq 2 -and $minor -lt 24)) { throw "Docker Compose 2.24+ required (found $versionText)." }
+    & docker info *> $null
+    if ($LASTEXITCODE -ne 0) { throw 'Docker Engine is not running.' }
+    Invoke-Compose config --quiet
+    foreach ($secret in @('FORECAST_POSTGRES_PASSWORD', 'TIMESFM_TOKEN', 'EXPLORER_MCP_AUTH_TOKEN')) {
+        if (-not (Test-EnvSet $secret)) { throw "Required variable is empty: $secret" }
+    }
+    $publishedPorts = @($env:EXPLORER_PORT, $env:SCHEMA_REGISTRY_PORT, $env:KAFKA_PORT)
+    if (@($publishedPorts | Sort-Object -Unique).Count -ne 3) {
+        throw 'Explorer, Schema Registry and Kafka host ports must be different.'
+    }
+    $memoryText = [string]((& docker info --format '{{.MemTotal}}') | Select-Object -First 1)
+    $memoryMb = [math]::Floor(([double]$memoryText) / 1MB)
+    Write-Host "Docker: Compose $versionText; $memoryMb MiB RAM (TimesFM limit $($env:TIMESFM_MEM_LIMIT))."
+    if ($memoryMb -lt 8192) { Write-Warning 'Less than 8 GiB assigned to Docker; forecasting may be slow or OOM.' }
+    $running = @((Invoke-Compose ps -q) | Where-Object { $_ }).Count -gt 0
+    foreach ($portText in @($env:EXPLORER_PORT, $env:SCHEMA_REGISTRY_PORT, $env:KAFKA_PORT)) {
+        $port = 0
+        if (-not [int]::TryParse($portText, [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
+            throw "Invalid port: $portText"
+        }
+        $client = New-Object System.Net.Sockets.TcpClient
+        try {
+            $pending = $client.BeginConnect('127.0.0.1', $port, $null, $null)
+            $occupied = $pending.AsyncWaitHandle.WaitOne(250) -and $client.Connected
+        } catch { $occupied = $false } finally { $client.Close() }
+        if ($occupied -and -not $running) { throw "Port $port is occupied (no running container in this Compose project)." }
+        if ($occupied) { Write-Warning "Port $port is occupied; an existing demo may own it." }
+    }
+    foreach ($image in @((Invoke-Compose config --images) | Sort-Object -Unique)) {
+        if ([string]::IsNullOrWhiteSpace($image)) { continue }
+        & docker image inspect $image *> $null
+        if ($LASTEXITCODE -ne 0) {
+            if ($offline) { throw "Offline image missing: $image (docker load or pull before starting)." }
+            Write-Host "Image to pull: $image"
+        }
+    }
+    if ($offline) { Write-Host 'Offline check: all images are local.' }
+    Write-Host 'Preflight OK.'
+}
+
+function Assert-ForecastReady {
+    if (-not $forecastOnly) { throw 'verify is available in forecast mode only.' }
+    $cid = [string]((Invoke-Compose ps -aq demo-forecast-seed) | Select-Object -First 1)
+    if (-not $cid) { throw 'Seeder has not started.' }
+    $state = [string]((& docker inspect --format '{{.State.Status}}' $cid) | Select-Object -First 1)
+    $exitCode = [string]((& docker inspect --format '{{.State.ExitCode}}' $cid) | Select-Object -First 1)
+    if ($state -ne 'exited') { throw "Seeder is still $state." }
+    if ($exitCode -ne '0') { throw "Seeder failed ($exitCode): inspect logs demo-forecast-seed." }
+    foreach ($service in @('kafka', 'demo-live', 'forecast-postgres', 'timesfm', 'explorer')) {
+        $id = [string]((Invoke-Compose ps -q $service) | Select-Object -First 1)
+        if (-not $id) { throw "Service $service is not running." }
+        $isRunning = [string]((& docker inspect --format '{{.State.Running}}' $id) | Select-Object -First 1)
+        if ($isRunning -ne 'true') { throw "Service $service is stopped." }
+    }
+    $timesfm = [string]((Invoke-Compose ps -q timesfm) | Select-Object -First 1)
+    $health = [string]((& docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' $timesfm) | Select-Object -First 1)
+    if ($health -ne 'healthy') { throw 'TimesFM has not become healthy.' }
+    $sql = "SELECT count(*) FROM (SELECT payload::jsonb->>'metricId' AS metric_id FROM kex_metric_observation_v1 WHERE payload::jsonb->>'collectorRunId' LIKE 'demo-seed-%' AND payload::jsonb->>'component'='value' GROUP BY 1 HAVING count(*) >= 500) seeded;"
+    $count = [string]((Invoke-Compose exec -T forecast-postgres psql -U forecasts -d forecasts -At -c $sql) | Select-Object -First 1)
+    if ($count.Trim() -ne '5') { throw "Only $count/5 metrics have >=500 historical observations." }
+    $metrics = @(Invoke-RestMethod -Uri "http://127.0.0.1:$($env:EXPLORER_PORT)/api/metrics" -TimeoutSec 10)
+    foreach ($name in @('unshipped', 'backlog', 'creep', 'jitter', 'shift')) {
+        if (-not @($metrics | Where-Object { $_.id -eq "demo-live-$name" }).Count) { throw "Metric demo-live-$name is missing." }
+    }
+    $forecast = Invoke-RestMethod -Uri "http://127.0.0.1:$($env:EXPLORER_PORT)/api/forecasts" -TimeoutSec 10
+    $series = @($forecast.series | Where-Object { $_.metricId -eq 'demo-live-unshipped' })
+    if ($series.Count -eq 0 -or -not $series[0].result -or
+        $series[0].result.state -ne 'READY' -or $series[0].result.strategy -ne 'TIMESFM' -or
+        -not $series[0].result.forecast) { throw 'Unshipped-orders TimesFM forecast is not READY.' }
+    Write-Host 'Ready: Kafka, PostgreSQL, Explorer, TimesFM, live traffic, five histories and TimesFM forecast.'
+}
+
+function Wait-ForecastReady {
+    Write-Host 'Waiting for live data, five histories and first READY TimesFM forecast...'
+    $deadline = (Get-Date).AddSeconds([int]$env:DEMO_FORECAST_READY_TIMEOUT)
+    while ($true) {
+        try { Assert-ForecastReady; return } catch {
+            $message = $_.Exception.Message
+            if ((Get-Date) -ge $deadline) { throw "Demo never became fully ready: $message (logs demo-forecast-seed / timesfm)." }
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+
+function Set-ForecastScenario([string] $Name) {
+    if (-not $forecastOnly) { throw 'scenario is available in forecast mode only.' }
+    $file = Join-Path $env:FORECAST_CONFIG_DIR 'demo-scenario.conf'
+    $running = [string]((Invoke-Compose ps -q explorer) | Select-Object -First 1)
+    if (-not $Name) {
+        if ($running) {
+            Invoke-Compose exec -T explorer sh -c 'cat /app/demo-control/demo-scenario.conf 2>/dev/null || echo normal'
+        } elseif (Test-Path -LiteralPath $file) {
+            Write-Host ([IO.File]::ReadAllText((Resolve-Path $file).Path).Trim())
+        } else { Write-Host 'normal' }
+        return
+    }
+    if ($Name -notin @('normal', 'overload', 'incident', 'recover', 'seasonal')) {
+        throw 'Valid scenarios: normal, overload, incident, recover, seasonal.'
+    }
+    if ($running) {
+        # The selected name is allowlisted. The volume is shared with the browser controller.
+        Invoke-Compose exec -T explorer sh -c 'printf "%s\n" "$0" > /app/demo-control/demo-scenario.conf' $Name | Out-Null
+    } else {
+        New-Item -ItemType Directory -Path $env:FORECAST_CONFIG_DIR -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path (Resolve-Path $env:FORECAST_CONFIG_DIR).Path 'demo-scenario.conf'),
+            "$Name`n", $Utf8NoBom)
+        Write-Host 'Scenario saved for the first startup; an existing stopped demo keeps its Docker-volume state.'
+    }
+    Write-Host "Live Kafka scenario: $Name (applied at the next tick, default 15 s)."
+}
+
 function Start-Demo {
     if (-not $forecastOnly -and -not (Test-EnvSet 'OPENROUTER_API_KEY')) {
         Write-Warning ('OPENROUTER_API_KEY is empty - Process Mining answers without its LLM half and the ' +
             "agent starts DEGRADED. Set it (`$env:OPENROUTER_API_KEY = 'sk-or-...', or in .env) and rerun.")
     }
-    Write-Host "First run: Maven build of the Explorer and the pinned TimesFM checkpoint ($($env:TIMESFM_CPUS) CPUs / $($env:TIMESFM_MEM_LIMIT))."
-    if ($spectraOn) { Write-Host 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.' }
-    # Docker Desktop gives the WSL 2 VM half the host's memory by default; TimesFM alone is capped
-    # at 8 GB, so on a 16 GB machine raise `memory=` in %UserProfile%\.wslconfig or pass -NoSpectra.
-    Write-Host 'Docker Desktop memory: see the [wsl2] memory= setting in %UserProfile%\.wslconfig. Later runs start in seconds.'
-    if ($env:DEMO_PUBLISHED_IMAGE -eq 'true') { Invoke-Compose pull --quiet --ignore-buildable }
-    # --remove-orphans: switching to -NoSpectra stops the SpectraLLM containers a previous run left.
-    Invoke-Compose up -d --build --remove-orphans
+    if ($prebuilt) {
+        foreach ($name in @('FORECAST_POSTGRES_PASSWORD', 'TIMESFM_TOKEN', 'EXPLORER_MCP_AUTH_TOKEN')) {
+            if (-not (Test-EnvSet $name)) { throw "Missing $name. Check .env or .forecast-stack/.env." }
+        }
+        Test-ForecastPreflight
+        Write-Host 'Prebuilt forecast demo: published images, no build or model download.'
+        Write-Host "TimesFM resources: $($env:TIMESFM_CPUS) CPUs / $($env:TIMESFM_MEM_LIMIT). Licence: services/timesfm/licenses/NOTICE.md"
+        Invoke-Compose config --quiet
+        if (-not $offline) { Invoke-Compose pull --quiet --ignore-buildable }
+        Invoke-Compose up -d --no-build --pull never --remove-orphans
+    } else {
+        Write-Host "First run: Maven build of the Explorer and the pinned TimesFM checkpoint ($($env:TIMESFM_CPUS) CPUs / $($env:TIMESFM_MEM_LIMIT))."
+        if ($spectraOn) { Write-Host 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.' }
+        Write-Host 'Docker Desktop memory: see the [wsl2] memory= setting in %UserProfile%\.wslconfig. Later runs start in seconds.'
+        if ($env:DEMO_PUBLISHED_IMAGE -eq 'true') { Invoke-Compose pull --quiet --ignore-buildable }
+        Invoke-Compose up -d --build --remove-orphans
+    }
 
-    Wait-Http 'Kafka Explorer' "http://127.0.0.1:$($env:EXPLORER_PORT)/actuator/health" 900 | Out-Null
+    $explorerReady = Wait-Http 'Kafka Explorer' "http://127.0.0.1:$($env:EXPLORER_PORT)/actuator/health" 900
+    if ($forecastOnly -and -not $explorerReady) { throw 'Kafka Explorer did not become healthy. See: .\demo-forecast.cmd logs explorer timesfm' }
     if ($forecastOnly) {
+        Wait-ForecastReady
         Write-Host @"
 
 Kafka SQL Explorer .... http://localhost:$($env:EXPLORER_PORT)   -> Metrics
@@ -272,7 +432,7 @@ Forecast: Metrics -> the five demo.live.* metrics have 9 h of seeded history (li
 "@
 }
 
-if ($Services.Count -gt 0 -and $Command -ne 'logs') {
+if ($Services.Count -gt 0 -and $Command -notin @('logs', 'scenario')) {
     throw "Only 'logs' takes service names. Usage: .\demo.cmd [-NoSpectra|-Forecast] [up|down|reset|ps|logs [service]|probe]"
 }
 
@@ -283,6 +443,13 @@ switch ($Command) {
     'reset' { Invoke-Compose down -v --remove-orphans }
     'ps'    { Invoke-Compose ps }
     'logs'  { Invoke-Compose logs -f --tail 200 @Services }
+    'doctor' { Test-ForecastPreflight }
+    'verify' { Assert-ForecastReady }
+    'scenario' {
+        if ($Services.Count -gt 1) { throw 'scenario accepts at most one name.' }
+        $name = if ($Services.Count) { $Services[0] } else { '' }
+        Set-ForecastScenario $name
+    }
     'probe' {
         Invoke-Compose --profile probe run --rm mcp-probe
         if ($spectraOn) { Invoke-Compose --profile probe run --rm spectra-mcp-probe }

@@ -5,6 +5,10 @@ This is the *why* behind the odd-looking choices in `service/`: almost every one
 fix, and the paragraph beside it is the defect it closes. Read the entry for a class
 before changing it.
 
+## Schema Registry Explorer (optional)
+
+`SchemaRegistryExplorerService` reads the backend's configured `kafka.schema-registry-url` via bounded HTTP requests; it does not accept upstream URLs from the browser. Only GET requests and the Confluent **non-mutating** `/compatibility` POST are exposed via `/api/schema-registry/**`. The candidate schema is re-read from a registered subject/version, not accepted from a free-text request. Response envelopes use Java records in `domain/` and `api/types.ts`. Registry downtime never blocks KafkaExplorer startup. See [operator guide](../SCHEMA-REGISTRY.md).
+
 ## Backend layers
 
 ```
@@ -208,3 +212,11 @@ of an existing template rather than a template of its own: it has the same shape
 a descriptor, an editor and a forecast unit for one number. An empty topic and a failed read are
 both errors, never zero: a silence of zero is "a record just arrived", the opposite of both.
 `MetricObservation.unit` reports it in milliseconds.
+
+## Dashboard production snapshots and count coverage (2026-11-23)
+
+`GET /api/dashboard` now reads `KafkaAdminService.getDashboardTopicCounts` (strict, full-partition-coverage counts, cached for 30 s) rather than the zero-filling `getTopicsSize` adapter. It keeps `topicSizes` compatible for existing pages and returns `unmeasuredTopics` separately: zero is a measured empty log, whereas absent is a failed offset read.
+
+`GET /api/dashboard/production` reads one batched latest-offset request across the cluster through `getProducedOffsetsTotals`; an incomplete topic is omitted instead of summed partially. Response: `{ offsets: {topic: totalLatestOffset}, sampledAt: epochMillis, totalTopics, available }`. The browser samples this at most every 30 seconds (or at the slower selected cadence), derives a difference-per-second only for topics in consecutive valid samples, and discloses coverage and time window. This observes **produced offsets**, not retained message counts; retention and compaction cannot masquerade as negative ingest. The endpoint remains bounded by the shared ten-second AdminClient deadline, and rate history is session-local only.
+
+`snapshotAvailable` in the dashboard response distinguishes a complete metadata read from the independent `ping()` verdict. The browser retains the last valid catalogue only when the read itself failed; a successful snapshot with degraded broker ping still updates the data and displays the degraded health tile.

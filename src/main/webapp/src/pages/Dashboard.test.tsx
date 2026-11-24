@@ -136,7 +136,90 @@ describe('Dashboard layout', () => {
     await screen.findByText('Total Topics');
     expect(tile('Cluster Health')?.className).toContain('border-t-success');
     expect(tile('Total Topics')?.className).not.toContain('border-t-primary');
-    expect(tile('Message Count')?.className).not.toContain('border-t-primary');
+    expect(tile('Message throughput')?.className).not.toContain('border-t-primary');
+  });
+});
+
+describe('Dashboard honest operational states', () => {
+  it('labels retained records separately from broker health and failed measurements', async () => {
+    const sizes = { ...dashboard.topicSizes, [topics[0]]: 0, [topics[1]]: 0 };
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/dashboard') return Promise.resolve({
+        data: { ...dashboard, topicSizes: sizes, unmeasuredTopics: [topics[0]] },
+      });
+      if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(topics.slice(0, 25)) });
+      return Promise.resolve({ data: {} });
+    });
+    renderPage();
+    const first = (await screen.findByText(topics[0])).closest('tr');
+    const second = screen.getByText(topics[1]).closest('tr');
+    const third = screen.getByText(topics[2]).closest('tr');
+    expect(within(first!).getByText('Not measured')).toBeInTheDocument();
+    expect(within(second!).getByText('Empty')).toBeInTheDocument();
+    expect(within(third!).getByText('Has records')).toBeInTheDocument();
+    expect(screen.getByText('Counts unknown, not zero')).toBeInTheDocument();
+    expect(screen.getByText('Empty topics').closest('div')?.parentElement).toHaveTextContent('1');
+  });
+
+  it('computes produced msg/s from two observed offset snapshots and states partial coverage', async () => {
+    let clock = 1_700_000_000_000;
+    const dateSpy = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    let requested = 0;
+    try {
+      mockedAxios.get.mockImplementation((url: string) => {
+        if (url === '/api/dashboard') return Promise.resolve({ data: dashboard });
+        if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(topics.slice(0, 25)) });
+        if (url === '/api/dashboard/production') {
+          const offset = requested++ === 0 ? 100 : 400;
+          return Promise.resolve({ data: {
+            offsets: { orders: offset }, totalTopics: 30, sampledAt: clock, available: true,
+          } });
+        }
+        return Promise.resolve({ data: {} });
+      });
+      renderPage();
+      const tile = (await screen.findByText('Message throughput')).closest('.kse-stat');
+      expect(tile).not.toHaveTextContent('10 msg/s');
+      await waitFor(() => expect(requested).toBe(1));
+      clock += 30_000;
+      window.dispatchEvent(new Event('focus'));
+      await waitFor(() => expect(tile).toHaveTextContent('10 msg/s'));
+      expect(tile).toHaveTextContent('1/30 topics');
+      expect(tile).toHaveTextContent('Stored messages: 46.5K');
+    } finally {
+      dateSpy.mockRestore();
+    }
+  });
+
+  it('keeps successful topic data distinct from a failed broker ping', async () => {
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/dashboard') return Promise.resolve({
+        data: { ...dashboard, snapshotAvailable: true, health: false },
+      });
+      if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(topics.slice(0, 25)) });
+      return Promise.resolve({ data: {} });
+    });
+    renderPage();
+    expect(await screen.findByText('Degraded')).toBeInTheDocument();
+    expect(screen.getByText(topics[0])).toBeInTheDocument();
+    expect(screen.queryByText(/Stale data/)).toBeNull();
+  });
+
+  it('keeps the last measured records and reports stale data after a failed refresh', async () => {
+    let reads = 0;
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/dashboard') {
+        reads++;
+        return reads === 1 ? Promise.resolve({ data: dashboard }) : Promise.reject(new Error('offline'));
+      }
+      if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(topics.slice(0, 25)) });
+      return Promise.resolve({ data: {} });
+    });
+    renderPage();
+    await screen.findByText(topics[0]);
+    window.dispatchEvent(new Event('focus'));
+    expect(await screen.findByText(/Stale data · last successful update/)).toBeInTheDocument();
+    expect(screen.getByText(topics[0])).toBeInTheDocument();
   });
 });
 
@@ -146,6 +229,83 @@ describe('Dashboard layout', () => {
  * rien tourner, et que la page date ce qu'elle montre — sans quoi « off » afficherait des chiffres
  * vieux d'une heure sans un mot.
  */
+describe('Dashboard top producers and quick diagnostics', () => {
+  it('shows top producing topics from two offset samples and links to the topic explorer', async () => {
+    let clock = 1_700_000_000_000;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    let requests = 0;
+    try {
+      mockedAxios.get.mockImplementation((url: string) => {
+        if (url === '/api/dashboard') return Promise.resolve({ data: dashboard });
+        if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(topics.slice(0, 25)) });
+        if (url === '/api/dashboard/production') {
+          const first = requests++ === 0;
+          return Promise.resolve({ data: {
+            offsets: {
+              [topics[29]]: first ? 100 : 700,
+              [topics[0]]: first ? 200 : 350,
+              [topics[1]]: first ? 300 : 300,
+            },
+            totalTopics: topics.length, sampledAt: clock, available: true,
+          } });
+        }
+        return Promise.resolve({ data: {} });
+      });
+      renderPage();
+      const section = await screen.findByRole('region', { name: 'Top producing topics' });
+      await waitFor(() => expect(requests).toBe(1));
+      expect(within(section).getByText('Ranking available after two valid production samples.')).toBeInTheDocument();
+      clock += 30_000;
+      window.dispatchEvent(new Event('focus'));
+      await waitFor(() => expect(within(section).getByText('20 msg/s')).toBeInTheDocument());
+      const links = within(section).getAllByRole('link');
+      expect(links[0]).toHaveTextContent(topics[29]);
+      expect(links[0]).toHaveAttribute('href', `/topic/${topics[29]}`);
+      expect(section).toHaveTextContent('3/30 topics compared');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('filters only truly measured empty topics, resets exclusions, and can clear', async () => {
+    const user = userEvent.setup();
+    const sizes = { ...dashboard.topicSizes, [topics[0]]: 0, [topics[1]]: 0 };
+    mockedAxios.get.mockImplementation((url: string) => {
+      if (url === '/api/dashboard') return Promise.resolve({
+        data: { ...dashboard, topicSizes: sizes, unmeasuredTopics: [topics[1]] },
+      });
+      if (url === '/api/dashboard/activity') return Promise.resolve({ data: activityFor(topics.slice(0, 25)) });
+      return Promise.resolve({ data: {} });
+    });
+    renderPage();
+    await screen.findByText(topics[0]);
+    await user.click(screen.getByRole('switch', { name: 'Hide empty' }));
+    await user.click(screen.getByRole('button', { name: 'Show empty topics' }));
+    const table = screen.getByRole('table');
+    expect(within(table).getByText(topics[0])).toBeInTheDocument();
+    expect(within(table).queryByText(topics[1])).toBeNull();
+    expect(within(table).queryByText(topics[2])).toBeNull();
+    expect(screen.getByText('1 matching topic')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Clear quick filter' }));
+    expect(within(table).getByText(topics[1])).toBeInTheDocument();
+  });
+
+  it('freezes silence only for the currently measured page and labels its scope', async () => {
+    const user = userEvent.setup();
+    const response = activityFor(topics.slice(0, 25));
+    response.topics[topics[0]] = series(topics[0], [10, 10, 0, 0]);
+    stubApi(response);
+    renderPage();
+    const action = await screen.findByRole('button', { name: 'Show silent topics on this page' });
+    await waitFor(() => expect(action).toBeEnabled());
+    await user.click(action);
+    expect(screen.getByText(/from the page measured when the filter was applied/)).toBeInTheDocument();
+    const table = screen.getByRole('table');
+    expect(within(table).getByText(topics[0])).toBeInTheDocument();
+    expect(within(table).queryByText(topics[1])).toBeNull();
+  });
+});
+
 describe('Dashboard auto-refresh', () => {
   it('states when it read and what it will do next', async () => {
     stubApi();

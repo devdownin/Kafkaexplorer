@@ -75,12 +75,18 @@ export interface MetricForecastReach extends ForecastThresholdReach {
 export function forecastReachFor(
   metric: { warningThreshold: number | null; criticalThreshold: number | null },
   series: ForecastSeriesView | null | undefined,
+  nowMillis = Date.now(),
 ): MetricForecastReach | null {
   const result = series?.result;
-  if (!series || !result?.forecast || result.context?.profile?.transformation === 'COUNTER_RATE') return null;
-  const reach = forecastThresholdReach(predictedPoints(result.forecast), metric.warningThreshold,
+  // A past prediction is not an impending breach. A stale/degraded model is not
+  // actionable either, even if its persisted horizon still contains future timestamps.
+  if (!series || !result?.forecast || result.state === 'STALE' || result.state === 'DEGRADED'
+    || result.context?.profile?.transformation === 'COUNTER_RATE') return null;
+  const future = predictedPoints(result.forecast).filter(point => point.at > nowMillis);
+  const reach = forecastThresholdReach(future, metric.warningThreshold,
     metric.criticalThreshold, result.strategy === 'TIMESFM');
-  return reach && { ...reach, inMillis: reach.steps * series.stepMillis };
+  return reach && { ...reach, inMillis: reach.at - nowMillis,
+    steps: Math.max(1, Math.ceil((reach.at - nowMillis) / series.stepMillis)) };
 }
 
 /**

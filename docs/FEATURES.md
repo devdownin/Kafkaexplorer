@@ -14,6 +14,15 @@ Open **Observe → Strata 3D** (route `/strata`) to inspect up to 48 Kafka topic
 
 See the [Strata 3D operator guide](STRATA-3D.md) and the [technical audit](notes/strata-3d-audit.md). These features are present in the source tree; a tagged Docker image must be published before claiming availability in a particular image tag.
 
+## Schema Registry Explorer — optional schema contracts
+
+Open **Explore → Schema Registry** (route `/schema-registry`) to filter registered subjects,
+inspect schema IDs, formats and references, compare two saved versions side by side and
+check the candidate against a selected baseline using the registry's effective compatibility
+policy. The check is read-only: it does not register or delete any schema. When no registry
+is reachable, the page explains how to start the optional Compose overlay; other
+KafkaExplorer features continue to work. [Operator guide](SCHEMA-REGISTRY.md).
+
 ## 1. Dashboard & Navigation
 - **Topic List**: Overview of all topics available on the Kafka cluster.
 - **Advanced Filtering**:
@@ -26,6 +35,8 @@ See the [Strata 3D operator guide](STRATA-3D.md) and the [technical audit](notes
 - **Topic hierarchy**: From **Explore → Topic hierarchy**, group names under one selected separator (`.`, `-` or `_`). Filter and navigate the tree by keyboard; inspect names excluded for mixed separators, empty levels or no separator. The selected view persists within the browser tab, and long trees render only visible rows. This groups names, not actual data-flow relationships. [Guide](TOPIC-HIERARCHY.md) · [Guide en français](TOPIC-HIERARCHY.fr.md).
 
 ![The dashboard: every topic with its message count, state and last message, over the seeded demo cluster](img/dashboard.png)
+
+The Dashboard separates **cluster reachability**, **retained-record presence**, **measurement availability**, and **observed production throughput**. Its msg/s KPI is derived from complete latest-offset snapshots, not differences in retained counts; coverage and a sample window accompany every rate, and the value stays unavailable until two valid samples exist. A stale-data indicator preserves the last measured values if a background read fails.
 
 ## 2. Topic Exploration
 - **Real-Time Metadata**: Visualization of the number of partitions, min/max offsets, and estimated data size.
@@ -374,3 +385,9 @@ Typed process stages are the preferred contract for process-level diagnostics: e
 binds its Kafka topic and, when applicable, the consumer group that consumes that stage. This avoids
 guessing which group belongs to which topic. The legacy `topics + groupIds` form remains accepted
 for compatibility but cannot be mixed with typed stages in the same call.
+
+### Dashboard — Top producers and diagnostic quick filters
+
+The **Top producing topics** panel ranks up to five topics by observed produced-offset delta per second, using the same pair of cluster-wide production snapshots as the Dashboard throughput KPI. Each entry links directly to its topic explorer. It displays the actual measurement interval and the number of topics compared. Topics with missing or reset offset measurements are excluded; the panel shows an unavailable state until two comparable snapshots exist. The list is not a ranking by retained message count, and a zero-rate topic can appear when fewer than five topics produced messages.
+
+The **Empty topics** diagnostic action filters the table to topics with a complete, measured retained count of zero, rather than merely revealing all topics. Unreadable counts are excluded. The **Topics that went silent** action filters to topics detected as silent **on the currently measured page**; the selection is frozen when clicked and explicitly labelled as page-scoped, not cluster-wide. Both actions clear conflicting search/hide switches, reset pagination and scroll to the topic table. A visible **Clear quick filter** action restores the full table view. These are in-session shortcuts; they do not overwrite the user's saved topic view.

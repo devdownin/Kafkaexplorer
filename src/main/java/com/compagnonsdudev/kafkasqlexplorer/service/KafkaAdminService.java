@@ -332,6 +332,21 @@ public class KafkaAdminService {
     }
 
     /**
+     * Dashboard-only strict counts. A topic is present only when every partition
+     * returned both boundaries; otherwise the UI must show "Not measured" rather
+     * than a partial floor labelled as an exact empty/populated result.
+     *
+     * The ordinary record-count API intentionally retains partial floors for
+     * feature discovery and metrics, so this strict view has its own 30-second
+     * cache and does not alter their semantics.
+     */
+    @Cacheable(value = "dashboardTopicCounts", key = "#topicNames")
+    public Map<String, Long> getDashboardTopicCounts(List<String> topicNames) {
+        if (topicNames == null || topicNames.isEmpty()) return Map.of();
+        return readRecordCounts(topicNames, true);
+    }
+
+    /**
      * Offsets ever produced to one topic: the latest offset summed over its partitions. A
      * cumulative total — what was produced, not what retention left — so a forecast reads it as a
      * produce rate through its counter-rate preparation.
@@ -364,7 +379,63 @@ public class KafkaAdminService {
         }
     }
 
+    /**
+     * One batched latest-offset lookup for the dashboard's production-rate samples.
+     * Unlike retained record counts, latest offsets are unaffected by retention/compaction.
+     * A topic is omitted unless every partition answered; a partial sum would look like a
+     * counter reset on the next sample. The caller polls this at most every 30 seconds.
+     */
+    public Map<String, Long> getProducedOffsetsTotals(List<String> topicNames) {
+        if (topicNames == null || topicNames.isEmpty()) return Map.of();
+
+        Map<String, List<TopicPartition>> byTopic;
+        try {
+            byTopic = cachedPartitions(topicNames, 10_000);
+        } catch (Exception e) {
+            log.debug("Could not describe partitions for production snapshot: {}",
+                    LogSafe.text(SqlErrorClassifier.explain(e)));
+            return Map.of();
+        }
+
+        List<TopicPartition> partitions = byTopic.values().stream()
+                .flatMap(List::stream).toList();
+        if (partitions.isEmpty()) return Map.of();
+
+        try {
+            ListOffsetsResult latest = adminClient.listOffsets(specs(partitions, OffsetSpec.latest()));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            Map<String, Long> measured = new HashMap<>();
+            for (Map.Entry<String, List<TopicPartition>> entry : byTopic.entrySet()) {
+                if (entry.getValue().isEmpty()) continue;
+                long total = 0L;
+                boolean complete = true;
+                for (TopicPartition partition : entry.getValue()) {
+                    try {
+                        long offset = awaitOffset(latest, partition, deadline).offset();
+                        if (offset < 0) throw new IllegalStateException("Negative latest offset");
+                        total = Math.addExact(total, offset);
+                    } catch (Exception e) {
+                        complete = false;
+                        log.debug("Could not read complete produced offsets for {}: {}",
+                                LogSafe.name(entry.getKey()), LogSafe.text(SqlErrorClassifier.explain(e)));
+                        break;
+                    }
+                }
+                if (complete) measured.put(entry.getKey(), total);
+            }
+            return measured;
+        } catch (Exception e) {
+            log.debug("Could not read produced offsets snapshot: {}",
+                    LogSafe.text(SqlErrorClassifier.explain(e)));
+            return Map.of();
+        }
+    }
+
     private Map<String, Long> readRecordCounts(List<String> topicNames) {
+        return readRecordCounts(topicNames, false);
+    }
+
+    private Map<String, Long> readRecordCounts(List<String> topicNames, boolean requireComplete) {
         Map<String, Long> sizes = new HashMap<>();
 
         Map<String, List<TopicPartition>> topicToPartitions;
@@ -409,7 +480,9 @@ public class KafkaAdminService {
                 // anything to measure". A topic where *none* answered is a different matter:
                 // the sum would be 0, and 0 is the one value that must never be invented, so
                 // the topic carries no entry at all rather than a fabricated emptiness.
-                if (measured > 0) sizes.put(entry.getKey(), size);
+                if (measured > 0 && (!requireComplete || measured == entry.getValue().size())) {
+                    sizes.put(entry.getKey(), size);
+                }
             }
         } catch (Exception e) {
             log.error("Failed to read record counts for: {}", topicNames, e);

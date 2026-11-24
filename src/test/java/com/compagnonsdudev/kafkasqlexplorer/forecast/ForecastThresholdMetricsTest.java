@@ -61,7 +61,8 @@ class ForecastThresholdMetricsTest {
     when(pilot.get("c")).thenReturn(c);
 
     var metrics = new ForecastThresholdMetrics(provider, metricService, registry);
-    var rows = metrics.rows(() -> 60_000L);
+    var now = new java.util.concurrent.atomic.AtomicLong(60_000L);
+    var rows = metrics.rows(now::get);
     assertThat(rows).hasSize(1);
 
     // Registered, the row reads the predicted instant against the clock: critical at 180 s, now 60 s.
@@ -69,6 +70,29 @@ class ForecastThresholdMetricsTest {
     var gauge = registry.find("t").tag("metric_id", "latency").tag("level", "critical").tag("likelihood", "expected").gauge();
     assertThat(gauge).isNotNull();
     assertThat(gauge.value()).isEqualTo(120.0);
+    // A stopped pilot must not keep exporting an old event as an ETA of zero seconds.
+    now.set(180_000L);
+    assertThat(gauge.value()).isNaN();
+  }
+
+  @Test
+  void omitsPastBreachesAndStaleModelResults() throws Exception {
+    when(provider.getIfAvailable()).thenReturn(pilot);
+    when(metricService.getAllMetrics()).thenReturn(List.of(metric("latency", 800.0, 1600.0)));
+    var configuredSeries = series("a", "latency");
+    when(pilot.series()).thenReturn(List.of(configuredSeries));
+    var current = record(SeriesPreparationProfile.Transformation.GAUGE_MEAN, 700, 900, 1700);
+    when(pilot.get("a")).thenReturn(current);
+    // All threshold-crossing points have already elapsed.
+    assertThat(new ForecastThresholdMetrics(provider, metricService, registry).rows(() -> 180_000L)).isEmpty();
+
+    var stale = new ForecastRecord(current.key(), current.generatedAt(), "STALE",
+        current.strategy(), current.visibility(), current.context(), current.forecast(),
+        current.quality(), current.evaluatedPoints(), current.evaluatedThrough(),
+        current.baselineMae(), current.reason(), current.qualityWindow());
+    assertThat(ForecastThresholdReach.reachFor(stale, 800.0, 1600.0, 0L)).isNull();
+    when(pilot.get("a")).thenReturn(stale);
+    assertThat(new ForecastThresholdMetrics(provider, metricService, registry).rows(() -> 0L)).isEmpty();
   }
 
   @Test

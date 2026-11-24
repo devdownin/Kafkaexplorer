@@ -58,6 +58,7 @@ These are generated, not photographed: `docs/screenshots/` drives the compiled S
 
 - 🖱️ **Click-to-query** — click a JSON key or XML tag in a message preview and it lands in your `SELECT`/`WHERE`, with `JSON_VALUE`/XPath generated for you.
 - 🧠 **Zero-config schemas** — topics are sampled, their structure inferred (JSON, XML, Avro via Schema Registry), and registered as Flink tables the first time you name them — by the topic's own name, as the cluster shows it: `SELECT * FROM "orders.v2-raw"`.
+- 🗂️ **Schema Registry Explorer (optional)** — browse schema subjects, inspect historical Avro/Protobuf/JSON contracts, compare two versions, and run a real, read-only compatibility check. [Operator guide](docs/SCHEMA-REGISTRY.md).
 - 📝 **A real SQL editor** — Monaco (the VS Code engine), auto-completion of topics and tables, query history, Flink SQL by default, and an explicit bounded Kafka Direct exploration mode with earliest/latest scans and scan coverage.
 - 🎨 **A spatial interface, light or dark** — glass navigation floating over opaque reading planes (tables, charts and the SQL editor never blur), light by default with a persistent dark-mode switch, six accent colours and a compact density for dense screens. Contrast is held to WCAG AA, and reduced motion and reduced transparency are honoured.
 - 🪐 **Kafka Strata 3D** — a read-only spatial observability cockpit with an aligned 30-minute activity lens, declared Flink lineage, per-partition focus and evidence-safe topic comparison. **Lots D/E** add local, opt-in WebGL performance diagnostics, a four-stage guided investigation, bounded offset/selected-group signals and downloadable allowlisted JSON snapshots (no record keys or payloads). [Operator guide](docs/STRATA-3D.md).
@@ -108,6 +109,33 @@ Then open **http://localhost:8080** and start clicking. That's it.
 The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPOSE_FILE=docker-compose.yml:compose/schema-registry.yml` in a root `.env` and a bare `docker compose up -d` means that combination — see `.env.example`.
 
 </details>
+
+### Forecast demo without a local build
+
+```bash
+./demo-forecast.sh             # Docker Compose pulls published images, initializes secrets and starts live metrics
+./demo-forecast.sh logs demo-forecast-seed
+./demo-forecast.sh down        # keep data; reset deletes volumes
+```
+
+On Windows: `.\\demo-forecast.cmd` (same `ps`, `logs`, `down` and `reset` commands).
+
+**Forecast demo (P2):** the Metrics page includes an opt-in Demo Control Center for switching live Kafka scenarios and exporting JSON/HTML forecast reports, when the selected Explorer image contains this feature. It stays hidden on standard deployments and older published images. See [Metrics demo scenarios](docs/metrics-demo-scenarios.md#demo-control-center--p2-source-builds-and-subsequent-releases).
+
+The launcher first checks Docker, Compose >= 2.24, ports, memory and images, then
+waits until the five historical metrics and a real **READY TimesFM forecast** exist
+before announcing the demo is ready. Diagnostics: `./demo-forecast.sh doctor`,
+`./demo-forecast.sh verify`. After the first image pull, use
+`./demo-forecast.sh --offline up` (`.\\demo-forecast.cmd -Offline up` on Windows)
+to forbid further image downloads. For live Kafka incidents, try
+`./demo-forecast.sh scenario overload`, `scenario incident`, `scenario recover`
+and `scenario normal`. The scenario control does not modify seeded history.
+No Maven, npm, local Docker image build or model-weight download is required; Docker Compose 2.24+
+and image pulls are required. The stack includes Kafka, Schema Registry, MCP,
+PostgreSQL, TimesFM and five continuously updated demo metrics with seeded history.
+The pinned forecast image bundles Timestral-28M under a [restricted model license](services/timesfm/licenses/NOTICE.md);
+review it even if Timestral shadow mode is disabled. See the
+[forecast demo scenarios](docs/metrics-demo-scenarios.md) for defaults and walkthroughs.
 
 ### 🎬 The whole suite in one command: `demo.sh`
 

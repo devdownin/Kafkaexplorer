@@ -151,6 +151,10 @@ export interface DashboardResponse {
   topics: string[];
   topicSizes: Record<string, number>;
   totalMessages: number;
+  /** Topics for which a retained-count measurement was incomplete. */
+  unmeasuredTopics?: string[];
+  /** A metadata snapshot can succeed even if the separate broker ping is degraded. */
+  snapshotAvailable?: boolean;
   tables: string[];
   health: boolean;
   /** Nom d'affichage choisi au déploiement — pas une information sur le broker. */
@@ -1738,6 +1742,12 @@ export interface ForecastCovariateComparison {
 export interface ForecastActivationRefusal {
   reason: string;
 }
+/** @java DemoControlController.ControlStatus */
+export interface DemoControlStatus {
+  scenario: string;
+  changedAt: number | null;
+}
+
 /** @java ForecastController.Status */
 export interface ForecastStatus {
   enabled: boolean;
@@ -1969,4 +1979,37 @@ export interface MetricRefreshCosts {
   tickMs: number;
   /** Absent for a metric not refreshed yet in this process. */
   metrics: Record<string, MetricRefreshCost>;
+}
+
+/** @java RegistrySubjects */
+export interface RegistrySubjects {
+  subjects: string[];
+  total: number;
+  truncated: boolean;
+}
+
+/** @java RegistrySchemaReference */
+export interface RegistrySchemaReference {
+  name: string;
+  subject: string;
+  version: number;
+}
+
+/** @java RegistrySchemaVersion */
+export interface RegistrySchemaVersion {
+  subject: string;
+  version: number;
+  id: number;
+  schemaType: string;
+  schema: string;
+  references: RegistrySchemaReference[];
+}
+
+/** @java RegistryCompatibility */
+export interface RegistryCompatibility {
+  compatible: boolean;
+  baselineVersion: number;
+  candidateVersion: number;
+  level: string;
+  messages: string[];
 }

@@ -73,7 +73,7 @@ class DashboardControllerTest {
 
     private void brokerAnswers() throws Exception {
         when(kafkaAdminService.listTopics()).thenReturn(List.of("orders"));
-        when(kafkaAdminService.getTopicsSize(anyList())).thenReturn(Map.of("orders", 12L));
+        when(kafkaAdminService.getDashboardTopicCounts(anyList())).thenReturn(Map.of("orders", 12L));
         when(kafkaAdminService.getTopicsLastMessageTimestamps(anyList())).thenReturn(Map.of("orders", 1_700_000_000_000L));
         when(kafkaAdminService.ping()).thenReturn(true);
     }
@@ -88,7 +88,8 @@ class DashboardControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.clusterName").value("Orders prod"))
             .andExpect(jsonPath("$.bootstrapServers").value("kafka:29092"))
-            .andExpect(jsonPath("$.health").value(true));
+            .andExpect(jsonPath("$.health").value(true))
+            .andExpect(jsonPath("$.snapshotAvailable").value(true));
     }
 
     /** A runtime repoint changes the address the pill reports — the label alone never could. */
@@ -110,6 +111,7 @@ class DashboardControllerTest {
         mockMvc.perform(get("/api/dashboard"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.health").value(false))
+            .andExpect(jsonPath("$.snapshotAvailable").value(false))
             .andExpect(jsonPath("$.bootstrapServers").value("kafka:9092"))
             .andExpect(jsonPath("$.topics").isEmpty());
     }
@@ -118,6 +120,43 @@ class DashboardControllerTest {
     @Test
     void theDefaultClusterLabelAssertsNoKafkaVersion() {
         assertEquals("Kafka cluster", new ExplorerConfig().getClusterName());
+    }
+
+    @Test
+    void doesNotConfuseUnreadableRecordCountsWithEmptyTopics() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("empty", "unreadable"));
+        when(kafkaAdminService.getDashboardTopicCounts(anyList())).thenReturn(Map.of("empty", 0L));
+        when(kafkaAdminService.getTopicsLastMessageTimestamps(anyList())).thenReturn(Map.of());
+        when(kafkaAdminService.ping()).thenReturn(true);
+
+        mockMvc.perform(get("/api/dashboard"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.topicSizes.empty").value(0))
+            .andExpect(jsonPath("$.topicSizes.unreadable").value(0))
+            .andExpect(jsonPath("$.unmeasuredTopics[0]").value("unreadable"));
+    }
+
+    @Test
+    void productionSnapshotReturnsCompleteOffsetsAndCoverage() throws Exception {
+        when(kafkaAdminService.listTopics()).thenReturn(List.of("orders", "unmeasured"));
+        when(kafkaAdminService.getProducedOffsetsTotals(anyList()))
+            .thenReturn(Map.of("orders", 900L));
+
+        mockMvc.perform(get("/api/dashboard/production"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.offsets.orders").value(900))
+            .andExpect(jsonPath("$.totalTopics").value(2))
+            .andExpect(jsonPath("$.available").value(true))
+            .andExpect(jsonPath("$.sampledAt").isNumber());
+    }
+
+    @Test
+    void failedProductionSnapshotNeverClaimsZeroMessages() throws Exception {
+        when(kafkaAdminService.listTopics()).thenThrow(new IllegalStateException("unreachable"));
+        mockMvc.perform(get("/api/dashboard/production"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.available").value(false))
+            .andExpect(jsonPath("$.offsets").isEmpty());
     }
 
     // ── GET /api/dashboard/activity ──────────────────────────────────────────

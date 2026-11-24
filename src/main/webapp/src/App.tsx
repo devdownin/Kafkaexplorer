@@ -16,6 +16,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const QueryWorkbench = lazy(() => import('./pages/QueryWorkbench'));
 const TopicExplorer = lazy(() => import('./pages/TopicExplorer'));
 const TopicHierarchy = lazy(() => import('./pages/TopicHierarchy'));
+const SchemaRegistryExplorer = lazy(() => import('./pages/SchemaRegistryExplorer'));
 const Compare = lazy(() => import('./pages/Compare'));
 const Lineage = lazy(() => import('./pages/Lineage'));
 const Strata3D = lazy(() => import('./pages/Strata3D'));
@@ -87,6 +88,7 @@ const router = createBrowserRouter([
       { path: '/query', element: <QueryWorkbench /> },
       { path: '/topic/:name', element: <TopicExplorer /> },
       { path: '/topics/hierarchy', element: <TopicHierarchy /> },
+      { path: '/schema-registry', element: <SchemaRegistryExplorer /> },
       { path: '/compare', element: <Compare /> },
       { path: '/lineage', element: <Lineage /> },
       { path: '/strata', element: <Strata3D /> },

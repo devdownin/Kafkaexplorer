@@ -718,6 +718,44 @@ overlay on the real stack, the seeded rows beside the recorded ones, a TimesFM r
 The seeder's SQL was also run against a real PostgreSQL and its rows read back through the real
 `MetricSeriesPreparer` (512 observed points, none missing) before it shipped.
 
+## Prebuilt demo operational gates and scenario control
+
+The no-build launchers check Docker Compose 2.24+, Docker Engine memory, the
+application's published ports and the locally cached images before startup.
+An explicit offline mode skips pulls and uses `--no-build --pull never`; it fails
+fast if an image is missing. Unlike the older single HTTP check, readiness
+requires a successful seeder exit, five histories of >=500 points each,
+a healthy TimesFM service and a READY forecast. `doctor` and `verify` expose
+the checks as CLI actions on Linux/macOS and Windows.
+
+`compose/demo-forecast.yml` uses a dedicated named `demo_control` volume,
+initialized by `demo-control-init` and mounted read-only in `demo-live` as
+`/demo-control` and read-write in Explorer as `/app/demo-control`. The CLI and
+browser scenario actions write the same `demo-scenario.conf` (normal, overload,
+incident, recover, seasonal); `live.sh` reads it on each tick and calls the
+shared `signals.awk` override, changing real producer outputs, not the seed's
+cloned PostgreSQL observations. No Docker socket is exposed to the UI.
+The published-image CI workflow, `.github/workflows/forecast-prebuilt-smoke.yml`,
+verifies this operational contract independently of source builds.
+
+## No-build forecast demo: the published images
+
+`./demo-forecast.sh` / `.\demo-forecast.cmd` wrap `demo.sh --forecast --prebuilt`
+and `demo.ps1 -Forecast -Prebuilt`. They reuse the existing generated secrets,
+defaults, live traffic and history seeding, but layer
+`compose/forecast-offline.yml`, `compose/demo-forecast-prebuilt.yml` and
+`compose/image.yml` in that order after the standard forecast stack.
+The prebuilt-specific overlay removes the `build:` of both TimesFM and the
+profiled prefetch helper; `compose/image.yml` does the same for Explorer.
+The launcher runs `config --quiet`, then `pull`, then
+`up -d --no-build --pull never` — a missing image stops the operation rather
+than silently building one. `docs/forecast-prebuilt-check.py`, run by
+`compose-lint`, asserts the effective Compose model has no active build
+definitions, retains the live-history services, and keeps model prefetch disabled.
+The pinned image includes Timestral with a restricted licence; see
+`services/timesfm/licenses/NOTICE.md` and
+[metrics demo scenarios](../metrics-demo-scenarios.md).
+
 ## The forecast stack with no download at start
 
 `compose/forecast-offline.yml` is an overlay of `compose/forecasts.yml` (like `local-ai.yml`, it

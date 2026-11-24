@@ -24,9 +24,14 @@ import { isInternalTopic } from '../internalTopics';
 import { useCatalog } from '../catalogStore';
 import {
   REFRESH_OPTIONS, REFRESH_OFF, readRefreshChoice, writeRefreshChoice,
-  refreshIntervalMs, activityIntervalMs, describeRefreshStatus,
+  refreshIntervalMs, activityIntervalMs, describeRefreshStatus, describeAge, isDashboardStale,
   type RefreshChoice,
 } from './dashboardRefresh';
+import {
+  PRODUCTION_SAMPLE_MS, appendProductionSnapshot, calculateProductionRate,
+  type ProductionSnapshot,
+} from './dashboardProduction';
+import { topProducers, matchesQuickFilter, type QuickFilter } from './dashboardInsights';
 
 const PAGE_SIZES = [10, 25, 50, 100];
 /*
@@ -39,8 +44,6 @@ const PAGE_SIZES = [10, 25, 50, 100];
 const ACTIVITY_TIMEOUT_MS = 20000;
 const TOPIC_COUNT_KEY = 'dashboard.lastTopicCount';
 const SAVED_TOPIC_VIEW_KEY = 'dashboard.savedTopicView';
-/** How many refreshes the Message Count trend line keeps (about two and a half minutes at 5 s). */
-const SPARK_SAMPLES = 30;
 interface SavedTopicView { query: string; hideEmpty: boolean; hideDlt: boolean; hideInternal: boolean; }
 const PAGE_SIZE_KEY = 'dashboard.pageSize';
 type SortKey = 'name' | 'size' | 'state' | 'lastMessage';
@@ -50,6 +53,9 @@ interface DashboardData {
   topics: string[];
   topicSizes: Record<string, number>;
   totalMessages: number;
+  /** Topics whose retained-count lookup failed; zero for them would be misleading. */
+  unmeasuredTopics?: string[];
+  snapshotAvailable?: boolean;
   tables: string[];
   health: boolean;
   topicLastMessages: Record<string, number | null>;
@@ -74,12 +80,19 @@ const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const [data, setData] = useState<DashboardData | null>(null);
-  /** `totalMessages` at each refresh of this visit — what the Message Count trend line draws. */
-  const [messageSamples, setMessageSamples] = useState<number[]>([]);
+  /** Latest-offset samples are distinct from retained-record totals. */
+  const [productionSamples, setProductionSamples] = useState<ProductionSnapshot[]>([]);
+  const [productionError, setProductionError] = useState(false);
+  const productionRequestedAt = useRef(0);
+  const [snapshotFailed, setSnapshotFailed] = useState(false);
+  const [hasSuccessfulSnapshot, setHasSuccessfulSnapshot] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState(() => params.get('q') ?? '');
   const [page, setPage] = useState(0);
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
+  /** Frozen at click time: silence is only measured for the currently visible page. */
+  const [silentSelection, setSilentSelection] = useState<string[]>([]);
   const [pageSize, setPageSize] = useState(() => {
     const stored = Number(localStorage.getItem(PAGE_SIZE_KEY));
     return PAGE_SIZES.includes(stored) ? stored : 25;
@@ -201,10 +214,17 @@ const Dashboard: React.FC = () => {
   const loadDashboard = async (reportErrors: boolean) => {
     try {
       const response = await axios.get('/api/dashboard');
-      setData(response.data);
-      if (typeof response.data?.totalMessages === 'number') {
-        const total: number = response.data.totalMessages;
-        setMessageSamples(prev => [...prev, total].slice(-SPARK_SAMPLES));
+      const snapshot: DashboardData = response.data;
+      if (snapshot.snapshotAvailable ?? snapshot.health) {
+        setData(snapshot);
+        setSnapshotFailed(false);
+        setHasSuccessfulSnapshot(true);
+        setFetchedAt(Date.now());
+      } else {
+        // Keep the last successfully measured values while showing a degraded broker.
+        // The server's failure fallback is an empty catalogue, not proof of zero topics.
+        setData(prev => prev ? { ...prev, health: false } : snapshot);
+        setSnapshotFailed(true);
       }
       // `loadDashboard` ne tourne que depuis un effet ou un gestionnaire, jamais pendant le
       // rendu — ce que la règle, qui raisonne sur la portée du composant, ne peut pas voir.
@@ -215,11 +235,11 @@ const Dashboard: React.FC = () => {
       // plus cette ligne. `--report-unused-disable-directives` impose de l'enlever — c'est le
       // mécanisme qui empêche les exceptions de survivre à leur raison. Si l'analyse reprend un
       // jour, l'erreur revient et le raisonnement est ici pour la remettre.
-      setFetchedAt(Date.now());
       if (reportErrors) {
         setError(null);
       }
     } catch {
+      setSnapshotFailed(true);
       if (reportErrors) {
         setError('Failed to fetch dashboard data');
       }
@@ -246,6 +266,49 @@ const Dashboard: React.FC = () => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- chargement initial
     void loadDashboard(true);
   }, []);
+
+  /** Production snapshots have their own 30-second minimum cadence and request budget. */
+  const loadProduction = async () => {
+    if (document.visibilityState !== 'visible') return;
+    const requestedAt = Date.now();
+    if (requestedAt - productionRequestedAt.current < PRODUCTION_SAMPLE_MS) return;
+    productionRequestedAt.current = requestedAt;
+    try {
+      const response = await axios.get<ProductionSnapshot>('/api/dashboard/production', { timeout: 20_000 });
+      if (!response.data?.available || !response.data.offsets) {
+        setProductionError(true);
+        setProductionSamples([]);
+        return;
+      }
+      setProductionError(false);
+      setProductionSamples(prev => appendProductionSnapshot(prev, response.data));
+    } catch {
+      // A missing measurement cannot be interpreted as zero production.
+      setProductionError(true);
+      setProductionSamples([]);
+    }
+  };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- asynchronous initial sample
+    void loadProduction();
+  }, []);
+
+  useEffect(() => {
+    const sample = () => {
+      if (document.visibilityState === 'visible') void loadProduction();
+    };
+    const chosen = refreshIntervalMs(refreshChoice);
+    const period = chosen === null ? null : Math.max(PRODUCTION_SAMPLE_MS, chosen);
+    const intervalId = period === null ? null : window.setInterval(sample, period);
+    window.addEventListener('focus', sample);
+    document.addEventListener('visibilitychange', sample);
+    return () => {
+      if (intervalId !== null) window.clearInterval(intervalId);
+      window.removeEventListener('focus', sample);
+      document.removeEventListener('visibilitychange', sample);
+    };
+  }, [refreshChoice]);
 
   /*
    * Le sondage est un effet **distinct** du chargement initial, et c'est ce qui rend la cadence
@@ -298,21 +361,30 @@ const Dashboard: React.FC = () => {
    * liste des topics à chaque rendu, dont les vingt-cinq que le sondage de 5 s provoque par minute.
    */
   const getState = useCallback((topic: string) =>
-    !data || data.topicSizes[topic] === 0 ? 'empty'
+    !data || data.unmeasuredTopics?.includes(topic) ? 'unmeasured'
+    : data.topicSizes[topic] === 0 ? 'empty'
     : isDeadLetterTopic(topic) ? 'dlt'
-    : 'healthy', [data]);
+    : 'populated', [data]);
 
   const filteredTopics = useMemo(() => {
+    const silentSet = new Set(silentSelection);
     if (!data) return [] as string[];
     return data.topics
+      .filter(t => matchesQuickFilter(t, quickFilter, data.topicSizes, data.unmeasuredTopics, silentSet))
       .filter(t => t.toLowerCase().includes(searchTerm.toLowerCase()))
-      .filter(t => !hideEmpty || (data.topicSizes[t] ?? 0) > 0)
+      .filter(t => !hideEmpty || data.unmeasuredTopics?.includes(t) || (data.topicSizes[t] ?? 0) > 0)
       .filter(t => !hideDlt   || !isDeadLetterTopic(t))
       .filter(t => !hideInternal || !isInternalTopic(t, internalPrefix))
       .sort((a, b) => {
         let cmp = 0;
         if (sortKey === 'name') cmp = a.localeCompare(b);
-        else if (sortKey === 'size') cmp = (data.topicSizes[a] ?? 0) - (data.topicSizes[b] ?? 0);
+        else if (sortKey === 'size') {
+          // Unknown counts are neither small nor zero; always sort them last.
+          const missingA = data.unmeasuredTopics?.includes(a) ?? false;
+          const missingB = data.unmeasuredTopics?.includes(b) ?? false;
+          if (missingA !== missingB) return missingA ? 1 : -1;
+          cmp = (data.topicSizes[a] ?? 0) - (data.topicSizes[b] ?? 0);
+        }
         else if (sortKey === 'state') cmp = getState(a).localeCompare(getState(b));
         else if (sortKey === 'lastMessage') {
           const ta = data.topicLastMessages?.[a] ?? null;
@@ -325,7 +397,7 @@ const Dashboard: React.FC = () => {
         }
         return sortDir === 'asc' ? cmp : -cmp;
       });
-  }, [data, searchTerm, hideEmpty, hideDlt, hideInternal, internalPrefix, sortKey, sortDir, getState]);
+  }, [data, searchTerm, hideEmpty, hideDlt, hideInternal, internalPrefix, sortKey, sortDir, getState, quickFilter, silentSelection]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTopics.length / pageSize));
   const pagedTopics = useMemo(
@@ -422,7 +494,7 @@ const Dashboard: React.FC = () => {
       <TableSkeleton rows={8} columns={5} />
     </div>
   );
-  if (error || !data) return <ErrorBanner message={error ?? 'Failed to load dashboard'} onRetry={() => void fetchData({ showSpinner: true })} />;
+  if (!data) return <ErrorBanner message={error ?? 'Failed to load dashboard'} onRetry={() => void fetchData({ showSpinner: true })} />;
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -445,6 +517,15 @@ const Dashboard: React.FC = () => {
 
   const prevCount = previousVisitTopicCount ?? data.topics.length;
   const topicDiff = data.topics.length - prevCount;
+  const stale = isDashboardStale(refreshChoice, fetchedAt, now, snapshotFailed);
+  const latestRate = productionSamples.length >= 2
+    ? calculateProductionRate(productionSamples[productionSamples.length - 2],
+        productionSamples[productionSamples.length - 1])
+    : null;
+  const rateSeries = productionSamples.slice(1).map((sample, i) =>
+    calculateProductionRate(productionSamples[i], sample)?.messagesPerSecond ?? null)
+    .filter((rate): rate is number => rate !== null);
+
   const topicTrend = topicDiff > 0 ? `+${topicDiff} since last visit`
                    : topicDiff < 0 ? `${topicDiff} since last visit`
                    : 'No change since last visit';
@@ -453,9 +534,36 @@ const Dashboard: React.FC = () => {
   const measuredActivityCount = activity
     ? pagedTopics.filter(topic => activity.topics[topic]?.available).length
     : 0;
-  const silentCount = activity
-    ? pagedTopics.filter(topic => detectSilence(activity.topics[topic])).length
-    : 0;
+  const silentTopics = activity
+    ? pagedTopics.filter(topic => detectSilence(activity.topics[topic]))
+    : [];
+  const silentCount = silentTopics.length;
+  const rankedProducers = productionSamples.length >= 2
+    ? topProducers(productionSamples[productionSamples.length - 2],
+        productionSamples[productionSamples.length - 1])
+    : [];
+  const productionWindowSeconds = productionSamples.length >= 2
+    ? Math.round((productionSamples[productionSamples.length - 1].sampledAt
+      - productionSamples[productionSamples.length - 2].sampledAt) / 1000)
+    : null;
+  const activateQuickFilter = (filter: QuickFilter) => {
+    if (filter === 'silent' && (!activity || !silentCount)) return;
+    setSilentSelection(filter === 'silent' ? silentTopics : []);
+    setQuickFilter(filter);
+    setSearchTerm('');
+    // Do not silently hide requested rows with previously enabled exclusion switches.
+    setHideEmpty(false);
+    setHideDlt(false);
+    setHideInternal(false);
+    setPage(0);
+    document.getElementById('topics')?.scrollIntoView?.({ behavior: 'smooth' });
+  };
+
+  function formatRate(value: number) {
+    if (value >= 1000) return formatCount(value);
+    if (value >= 10) return value.toFixed(0);
+    return value.toFixed(value >= 1 ? 1 : 2);
+  }
 
   function formatCount(num: number) {
     if (num >= 1000000000) return (num / 1000000000).toFixed(1) + 'B';
@@ -470,11 +578,11 @@ const Dashboard: React.FC = () => {
    * seconde moitié des cas se verrait étiqueter d'une convention que son producteur n'a pas suivie.
    */
   const stateBadge = (topic: string, state: string) =>
-    state === 'empty' ? <Badge tone="neutral">Empty</Badge>
+    state === 'unmeasured' ? <Badge tone="warning">Not measured</Badge>
+    : state === 'empty' ? <Badge tone="neutral">Empty</Badge>
     : state === 'dlt' ? <Badge tone="warning" dot>{deadLetterLabel(topic) ?? 'DLT'}</Badge>
-    // The ordinary state is said quietly: a green badge on nearly every row is a column of noise
-    // in which the one dead-letter or empty topic no longer stands out.
-    : <span className="text-[12px] text-outline">Healthy</span>;
+    // Presence of retained records is not a Kafka topic health verdict.
+    : <span className="text-[12px] text-outline">Has records</span>;
 
   const pagerBtn = 'inline-flex items-center justify-center w-8 h-8 rounded-md border border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high disabled:opacity-30 disabled:cursor-not-allowed transition-colors';
 
@@ -492,6 +600,14 @@ const Dashboard: React.FC = () => {
               * sur lequel personne ne devrait agir. Les deux moitiés ensemble : l'âge seul se lit
               * comme une panne, la cadence seule ne dit pas où l'on en est dans l'intervalle.
               */}
+            {stale && (
+              <span role="status" className="rounded-md border border-warning/40 bg-warning/10 px-2 py-1 text-[11px] text-warning"
+                title={snapshotFailed ? 'The latest cluster read failed; previous values are retained where possible' : 'The latest cluster snapshot is older than the refresh allowance'}>
+                {hasSuccessfulSnapshot
+                  ? `Stale data · last successful update ${describeAge(fetchedAt, now)}`
+                  : 'Cluster data unavailable · no successful snapshot yet'}
+              </span>
+            )}
             <span className="text-[11px] text-on-surface-variant tabular-nums">
               {describeRefreshStatus(refreshChoice, fetchedAt, now)}
             </span>
@@ -522,8 +638,8 @@ const Dashboard: React.FC = () => {
       />
 
       {/* KPI Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Bento: the cluster verdict is the large tile; counts are small; the ingest curve gets a full-width strip. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+        {/* Cluster Health and production-rate tile share the desktop row. */}
         {/*
           * Cette tuile comptait les jobs Flink, avec l'état du cluster pour seule couleur et pour
           * seul sous-titre. Le compte est parti avec le tableau « Flink SQL Jobs » — plus rien ne
@@ -532,7 +648,7 @@ const Dashboard: React.FC = () => {
           * est ce que la tuile disait vraiment : le cluster répond, ou non.
           */}
         <Stat
-          size="lg" className="sm:col-span-2"
+          size="lg" className="sm:col-span-2 lg:col-span-2"
           label="Cluster Health" icon={data.health ? 'check_circle' : 'error'}
           tone={data.health ? 'success' : 'error'}
           value={data.health ? 'Healthy' : 'Degraded'}
@@ -544,6 +660,26 @@ const Dashboard: React.FC = () => {
           }
         />
         <Stat
+          className="sm:col-span-2 lg:col-span-2"
+          label="Message throughput" icon="bolt"
+          value={latestRate ? <>{formatRate(latestRate.messagesPerSecond)} <span className="text-[14px] font-medium text-on-surface-variant">msg/s</span></> : '—'}
+          hint={
+            <>
+              <span>{latestRate
+                ? `Observed from produced offsets · ${latestRate.measuredTopics}/${latestRate.totalTopics} topics · ${Math.round(latestRate.seconds)} s`
+                : productionError ? 'Production rate unavailable'
+                : productionSamples.length >= 2 ? 'Rate unavailable · no comparable topics'
+                : productionSamples.length === 1 && productionSamples[0].totalTopics === 0 ? 'No topics to measure'
+                : 'Measuring produced offsets…'}</span>
+              <span className="block">Stored messages: {formatCount(data.totalMessages)}{data.unmeasuredTopics?.length ? ' (partial)' : ''}</span>
+            </>
+          }
+          aside={latestRate && rateSeries.length >= 2
+            ? <TrendLine values={rateSeries} width={100} height={32}
+                label={`Observed produced messages per second across ${rateSeries.length} intervals of this visit`} />
+            : undefined}
+        />
+        <Stat
           label="Total Topics" icon="format_list_bulleted"
           value={data.topics.length.toLocaleString()}
           hint={<span className={topicDiff !== 0 ? 'text-primary' : ''}>{topicTrend}</span>}
@@ -553,16 +689,6 @@ const Dashboard: React.FC = () => {
           value={data.tables.length.toLocaleString()}
           hint={data.tables.length > 0 ? `${data.tables.length} registered` : 'None registered'}
         />
-        <Stat
-          className="sm:col-span-2 lg:col-span-4"
-          label="Message Count" icon="bolt"
-          value={formatCount(data.totalMessages)}
-          hint={data.totalMessages > 0 ? 'Active ingest' : 'No activity'}
-          aside={messageSamples.length >= 2
-            ? <TrendLine values={messageSamples} width={220} height={40}
-                label={`Total message count at each of the last ${messageSamples.length} refreshes of this visit`} />
-            : <p className="text-[12px] text-on-surface-variant">The trend builds up as the page refreshes.</p>}
-        />
       </div>
 
       {/* Prioritise actionable signals without treating topic names as proof of an incident. */}
@@ -571,7 +697,7 @@ const Dashboard: React.FC = () => {
           <h2 className="text-sm font-semibold text-on-surface">Diagnostic overview</h2>
           <span className="text-xs text-on-surface-variant">Based on the latest dashboard snapshot</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
           {/* Silent producers, in place of a "Cluster connection" cell that repeated the health tile
               just above. Counted over the rows whose activity was measured — the column is read for
               the page shown, not for the cluster — and the cell says so. */}
@@ -586,13 +712,21 @@ const Dashboard: React.FC = () => {
               <>
                 <div className={`font-semibold mt-1 tabular-nums ${silentCount ? 'text-warning' : ''}`}>{silentCount.toLocaleString()}</div>
                 <p className="text-xs mt-1 text-on-surface-variant">Among the {measuredActivityCount.toLocaleString()} topic{measuredActivityCount === 1 ? '' : 's'} measured on this page</p>
+                <button type="button" disabled={!silentCount}
+                  className="text-xs text-primary hover:underline mt-1 inline-flex items-center min-h-6 disabled:opacity-50"
+                  onClick={() => activateQuickFilter('silent')}>Show silent topics on this page</button>
               </>
             )}
           </div>
           <div className="rounded-md bg-surface-container p-3">
             <div className="text-xs text-on-surface-variant">Empty topics</div>
-            <div className="font-semibold mt-1 tabular-nums">{data.topics.filter(t => (data.topicSizes[t] ?? 0) === 0).length.toLocaleString()}</div>
-            <button type="button" className="text-xs text-primary hover:underline mt-1 inline-flex items-center min-h-6" onClick={() => { setHideEmpty(false); setSearchTerm(''); document.getElementById('topics')?.scrollIntoView({ behavior: 'smooth' }); }}>Inspect topics</button>
+            <div className="font-semibold mt-1 tabular-nums">{data.topics.filter(t => !data.unmeasuredTopics?.includes(t) && (data.topicSizes[t] ?? 0) === 0).length.toLocaleString()}</div>
+            <button type="button" className="text-xs text-primary hover:underline mt-1 inline-flex items-center min-h-6" onClick={() => activateQuickFilter('empty')}>Show empty topics</button>
+          </div>
+          <div className="rounded-md bg-surface-container p-3">
+            <div className="text-xs text-on-surface-variant">Unmeasured topics</div>
+            <div className="font-semibold mt-1 tabular-nums">{(data.unmeasuredTopics?.length ?? 0).toLocaleString()}</div>
+            <p className="text-xs mt-1 text-on-surface-variant">Counts unknown, not zero</p>
           </div>
           <div className="rounded-md bg-surface-container p-3">
             <div className="text-xs text-on-surface-variant">Dead-letter topics</div>
@@ -600,6 +734,38 @@ const Dashboard: React.FC = () => {
             <Link to="/dead-letter" className="text-xs text-primary hover:underline inline-flex items-center min-h-6 mt-1">Open dead-letter explorer</Link>
           </div>
         </div>
+      </section>
+
+      {/* Top producers: all comparable topics, not just the paginated activity column. */}
+      <section aria-label="Top producing topics" className="kse-surface p-4 md:p-5 space-y-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold text-on-surface">Top producing topics</h2>
+          <span className="text-xs text-on-surface-variant">
+            {latestRate && productionWindowSeconds
+              ? `Produced offsets · ${productionWindowSeconds} s · ${latestRate.measuredTopics}/${latestRate.totalTopics} topics compared`
+              : 'Awaiting two comparable production samples'}
+          </span>
+        </div>
+        {latestRate && rankedProducers.length > 0 ? (
+          <ol className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-2" aria-label="Top five topics by observed production rate">
+            {rankedProducers.map(({ topic, messagesPerSecond }, index) => (
+              <li key={topic} className="kse-inset-panel rounded-xl p-3 min-w-0">
+                <div className="text-xs text-on-surface-variant">#{index + 1} · observed msg/s</div>
+                <Link to={`/topic/${encodeURIComponent(topic)}`}
+                  className="block truncate font-mono text-sm text-primary hover:underline mt-1"
+                  title={topic}>{topic}</Link>
+                <div className="font-semibold tabular-nums mt-1">{formatRate(messagesPerSecond)} msg/s</div>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="text-sm text-on-surface-variant" role="status">
+            {productionError ? 'Production measurements unavailable.'
+              : latestRate ? 'No comparable topics.'
+              : 'Ranking available after two valid production samples.'}
+          </p>
+        )}
+        <p className="text-xs text-on-surface-variant">Ranked by observed offset increases, including zero-rate topics. Incomplete or reset topics are excluded; this is not a retained-message ranking.</p>
       </section>
 
       {/* Topics */}
@@ -636,6 +802,8 @@ const Dashboard: React.FC = () => {
 
           </div>
         </div>
+
+        <p className="text-[11px] text-on-surface-variant">State describes retained records and topic category, not broker health. Unreadable counts are marked “Not measured”.</p>
 
         {/* Display options, on a row of their own: the filter above is what one types into all day,
             these are what one sets once. Same control height throughout. */}
@@ -734,6 +902,14 @@ const Dashboard: React.FC = () => {
             </div>
         </div>
 
+        {quickFilter !== 'all' && (
+          <div role="status" className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant">
+            <Badge tone="primary">{quickFilter === 'empty' ? 'Empty topics' : 'Silent topics · sampled page'}</Badge>
+            <span>{filteredTopics.length} matching topic{filteredTopics.length === 1 ? '' : 's'}{quickFilter === 'silent' ? ' from the page measured when the filter was applied' : ''}</span>
+            <button type="button" onClick={() => activateQuickFilter('all')}
+              className="min-h-6 text-primary hover:underline">Clear quick filter</button>
+          </div>
+        )}
         <Table>
           <TableHead>
             <tr>
@@ -769,7 +945,9 @@ const Dashboard: React.FC = () => {
                 onDoubleClick={() => navigate(`/topic/${topic}`)}
               >
                 <Td className="font-mono font-medium text-on-surface">{topic}</Td>
-                <Td className="text-on-surface-variant tabular-nums">{(data.topicSizes[topic] ?? 0).toLocaleString()}</Td>
+                <Td className="text-on-surface-variant tabular-nums" title={data.unmeasuredTopics?.includes(topic) ? 'Message count could not be measured' : undefined}>
+                  {data.unmeasuredTopics?.includes(topic) ? '—' : (data.topicSizes[topic] ?? 0).toLocaleString()}
+                </Td>
                 <Td>
                   <span className="flex flex-wrap items-center gap-1.5">
                     {stateBadge(topic, getState(topic))}
@@ -805,7 +983,7 @@ const Dashboard: React.FC = () => {
                   <EmptyState
                     icon="search_off"
                     title={searchTerm ? 'No matching topics' : 'No topics found'}
-                    description={searchTerm ? `Nothing matches “${searchTerm}”.` : 'This cluster has no topics yet.'}
+                    description={quickFilter !== 'all' ? 'No topics match this quick filter and the current table options.' : searchTerm ? `Nothing matches “${searchTerm}”.` : 'This cluster has no topics yet.'}
                   />
                 </td>
               </tr>

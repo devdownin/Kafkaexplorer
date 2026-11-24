@@ -123,6 +123,8 @@ const MetricCardView: React.FC<{
   forecast?: ForecastStageSummary;
   /** Forecast points come from the already-polled /api/forecasts status; no per-card API calls. */
   forecastSeries?: ForecastSeriesView;
+  /** Only supplied while a future threshold is displayed; avoids re-rendering all charts on every tick. */
+  forecastNow?: number;
   /** The one-click creation is running for this card. */
   forecastCreating?: boolean;
   /** Shows this metric's forecast in the Metrics Forecast panel: the card is where a series is chosen. */
@@ -135,7 +137,7 @@ const MetricCardView: React.FC<{
   refreshTickMs?: number;
   /** How far the latest forecast moved the predicted threshold from the previous one (ms, negative = sooner). */
   reachShiftMs?: number;
-}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, forecastCreating = false, onShowForecast, nextForecastAt = null, refreshDurationMs, refreshTickMs, reachShiftMs }) => {
+}> = ({ metric, onEdit, onDelete, onRefresh, refreshing, onPrepareForecast, forecastUnavailableReason, forecast, forecastSeries, forecastNow, forecastCreating = false, onShowForecast, nextForecastAt = null, refreshDurationMs, refreshTickMs, reachShiftMs }) => {
   const { toast } = useToast();
   const status = getStatus(metric);
   const st = STATUS_STYLES[status];
@@ -208,7 +210,7 @@ const MetricCardView: React.FC<{
    */
   const thresholdsApply = !(timed && counterRate);
   // The page's filter and sort read the same function, so the badge and the list cannot disagree.
-  const reach = forecastReachFor(metric, forecastSeries);
+  const reach = forecastReachFor(metric, forecastSeries, forecastNow);
   const observedCount = chartData.length;
   forecastPoints.forEach((p, i) => chartData.push({
     i: observedCount + i, v: null, predicted: p.q50,

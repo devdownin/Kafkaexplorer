@@ -57,6 +57,7 @@ Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilot
 ## ✨ Points forts
 
 - 🖱️ **Cliquer, c'est requêter** — cliquez sur une clé JSON ou une balise XML dans l'aperçu d'un message et elle atterrit dans votre `SELECT`/`WHERE`, `JSON_VALUE`/XPath générés pour vous.
+- 🗂️ **Explorateur Schema Registry (facultatif)** — parcourez les sujets et versions des schémas Avro/Protobuf/JSON, comparez deux versions et vérifiez leur compatibilité sans modifier le registre. [Guide](docs/SCHEMA-REGISTRY.md).
 - 🧠 **Schémas sans configuration** — les topics sont échantillonnés, leur structure inférée (JSON, XML, Avro via Schema Registry) et enregistrée comme table Flink dès que vous la nommez — par le nom du topic, tel que le cluster l'affiche : `SELECT * FROM "orders.v2-raw"`.
 - 📝 **Un vrai éditeur SQL** — Monaco (le moteur de VS Code), auto-complétion des topics et tables, historique de requêtes, lecture earliest/latest.
 - 🎨 **Une interface spatiale, claire ou sombre** — une navigation en verre qui flotte au-dessus de plans de lecture opaques (tables, graphiques et éditeur SQL ne sont jamais floutés), claire par défaut avec un interrupteur de mode sombre qui mémorise votre choix, avec six couleurs d'accent et une densité compacte pour les écrans chargés. Les contrastes respectent WCAG AA, et la réduction des animations et de la transparence est honorée.
@@ -107,6 +108,34 @@ Ouvrez ensuite **http://localhost:8080** et commencez à cliquer. C'est tout.
 Les stacks ci-dessus sont une base plus des overlays, donc plusieurs portent deux `-f`. Posez `COMPOSE_FILE=docker-compose.yml:compose/schema-registry.yml` dans un `.env` à la racine et un simple `docker compose up -d` désigne cette combinaison — voir `.env.example`.
 
 </details>
+
+### Démo Forecast sans compilation locale
+
+```bash
+./demo-forecast.sh             # images publiées, secrets initialisés, métriques alimentées
+./demo-forecast.sh logs demo-forecast-seed
+./demo-forecast.sh down        # conserve les données ; reset supprime les volumes
+```
+
+Sous Windows : `.\\demo-forecast.cmd` (mêmes commandes `ps`, `logs`, `down` et `reset`).
+
+**Démo Forecast P2 :** la page Metrics propose un Demo Control Center activé uniquement pour la démo, avec scénarios Kafka pilotables et export de rapports JSON/HTML. Le panneau reste masqué dans les déploiements standards et avec les anciennes images publiées. Voir [les scénarios de démo](docs/metrics-demo-scenarios.md#demo-control-center--p2-source-builds-and-subsequent-releases).
+
+Le lanceur contrôle d'abord Docker, Compose >= 2.24, les ports, la mémoire et
+les images. Il annonce la démo **prête** seulement après l'injection des cinq
+historiques et l'obtention d'une prévision TimesFM réelle (`READY`).
+Commandes de diagnostic : `./demo-forecast.sh doctor` et
+`./demo-forecast.sh verify`. Après le premier téléchargement, l'option
+`./demo-forecast.sh --offline up` (`.\\demo-forecast.cmd -Offline up` sous Windows)
+interdit tout nouveau téléchargement d'image. Les scénarios de trafic Kafka
+sont pilotés par `scenario overload`, `scenario incident`,
+`scenario recover` et `scenario normal`, sans réécrire l'historique.
+Aucun build Maven, npm ou Docker, aucun téléchargement de poids TimesFM au démarrage.
+Docker Compose 2.24+ et l'accès aux registres d'images sont nécessaires. La stack comprend Kafka,
+Schema Registry, MCP, PostgreSQL, TimesFM et cinq métriques de démonstration alimentées en continu,
+avec un historique initialisé automatiquement. L'image Forecast publiée contient Timestral-28M,
+sous une [licence restrictive](services/timesfm/licenses/NOTICE.md), même si son mode shadow est désactivé.
+Voir les [scénarios de démonstration](docs/metrics-demo-scenarios.md) pour les paramètres et les étapes.
 
 ### 🎬 Toute la suite en une commande : `demo.sh`
 
