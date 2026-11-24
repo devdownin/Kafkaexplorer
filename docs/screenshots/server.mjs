@@ -133,13 +133,22 @@ const server = http.createServer((req, res) => {
   // Kafka Strata asks for its activity by POST, the topics in a JSON body (48 long names overflow
   // a request line); the fixture reads a URL, so the body is turned back into one.
   if (req.method === 'POST' && pathname === '/api/dashboard/activity') {
+    // Bounded like the real request: 48 names of at most 249 characters fit well inside 64 KB.
+    const MAX_BODY = 64 * 1024;
     let raw = '';
-    req.on('data', chunk => { raw += chunk; });
+    let tooLarge = false;
+    req.on('data', chunk => {
+      if (tooLarge) return;
+      raw += chunk;
+      if (raw.length > MAX_BODY) { tooLarge = true; raw = ''; }
+    });
     req.on('end', () => {
+      if (tooLarge) return send(res, 413, JSON.stringify({ message: 'body too large' }), MIME['.json']);
       let body;
       try { body = JSON.parse(raw || '{}'); } catch { body = {}; }
-      if (!Array.isArray(body.topics) || body.topics.length === 0) {
-        return send(res, 400, JSON.stringify({ message: 'topics is required' }), MIME['.json']);
+      if (!Array.isArray(body.topics) || body.topics.length === 0
+          || !body.topics.every(name => typeof name === 'string' && name.length > 0 && !name.includes(','))) {
+        return send(res, 400, JSON.stringify({ message: 'topics must be a non-empty list of names' }), MIME['.json']);
       }
       const asked = new URL('/api/dashboard/activity', 'http://localhost');
       asked.searchParams.set('topics', body.topics.join(','));
