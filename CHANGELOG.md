@@ -31,6 +31,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   started with an explicit `--port`, now commented as load-bearing in `serve.sh`.
   `check-image-pins.py` reads the build number out of the new tag format as well as the old one.
 
+- **SpectraLLM's chat server shares one KV pool across its two slots** (`LLM_KV_PER_SLOT`,
+  default 12288 → `--kv-unified --kv-unified-per-slot`, new in llama.cpp 1.0). A request may take
+  up to 12 288 tokens instead of a fixed 8 192, at the same memory: the pool is still
+  `LLM_CONTEXT`. Under contention, llama-server fails every active request when the pool runs
+  out, which needs one of them past 8 192 at that moment. The Explorer's prompt budget therefore
+  stays sized to 8 192. Empty `LLM_KV_PER_SLOT` restores the fixed split; the agent-eval overlay
+  clears it so its single slot keeps its 32 768-token window.
+
 - **CI release and Pages reliability:** update the published Explorer image pins to v2.9.2;
   wait for GitHub Pages artifact indexing before deployment and back off before a retry.
 

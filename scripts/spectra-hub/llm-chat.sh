@@ -38,6 +38,14 @@ if [ -z "${SERVER}" ]; then echo "[llm-chat] no llama-server binary in this imag
 # which llama-server rejects outright.
 CTX_ARG=""
 if [ -n "${LLM_CONTEXT}" ]; then CTX_ARG="-c ${LLM_CONTEXT}"; fi
-echo "[llm-chat] serving ${FILE} as ${ALIAS}"
+# A NON-EMPTY LLM_KV_PER_SLOT turns the window into one pool the slots share (`--kv-unified`)
+# and caps each request at that many tokens (`--kv-unified-per-slot`, llama.cpp 1.0). Without
+# it, `-c` is cut into LLM_PARALLEL equal, fixed parts. The pool is still `-c`, so it costs no
+# memory; with LLM_CONTEXT empty llama-server sizes it to LLM_PARALLEL x LLM_KV_PER_SLOT. Empty
+# keeps the fixed split. The flag alone would change nothing: it only caps, and without
+# `--kv-unified` a slot is already capped lower, at `-c / --parallel`.
+KV_ARG=""
+if [ -n "${LLM_KV_PER_SLOT:-}" ]; then KV_ARG="--kv-unified --kv-unified-per-slot ${LLM_KV_PER_SLOT}"; fi
+echo "[llm-chat] serving ${FILE} as ${ALIAS}${LLM_KV_PER_SLOT:+, shared KV pool, up to ${LLM_KV_PER_SLOT} tokens per request}"
 exec "${SERVER}" --host 0.0.0.0 --port 8081 --model "${MODELS}/${FILE}" \
-  --alias "${ALIAS}" ${CTX_ARG} --parallel "${LLM_PARALLEL}" ${LLM_CHAT_EXTRA_ARGS}
+  --alias "${ALIAS}" ${CTX_ARG} --parallel "${LLM_PARALLEL}" ${KV_ARG} ${LLM_CHAT_EXTRA_ARGS}
