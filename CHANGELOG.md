@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Forecast demo with the agent, from published images.** `./demo.sh --forecast --prebuilt --agent`
+  (`.\demo-forecast.cmd -Agent` on Windows) adds the Kex-anHarness agent and the Explorer's
+  OpenRouter model to the forecast demo, through the overlays `--no-spectra` already uses. The
+  Explorer, forecast and agent images all follow `latest` and nothing is compiled; an explicit tag
+  in the environment or `.env` still wins. `--agent` is refused outside `--forecast`, the full
+  suite already running the agent.
+
 - **llama.cpp 1.0.0.** Every llama.cpp image (local LLM overlay, SpectraLLM hub, CUDA overlay,
   `kex-llm`) moves from `server-b9828` to `server-v1.0.0-b12359-b1b770d`, the CPU and CUDA tags
   still naming one build; the `kex-llm` base is pinned by its new digest. What it brings to this

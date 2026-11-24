@@ -102,6 +102,7 @@ docker compose up -d                                                       # bas
 OPENROUTER_API_KEY=sk-or-... ./demo.sh                                      # everything: + Avro, MCP, forecasts (live traffic + seeded history), SpectraLLM, agent
 OPENROUTER_API_KEY=sk-or-... ./demo.sh --no-spectra                         # the same without SpectraLLM and its 4.8 GB of weights
 ./demo.sh --forecast                                                        # the forecast demo alone: no key, no SpectraLLM, no agent, every variable defaulted
+OPENROUTER_API_KEY=sk-or-... ./demo.sh --forecast --prebuilt --agent         # forecast demo + the agent, Explorer/forecast/agent images on latest, nothing built
 ./setup-demo.sh localhost:9092                                             # demo data (79 topics)
 ./setup-demo-avro.sh localhost:9092 http://localhost:8081                  # Avro topics (needs Schema Registry)
 ./setup-demo-peage.sh localhost:9092                                       # ksqlDB → Flink migration examples (5 péage topics, opt-in)
@@ -126,6 +127,7 @@ $env:OPENROUTER_API_KEY = 'sk-or-...'
 .\demo.cmd                       # the whole suite, as ./demo.sh
 .\demo.cmd -NoSpectra            # as ./demo.sh --no-spectra
 .\demo.cmd -Forecast              # as ./demo.sh --forecast
+.\demo-forecast.cmd -Agent        # as ./demo.sh --forecast --prebuilt --agent: + the agent, all on latest, no build
 .\demo.cmd logs explorer         # also: ps, probe, down, reset
 ```
 
