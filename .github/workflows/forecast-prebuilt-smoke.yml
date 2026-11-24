@@ -22,6 +22,12 @@ on:
 permissions:
   contents: read
 
+# Avoid multiple 6-10 GB Forecast stacks for the same PR or branch.
+# A new commit supersedes the previous smoke run and frees runner capacity.
+concurrency:
+  group: prebuilt-forecast-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   real-published-images:
     name: Launch and verify the real published-image forecast demo
