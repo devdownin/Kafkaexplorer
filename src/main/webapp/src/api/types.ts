@@ -1353,7 +1353,7 @@ export type McpOutcome = 'OK' | 'DENIED' | 'ERROR';
  * qu'il soit déclaré comme tel. Le préfixe `Mcp` évite la collision qu'un type nommé `State`
  * provoquerait dans un fichier de types partagé.
  *
- * @java State
+ * @java Visibility.State
  */
 export type McpVisibilityState = 'EXPOSED' | 'EXPOSED_WITH_APPROVAL' | 'HIDDEN';
 
