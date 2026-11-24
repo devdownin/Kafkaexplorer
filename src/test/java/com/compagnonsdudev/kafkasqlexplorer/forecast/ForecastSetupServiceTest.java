@@ -117,6 +117,36 @@ class ForecastSetupServiceTest {
     c = setup.candidates().metrics().getFirst(); assertFalse(c.eligible()); assertEquals(3, c.blockers().size());
     verifyNoInteractions(history, client, pilot, preparation);
   }
+  @Test void theCatalogueNamesTheModelsThatWillProduceTheForecast() {
+    var models = setup.candidates().models();
+    assertEquals(2, models.size());
+    var primary = models.get(0);
+    // The identity the client accepts, not a second copy that could drift from it.
+    assertEquals("PRIMARY", primary.role()); assertEquals("TimesFM", primary.name());
+    assertEquals(TimesFmClient.MODEL_ID, primary.modelId());
+    assertEquals(TimesFmClient.MODEL_REVISION, primary.revision());
+    assertEquals(TimesFmClient.ADAPTER_VERSION, primary.adapterVersion());
+    assertFalse(primary.enabled(), "configuration, not reachability: off until inference is enabled");
+    var shadow = models.get(1);
+    assertEquals("SHADOW", shadow.role()); assertEquals("mistralai/Timestral-28M", shadow.modelId());
+    assertNull(shadow.revision(), "the shadow's pin is the operator's, set on the service");
+    assertEquals("kex-timestral-28m-v1", shadow.adapterVersion());
+    assertFalse(shadow.enabled());
+    root.getInference().setEnabled(true);
+    assertTrue(setup.candidates().models().get(0).enabled());
+    assertFalse(setup.candidates().models().get(1).enabled(), "the shadow needs its own switch");
+    root.getInference().getShadow().setEnabled(true);
+    root.getInference().getShadow().setModelId("mistralai/Timestral-100M");
+    shadow = setup.candidates().models().get(1);
+    assertTrue(shadow.enabled()); assertEquals("mistralai/Timestral-100M", shadow.modelId());
+    assertEquals("kex-timestral-100m-v1", shadow.adapterVersion());
+    // An id the client would refuse is named as configured and reported off, never presented as live.
+    root.getInference().getShadow().setModelId(TimesFmClient.MODEL_ID);
+    shadow = setup.candidates().models().get(1);
+    assertFalse(shadow.enabled()); assertEquals(TimesFmClient.MODEL_ID, shadow.modelId());
+    assertFalse(setup.candidates().toString().toLowerCase().contains("token"));
+    verifyNoInteractions(history, client, pilot, preparation);
+  }
   @Test void aCountTemplateIsEligibleWithoutAUnitParameterNobodyCanSet() {
     metric = metric("TOPIC_COUNT_DELTA", Map.of("leftTopic", "orders", "rightTopic", "orders.dlq",
         "countMode", "OFFSETS", "operation", "PERCENT_GAP"), List.of());

@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The forecast assistant says which model will produce the forecast.** A *Forecast model* block in
+  the setup form lists the primary model (TimesFM) and the shadow (Timestral) with their checkpoint,
+  revision, adapter version and whether each is switched on — read from `GET /api/forecasts/candidates`
+  (`models`), built from the identities the inference client itself accepts. Until now the form never
+  named the model at all.
 - **Strata 3D: count comparisons are links, and names are written where they help.** A
   `TOPIC_COUNT_DELTA` metric now draws a link between the two topics it compares (**Count
   comparisons** layer, on by default), green within its thresholds and red or orange in breach. The

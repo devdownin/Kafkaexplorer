@@ -5,7 +5,7 @@ import { flushSync } from 'react-dom';
 import axios from 'axios';
 import { Badge, Button, Checkbox, Field, Input, ListSkeleton, Select } from '../ui';
 import { CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts';
-import type { ForecastApplied, ForecastCandidate, ForecastCandidates, ForecastDraft, ForecastDraftRequest, ForecastHistoryPreview } from '../../api/types';
+import type { ForecastApplied, ForecastCandidate, ForecastCandidates, ForecastDraft, ForecastDraftRequest, ForecastHistoryPreview, ForecastModelInfo } from '../../api/types';
 import { copyText } from '../../clipboard';
 import { NameListField } from './NameListField';
 import { about } from './forecastStage';
@@ -30,6 +30,36 @@ const SEASONALITIES = Object.entries(SEASON_PERIODS).map(([value, period]) =>
   ({ value, period, label: value === 'NONE' ? 'None' : value[0] + value.slice(1).toLowerCase() }));
 /** The pilot's terms stay in the API; the page says what the forecast value is. */
 const TRANSFORMATION: Record<string, string> = { COUNTER_RATE: 'Rate per second', GAUGE_MEAN: 'Average per interval' };
+/**
+ * Which model produces the forecast, and which one only watches. The checkpoint is a repository id a
+ * reader can look up, the commit is cut to the length Git itself shows, and the adapter version is the
+ * identity every stored answer carries — so a forecast on screen can be traced to exactly this.
+ * `enabled` is configuration: it says the model is switched on, not that its service answers.
+ */
+function ModelDetails({ models }: { models: ForecastModelInfo[] }) {
+  if (models.length === 0) return null;
+  return <section className="space-y-2" aria-label="Forecast model">
+    <h5 className="text-sm font-medium">Forecast model</h5>
+    <ul className="space-y-2">{models.map(m => <li key={m.role} className="rounded-lg border border-outline-variant bg-surface-container px-3 py-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">{m.name}</span>
+        <Badge tone={m.enabled ? 'success' : 'neutral'}>{m.enabled ? 'On' : 'Off'}</Badge>
+        <span className="text-xs text-on-surface-variant">{m.role === 'PRIMARY'
+          ? 'Produces the forecast you see'
+          : 'Scored beside it on the same history, never shown as a forecast'}</span>
+      </div>
+      <dl className="mt-1 grid gap-x-4 gap-y-0.5 text-xs sm:grid-cols-[auto_1fr]">
+        <dt className="text-on-surface-variant">Checkpoint</dt><dd className="font-mono break-all">{m.modelId || '—'}</dd>
+        <dt className="text-on-surface-variant">Revision</dt>
+        <dd className="font-mono">{m.revision ? m.revision.slice(0, 7) : 'Set on the inference service'}</dd>
+        <dt className="text-on-surface-variant">Adapter</dt><dd className="font-mono">{m.adapterVersion || '—'}</dd>
+      </dl>
+      {!m.enabled && <p className="mt-1 text-xs text-on-surface-variant">{m.role === 'PRIMARY'
+        ? 'Inference is not enabled: no forecast can be produced until it is.'
+        : 'Not enabled: nothing is compared with the forecast.'}</p>}
+    </li>)}</ul>
+  </section>;
+}
 function span(millis: number) {
   if (!Number.isFinite(millis) || millis <= 0) return '';
   const minutes = millis / 60000;
@@ -230,6 +260,7 @@ export function ForecastSetupWizard({ metricId: forMetric, initialError = '', so
           {hint && <dd className="text-xs text-on-surface-variant">{hint}</dd>}
         </div>)}
       </dl>
+      <ModelDetails models={candidates.models ?? []} />
       {preview && <figure className="space-y-1" aria-label="Recorded history">
         <figcaption className="text-xs text-on-surface-variant">{preview.points.length > 1
           ? `Recorded history at ${cadenceLabel}: ${preview.observedPoints} of the ${preview.requiredPoints} points a first forecast needs.`

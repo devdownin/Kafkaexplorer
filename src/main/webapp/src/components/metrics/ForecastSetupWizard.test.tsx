@@ -31,6 +31,46 @@ describe('ForecastSetupWizard', () => {
     expect(screen.queryByLabelText('Metric')).toBeNull();
     expect(axios.post).not.toHaveBeenCalled();
   });
+  it('names the model that will produce the forecast, and the one that only watches', async () => {
+    const models = [
+      { role: 'PRIMARY', name: 'TimesFM', modelId: 'google/timesfm-2.5-200m-pytorch',
+        revision: '1d952420fba87f3c6dee4f240de0f1a0fbc790e3', adapterVersion: 'kex-timesfm-2.5-v3', enabled: true },
+      { role: 'SHADOW', name: 'Timestral shadow', modelId: 'mistralai/Timestral-28M', revision: null,
+        adapterVersion: 'kex-timestral-28m-v1', enabled: false },
+    ];
+    vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1, truncated: false,
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128, models } });
+    await sources();
+    const section = screen.getByRole('region', { name: 'Forecast model' });
+    const [primary, shadow] = Array.from(section.querySelectorAll('li'));
+    expect(primary).toHaveTextContent('TimesFM');
+    expect(primary).toHaveTextContent('On');
+    expect(primary).toHaveTextContent('Produces the forecast you see');
+    expect(primary).toHaveTextContent('google/timesfm-2.5-200m-pytorch');
+    // The commit is cut to the length Git shows, and the adapter is the identity stored answers carry.
+    expect(primary).toHaveTextContent('1d95242');
+    expect(primary).not.toHaveTextContent('1d952420fba87f3c6dee4f240de0f1a0fbc790e3');
+    expect(primary).toHaveTextContent('kex-timesfm-2.5-v3');
+    expect(shadow).toHaveTextContent('Timestral shadow');
+    expect(shadow).toHaveTextContent('Off');
+    expect(shadow).toHaveTextContent('never shown as a forecast');
+    expect(shadow).toHaveTextContent('Set on the inference service');
+    expect(shadow).toHaveTextContent('Not enabled: nothing is compared with the forecast.');
+  });
+  it('says no forecast can be produced while inference is off, and shows nothing for an older server', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1, truncated: false,
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128,
+      models: [{ role: 'PRIMARY', name: 'TimesFM', modelId: 'google/timesfm-2.5-200m-pytorch',
+        revision: '1d952420fba87f3c6dee4f240de0f1a0fbc790e3', adapterVersion: 'kex-timesfm-2.5-v3', enabled: false }] } });
+    await sources();
+    expect(screen.getByRole('region', { name: 'Forecast model' })).toHaveTextContent('Inference is not enabled: no forecast can be produced');
+    cleanup();
+    // A server from before the catalogue named its models: the block is absent, the form unchanged.
+    vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [metric], total: 1, truncated: false,
+      clusterId: 'existing', collectorId: 'collector', applyUnavailable: null, minimumContextPoints: 128 } });
+    await sources();
+    expect(screen.queryByRole('region', { name: 'Forecast model' })).toBeNull();
+  });
   it('shows metadata blockers in place of the form', async () => {
     vi.mocked(axios.get).mockResolvedValue({ data: { metrics: [{ ...metric, eligible: false, blockers: ['Set a known unit'] }], total: 1 } });
     render(<ConfirmProvider><ForecastSetupWizard metricId="lag" /></ConfirmProvider>);

@@ -63,7 +63,17 @@ public class ForecastSetupService {
    * how long that is at the interval being chosen instead of promising "once enough points exist".
    */
   public record Candidates(List<Candidate> metrics, int total, boolean truncated, String clusterId, String collectorId,
-      String applyUnavailable, int minimumContextPoints) {}
+      String applyUnavailable, int minimumContextPoints, List<ModelInfo> models) {}
+  /**
+   * One forecasting model as the service is configured, so the assistant can say what will produce
+   * the forecast it is about to start. {@code role} is {@code PRIMARY} (the model whose forecasts are
+   * stored and served) or {@code SHADOW} (scored beside it on the same cohorts, never served).
+   * {@code revision} is the pinned commit, null for the shadow: its pin is the operator's, set on the
+   * inference service and recorded with each answer rather than enforced here. {@code enabled} is
+   * configuration, not reachability — the readiness probe says whether the service answers.
+   */
+  public record ModelInfo(String role, String name, String modelId, String revision, String adapterVersion,
+      boolean enabled) {}
   /**
    * What a metric's recorded history looks like at one sampling interval, before anything is
    * approved: the points to draw, how many of the first forecast's needed points exist, and the
@@ -283,7 +293,28 @@ public class ForecastSetupService {
     var all = metrics.getAllMetrics();
     return new Candidates(all.stream().sorted(java.util.Comparator.comparing(MetricConfig::id))
         .limit(100).map(this::candidate).toList(), all.size(), all.size() > 100, root.getHistory().getClusterId(),
-        root.getHistory().getCollectorId(), applyUnavailable(), SeriesPreparationProfile.MIN_CONTEXT_POINTS);
+        root.getHistory().getCollectorId(), applyUnavailable(), SeriesPreparationProfile.MIN_CONTEXT_POINTS, models());
+  }
+
+  /** The primary model, then the shadow: the identities the client accepts, not a second copy of them. */
+  List<ModelInfo> models() {
+    var inferenceProperties = root.getInference();
+    var primary = TimesFmClient.Model.PRIMARY;
+    var models = new ArrayList<ModelInfo>();
+    models.add(new ModelInfo("PRIMARY", primary.label(), primary.modelId(), primary.revision(),
+        primary.adapterVersion(), inferenceProperties.isEnabled()));
+    var shadowProperties = inferenceProperties.getShadow();
+    String configured = shadowProperties.getModelId();
+    TimesFmClient.Model shadow;
+    try { shadow = TimesFmClient.Model.shadow(TimesFmInferenceProperties.Shadow.validatedModelId(configured)); }
+    catch (IllegalArgumentException refused) { shadow = null; }
+    // A shadow id the client would refuse is named as configured and reported off: the page must not
+    // present a model that no answer could carry.
+    models.add(shadow != null
+        ? new ModelInfo("SHADOW", shadow.label(), shadow.modelId(), shadow.revision(), shadow.adapterVersion(),
+            inferenceProperties.isEnabled() && shadowProperties.isEnabled())
+        : new ModelInfo("SHADOW", "Timestral shadow", configured == null ? "" : configured, null, "", false));
+    return List.copyOf(models);
   }
 
   private Candidate candidate(MetricConfig m) {

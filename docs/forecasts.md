@@ -239,7 +239,7 @@ does. The reading is `ForecastThresholdReach`, the server twin of the page's `fo
 | --- | --- |
 | `GET /api/forecasts/preparation` | Configuration and actual MCP catalogue checks; no remote probe |
 | `POST /api/forecasts/preparation/probe` | Cached bounded PostgreSQL connection and TimesFM health probes |
-| `GET /api/forecasts/candidates` | Bounded metadata catalogue without SQL/DDL/secrets |
+| `GET /api/forecasts/candidates` | Bounded metadata catalogue without SQL/DDL/secrets, and the forecasting models (primary and shadow: checkpoint, revision, adapter, on/off) |
 | `POST /api/forecasts/configuration` | Validate confirmed declaration and export YAML; no runtime mutation |
 | `POST /api/forecasts/series` | Same validation, then approve at runtime (`runtime-approval` on; 409 names why not) |
 | `DELETE /api/forecasts/series/{seriesId}` | Withdraw a series approved at runtime; configured series refuse with 409 |
