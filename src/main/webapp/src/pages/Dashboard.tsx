@@ -639,7 +639,9 @@ const Dashboard: React.FC = () => {
 
       {/* KPI Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
-        {/* Cluster Health and production-rate tile share the desktop row. */}
+        {/* Cluster Health and the throughput tile share one row from `sm` up: half the width each
+            on a narrow window, a third each on the desktop row beside the two small counts. Below
+            `lg` the throughput tile used to span the whole row and land under Cluster Health. */}
         {/*
           * Cette tuile comptait les jobs Flink, avec l'état du cluster pour seule couleur et pour
           * seul sous-titre. Le compte est parti avec le tableau « Flink SQL Jobs » — plus rien ne
@@ -648,7 +650,7 @@ const Dashboard: React.FC = () => {
           * est ce que la tuile disait vraiment : le cluster répond, ou non.
           */}
         <Stat
-          size="lg" className="sm:col-span-2 lg:col-span-2"
+          size="lg" className="sm:col-span-1 lg:col-span-2"
           label="Cluster Health" icon={data.health ? 'check_circle' : 'error'}
           tone={data.health ? 'success' : 'error'}
           value={data.health ? 'Healthy' : 'Degraded'}
@@ -660,7 +662,7 @@ const Dashboard: React.FC = () => {
           }
         />
         <Stat
-          className="sm:col-span-2 lg:col-span-2"
+          className="sm:col-span-1 lg:col-span-2"
           label="Message throughput" icon="bolt"
           value={latestRate ? <>{formatRate(latestRate.messagesPerSecond)} <span className="text-[14px] font-medium text-on-surface-variant">msg/s</span></> : '—'}
           hint={
