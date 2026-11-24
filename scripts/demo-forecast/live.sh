@@ -133,6 +133,7 @@ targets_reached() { # <offset snapshot> <epoch> <scenario>
 previous_request=''
 previous_at=''
 previous_mode=''
+pending_ticks=0
 echo "Producing live traffic every ${TICK}s (five topic pairs: orders, requests, imports, events, tickets)."
 while :; do
   now=$(date +%s)
@@ -145,6 +146,7 @@ while :; do
   mode=${request%%|*}
   case "$mode" in normal|overload|incident|recover|seasonal) ;; *) mode=normal; request=normal ;; esac
   if [ "$request" != "$previous_request" ]; then
+    pending_ticks=0
     echo "Demo traffic request: $mode (Kafka offset verification pending)"
   fi
   if [ -n "$offsets" ]; then
@@ -173,6 +175,14 @@ while :; do
       mv -f "$receipt_tmp" "$APPLIED_FILE"
       if [ "$started" = "$now" ]; then
         echo "Demo traffic verified: $mode at Kafka offsets ($now)"
+      fi
+      pending_ticks=0
+    else
+      pending_ticks=$((pending_ticks + 1))
+      # Lightweight operational breadcrumb when an overloaded runner cannot
+      # drain the Kafka producer buffers. Do not log individual records.
+      if [ "$((pending_ticks % 4))" -eq 0 ]; then
+        echo "Scenario $mode pending ($pending_ticks offset polls): orders=$(( $(count_of demo.live.orders "$offsets") - $(count_of demo.live.shipped "$offsets") )), requests=$(( $(count_of demo.live.requests "$offsets") - $(count_of demo.live.processed "$offsets") )), tickets=$(( $(count_of demo.live.tickets "$offsets") - $(count_of demo.live.resolved "$offsets") )), events=$(( $(count_of demo.live.events "$offsets") - $(count_of demo.live.archived "$offsets") ))"
       fi
     fi
     printf '%s\n' "$PAIRS" | while read -r left right curve; do
