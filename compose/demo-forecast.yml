@@ -28,7 +28,7 @@ services:
       EXPLORER_DEMO_CONTROL_ENABLED: ${DEMO_CONTROL_ENABLED:-true}
       EXPLORER_DEMO_CONTROL_DIRECTORY: /app/demo-control
     volumes:
-      - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}:/app/demo-control
+      - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}/demo-control:/app/demo-control
 
   demo-live:
     image: ${KAFKA_IMAGE:-apache/kafka:4.4.0}
@@ -38,7 +38,7 @@ services:
     volumes:
       - ./scripts/demo-forecast:/demo-forecast:ro
       # Generator publishes a verified scenario receipt after Kafka offsets catch up.
-      - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}:/demo-control:rw
+      - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}/demo-control:/demo-control:rw
     environment:
       # Ten persistent console producers run in this small demo; without a heap cap
       # their JVMs can trigger OOM restarts alongside Kafka, Explorer and TimesFM in CI.

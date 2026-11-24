@@ -290,14 +290,15 @@ wait_forecast_ready() {
 }
 set_scenario() {
   [[ $DEMO_MODE == forecast ]] || { echo 'scenario is available in forecast mode only.' >&2; return 2; }
-  local name=${1:-} file="${FORECAST_CONFIG_DIR}/demo-scenario.conf"
+  local name=${1:-} file="${FORECAST_CONFIG_DIR}/demo-control/demo-scenario.conf"
   if [[ -z $name ]]; then
     if [[ -f $file ]]; then IFS='|' read -r current _ < "$file" || true; echo "${current:-normal}"; else echo normal; fi
     return 0
   fi
   case $name in normal|overload|incident|recover|seasonal) ;; *)
     echo 'Usage: scenario [normal|overload|incident|recover|seasonal]' >&2; return 2 ;; esac
-  mkdir -p "$FORECAST_CONFIG_DIR"
+  mkdir -p "${FORECAST_CONFIG_DIR}/demo-control"
+  chmod 0777 "${FORECAST_CONFIG_DIR}/demo-control"
   printf '%s\n' "$name" > "$file"
   echo "Live Kafka scenario set to $name (next generator tick, default 15 s)."
 }
@@ -323,10 +324,11 @@ up() {
     echo '      agent starts DEGRADED. Export it (or put it in .env) and rerun ./demo.sh.' >&2
   fi
   if [[ $DEMO_MODE == forecast ]]; then
-    # The Explorer image runs as uid 10001; the host CLI and the generator also
-    # access this one demo-only directory. Keep the rest of .forecast-stack private.
-    mkdir -p "$FORECAST_CONFIG_DIR"
-    chmod 0777 "$FORECAST_CONFIG_DIR"
+    # A dedicated writable demo-only mount survives forecast-stack.sh --prepare-only,
+    # which intentionally restores mode 0755 on the *parent* config directory for
+    # every CLI invocation (including "scenario" and "verify").
+    mkdir -p "${FORECAST_CONFIG_DIR}/demo-control"
+    chmod 0777 "${FORECAST_CONFIG_DIR}/demo-control"
   fi
   if [[ $DEMO_PREBUILT == true ]]; then
     for secret in FORECAST_POSTGRES_PASSWORD TIMESFM_TOKEN EXPLORER_MCP_AUTH_TOKEN; do

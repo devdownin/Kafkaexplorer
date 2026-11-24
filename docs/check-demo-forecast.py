@@ -236,6 +236,19 @@ for name in ('demo.sh', 'demo.ps1'):
 if 'compose/demo-forecast.yml' not in (ROOT / '.github/workflows/ci.yml').read_text():
     problems.append('ci.yml does not name compose/demo-forecast.yml among the overlays it resolves')
 overlay = (ROOT / 'compose/demo-forecast.yml').read_text()
+# The normal forecast preparer chmods its configuration directory to 0755 on
+# every invocation. Sharing that *parent* with demo-live made the receipt write
+# fail after the first "scenario" CLI call, and restart the producer repeatedly.
+control_mount = '${FORECAST_CONFIG_DIR:-./.forecast-stack/config}/demo-control:'
+if overlay.count(control_mount) != 2:
+    problems.append('demo control must use its own writable subdirectory in both explorer and generator mounts')
+for launcher in ('demo.sh', 'demo.ps1'):
+    if 'demo-control/demo-scenario.conf' not in (ROOT / launcher).read_text() and (
+        launcher != 'demo.ps1' or "Join-Path $controlDirectory 'demo-scenario.conf'" not in (ROOT / launcher).read_text()):
+        problems.append(f'{launcher} must write to the isolated demo-control directory')
+if '.forecast-stack/config/demo-control/demo-scenario-applied.conf' not in (
+    ROOT / 'ci/prebuilt-demo-scenarios.py').read_text():
+    problems.append('smoke test must read acknowledgements from the same isolated demo-control directory')
 for script in ('live.sh', 'seed.sh', 'signals.awk'):
     if not (DIR / script).is_file():
         problems.append(f'scripts/demo-forecast/{script} is missing')

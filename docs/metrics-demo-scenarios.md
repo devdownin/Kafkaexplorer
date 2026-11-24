@@ -149,7 +149,11 @@ specifically disables image/model fetching.
 
 These commands work on an already-running stack and are applied at the next live
 producer tick (normally 15 seconds), by writing `demo-scenario.conf` into the
-host-side `.forecast-stack/config` directory. The producer reads the file read-only.
+host-side `.forecast-stack/config/demo-control` directory. This dedicated
+writable directory keeps scenario requests and Kafka-verified receipts separate
+from `.forecast-stack/config/forecasts.yml`; the forecast stack bootstrap resets
+the parent directory permissions during every CLI call. The producer reads
+requests and writes receipts in the dedicated directory.
 They change **real Kafka topic offsets** and thus the next live observations; they
 do not rewrite the pre-seeded historical observations or spoof forecasts.
 

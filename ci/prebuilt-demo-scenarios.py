@@ -33,7 +33,7 @@ def read_metric(metric_id):
 
 def wait_for_verified_scenario(mode, seconds=180):
     """Do not start the UI timeout until the generator has verified the Kafka offsets."""
-    path = pathlib.Path(".forecast-stack/config/demo-scenario-applied.conf")
+    path = pathlib.Path(".forecast-stack/config/demo-control/demo-scenario-applied.conf")
     deadline = time.monotonic() + seconds
     last = None
     while time.monotonic() < deadline:

@@ -334,7 +334,8 @@ function Wait-ForecastReady {
 
 function Set-ForecastScenario([string] $Name) {
     if (-not $forecastOnly) { throw 'scenario is available in forecast mode only.' }
-    $file = Join-Path $env:FORECAST_CONFIG_DIR 'demo-scenario.conf'
+    $controlDirectory = Join-Path $env:FORECAST_CONFIG_DIR 'demo-control'
+    $file = Join-Path $controlDirectory 'demo-scenario.conf'
     if (-not $Name) {
         if (Test-Path -LiteralPath $file) { Write-Host (([IO.File]::ReadAllText((Resolve-Path $file).Path).Trim() -split '\|', 2)[0]) }
         else { Write-Host 'normal' }
@@ -343,13 +344,17 @@ function Set-ForecastScenario([string] $Name) {
     if ($Name -notin @('normal', 'overload', 'incident', 'recover', 'seasonal')) {
         throw 'Valid scenarios: normal, overload, incident, recover, seasonal.'
     }
-    New-Item -ItemType Directory -Path $env:FORECAST_CONFIG_DIR -Force | Out-Null
-    [IO.File]::WriteAllText((Join-Path (Resolve-Path $env:FORECAST_CONFIG_DIR).Path 'demo-scenario.conf'),
+    New-Item -ItemType Directory -Path $controlDirectory -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path (Resolve-Path $controlDirectory).Path 'demo-scenario.conf'),
         "$Name`n", $Utf8NoBom)
     Write-Host "Live Kafka scenario: $Name (applied at the next tick, default 15 s)."
 }
 
 function Start-Demo {
+    if ($forecastOnly) {
+        # Isolate the writable scenario receipts from the private forecast config.
+        New-Item -ItemType Directory -Path (Join-Path $env:FORECAST_CONFIG_DIR 'demo-control') -Force | Out-Null
+    }
     if (-not $forecastOnly -and -not (Test-EnvSet 'OPENROUTER_API_KEY')) {
         Write-Warning ('OPENROUTER_API_KEY is empty - Process Mining answers without its LLM half and the ' +
             "agent starts DEGRADED. Set it (`$env:OPENROUTER_API_KEY = 'sk-or-...', or in .env) and rerun.")
