@@ -543,7 +543,12 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       camera.top = halfHeight;
       camera.bottom = -halfHeight;
       camera.updateProjectionMatrix();
-      renderer.setSize(width, height, false);
+      // The drawing buffer is the CSS size times the pixel ratio; the canvas's *displayed* size
+      // must stay the CSS size. With `false` here and no rule sizing the canvas, it was displayed
+      // at its buffer size — 1.4 to 2 times the scene's frame on any HiDPI screen — and clipped by
+      // the host, so the scene sat off-centre with its right and bottom out of sight. Measured at
+      // devicePixelRatio 2 with 20 topics: a 1626 × 942 canvas in a 1162 × 673 frame.
+      renderer.setSize(width, height, true);
       renderer.render(scene, camera);
     };
     current.fit = (items: Topic[]) => {

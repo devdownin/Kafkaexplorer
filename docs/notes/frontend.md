@@ -984,6 +984,11 @@ count comparisons (`scripts/demo-forecast/seed.sh`, over `demo.live.*`) are over
 no naming rule links, so the red link never appeared in the demo. A pair is drawn once, by the first
 of declared lineage, count comparison, inferred link that holds it, whichever way round.
 
+**The canvas is displayed at its frame's size** (`renderer.setSize(width, height, true)`): the
+drawing buffer is that size times the pixel ratio, and with `false` and no CSS sizing it, the canvas
+was *shown* at the buffer's size and clipped by its host — off-centre and cut on every HiDPI screen
+(1626 × 942 in a 1162 × 673 frame at ratio 2). `strata-webgl-probe.mjs` checks it at ratio 2.
+
 **Names are written where they help** (`labelledTopics`). Up to twelve columns, every name; past
 that, only the topics the operator is pointing at (selected, compared, focused, hovered, a trace's
 hits) and the eight busiest by their latest measured bucket — forty-eight overlapping labels hid the

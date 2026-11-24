@@ -59,6 +59,11 @@ GitHub Pages on every view. Without the binary the run still succeeds and says s
 — compression is not what this script is for, but nobody should discover the omission from a
 commit diff either.
 
+The `strata` screen is a real WebGL frame, so it needs a Chromium with WebGL (headless Chromium
+has it in software, as `strata-webgl-probe.mjs` already relies on). It turns motion off before the
+shot — a particle caught mid-flight would make every run a different image — and photographs the
+scene alone, the chrome around it being what every other screen already shows.
+
 ## Measuring the layout, not photographing it
 
 `layout-probe.mjs` runs against the same server and reports numbers instead of images: whether a

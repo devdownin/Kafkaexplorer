@@ -5,6 +5,8 @@ It provides a time-oriented view of topics and deliberate connections, complemen
 [Stream Flow](../src/main/webapp/src/pages/StreamFlow.tsx), [Lineage](../src/main/webapp/src/pages/Lineage.tsx)
 and Topic Explorer.
 
+![Kafka Strata 3D in pipeline lanes: one family per lane, its stages left to right, with the links its names suggest](img/strata.png)
+
 ## Deployment and publication
 
 Open **Observe → Strata 3D** from the application, or navigate to

@@ -162,6 +162,30 @@ const SCREENS = [
     },
     anchor: '[aria-label="Forecast status of gauge_volume_demo_orders_1_received"]',
   },
+  {
+    // Kafka Strata 3D in pipeline lanes: one family per lane, its stages left to right, with the
+    // links the names suggest. A real WebGL frame, so it needs a GPU-less Chromium that still has
+    // WebGL — the one `strata-webgl-probe.mjs` already relies on.
+    name: 'strata',
+    url: '/strata?sv.layout=lanes&sv.filter=' + encodeURIComponent('demo.'),
+    settle: async page => {
+      await page.getByText(/^Sampled /).first().waitFor();
+      // Motion off: a particle or a pulse caught mid-flight makes every run a different image.
+      await page.getByRole('button', { name: 'Pause motion' }).click();
+      await page.getByRole('button', { name: /Layers ·/ }).click();
+      await page.getByRole('checkbox', { name: /Inferred links/ }).check();
+      await page.keyboard.press('Escape');
+      // The fit frames every lane with room to orbit; a closer frame is the one worth reading.
+      const box = await page.locator('section[aria-label="3D topic visualization"]').boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.wheel(0, -600);
+      // Off the canvas, or the column under the cursor opens its hover card over the shot.
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(1500);
+    },
+    // The scene alone: the page around it is the same chrome every other shot already shows.
+    element: 'section[aria-label="3D topic visualization"]',
+  },
 ];
 
 /**
@@ -285,7 +309,8 @@ for (const screen of SCREENS) {
     // portent aucun texte. Ils se déclarent eux-mêmes, plutôt que d'être listés ici.
     await page.addStyleTag({ content: '[data-decorative] { display: none !important; }' });
 
-    await page.screenshot({ path: file });
+    if (screen.element) await page.locator(screen.element).first().screenshot({ path: file });
+    else await page.screenshot({ path: file });
     const { before, after, skipped } = quantise(file);
     if (!skipped) { quantised++; savedFrom += before; savedTo += after; }
     const kb = Math.round(after / 1024);

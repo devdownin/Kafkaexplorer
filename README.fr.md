@@ -50,6 +50,9 @@ Pensé pour les data engineers, les architectes, et tous ceux qui se sont un jou
 **Cluster** — quorum de contrôleurs KRaft, groupes clients, versions de fonctionnalités.
 ![Cluster](docs/img/cluster.png)
 
+**Kafka Strata 3D** — les topics en colonnes colorées par famille, un pipeline aligné sur ses étapes, les liens que suggèrent ses noms.
+![Kafka Strata 3D en couloirs de pipeline](docs/img/strata.png)
+
 Ces captures sont générées, pas prises à la main : `docs/screenshots/` pilote le SPA compilé au-dessus de réponses d'API figées, calquées sur le jeu de données de démo. Voir son [README](docs/screenshots/README.md) pour les régénérer après un changement d'UI.
 
 </details>
