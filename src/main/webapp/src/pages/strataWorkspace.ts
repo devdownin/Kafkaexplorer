@@ -4,11 +4,13 @@
 import type { PartitionActivityResponse, TopicActivity, TopicActivityResponse } from '../api/types';
 import { bucketReading } from './strataTime';
 
-export type StrataLayer = 'activity' | 'lineage' | 'traces' | 'consumers' | 'anomalies' | 'forecast';
+export type StrataLayer = 'activity' | 'lineage' | 'inferred' | 'traces' | 'consumers' | 'anomalies' | 'forecast';
 export type StrataLayers = Record<StrataLayer, boolean>;
 
 export const DEFAULT_STRATA_LAYERS: StrataLayers = {
   activity: true, lineage: true, traces: true, consumers: true, anomalies: true, forecast: true,
+  // A guess from naming conventions: off until the operator asks for it.
+  inferred: false,
 };
 
 export interface TopicEvidence {
@@ -54,8 +56,17 @@ export function topicEvidence(activity: TopicActivity | undefined, bucket: numbe
   };
 }
 
-export function topicMapPositions(items: readonly { name: string; layoutIndex: number }[],
-  totalTopics: number = items.length) {
+export function topicMapPositions(items: readonly { name: string; layoutIndex: number; slot?: { x: number; z: number } }[],
+  totalTopics: number = items.length, lanes = false) {
+  if (lanes && items.length && items.every(item => item.slot)) {
+    // Lanes are laid out from the topics in view, so the map frames those same topics.
+    const xs = items.map(item => item.slot!.x);
+    const zs = items.map(item => item.slot!.z);
+    const minX = Math.min(...xs), spanX = Math.max(1, Math.max(...xs) - minX);
+    const minZ = Math.min(...zs), spanZ = Math.max(1, Math.max(...zs) - minZ);
+    return items.map(item => ({ name: item.name,
+      x: 16 + (item.slot!.x - minX) / spanX * 208, y: 14 + (item.slot!.z - minZ) / spanZ * 136 }));
+  }
   // Use the full cluster extent even when the operator filters the visible
   // topics. This keeps mini-map coordinates stable across filter changes.
   const radius = Math.max(5, 3.4 * Math.sqrt(Math.max(1, totalTopics)));

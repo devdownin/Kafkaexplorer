@@ -5,7 +5,7 @@ import { readStrataView, shareStrataUrl, writeStrataView, strataRenderBudget } f
 describe('Kafka Strata shareable views', () => {
   it('round-trips a focus/compare view without affecting unrelated query parameters', () => {
     const view = { mode: 'compare' as const, topic: 'orders', peer: 'invoices', focus: 'orders',
-      filter: 'ord', bucket: 4, quality: 'detail' as const };
+      filter: 'ord', bucket: 4, quality: 'detail' as const, layout: 'lanes' as const };
     const url = writeStrataView(new URLSearchParams('from=explorer&sv.topic=old'), view);
     expect(url.get('from')).toBe('explorer');
     expect(readStrataView(url)).toEqual(view);
@@ -15,7 +15,7 @@ describe('Kafka Strata shareable views', () => {
   it('strips unrelated query parameters and URL fragments from shared links', () => {
     const link = shareStrataUrl('https://example.test/strata?messageKey=secret&token=abc#oauth-fragment', {
       mode: 'compare', topic: 'orders', peer: 'invoices', focus: null,
-      filter: '', bucket: 11, quality: 'auto',
+      filter: '', bucket: 11, quality: 'auto', layout: 'spiral',
     });
     expect(link).toContain('sv.topic=orders');
     expect(link).toContain('sv.peer=invoices');
@@ -31,13 +31,16 @@ describe('Kafka Strata shareable views', () => {
     expect(invalid).toMatchObject({
       topic: 'orders', peer: null, focus: null, bucket: 11, quality: 'auto', mode: 'investigate',
     });
+    // An unknown arrangement is the default one, and the default is never written.
+    expect(readStrataView(new URLSearchParams('sv.layout=helix')).layout).toBe('spiral');
+    expect(writeStrataView(new URLSearchParams(), { ...invalid, layout: 'spiral' }).has('sv.layout')).toBe(false);
     expect(readStrataView(new URLSearchParams('sv.topic=' + 'X'.repeat(250))).topic).toBeNull();
   });
 
   it('does not serialize a peer outside Compare or leak unrelated trace data', () => {
     const params = writeStrataView(new URLSearchParams('sv.peer=old'), {
       mode: 'investigate', topic: 'orders', peer: 'other', focus: null, filter: '',
-      bucket: 11, quality: 'auto',
+      bucket: 11, quality: 'auto', layout: 'spiral',
     });
     expect(params.get('sv.peer')).toBeNull();
     expect(params.has('messageKey')).toBe(false);

@@ -926,6 +926,7 @@ dashboard: a bucket that could not be measured is *unknown*, never zero.
 | `pages/strataWorkspace.ts` | `topicEvidence`, `stableLayout`, `shouldRefit`, `activityScaleMax`, `isDoubleTap`, mini-map positions |
 | `pages/strataImmersive.ts` | Partition ribbons, the forecast canopy and its axis labels (`textSprite`, `axisValue`) |
 | `pages/strataView.ts` | URL view state (`sv.*`), the share link, the render budget |
+| `pages/strataFlows.ts` | What is read off a topic's *name* and drawn between topics: families, colours and socle shapes, pipeline lanes, links inferred from names, the height of an instant, particle counts, and the link verdict of the count-comparison metrics |
 | `pages/strataLineage.ts`, `strataDiagnostics.ts`, `strataInvestigation.ts`, `strataForecast.ts`, `strataPerformance.ts`, `strataShortcuts.ts` | Declared links, comparison and investigation logic, forecast projection, telemetry summary, shortcut mapping |
 
 ### Data — every read is bounded, read-only and paused while the tab is hidden
@@ -939,13 +940,17 @@ dashboard: a bucket that could not be measured is *unknown*, never zero.
 | `GET /api/topic/{t}/consumers` | 30 s, selected topic only | Consumer groups; a chosen group's per-partition lag becomes markers round the column |
 | `GET /api/forecasts`, then the series | 60 s, focused topic only | A ready TimesFM forecast scoped to exactly that topic becomes the canopy (`spatialProjection`) |
 | `POST /api/stream-flow/stream` | On demand | Key trace, operator-initiated; matches are drawn as chronological arcs, not causality |
+| `GET /api/metrics` | 60 s | Only the `TOPIC_COUNT_DELTA` metrics are used: their verdict (`gradeMetric`, the Metrics page's rule) colours the link between their two topics. A failure is silent — an uncoloured link is the truth about it |
 
 Each poller has its own `AbortController`, a `busy` guard against overlap, and a `visibilitychange`
 listener that refetches on return. **Refresh** restarts them all.
 
 ### The scene
 
-One column per topic on a sunflower spiral, its slot from `stableLayout`. Twelve rings stack the
+One column per topic, either on a sunflower spiral (its slot from `stableLayout`) or, with
+**Arrange → Pipeline lanes** (`sv.layout=lanes`), in one lane per family with its numbered stages left
+to right and the side outputs of a stage beside it (`laneLayout`); one-topic families share the last
+lane. The spiral keeps its stable slots, so switching back puts every column where it was. Twelve rings stack the
 buckets bottom (oldest) to top (latest): width is offsets produced, on a log scale, against the
 largest bucket in view, which the legend quotes; a thin grey ring is a bucket not measured. A
 horizontal lens plane marks the selected bucket, which `applyEmphasis` brightens on every column
@@ -955,8 +960,28 @@ render-on-demand: no animation frame is requested while nothing moves, and the c
 throttled by the render budget (`strataRenderBudget`: pixel ratio, frame interval and ring segments,
 lowered on dense scenes or by the **Render quality** select).
 
-**Layers** (`StrataLayerMenu`): activity, lineage, key matches, consumer lag, deviations, forecast.
-Hiding one changes what is drawn, never what is measured, and starts no read.
+**Colour is the family.** A topic's family is its name's first two segments (`demo.orders.1.received`
+→ `demo.orders`); its hue comes from a hash of that family onto eight hues spread round the wheel, each
+kept 20° from a colour the scene spends on a meaning (red stalled, amber deviation, the lag-free green,
+the selection cyan, the comparison violet), and the lightness steps with the stage. The socle's number
+of sides is the family's second channel. The **Families** legend in the navigator lists the cluster's
+families (not the filtered view's, or choosing one would hide the others) and filters on one.
+
+**Links and what travels on them.** Declared lineage keeps its long dashes. The **Inferred links**
+layer — off by default — draws, as a fine grey dotted line, what a naming convention suggests
+(`inferNameLinks`: stage *n* → *n + 1* in a family, `.in` → `.out` within a stage, a dead letter, retry
+or audit topic as a sink only), and never a pair the lineage already declares. Along every drawn link,
+particles travel: as many as the target produced in the latest bucket, on the rings' logarithmic scale,
+none when that bucket is unmeasured. A `TOPIC_COUNT_DELTA` metric over the pair, in either order, turns
+the link and its particles to its severity (critical red, warning orange). Particles keep the render
+loop running only while motion is on; still, they stay evenly spaced, so their number still reads.
+
+**A trace is placed in time.** Height is time on this axis, so each traced hit sits at the height of
+its own instant (`timeHeight`, on the rings' scale) and the slope between two hits is the latency
+between them. A hit outside the 30-minute window is clamped to its edge and drawn faint.
+
+**Layers** (`StrataLayerMenu`): activity, lineage, inferred links, key matches, consumer lag,
+deviations, forecast. Hiding one changes what is drawn, never what is measured, and starts no read.
 
 ### The workspace
 
@@ -975,7 +1000,7 @@ table, forecast panel, trace form, deviations, a stalled-group notice, warnings)
 
 ### State in the URL
 
-`sv.mode`, `sv.topic`, `sv.peer`, `sv.focus`, `sv.filter`, `sv.bucket`, `sv.quality` are written with
+`sv.mode`, `sv.topic`, `sv.peer`, `sv.focus`, `sv.filter`, `sv.bucket`, `sv.quality`, `sv.layout` are written with
 `history.replaceState` (no history spam) and read back as hints: lengths and characters are
 checked, a focus must be the selected topic, a peer must differ from it. **Copy view link** keeps only
 those keys and drops every other query parameter and the hash, which can carry another page's
@@ -1010,10 +1035,12 @@ snapshot, and the 390 px layout. A change to the page's requests needs the match
 - **Emphasis is re-applied after every rebuild** (`applyEmphasis`). The time lens, the deviation
   colour and the selection scale lived in an effect whose dependencies differed from the rebuild's,
   so a partition poll or a quality change brought every ring back at its base opacity.
-- **A topic keeps its slot and its colour** (`stableLayout`, `columnHue`). Positions were the rank in
+- **A topic keeps its slot and its colour** (`stableLayout`, `topicColor`). Positions were the rank in
   the alphabetical list, so a topic created elsewhere moved every one after it and the camera
   re-framed on the next metadata poll; colours were the rank among the *visible* topics, so filtering
-  repainted them. The camera re-frames only when `shouldRefit` says so, and a change of scope moves a
+  repainted them. The colour now comes from the name alone, which is stable by construction. It came
+  from the slot after that, a hue confined to 0.42–0.62 of the wheel, which made every column the same
+  teal at a glance and carried nothing about what the topic was. The camera re-frames only when `shouldRefit` says so, and a change of scope moves a
   camera only when a topic is focused.
 - **A failed activity refresh keeps the last sample** and says so; `topicEvidence` turns it stale
   after 90 s. Blanking it showed neutral rings under "Activity not measured yet", the wrong sentence.

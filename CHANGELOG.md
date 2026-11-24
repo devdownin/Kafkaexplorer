@@ -20,6 +20,17 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Strata 3D: topics told apart, flows made visible.** A column's colour is now its *family* (the
+  first two segments of its name), on eight hues spread round the wheel and kept clear of the colours
+  that carry a meaning, with the shade stepping along numbered stages and a socle shape per family as
+  a second channel; it was a hue confined to a fifth of the wheel, every column the same teal. A
+  **Families** legend filters on one. **Arrange → Pipeline lanes** lays a family out along its stages
+  (`sv.layout`). An **Inferred links** layer, off by default and drawn apart from declared lineage,
+  shows what naming conventions suggest. Particles travel each drawn link in proportion to what its
+  target produced; a `TOPIC_COUNT_DELTA` metric in breach over the pair turns the link red or orange.
+  A key trace is placed in time, so the slope between two hits is their latency. Columns, socles and
+  shells are more opaque and the floor grid quieter.
+
 - **CI check against drifting demo defaults** (`docs/check-demo-defaults.py`, run with the other
   `docs/check-*.py`). A default in `demo.sh` / `demo.ps1` must be an override of a compose default,
   declared with its reason, or a value the launcher reads itself; a copy of a compose default, an

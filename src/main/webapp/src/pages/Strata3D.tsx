@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { ConsumerGroupLag, DashboardResponse, PartitionActivityResponse, TopicActivity, TopicActivityResponse } from '../api/types';
+import type { ConsumerGroupLag, DashboardResponse, MetricConfig, PartitionActivityResponse, TopicActivity, TopicActivityResponse } from '../api/types';
 import StrataConsumerPanel from './StrataConsumerPanel';
 import StrataTracePanel from './StrataTracePanel';
 import StrataForecastPanel from './StrataForecastPanel';
@@ -14,7 +14,11 @@ import { bucketReading, detectActivityAnomaly } from './strataTime';
 import type { ParsedFlow } from './streamFlowLogic';
 import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strataLineage';
 import { Link } from 'react-router-dom';
-import { readStrataView, shareStrataUrl, strataRenderBudget, writeStrataView, type StrataQuality } from './strataView';
+import { readStrataView, shareStrataUrl, strataRenderBudget, writeStrataView, type StrataLayout, type StrataQuality } from './strataView';
+import {
+  RING_BASE_Y, RING_STEP_Y, familyCss, familyLegend, familyShape, flowParticleCount, healthOf, inferNameLinks, laneLayout, linkHealth,
+  spiralSlot, timeHeight, topicColor, topicFamily, type Slot,
+} from './strataFlows';
 import { copyText } from '../clipboard';
 import {
   DEFAULT_STRATA_LAYERS, activityScaleMax, isDoubleTap, partitionFrameMatches, shouldRefit, stableLayout,
@@ -36,21 +40,30 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 type Dashboard = DashboardResponse;
 type Activity = TopicActivity;
 type ActivityResponse = TopicActivityResponse;
-type Topic = { name: string; size: number | null; activity?: Activity; layoutIndex: number };
+type Topic = { name: string; size: number | null; activity?: Activity; layoutIndex: number; slot: Slot };
+type LinkHealth = ReadonlyMap<string, 'ok' | 'warning' | 'critical'>;
+/** The activity window, for placing an instant on the vertical axis. */
+type TimeWindow = { startMs: number; bucketMs: number };
 const MAX_TOPICS = 48;
 const BUCKETS = 12;
 const WINDOW_MS = 30 * 60 * 1000;
 
-function position(index: number): THREE.Vector3 {
-  // Deterministic sunflower placement; refreshing metrics never moves a topic.
-  const radius = 3.4 * Math.sqrt(index);
-  const angle = index * 2.399963229728653;
-  return new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+/**
+ * Where a column stands. The slot is computed by the page from the arrangement — the stable
+ * sunflower slot (`spiralSlot(layoutIndex)`) or a pipeline lane (`laneLayout`) — so refreshing the
+ * metrics never moves a topic, and this function only reads it.
+ */
+function topicPosition(topic: { slot: Slot }): THREE.Vector3 {
+  return new THREE.Vector3(topic.slot.x, 0, topic.slot.z);
 }
+
+/** What a scene is laid out from: its names and their slots, so a change of arrangement re-frames it. */
+const sceneSignature = (topics: readonly Topic[]) =>
+  topics.map(t => `${t.name}:${t.slot.x.toFixed(2)},${t.slot.z.toFixed(2)}`).join('\u0000');
 
 function sceneFrame(topics: Topic[]): { center: THREE.Vector3; extent: number } {
   if (!topics.length) return { center: new THREE.Vector3(0, 2.6, 0), extent: 9 };
-  const positions = topics.map(topic => position(topic.layoutIndex));
+  const positions = topics.map(topicPosition);
   const minX = Math.min(...positions.map(p => p.x));
   const maxX = Math.max(...positions.map(p => p.x));
   const minZ = Math.min(...positions.map(p => p.z));
@@ -132,12 +145,16 @@ function drawLabel(name: string, dark: boolean): THREE.CanvasTexture | null {
   context.strokeStyle = dark ? 'rgba(155, 197, 235, .5)' : 'rgba(102, 128, 154, .38)';
   context.lineWidth = 2;
   context.strokeRect(2, 2, 380, 68);
+  // The stripe carries the column's colour, so a name is read with its column from any angle.
+  const tone = topicColor(name, dark);
+  context.fillStyle = `hsl(${Math.round(tone.h * 360)} ${Math.round(tone.s * 100)}% ${Math.round(tone.l * 100)}%)`;
+  context.fillRect(2, 2, 12, 68);
   context.font = '600 28px system-ui, sans-serif';
   context.fillStyle = dark ? '#F0F6FE' : '#1D334B';
   context.textAlign = 'center';
   context.textBaseline = 'middle';
   const label = name.length > 24 ? name.slice(0, 23) + '…' : name;
-  context.fillText(label, 192, 36, 362);
+  context.fillText(label, 198, 36, 352);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.userData.shared = true;
@@ -155,14 +172,6 @@ function topicLabel(name: string, dark: boolean, assets: StrataAssets): THREE.Sp
   return sprite;
 }
 
-/**
- * A column's colour follows its stable slot, not its rank among the topics in view: filtering
- * used to repaint the same topic. The hue stays within green-cyan-blue (0.42–0.62), clear of
- * the violet that marks the comparison peer and the forecast.
- */
-export function columnHue(layoutIndex: number): number {
-  return ((layoutIndex * 0.137508) % 1) * 0.2 + 0.42;
-}
 
 const RING_STEPS = 32;
 
@@ -170,21 +179,27 @@ function createTopic(topic: Topic, maxRate: number, dark: boolean,
   highlight: 'primary' | 'comparison' | null, ringSegments: number, showActivity: boolean,
   assets: StrataAssets): THREE.Group {
   const group = new THREE.Group();
-  group.position.copy(position(topic.layoutIndex));
+  group.position.copy(topicPosition(topic));
   group.userData.topic = topic.name;
   const counts = Array.from({ length: BUCKETS }, (_, bucket) => bucketReading(topic.activity, bucket));
   const hasData = showActivity && counts.some(value => value !== null);
-  const color = new THREE.Color().setHSL(columnHue(topic.layoutIndex), dark ? 0.7 : 0.64, dark ? 0.68 : 0.45);
+  // The colour is the topic's family (`topicColor`): a name-derived, stable hue, the lightness stepping
+  // with the stage. It was a hue from the slot, confined to 20 % of the wheel, which made every
+  // column the same teal at a glance.
+  const tone = topicColor(topic.name, dark);
+  const color = new THREE.Color().setHSL(tone.h, tone.s, tone.l);
+  // The socle's shape is the family's second channel, for whoever cannot tell the hues apart.
+  const sides = familyShape(topicFamily(topic.name));
   const base = new THREE.Mesh(
-    assets.geometry('base', () => new THREE.CylinderGeometry(0.96, 0.96, 0.10, 40)),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, depthWrite: false }),
+    assets.geometry(`base:${sides}`, () => new THREE.CylinderGeometry(0.96, 0.96, 0.14, sides)),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, depthWrite: false }),
   );
   base.position.y = 0.05;
   group.add(base);
   const height = 5.6;
   const shell = new THREE.Mesh(
     assets.geometry('shell', () => new THREE.CylinderGeometry(0.86, 0.86, height, 40, 1, true)),
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: hasData ? 0.055 : 0.025, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: hasData ? 0.13 : 0.05, side: THREE.DoubleSide, depthWrite: false }),
   );
   shell.position.y = height / 2 + 0.12;
   group.add(shell);
@@ -201,7 +216,7 @@ function createTopic(topic: Topic, maxRate: number, dark: boolean,
       new THREE.MeshBasicMaterial({ color: measured ? color : 0x8b9aaa, transparent: true, opacity: measured ? 0.4 + normalized * 0.48 : 0.22, depthWrite: false }),
     );
     ring.rotation.x = Math.PI / 2;
-    ring.position.y = 0.35 + i * 0.43;
+    ring.position.y = RING_BASE_Y + i * RING_STEP_Y;
     ring.userData.bucketIndex = i;
     ring.userData.baseOpacity = (ring.material as THREE.MeshBasicMaterial).opacity;
     ring.userData.baseColor = (ring.material as THREE.MeshBasicMaterial).color.clone();
@@ -243,7 +258,8 @@ function createTopic(topic: Topic, maxRate: number, dark: boolean,
 
 /** The floor follows the scene's extent and the theme; a grid sized once at mount was too small for a widened filter. */
 function createGround(size: number, dark: boolean): THREE.GridHelper {
-  const ground = new THREE.GridHelper(size, 24, dark ? 0x4f6a80 : 0x7794ab, dark ? 0x2f4253 : 0xb1c1cf);
+  // Quieter than the columns it carries: the grid used to be the most contrasted thing in the scene.
+  const ground = new THREE.GridHelper(size, 24, dark ? 0x3a4f61 : 0xa9bccb, dark ? 0x233443 : 0xd8e2ea);
   ground.userData.size = size;
   ground.userData.dark = dark;
   return ground;
@@ -269,7 +285,7 @@ type StrataEmphasis = {
  */
 function applyEmphasis(current: { groups: THREE.Group[]; lens: THREE.Mesh }, emphasis: StrataEmphasis) {
   const { topics, selected, selectedBucket, lensAvailable, layers } = emphasis;
-  current.lens.position.y = 0.35 + selectedBucket * 0.43;
+  current.lens.position.y = RING_BASE_Y + selectedBucket * RING_STEP_Y;
   current.lens.visible = lensAvailable && layers.activity;
   const measurements = new Map(topics.map(topic => [topic.name, topic.activity]));
   for (const group of current.groups) {
@@ -289,7 +305,7 @@ function applyEmphasis(current: { groups: THREE.Group[]; lens: THREE.Mesh }, emp
 
 function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect, onFocus,
   focused, partitionActivity, forecast,
-  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, frameKey, onHover, onPerformance }: {
+  motion, quality, links, inferredLinks, health, timeWindow, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, frameKey, onHover, onPerformance }: {
   topics: Topic[];
   /** Changes when the operator changes what is in view (the filter): the camera re-frames then. */
   frameKey: string;
@@ -304,6 +320,11 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   motion: boolean;
   quality: StrataQuality;
   links: StrataLink[];
+  /** Guessed from topic names (`inferNameLinks`): drawn only on their own layer, never as lineage. */
+  inferredLinks: StrataLink[];
+  /** The count-comparison metrics' verdict on a pair of topics, which colours the link between them. */
+  health: LinkHealth;
+  timeWindow: TimeWindow | null;
   selectedGroup: ConsumerGroupLag | null;
   themeRevision: number;
   selectedBucket: number;
@@ -346,6 +367,8 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     fit: (items: Topic[]) => void;
     focus: (topic: string | null) => void;
     positions: Map<string, THREE.Vector3>;
+    /** Travel along the links; the render loop moves them while motion is on. */
+    particles: THREE.Mesh[];
     overview: { position: THREE.Vector3; target: THREE.Vector3; zoom: number };
   } | null>(null);
   useEffect(() => {
@@ -412,7 +435,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     );
     lens.rotation.x = -Math.PI / 2;
     lens.position.copy(initialFrame.center);
-    lens.position.y = 0.35 + 11 * 0.43;
+    lens.position.y = RING_BASE_Y + 11 * RING_STEP_Y;
     scene.add(lens);
     let ground = createGround(Math.max(40, extent * 2.8), isDarkTheme());
     ground.position.set(initialFrame.center.x, -0.12, initialFrame.center.z);
@@ -432,7 +455,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
         scene.add(next);
         ground = next;
       },
-      groups: [] as THREE.Group[], lens, signature: topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000'),
+      groups: [] as THREE.Group[], lens, signature: sceneSignature(topics), particles: [] as THREE.Mesh[],
       visible: topics.map(t => t.name), frameKey, userMoved: false,
       positions: new Map<string, THREE.Vector3>(),
       rebuildMs: null as number | null,
@@ -577,8 +600,8 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     };
     const render = (time: number) => {
       frame = 0;
-      const moving = motionRef.current && current.groups.some(group =>
-        group.children.some(object => object.userData.pulse !== undefined));
+      const moving = motionRef.current && (current.particles.length > 0 || current.groups.some(group =>
+        group.children.some(object => object.userData.pulse !== undefined)));
       // Static frames do not consume a permanent RAF loop. Dense scenes throttle
       // only continuous animation; camera movement and focus still render promptly.
       if (moving && time - last < budgetRef.current.frameIntervalMs) {
@@ -605,6 +628,11 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
             ? 0.3 + ((time * 0.00035 + (object.userData.pulse as number)) % 1) * 5.2
             : 5.45;
         }
+      }
+      for (const particle of current.particles) {
+        const flow = particle.userData.flow as { curve: THREE.Curve<THREE.Vector3>; phase: number };
+        // Still, the particles keep their even spacing: how many there are still says how much flowed.
+        flow.curve.getPointAt(moving ? (time * 0.00016 + flow.phase) % 1 : flow.phase, particle.position);
       }
       renderer.render(scene, camera);
       renderedFrames++;
@@ -677,7 +705,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   useEffect(() => {
     const current = state.current;
     if (!current) return;
-    const signature = topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000');
+    const signature = sceneSignature(topics);
     if (signature !== current.signature) {
       const visible = topics.map(t => t.name);
       // A topic created elsewhere must not throw away the operator's orbit.
@@ -695,7 +723,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     current.assets.keepLabels(topics.map(topic => topic.name), dark);
     (current.lens.material as THREE.MeshBasicMaterial).color.setHex(dark ? 0x83b9d5 : 0x5888af);
     const maxRate = layers.activity ? activityScaleMax(topics, BUCKETS) : 1;
-    current.positions = new Map(topics.map(topic => [topic.name, position(topic.layoutIndex)]));
+    current.positions = new Map(topics.map(topic => [topic.name, topicPosition(topic)]));
     current.groups = topics.map(topic => {
       const highlight = topic.name === selected ? 'primary' :
         diagnosticMode === 'compare' && topic.name === compareWith ? 'comparison' : null;
@@ -724,7 +752,16 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       return column;
     });
     const lookup = current.positions;
-    for (const link of layers.lineage ? links : []) {
+    current.particles = [];
+    const byName = new Map(topics.map(topic => [topic.name, topic]));
+    // Declared lineage first, then the links guessed from names. They are never drawn alike: the
+    // declared ones keep their long dashes, the guessed ones are a fine grey dotted line on a layer
+    // that is off by default.
+    const drawnLinks = [
+      ...(layers.lineage ? links.map(link => ({ link, inferred: false })) : []),
+      ...(layers.inferred ? inferredLinks.map(link => ({ link, inferred: true })) : []),
+    ];
+    for (const { link, inferred } of drawnLinks) {
       const start = lookup.get(link.from);
       const end = lookup.get(link.to);
       if (!start || !end) continue;
@@ -737,48 +774,77 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       );
       const geometry = new THREE.BufferGeometry().setFromPoints(curve.getPoints(40));
       const neighborhood = link.from === selected || link.to === selected;
+      const receding = diagnosticMode === 'investigate' && Boolean(selected) && !neighborhood;
+      // A count-comparison metric over the pair in breach turns the link and what travels on it to its
+      // severity. Nothing else does: a link without such a metric is drawn in its ordinary colour.
+      const verdict = healthOf(health, link);
+      const alarm = verdict === 'critical' ? 0xdd5b59 : verdict === 'warning' ? 0xe4a757 : null;
+      const lineColor = alarm ?? (inferred ? (dark ? 0xa3b1be : 0x5d6b78)
+        : neighborhood ? (dark ? 0x48c6cb : 0x118b9c) : (dark ? 0x9db6db : 0x6d7fa2));
       const line = new THREE.Line(geometry, new THREE.LineDashedMaterial({
-        color: neighborhood ? (dark ? 0x48c6cb : 0x118b9c) : (dark ? 0x9db6db : 0x6d7fa2),
-        transparent: true, opacity: diagnosticMode === 'investigate' && selected
-          ? (neighborhood ? 0.92 : 0.12) : 0.58,
-        dashSize: 0.38, gapSize: 0.24,
+        color: lineColor, transparent: true,
+        opacity: receding ? 0.12 : diagnosticMode === 'investigate' && selected ? 0.92 : inferred ? 0.72 : 0.7,
+        dashSize: inferred ? 0.1 : 0.38, gapSize: inferred ? 0.16 : 0.24,
       }));
       line.computeLineDistances();
+      line.userData.link = { from: link.from, to: link.to, inferred, health: verdict };
       current.content.add(line);
+      // What travels: as many particles as the target produced in the latest bucket, on the rings'
+      // own logarithmic scale. No measurement, no particle — an empty link is not drawn as a quiet one.
+      const target = byName.get(link.to);
+      const count = layers.activity
+        ? flowParticleCount(target ? bucketReading(target.activity, BUCKETS - 1) : null, maxRate) : 0;
+      const tone = topicColor(link.from, dark);
+      const particleColor = alarm ?? new THREE.Color().setHSL(tone.h, tone.s, Math.min(0.85, tone.l + 0.12));
+      for (let k = 0; k < count; k++) {
+        const particle = new THREE.Mesh(
+          current.assets.geometry('flow-particle', () => new THREE.SphereGeometry(0.16, 10, 8)),
+          new THREE.MeshBasicMaterial({ color: particleColor, transparent: true, depthWrite: false,
+            opacity: receding ? 0.15 : inferred ? 0.7 : 0.95 }),
+        );
+        particle.userData.flow = { curve, phase: k / count };
+        particle.userData.link = line.userData.link;
+        curve.getPointAt(k / count, particle.position);
+        current.content.add(particle);
+        current.particles.push(particle);
+      }
     }
 
-    // Chronological key matches are distinct from dashed Flink lineage. The links
-    // express event order, not a guaranteed causal transfer.
+    // Chronological key matches are distinct from dashed Flink lineage. The links express event
+    // order, not a guaranteed causal transfer. Height is time on this axis, so each hit sits at the
+    // height of its own instant and the slope between two hits is the latency between them; a hit
+    // older or newer than the window is clamped to its edge and drawn faint, never as if in it.
     if (layers.traces && trace) {
       const visibleHits = trace.hits.filter(hit => lookup.has(hit.topic)).slice(0, 48);
-      for (let index = 0; index < visibleHits.length; index++) {
-        const start = lookup.get(visibleHits[index].topic)!;
-        const point = new THREE.Mesh(
+      const placed = visibleHits.map(hit => {
+        const at = lookup.get(hit.topic)!;
+        const height = timeWindow
+          ? timeHeight(hit.firstTimestamp, timeWindow.startMs, timeWindow.bucketMs, BUCKETS)
+          : { y: 6.18, inWindow: true };
+        return { point: new THREE.Vector3(at.x, height.y, at.z), inWindow: height.inWindow };
+      });
+      placed.forEach(({ point, inWindow }, index) => {
+        const marker = new THREE.Mesh(
           current.assets.geometry('trace-point', () => new THREE.SphereGeometry(0.17, 14, 10)),
-          new THREE.MeshBasicMaterial({ color: 0x1bafbd }),
+          new THREE.MeshBasicMaterial({ color: 0x1bafbd, transparent: !inWindow, opacity: inWindow ? 1 : 0.35 }),
         );
-        point.position.set(start.x, 6.18, start.z);
-        current.content.add(point);
-        if (index === 0) continue;
-        const end = lookup.get(visibleHits[index - 1].topic)!;
-        const radius = start.distanceTo(end);
-        const curve = new THREE.CubicBezierCurve3(
-          new THREE.Vector3(end.x, 6.18, end.z),
-          new THREE.Vector3(end.x, 7.3 + radius * 0.09, end.z),
-          new THREE.Vector3(start.x, 7.3 + radius * 0.09, start.z),
-          new THREE.Vector3(start.x, 6.18, start.z),
-        );
+        marker.position.copy(point);
+        marker.userData.traceHit = index;
+        current.content.add(marker);
+        if (index === 0) return;
+        const previous = placed[index - 1];
         const beam = new THREE.Mesh(
-          new THREE.TubeGeometry(curve, 24, 0.04, 6, false),
-          new THREE.MeshBasicMaterial({ color: 0x16afbd, transparent: true, opacity: 0.88 }),
+          new THREE.TubeGeometry(new THREE.LineCurve3(previous.point, point), 1, 0.045, 6, false),
+          new THREE.MeshBasicMaterial({ color: 0x16afbd, transparent: true,
+            opacity: inWindow && previous.inWindow ? 0.9 : 0.35 }),
         );
         current.content.add(beam);
-      }
+      });
     }
 
     const selectedIndex = topics.findIndex(t => t.name === selected);
     if (layers.consumers && selectedIndex >= 0 && selectedGroup) {
-      const point = position(topics[selectedIndex].layoutIndex);
+      const point = topicPosition(topics[selectedIndex]);
       const partitions = selectedGroup.partitions.slice(0, 64);
       const healthColor = selectedGroup.error ? 0x8592a1 : selectedGroup.totalLag > 0 && selectedGroup.membersKnown && selectedGroup.assignedMembers === 0
         ? 0xdd5b59 : 0xe4a757;
@@ -806,9 +872,9 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     applyEmphasis(current, emphasis.current);
     current.rebuildMs = performance.now() - rebuildStarted;
     current.invalidate();
-  }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments, layers, frameKey]);
+  }, [topics, links, inferredLinks, health, timeWindow, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments, layers, frameKey]);
 
-  const scopeKey = topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000');
+  const scopeKey = sceneSignature(topics);
   // A change of scope re-aims a focused camera; with nothing focused it must leave the camera
   // alone, or every topic created elsewhere sent the operator back to the overview.
   const lastFocus = useRef<string | null>(null);
@@ -880,6 +946,9 @@ export default function Strata3D() {
   const [forecastOverlay, setForecastOverlay] = useState<StrataProjection | null>(null);
   const [traced, setTraced] = useState<{ scope: string; flow: ParsedFlow } | null>(null);
   const [layers, setLayers] = useState(DEFAULT_STRATA_LAYERS);
+  // `layout` below is the stable-slot cache; this is the operator's choice of arrangement.
+  const [arrangement, setArrangement] = useState<StrataLayout>(initialView.layout);
+  const [metrics, setMetrics] = useState<MetricConfig[]>([]);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const topicFilterRef = useRef<HTMLInputElement>(null);
   const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
@@ -903,19 +972,19 @@ export default function Strata3D() {
     const existing = new URLSearchParams(window.location.search);
     const next = writeStrataView(existing, {
       mode: diagnosticMode, topic: selected, peer: compareWith, focus: focused,
-      filter: query, bucket: selectedBucket, quality,
+      filter: query, bucket: selectedBucket, quality, layout: arrangement,
     });
     if (existing.toString() !== next.toString()) {
       const suffix = next.toString();
       window.history.replaceState(window.history.state, '',
         window.location.pathname + (suffix ? '?' + suffix : '') + window.location.hash);
     }
-  }, [diagnosticMode, selected, compareWith, focused, query, selectedBucket, quality]);
+  }, [diagnosticMode, selected, compareWith, focused, query, selectedBucket, quality, arrangement]);
 
   const copyViewLink = async () => {
     const link = shareStrataUrl(window.location.href, {
       mode: diagnosticMode, topic: selected, peer: compareWith, focus: focused,
-      filter: query, bucket: selectedBucket, quality,
+      filter: query, bucket: selectedBucket, quality, layout: arrangement,
     });
     const copied = await copyText(link);
     setShareLink(copied ? null : link);
@@ -1067,6 +1136,37 @@ export default function Strata3D() {
     };
   }, [refresh]);
 
+  // The count-comparison metrics colour the links they compare. Read-only, bounded, paused while the
+  // tab is hidden like every other read here — and silent when it fails: a link without a verdict is
+  // drawn in its ordinary colour, which is the truth about it, so a failure has nothing to correct.
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    let busy = false;
+    const fetchMetrics = async () => {
+      if (document.visibilityState === 'hidden' || busy) return;
+      busy = true;
+      try {
+        const { data } = await axios.get<MetricConfig[]>('/api/metrics', { timeout: 20000, signal: controller.signal });
+        if (active) setMetrics(Array.isArray(data) ? data : []);
+      } catch (failure) {
+        if (active && !axios.isCancel(failure)) setMetrics([]);
+      } finally {
+        busy = false;
+      }
+    };
+    void fetchMetrics();
+    const interval = window.setInterval(() => { void fetchMetrics(); }, 60000);
+    const onVisible = () => { if (document.visibilityState === 'visible') void fetchMetrics(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refresh]);
+
   useEffect(() => {
     if (!activeFocus) return;
     const controller = new AbortController();
@@ -1106,11 +1206,25 @@ export default function Strata3D() {
   const onTrace = useCallback((flow: ParsedFlow | null) => {
     setTraced(flow ? { scope, flow } : null);
   }, [scope]);
-  const topics = useMemo(() => scoped.map(name => ({
-    name, size: dashboard?.topicSizes[name] ?? null, activity: activity?.topics[name],
-    layoutIndex: layoutIndices.get(name) ?? 0,
-  })), [scoped, dashboard, activity, layoutIndices]);
+  // Lanes are laid out from the topics in view: a pipeline is read along its stages, which the
+  // spiral scatters. The spiral keeps its stable slots, so switching back restores every column.
+  const lanes = useMemo(() => arrangement === 'lanes' ? laneLayout(scoped) : null, [arrangement, scoped]);
+  const topics = useMemo(() => scoped.map(name => {
+    const layoutIndex = layoutIndices.get(name) ?? 0;
+    return {
+      name, size: dashboard?.topicSizes[name] ?? null, activity: activity?.topics[name],
+      layoutIndex, slot: lanes?.get(name) ?? spiralSlot(layoutIndex),
+    };
+  }), [scoped, dashboard, activity, layoutIndices, lanes]);
   const links = useMemo(() => lineage ? deriveStrataLinks(lineage, scoped) : [], [lineage, scoped]);
+  const inferredLinks = useMemo(() => inferNameLinks(scoped, links), [scoped, links]);
+  const health = useMemo(() => linkHealth(metrics), [metrics]);
+  // The cluster's families, not the filtered view's: choosing one must not make the others vanish.
+  const families = useMemo(() => familyLegend(names), [names]);
+  const windowStartMs = activity?.windowStartMs;
+  const bucketMs = activity?.bucketMs;
+  const timeWindow = useMemo(() => windowStartMs !== undefined && bucketMs !== undefined && bucketMs > 0
+    ? { startMs: windowStartMs, bucketMs } : null, [windowStartMs, bucketMs]);
   const selectedTopic = topics.find(t => t.name === selected);
   const receivedAt = activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null;
   const selectedEvidence = topicEvidence(selectedTopic?.activity, selectedBucket, receivedAt);
@@ -1230,6 +1344,15 @@ export default function Strata3D() {
           <button type="button" aria-pressed={diagnosticMode === 'compare'}
             onClick={() => { setFocused(null); setDiagnosticMode('compare'); }}
             className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">Compare</button>
+          <span className="ml-2 mr-1 text-xs font-semibold text-on-surface-variant">Arrange</span>
+          <div role="group" aria-label="Arrangement of the topics" className="inline-flex rounded-lg border border-outline-variant">
+            <button type="button" aria-pressed={arrangement === 'spiral'} onClick={() => setArrangement('spiral')}
+              title="Every topic keeps the slot it was first given"
+              className="rounded-l-lg px-3 py-1.5 text-xs text-on-surface aria-pressed:bg-primary/10 aria-pressed:text-primary">Spiral</button>
+            <button type="button" aria-pressed={arrangement === 'lanes'} onClick={() => setArrangement('lanes')}
+              title="One lane per family of topics, its numbered stages left to right"
+              className="rounded-r-lg border-l border-outline-variant px-3 py-1.5 text-xs text-on-surface aria-pressed:bg-primary/10 aria-pressed:text-primary">Pipeline lanes</button>
+          </div>
         </section>
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" aria-expanded={navigatorOpen}
@@ -1286,8 +1409,29 @@ export default function Strata3D() {
               maxLength={160} placeholder="Topic name"
               className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface" />
           </label>
+          {families.length > 1 && families.some(entry => entry.count > 1) && <section aria-label="Topic families">
+            <h3 className="mb-1.5 text-xs font-semibold text-on-surface">Families</h3>
+            <p className="mb-2 text-[11px] text-on-surface-variant">
+              Colour and socle shape follow the name prefix. Choose one to filter.
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {families.slice(0, 12).map(({ family, count }) => {
+                // The filter matches names, so a family is filtered by the prefix its topics are written with.
+                const prefix = names.find(name => topicFamily(name) === family)?.slice(0, family.length) ?? family;
+                const active = query === prefix;
+                return <button type="button" key={family} aria-pressed={active}
+                  aria-label={`Filter on family ${family}, ${count} topic${count === 1 ? '' : 's'}`}
+                  onClick={() => setQuery(active ? '' : prefix)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-outline-variant px-2 py-0.5 text-[11px] text-on-surface aria-pressed:border-primary aria-pressed:bg-primary/10">
+                  <span aria-hidden="true" className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: familyCss(family) }} />
+                  <span className="font-mono">{family}</span>
+                  <span className="tabular-nums text-on-surface-variant">{count}</span>
+                </button>;
+              })}
+            </div>
+          </section>}
           <StrataMiniMap items={topics} totalTopics={layoutExtent} selected={selected} peer={activeCompareWith}
-            leads={leads} onSelect={chooseTopic} onFocus={focusTopic} />
+            leads={leads} onSelect={chooseTopic} onFocus={focusTopic} lanes={arrangement === 'lanes'} />
           <div>
             <h3 className="mb-2 text-xs font-semibold text-on-surface">Topics in view</h3>
             <p className="mb-2 text-[11px] text-on-surface-variant">
@@ -1326,9 +1470,10 @@ export default function Strata3D() {
                 diagnosticMode={diagnosticMode} onSelect={chooseTopic} onFocus={focusTopic}
                 focused={activeFocus} partitionActivity={alignedPartitionActivity} forecast={visibleForecast} motion={motion}
                 quality={quality} layers={layers} onHover={updateHovered} onPerformance={setPerformanceStats}
-                links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
+                links={links} inferredLinks={inferredLinks} health={health} timeWindow={timeWindow}
+                selectedGroup={selectedGroup} themeRevision={themeRevision}
                 selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace}
-                frameKey={filteredQuery} /> :
+                frameKey={filteredQuery + '|' + arrangement} /> :
               <p className="p-8 text-sm text-on-surface-variant">{dashboard ? 'No matching topics.' : 'Loading cluster…'}</p>}
             {hovered && hoveredTopic && <StrataHoverCard name={hoveredTopic.name} activity={hoveredTopic.activity}
               bucket={selectedBucket} receivedAt={activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null}

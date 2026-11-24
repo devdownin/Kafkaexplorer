@@ -8,12 +8,14 @@ import {
   activityHistogram, topicEvidence, topicMapPositions,
   type StrataLayers, type StrataLayer,
 } from './strataWorkspace';
+import { familyCss, topicFamily } from './strataFlows';
 
 export type StrataViewTopic = { name: string; layoutIndex: number; activity?: TopicActivity };
 
 const layerDefinitions: { key: StrataLayer; name: string; description: string; swatch: string }[] = [
   { key: 'activity', name: 'Activity', description: 'Measured offset-production rings', swatch: '#0c9da9' },
   { key: 'lineage', name: 'Lineage', description: 'Declared Flink paths, not message traces', swatch: '#7794ab' },
+  { key: 'inferred', name: 'Inferred links', description: 'Guessed from topic names, never declared', swatch: '#8b9aaa' },
   { key: 'traces', name: 'Key matches', description: 'Chronological matches, not causality', swatch: '#16afbd' },
   { key: 'consumers', name: 'Consumer lag', description: 'Selected group, per partition', swatch: '#e4a757' },
   { key: 'anomalies', name: 'Deviations', description: 'Local activity candidates only', swatch: '#e7a044' },
@@ -51,7 +53,7 @@ export function StrataLayerMenu({ layers, onChange }: {
     <button type="button" ref={triggerRef} aria-expanded={open} aria-controls="strata-layer-options"
       onClick={() => setOpen(value => !value)}
       className="strata-glass rounded-xl border border-outline-variant bg-surface/95 backdrop-blur-lg px-3 py-2 text-xs font-semibold text-on-surface shadow-sm focus-visible:outline-2 focus-visible:outline-primary">
-      Layers · {enabled}/6
+      Layers · {enabled}/{layerDefinitions.length}
     </button>
     {open && <div id="strata-layer-options"
       className="strata-glass absolute right-0 top-full mt-2 z-30 w-64 max-w-[calc(100vw-3rem)] rounded-xl border border-outline-variant bg-surface/95 backdrop-blur-xl shadow-xl p-3 space-y-2"
@@ -78,14 +80,15 @@ export function StrataLayerMenu({ layers, onChange }: {
   </div>;
 }
 
-export function StrataMiniMap({ items, totalTopics, selected, peer, leads, onSelect, onFocus }: {
-  items: readonly { name: string; layoutIndex: number }[];
+export function StrataMiniMap({ items, totalTopics, selected, peer, leads, onSelect, onFocus, lanes = false }: {
+  items: readonly { name: string; layoutIndex: number; slot?: { x: number; z: number } }[];
   totalTopics: number;
+  lanes?: boolean;
   selected: string | null; peer: string | null;
   leads?: readonly { topic: string; label: string; level: 'watch' | 'stalled'; source: string }[];
   onSelect: (name: string) => void; onFocus: (name: string) => void;
 }) {
-  const positions = topicMapPositions(items, totalTopics);
+  const positions = topicMapPositions(items, totalTopics, lanes);
   const findLead = (topic: string) => leads?.find(lead => lead.topic === topic);
   return <section className="rounded-xl border border-outline-variant bg-surface-container-low p-3" aria-label="Topic mini-map">
     <div className="flex items-center justify-between">
@@ -97,7 +100,7 @@ export function StrataMiniMap({ items, totalTopics, selected, peer, leads, onSel
         <path d="M0 82H240M120 0V164" stroke="currentColor" opacity=".10" strokeDasharray="3 6" />
         {positions.map(p => <circle key={p.name} cx={p.x} cy={p.y}
           r={p.name === selected || p.name === peer ? 5 : findLead(p.name) ? 4 : 2.7}
-          fill={p.name === selected ? '#0c9da9' : p.name === peer ? '#9b76db' : '#8aa5b8'}
+          fill={p.name === selected ? '#0c9da9' : p.name === peer ? '#9b76db' : familyCss(topicFamily(p.name))}
           stroke={findLead(p.name)?.level === 'stalled' ? '#d95b64' : findLead(p.name) ? '#e4a757' : 'none'}
           strokeWidth={findLead(p.name) ? 2.5 : 0}
           opacity={p.name === selected || p.name === peer || findLead(p.name) ? 1 : .7} />)}
