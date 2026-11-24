@@ -940,7 +940,7 @@ dashboard: a bucket that could not be measured is *unknown*, never zero.
 | `GET /api/topic/{t}/consumers` | 30 s, selected topic only | Consumer groups; a chosen group's per-partition lag becomes markers round the column |
 | `GET /api/forecasts`, then the series | 60 s, focused topic only | A ready TimesFM forecast scoped to exactly that topic becomes the canopy (`spatialProjection`) |
 | `POST /api/stream-flow/stream` | On demand | Key trace, operator-initiated; matches are drawn as chronological arcs, not causality |
-| `GET /api/metrics` | 60 s | Only the `TOPIC_COUNT_DELTA` metrics are used: their verdict (`gradeMetric`, the Metrics page's rule) colours the link between their two topics. A failure is silent — an uncoloured link is the truth about it |
+| `GET /api/metrics` | 60 s | Only the `TOPIC_COUNT_DELTA` metrics are used: each draws a link between its two topics (`metricLinks`) and its verdict (`gradeMetric`, the Metrics page's rule) colours it. A failure is silent — an uncoloured link is the truth about it |
 
 Each poller has its own `AbortController`, a `busy` guard against overlap, and a `visibilitychange`
 listener that refetches on return. **Refresh** restarts them all.
@@ -973,15 +973,38 @@ layer — off by default — draws, as a fine grey dotted line, what a naming co
 or audit topic as a sink only), and never a pair the lineage already declares. Along every drawn link,
 particles travel: as many as the target produced in the latest bucket, on the rings' logarithmic scale,
 none when that bucket is unmeasured. A `TOPIC_COUNT_DELTA` metric over the pair, in either order, turns
-the link and its particles to its severity (critical red, warning orange). Particles keep the render
+the link and its particles to its severity (critical red, warning orange).
+
+**A count comparison is a link of its own** (`metricLinks`, the **Count comparisons** layer, on by
+default): an operator who wrote a `TOPIC_COUNT_DELTA` metric declared its left topic upstream of its
+right one, so the pair is drawn — near-solid, in the lag-free green while the metric is within its
+thresholds, neutral while it has no verdict, red or orange in breach. This is what made the verdict
+visible at all: the colour used to apply only to a link some *other* rule drew, and the demo's five
+count comparisons (`scripts/demo-forecast/seed.sh`, over `demo.live.*`) are over topics no lineage and
+no naming rule links, so the red link never appeared in the demo. A pair is drawn once, by the first
+of declared lineage, count comparison, inferred link that holds it, whichever way round.
+
+**The canvas is displayed at its frame's size** (`renderer.setSize(width, height, true)`): the
+drawing buffer is that size times the pixel ratio, and with `false` and no CSS sizing it, the canvas
+was *shown* at the buffer's size and clipped by its host — off-centre and cut on every HiDPI screen
+(1626 × 942 in a 1162 × 673 frame at ratio 2). `strata-webgl-probe.mjs` checks it at ratio 2.
+
+**Names are written where they help** (`labelledTopics`). Up to twelve columns, every name; past
+that, only the topics the operator is pointing at (selected, compared, focused, hovered, a trace's
+hits) and the eight busiest by their latest measured bucket — forty-eight overlapping labels hid the
+scene they named. An unmeasured topic ranks last, never as busy. `applyEmphasis` toggles the sprites,
+so a hover costs a repaint, not a rebuild; the inputs are folded into one key so a poll that leaves the
+ranking unchanged repaints nothing. The **All names** layer writes them all.
+
+Particles keep the render
 loop running only while motion is on; still, they stay evenly spaced, so their number still reads.
 
 **A trace is placed in time.** Height is time on this axis, so each traced hit sits at the height of
 its own instant (`timeHeight`, on the rings' scale) and the slope between two hits is the latency
 between them. A hit outside the 30-minute window is clamped to its edge and drawn faint.
 
-**Layers** (`StrataLayerMenu`): activity, lineage, inferred links, key matches, consumer lag,
-deviations, forecast. Hiding one changes what is drawn, never what is measured, and starts no read.
+**Layers** (`StrataLayerMenu`): activity, lineage, count comparisons, inferred links, key matches,
+consumer lag, deviations, forecast, all names. Hiding one changes what is drawn, never what is measured, and starts no read.
 
 ### The workspace
 

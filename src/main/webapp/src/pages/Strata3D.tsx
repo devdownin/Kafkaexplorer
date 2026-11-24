@@ -16,8 +16,8 @@ import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strata
 import { Link } from 'react-router-dom';
 import { readStrataView, shareStrataUrl, strataRenderBudget, writeStrataView, type StrataLayout, type StrataQuality } from './strataView';
 import {
-  RING_BASE_Y, RING_STEP_Y, familyCss, familyLegend, familyShape, flowParticleCount, healthOf, inferNameLinks, laneLayout, linkHealth,
-  spiralSlot, timeHeight, topicColor, topicFamily, type Slot,
+  RING_BASE_Y, RING_STEP_Y, familyCss, familyLegend, familyShape, flowParticleCount, healthOf, inferNameLinks, labelledTopics,
+  laneLayout, linkHealth, metricLinks, spiralSlot, timeHeight, topicColor, topicFamily, type Slot,
 } from './strataFlows';
 import { copyText } from '../clipboard';
 import {
@@ -169,6 +169,7 @@ function topicLabel(name: string, dark: boolean, assets: StrataAssets): THREE.Sp
   }));
   sprite.scale.set(3.2, 0.6, 1);
   sprite.position.y = 6.44;
+  sprite.userData.label = true;
   return sprite;
 }
 
@@ -275,6 +276,8 @@ export const coarsePointer = () => typeof window.matchMedia === 'function'
 /** What the operator is pointing at, as opposed to what was measured. */
 type StrataEmphasis = {
   topics: Topic[]; selected: string | null; selectedBucket: number; lensAvailable: boolean; layers: StrataLayers;
+  /** The columns whose name stays written (`labelledTopics`); the others show it on hover. */
+  labelled: ReadonlySet<string>;
 };
 
 /**
@@ -284,7 +287,7 @@ type StrataEmphasis = {
  * effects a partition poll or a quality change wiped the lens until the next bucket change.
  */
 function applyEmphasis(current: { groups: THREE.Group[]; lens: THREE.Mesh }, emphasis: StrataEmphasis) {
-  const { topics, selected, selectedBucket, lensAvailable, layers } = emphasis;
+  const { topics, selected, selectedBucket, lensAvailable, layers, labelled } = emphasis;
   current.lens.position.y = RING_BASE_Y + selectedBucket * RING_STEP_Y;
   current.lens.visible = lensAvailable && layers.activity;
   const measurements = new Map(topics.map(topic => [topic.name, topic.activity]));
@@ -292,6 +295,7 @@ function applyEmphasis(current: { groups: THREE.Group[]; lens: THREE.Mesh }, emp
     group.scale.setScalar(group.userData.topic === selected ? 1.04 : 1);
     const anomaly = layers.anomalies ? detectActivityAnomaly(measurements.get(group.userData.topic as string), selectedBucket) : null;
     for (const object of group.children) {
+      if (object.userData.label) object.visible = labelled.has(group.userData.topic as string);
       if (!(object instanceof THREE.Mesh) || object.userData.bucketIndex === undefined) continue;
       const material = object.material as THREE.MeshBasicMaterial;
       const active = object.userData.bucketIndex === selectedBucket;
@@ -305,7 +309,7 @@ function applyEmphasis(current: { groups: THREE.Group[]; lens: THREE.Mesh }, emp
 
 function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect, onFocus,
   focused, partitionActivity, forecast,
-  motion, quality, links, inferredLinks, health, timeWindow, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, frameKey, onHover, onPerformance }: {
+  motion, quality, links, comparedLinks, inferredLinks, labelled, health, timeWindow, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, frameKey, onHover, onPerformance }: {
   topics: Topic[];
   /** Changes when the operator changes what is in view (the filter): the camera re-frames then. */
   frameKey: string;
@@ -320,8 +324,11 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   motion: boolean;
   quality: StrataQuality;
   links: StrataLink[];
+  /** The pairs a count-comparison metric compares (`metricLinks`): an operator's declaration. */
+  comparedLinks: StrataLink[];
   /** Guessed from topic names (`inferNameLinks`): drawn only on their own layer, never as lineage. */
   inferredLinks: StrataLink[];
+  labelled: ReadonlySet<string>;
   /** The count-comparison metrics' verdict on a pair of topics, which colours the link between them. */
   health: LinkHealth;
   timeWindow: TimeWindow | null;
@@ -536,7 +543,12 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       camera.top = halfHeight;
       camera.bottom = -halfHeight;
       camera.updateProjectionMatrix();
-      renderer.setSize(width, height, false);
+      // The drawing buffer is the CSS size times the pixel ratio; the canvas's *displayed* size
+      // must stay the CSS size. With `false` here and no rule sizing the canvas, it was displayed
+      // at its buffer size — 1.4 to 2 times the scene's frame on any HiDPI screen — and clipped by
+      // the host, so the scene sat off-centre with its right and bottom out of sight. Measured at
+      // devicePixelRatio 2 with 20 topics: a 1626 × 942 canvas in a 1162 × 673 frame.
+      renderer.setSize(width, height, true);
       renderer.render(scene, camera);
     };
     current.fit = (items: Topic[]) => {
@@ -693,14 +705,14 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const emphasis = useRef<StrataEmphasis>({ topics, selected, selectedBucket, lensAvailable, layers });
+  const emphasis = useRef<StrataEmphasis>({ topics, selected, selectedBucket, lensAvailable, layers, labelled });
   useEffect(() => {
-    emphasis.current = { topics, selected, selectedBucket, lensAvailable, layers };
+    emphasis.current = { topics, selected, selectedBucket, lensAvailable, layers, labelled };
     const current = state.current;
     if (!current) return;
     applyEmphasis(current, emphasis.current);
     current.invalidate();
-  }, [topics, selected, selectedBucket, lensAvailable, layers]);
+  }, [topics, selected, selectedBucket, lensAvailable, layers, labelled]);
 
   useEffect(() => {
     const current = state.current;
@@ -754,17 +766,25 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     const lookup = current.positions;
     current.particles = [];
     const byName = new Map(topics.map(topic => [topic.name, topic]));
-    // Declared lineage first, then the links guessed from names. They are never drawn alike: the
-    // declared ones keep their long dashes, the guessed ones are a fine grey dotted line on a layer
-    // that is off by default.
-    const drawnLinks = [
-      ...(layers.lineage ? links.map(link => ({ link, inferred: false })) : []),
-      ...(layers.inferred ? inferredLinks.map(link => ({ link, inferred: true })) : []),
+    // Declared lineage first, then the pairs a count comparison declares, then the links guessed from
+    // names, and a pair is drawn once, by the first that holds it. They are never drawn alike: the
+    // declared ones keep their long dashes, a compared pair is a near-solid line in its verdict's
+    // colour, the guessed ones a fine grey dotted line on a layer that is off by default.
+    const drawnLinks: { link: StrataLink; kind: 'declared' | 'compared' | 'inferred' }[] = [
+      ...(layers.lineage ? links.map(link => ({ link, kind: 'declared' as const })) : []),
+      ...(layers.compared ? comparedLinks.map(link => ({ link, kind: 'compared' as const })) : []),
+      ...(layers.inferred ? inferredLinks.map(link => ({ link, kind: 'inferred' as const })) : []),
     ];
-    for (const { link, inferred } of drawnLinks) {
+    const drawnPairs = new Set<string>();
+    for (const { link, kind } of drawnLinks) {
+      const inferred = kind === 'inferred';
+      const compared = kind === 'compared';
       const start = lookup.get(link.from);
       const end = lookup.get(link.to);
       if (!start || !end) continue;
+      const pair = [link.from, link.to].sort().join('\u0000');
+      if (drawnPairs.has(pair)) continue;
+      drawnPairs.add(pair);
       const span = start.distanceTo(end);
       const curve = new THREE.CubicBezierCurve3(
         new THREE.Vector3(start.x, 5.6, start.z),
@@ -779,15 +799,18 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       // severity. Nothing else does: a link without such a metric is drawn in its ordinary colour.
       const verdict = healthOf(health, link);
       const alarm = verdict === 'critical' ? 0xdd5b59 : verdict === 'warning' ? 0xe4a757 : null;
-      const lineColor = alarm ?? (inferred ? (dark ? 0xa3b1be : 0x5d6b78)
+      // A compared pair within its thresholds says so in the lag-free green; one whose metric has no
+      // verdict yet (pending, failing) stays neutral rather than passing for healthy.
+      const lineColor = alarm ?? (compared ? (verdict === 'ok' ? 0x4aaf99 : (dark ? 0x9db6db : 0x6d7fa2))
+        : inferred ? (dark ? 0xa3b1be : 0x5d6b78)
         : neighborhood ? (dark ? 0x48c6cb : 0x118b9c) : (dark ? 0x9db6db : 0x6d7fa2));
       const line = new THREE.Line(geometry, new THREE.LineDashedMaterial({
         color: lineColor, transparent: true,
         opacity: receding ? 0.12 : diagnosticMode === 'investigate' && selected ? 0.92 : inferred ? 0.72 : 0.7,
-        dashSize: inferred ? 0.1 : 0.38, gapSize: inferred ? 0.16 : 0.24,
+        dashSize: inferred ? 0.1 : compared ? 1.2 : 0.38, gapSize: inferred ? 0.16 : compared ? 0.08 : 0.24,
       }));
       line.computeLineDistances();
-      line.userData.link = { from: link.from, to: link.to, inferred, health: verdict };
+      line.userData.link = { from: link.from, to: link.to, inferred, kind, health: verdict };
       current.content.add(line);
       // What travels: as many particles as the target produced in the latest bucket, on the rings'
       // own logarithmic scale. No measurement, no particle — an empty link is not drawn as a quiet one.
@@ -872,7 +895,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     applyEmphasis(current, emphasis.current);
     current.rebuildMs = performance.now() - rebuildStarted;
     current.invalidate();
-  }, [topics, links, inferredLinks, health, timeWindow, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments, layers, frameKey]);
+  }, [topics, links, comparedLinks, inferredLinks, health, timeWindow, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments, layers, frameKey]);
 
   const scopeKey = sceneSignature(topics);
   // A change of scope re-aims a focused camera; with nothing focused it must leave the camera
@@ -1218,6 +1241,7 @@ export default function Strata3D() {
   }), [scoped, dashboard, activity, layoutIndices, lanes]);
   const links = useMemo(() => lineage ? deriveStrataLinks(lineage, scoped) : [], [lineage, scoped]);
   const inferredLinks = useMemo(() => inferNameLinks(scoped, links), [scoped, links]);
+  const comparedLinks = useMemo(() => metricLinks(metrics, scoped, links), [metrics, scoped, links]);
   const health = useMemo(() => linkHealth(metrics), [metrics]);
   // The cluster's families, not the filtered view's: choosing one must not make the others vanish.
   const families = useMemo(() => familyLegend(names), [names]);
@@ -1244,6 +1268,17 @@ export default function Strata3D() {
   const selectBucket = useCallback((bucket: number) => { setReplaying(false); setSelectedBucket(bucket); }, []);
   const activeCompareWith = diagnosticMode === 'compare' && compareWith !== selected &&
     topics.some(t => t.name === compareWith) ? compareWith : null;
+  // Past a dozen columns only the busiest and the ones being pointed at keep their name written.
+  // The inputs are folded into one key so the set — and the repaint it costs — changes only when
+  // the answer can: a hover over the same column, or a poll that leaves the ranking, does not.
+  const hoveredName = hovered?.name ?? null;
+  const pinnedNames = [selected, activeCompareWith, activeFocus, hoveredName,
+    ...(layers.traces ? activeTrace?.hits.map(hit => hit.topic) ?? [] : [])];
+  const labelReadings = topics.map(topic => ({ name: topic.name, latest: bucketReading(topic.activity, BUCKETS - 1) }));
+  const labelKey = layers.labels ? 'all:' + scope
+    : [...labelledTopics(labelReadings, pinnedNames)].sort().join('\u0000');
+  const labelled = useMemo(() => new Set(labelKey.startsWith('all:') ? scoped
+    : labelKey ? labelKey.split('\u0000') : []), [labelKey, scoped]);
   const measured = topics.filter(t => t.activity?.available).length;
   const ringScaleMax = activityScaleMax(topics, BUCKETS);
   const bucketMinutes = activity?.bucketMs ? activity.bucketMs / 60000 : WINDOW_MS / BUCKETS / 60000;
@@ -1470,7 +1505,7 @@ export default function Strata3D() {
                 diagnosticMode={diagnosticMode} onSelect={chooseTopic} onFocus={focusTopic}
                 focused={activeFocus} partitionActivity={alignedPartitionActivity} forecast={visibleForecast} motion={motion}
                 quality={quality} layers={layers} onHover={updateHovered} onPerformance={setPerformanceStats}
-                links={links} inferredLinks={inferredLinks} health={health} timeWindow={timeWindow}
+                links={links} comparedLinks={comparedLinks} inferredLinks={inferredLinks} labelled={labelled} health={health} timeWindow={timeWindow}
                 selectedGroup={selectedGroup} themeRevision={themeRevision}
                 selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace}
                 frameKey={filteredQuery + '|' + arrangement} /> :

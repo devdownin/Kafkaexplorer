@@ -50,6 +50,9 @@ Built for data engineers, architects and anyone who has ever asked *"what's actu
 **Cluster** — KRaft controller quorum, client groups, feature versions.
 ![Cluster](docs/img/cluster.png)
 
+**Kafka Strata 3D** — topics as columns coloured by family, a pipeline laid out along its stages, the links its names suggest.
+![Kafka Strata 3D in pipeline lanes](docs/img/strata.png)
+
 These are generated, not photographed: `docs/screenshots/` drives the compiled SPA over canned API responses shaped like the demo dataset. See its [README](docs/screenshots/README.md) to regenerate them after a UI change.
 
 </details>

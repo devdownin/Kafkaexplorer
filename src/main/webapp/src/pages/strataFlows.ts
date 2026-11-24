@@ -268,3 +268,60 @@ export function linkHealth(metrics: readonly MetricConfig[]): Map<string, 'ok' |
 export function healthOf(health: ReadonlyMap<string, 'ok' | 'warning' | 'critical'>, link: StrataLink) {
   return health.get(pairKey(link.from, link.to)) ?? null;
 }
+
+// ── Links an operator's count comparison declares ──────────────────────────────────────────────
+
+export const COMPARED_VIA = 'compared by a count metric';
+
+/**
+ * The pairs a `TOPIC_COUNT_DELTA` metric compares, as links from its left topic to its right one.
+ * An operator who wrote that metric said the two topics are one flow — upstream and downstream —
+ * which is a declaration, unlike a name convention, and the only link whose health is measured.
+ * Without it the verdict had nothing to colour: the demo's five count comparisons were over topics
+ * no lineage and no naming rule linked, so the red and orange links never appeared.
+ *
+ * Only the topics in view, and only a pair no other link already draws, whichever way round.
+ */
+export function metricLinks(metrics: readonly MetricConfig[], names: readonly string[],
+  taken: readonly StrataLink[] = []): StrataLink[] {
+  const inView = new Set(names);
+  const known = new Set(taken.flatMap(link => [pairKey(link.from, link.to), pairKey(link.to, link.from)]));
+  const links: StrataLink[] = [];
+  for (const metric of metrics) {
+    if (metric.templateType !== 'TOPIC_COUNT_DELTA') continue;
+    const from = metric.templateParams?.leftTopic;
+    const to = metric.templateParams?.rightTopic;
+    if (typeof from !== 'string' || typeof to !== 'string' || from === to) continue;
+    if (!inView.has(from) || !inView.has(to) || known.has(pairKey(from, to))) continue;
+    known.add(pairKey(from, to));
+    known.add(pairKey(to, from));
+    links.push({ from, to, via: COMPARED_VIA });
+  }
+  return links;
+}
+
+// ── Which names stay written ───────────────────────────────────────────────────────────────────
+
+/** Up to this many topics in view, every column keeps its name. */
+export const LABEL_ALL_UP_TO = 12;
+/** Past it, the busiest this many keep theirs beside the ones the operator is pointing at. */
+export const BUSIEST_LABELLED = 8;
+
+/**
+ * The columns whose name stays written. Forty-eight overlapping labels hide the scene they name,
+ * so past `LABEL_ALL_UP_TO` only these keep one: whatever the operator is pointing at (`pinned` —
+ * the selection, the comparison, the focus, the hovered column, a trace's topics) and the busiest
+ * by their latest measured bucket. An unmeasured topic is never "busy": it is ranked last, not zero.
+ * Every other name is still one hover, one list row or the mini-map away.
+ */
+export function labelledTopics(topics: readonly { name: string; latest: number | null }[],
+  pinned: Iterable<string | null | undefined>, busiest = BUSIEST_LABELLED): Set<string> {
+  if (topics.length <= LABEL_ALL_UP_TO) return new Set(topics.map(topic => topic.name));
+  const labelled = new Set<string>();
+  for (const name of pinned) if (name) labelled.add(name);
+  topics.filter(topic => topic.latest !== null && topic.latest > 0)
+    .sort((a, b) => (b.latest as number) - (a.latest as number) || a.name.localeCompare(b.name))
+    .slice(0, busiest)
+    .forEach(topic => labelled.add(topic.name));
+  return labelled;
+}

@@ -372,6 +372,52 @@ describe('Strata3D page', () => {
       expect(calm.userData.link.health).toBeNull();
     });
 
+    it('links the topics a count comparison compares, in its verdict, on a layer of its own', async () => {
+      const user = userEvent.setup();
+      stub.topics = ['orders', 'demo.live.orders', 'demo.live.shipped', 'demo.live.requests', 'demo.live.processed'];
+      const compare = (left: string, right: string, lastValue: number) => ({
+        id: left, name: left + ' minus ' + right, type: 'GAUGE' as const, sql: null, description: '',
+        warningThreshold: 300, criticalThreshold: 400, lastValue, lastUpdateTime: 1, errorMessage: null,
+        history: [], lastSummary: null, createTableSql: null, templateType: 'TOPIC_COUNT_DELTA' as const,
+        templateParams: { leftTopic: left, rightTopic: right },
+        executionMode: null, labelTopic: null, labelFields: null, componentHistory: null,
+      });
+      stub.metrics = [compare('demo.live.orders', 'demo.live.shipped', 450),
+        compare('demo.live.requests', 'demo.live.processed', 12)];
+      await renderPage();
+      // No lineage and no naming rule links these: only the metric does, and on by default.
+      await waitFor(() => expect(links().length).toBe(2));
+      const breached = links().find(line => line.userData.link.from === 'demo.live.orders')!;
+      expect(breached.userData.link).toMatchObject({ to: 'demo.live.shipped', kind: 'compared', health: 'critical' });
+      expect((breached.material as THREE.LineDashedMaterial).color.getHex()).toBe(0xdd5b59);
+      const calm = links().find(line => line.userData.link.from === 'demo.live.requests')!;
+      expect(calm.userData.link.health).toBe('ok');
+      expect((calm.material as THREE.LineDashedMaterial).color.getHex()).toBe(0x4aaf99);
+      expect(particles().length).toBeGreaterThan(0);
+      await user.click(screen.getByRole('button', { name: /Layers ·/ }));
+      await user.click(screen.getByRole('checkbox', { name: /Count comparisons/ }));
+      await waitFor(() => expect(links()).toHaveLength(0));
+    });
+
+    it('writes only the useful names past a dozen columns, and all of them on request', async () => {
+      const user = userEvent.setup();
+      // jsdom has no 2D canvas: a context that draws nothing lets the labels exist.
+      const context = { fillRect: () => {}, strokeRect: () => {}, fillText: () => {} };
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+      stub.topics = ['orders', ...Array.from({ length: 19 }, (_, i) => `stream.t${String(i).padStart(2, '0')}`)];
+      await renderPage();
+      const written = () => [...columns()].filter(([, column]) =>
+        column.children.some(child => child.userData.label && child.visible)).map(([name]) => name);
+      await waitFor(() => expect(written()).toHaveLength(8));
+      // Every topic produced alike, so the tie goes by name; a selected one is written as well.
+      expect(written()).not.toContain('stream.t18');
+      await user.click(screen.getByRole('button', { name: /^stream\.t18/ }));
+      await waitFor(() => expect(written()).toContain('stream.t18'));
+      await user.click(screen.getByRole('button', { name: /Layers ·/ }));
+      await user.click(screen.getByRole('checkbox', { name: /All names/ }));
+      await waitFor(() => expect(written()).toHaveLength(20));
+    });
+
     it('lists the families in view and filters on one', async () => {
       const user = userEvent.setup();
       stub.topics = pipeline;

@@ -5,6 +5,8 @@ It provides a time-oriented view of topics and deliberate connections, complemen
 [Stream Flow](../src/main/webapp/src/pages/StreamFlow.tsx), [Lineage](../src/main/webapp/src/pages/Lineage.tsx)
 and Topic Explorer.
 
+![Kafka Strata 3D in pipeline lanes: one family per lane, its stages left to right, with the links its names suggest](img/strata.png)
+
 ## Deployment and publication
 
 Open **Observe → Strata 3D** from the application, or navigate to
@@ -36,7 +38,9 @@ these features in a deployed image. See the [container operations guide](DOCKERH
 | Dashed line | Flink INSERT dependency **declared** by Lineage | `GET /api/lineage` |
 | Fine grey dotted line (*Inferred links* layer, off by default) | A link a **naming convention suggests** (stage *n* → *n + 1*, `.in` → `.out`), never declared, never presented as one | The topic names |
 | Particles travelling a link | As many as the target produced in the **latest** bucket, on the rings' log scale; none when unmeasured | `POST /api/dashboard/activity` |
+| Near-solid line (*Count comparisons* layer) | A pair a `TOPIC_COUNT_DELTA` metric **compares**, left topic upstream: green within its thresholds, neutral with no verdict yet | `GET /api/metrics` |
 | Red or orange link | A `TOPIC_COUNT_DELTA` metric over the two topics is **critical** or **warning** | `GET /api/metrics` |
+| Topic name above a column | Every name up to 12 topics; past that the selected, compared, focused, hovered and traced topics and the 8 busiest (*All names* layer writes every one) | The topic name |
 | Teal path through the columns | Chronological matches for a searched Kafka key, each **at the height of its instant**, so the slope is the latency; faint when outside the window. **Not proven causal transfer** | `POST /api/stream-flow/stream` |
 | Coloured satellites | Lag per partition of the **selected consumer group** | `GET /api/topic/{name}/consumers` |
 | Partition ribbons in focus | Per-partition offset-production for each 2.5-minute interval; ribbon width follows each partition's **own measured** rate | `GET /api/dashboard/partition-activity?topic=...` |
@@ -105,8 +109,9 @@ can be hidden to give the scene additional space. On smaller screens, panels
 stack beneath the scene. Forecast, partition evidence and operator-initiated key
 tracing remain accessible in the **Evidence details** section.
 
-The **Layers** menu toggles activity rings, declared Flink lineage, key traces,
-selected consumer-group satellites, anomaly highlights and the spatial forecast.
+The **Layers** menu toggles activity rings, declared Flink lineage, count comparisons,
+inferred links, key traces, selected consumer-group satellites, anomaly highlights, the
+spatial forecast and whether every topic name is written.
 These are *presentation-only* switches; they do not change the shared time
 window, trigger Kafka message scans or alter stored data. Selection in
 Investigate also emphasizes declared neighbors without inventing edges.

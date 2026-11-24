@@ -15,11 +15,13 @@ export type StrataViewTopic = { name: string; layoutIndex: number; activity?: To
 const layerDefinitions: { key: StrataLayer; name: string; description: string; swatch: string }[] = [
   { key: 'activity', name: 'Activity', description: 'Measured offset-production rings', swatch: '#0c9da9' },
   { key: 'lineage', name: 'Lineage', description: 'Declared Flink paths, not message traces', swatch: '#7794ab' },
+  { key: 'compared', name: 'Count comparisons', description: 'Pairs a count-delta metric compares, coloured by its verdict', swatch: '#4aaf99' },
   { key: 'inferred', name: 'Inferred links', description: 'Guessed from topic names, never declared', swatch: '#8b9aaa' },
   { key: 'traces', name: 'Key matches', description: 'Chronological matches, not causality', swatch: '#16afbd' },
   { key: 'consumers', name: 'Consumer lag', description: 'Selected group, per partition', swatch: '#e4a757' },
   { key: 'anomalies', name: 'Deviations', description: 'Local activity candidates only', swatch: '#e7a044' },
   { key: 'forecast', name: 'Forecast', description: 'Separate metric axis, q10–q90', swatch: '#9c7de5' },
+  { key: 'labels', name: 'All names', description: 'Otherwise only the busiest and the topics in focus', swatch: '#6d7fa2' },
 ];
 
 export function StrataLayerMenu({ layers, onChange }: {

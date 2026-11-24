@@ -53,6 +53,22 @@ try {
   if (before.equals(after)) throw new Error('Orbit gesture produced no new rendered frame');
 
   await page.getByRole('combobox', { name: '3D render quality' }).selectOption('detail');
+  // At a pixel ratio above 1 the drawing buffer outgrows the frame; the *displayed* canvas must not.
+  // It did, on every HiDPI screen: the canvas was shown at its buffer size and clipped by its host,
+  // so the scene sat off-centre with its right and bottom cut. `economy` above runs at ratio 1, which
+  // is why this probe never saw it — `detail` here runs at 2.
+  await page.waitForTimeout(180);
+  const sizing = await canvas.evaluate(element => ({
+    shown: [element.clientWidth, element.clientHeight],
+    frame: [element.parentElement.clientWidth, element.parentElement.clientHeight],
+    buffer: [element.width, element.height],
+  }));
+  if (sizing.shown[0] !== sizing.frame[0] || sizing.shown[1] !== sizing.frame[1]) {
+    throw new Error(`Canvas displayed at ${sizing.shown.join('×')} in a ${sizing.frame.join('×')} frame`);
+  }
+  if (sizing.buffer[0] <= sizing.shown[0]) {
+    throw new Error(`Drawing buffer ${sizing.buffer.join('×')} is not above the displayed size at ratio 2`);
+  }
   // Copy is a workspace action adjacent to, not inside, the view-presets group.
   // Target its accessible name instead of coupling the probe to that layout detail.
   await page.getByRole('button', { name: 'Copy view link', exact: true }).click();

@@ -20,6 +20,20 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Strata 3D: count comparisons are links, and names are written where they help.** A
+  `TOPIC_COUNT_DELTA` metric now draws a link between the two topics it compares (**Count
+  comparisons** layer, on by default), green within its thresholds and red or orange in breach. The
+  verdict used to colour only a link another rule drew, and the demo's five count comparisons are
+  over `demo.live.*` topics nothing else links, so the alarm colour never showed in the demo. Past
+  twelve columns, only the selected, compared, focused, hovered and traced topics and the eight
+  busiest keep their name written; **All names** writes them all.
+- **Strata 3D on a HiDPI screen: the scene is centred and whole again.** The canvas was displayed at
+  its drawing-buffer size — 1.4 to 2 times its frame at a pixel ratio above 1 — and clipped, so on
+  any Retina or 4K display the scene sat off-centre with its right and bottom out of sight. The
+  WebGL probe now checks the displayed size at ratio 2; it ran at ratio 1 before, which is why it
+  never saw it. Found while adding **a real Strata 3D screenshot** (`docs/img/strata.png`, generated
+  by `docs/screenshots/capture.mjs`) to the READMEs, the Pages site, the Docker Hub page and the
+  operator guide, in place of the site's conceptual illustration.
 - **Strata 3D: topics told apart, flows made visible.** A column's colour is now its *family* (the
   first two segments of its name), on eight hues spread round the wheel and kept clear of the colours
   that carry a meaning, with the shade stepping along numbered stages and a socle shape per family as

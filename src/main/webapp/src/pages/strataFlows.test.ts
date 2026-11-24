@@ -3,8 +3,8 @@
 import { describe, expect, it } from 'vitest';
 import type { MetricConfig } from '../api/types';
 import {
-  FAMILY_HUES, INFERRED_VIA, familyHue, familyLegend, familyShape, flowParticleCount, healthOf,
-  inferNameLinks, isSideOutput, laneLayout, linkHealth, spiralSlot, timeHeight, topicColor,
+  BUSIEST_LABELLED, COMPARED_VIA, FAMILY_HUES, INFERRED_VIA, LABEL_ALL_UP_TO, familyHue, familyLegend, familyShape, flowParticleCount, healthOf,
+  inferNameLinks, isSideOutput, labelledTopics, laneLayout, linkHealth, metricLinks, spiralSlot, timeHeight, topicColor,
   topicFamily, topicStage,
 } from './strataFlows';
 
@@ -189,5 +189,57 @@ describe('particles and link health', () => {
     expect(linkHealth([metric({ lastValue: null })]).size).toBe(0);
     expect(linkHealth([metric({ errorMessage: 'broker down' })]).size).toBe(0);
     expect(linkHealth([metric({ templateType: 'CONSUMER_LAG' })]).size).toBe(0);
+  });
+});
+
+describe('links a count comparison declares', () => {
+  const compare = (left: string, right: string, over: Partial<MetricConfig> = {}): MetricConfig => ({
+    id: left + right, name: 'gap', type: 'GAUGE', sql: null, description: '', warningThreshold: 5,
+    criticalThreshold: 20, lastValue: null, lastUpdateTime: null, errorMessage: null, history: [],
+    lastSummary: null, createTableSql: null, templateType: 'TOPIC_COUNT_DELTA',
+    templateParams: { leftTopic: left, rightTopic: right }, executionMode: null, labelTopic: null,
+    labelFields: null, componentHistory: null, ...over,
+  });
+  const live = ['demo.live.orders', 'demo.live.shipped', 'demo.live.requests', 'demo.live.processed'];
+
+  it('links the two topics a metric compares, upstream to downstream, even before it has a value', () => {
+    expect(metricLinks([compare('demo.live.orders', 'demo.live.shipped')], live)).toEqual([
+      { from: 'demo.live.orders', to: 'demo.live.shipped', via: COMPARED_VIA },
+    ]);
+  });
+
+  it('draws a pair once, leaves a declared one to the lineage, and ignores what is out of view', () => {
+    const metrics = [
+      compare('demo.live.orders', 'demo.live.shipped'), compare('demo.live.shipped', 'demo.live.orders'),
+      compare('demo.live.requests', 'demo.live.processed'), compare('demo.live.imports', 'demo.live.indexed'),
+      compare('demo.live.orders', 'demo.live.orders'), compare('a', 'b', { templateType: 'CONSUMER_LAG' }),
+    ];
+    const declared = [{ from: 'demo.live.processed', to: 'demo.live.requests', via: 'job' }];
+    expect(metricLinks(metrics, live, declared).map(link => link.from + ' -> ' + link.to))
+      .toEqual(['demo.live.orders -> demo.live.shipped']);
+  });
+});
+
+describe('which names stay written', () => {
+  const view = (count: number, latest: (i: number) => number | null = i => i) =>
+    Array.from({ length: count }, (_, i) => ({ name: `t${String(i).padStart(2, '0')}`, latest: latest(i) }));
+
+  it('writes every name while the view is small', () => {
+    expect(labelledTopics(view(LABEL_ALL_UP_TO), []).size).toBe(LABEL_ALL_UP_TO);
+  });
+
+  it('keeps the busiest and whatever is being pointed at once it is not', () => {
+    const labelled = labelledTopics(view(30), ['t00', null, 't03', undefined]);
+    expect(labelled.has('t29')).toBe(true);
+    expect(labelled.has(`t${30 - BUSIEST_LABELLED}`)).toBe(true);
+    expect(labelled.has(`t${29 - BUSIEST_LABELLED}`)).toBe(false);
+    expect(labelled.has('t00')).toBe(true);
+    expect(labelled.has('t03')).toBe(true);
+    expect(labelled.size).toBe(BUSIEST_LABELLED + 2);
+  });
+
+  it('never ranks an unmeasured or silent topic as busy', () => {
+    expect(labelledTopics(view(20, () => null), []).size).toBe(0);
+    expect(labelledTopics(view(20, i => (i === 5 ? 3 : 0)), [])).toEqual(new Set(['t05']));
   });
 });

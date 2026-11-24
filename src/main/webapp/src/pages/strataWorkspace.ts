@@ -4,13 +4,18 @@
 import type { PartitionActivityResponse, TopicActivity, TopicActivityResponse } from '../api/types';
 import { bucketReading } from './strataTime';
 
-export type StrataLayer = 'activity' | 'lineage' | 'inferred' | 'traces' | 'consumers' | 'anomalies' | 'forecast';
+export type StrataLayer = 'activity' | 'lineage' | 'compared' | 'inferred' | 'traces' | 'consumers' | 'anomalies' | 'forecast'
+  | 'labels';
 export type StrataLayers = Record<StrataLayer, boolean>;
 
 export const DEFAULT_STRATA_LAYERS: StrataLayers = {
   activity: true, lineage: true, traces: true, consumers: true, anomalies: true, forecast: true,
+  // The pairs a count-comparison metric declares: an operator's statement, so on by default.
+  compared: true,
   // A guess from naming conventions: off until the operator asks for it.
   inferred: false,
+  // Every column's name; otherwise only the busiest and the ones being pointed at (`labelledTopics`).
+  labels: false,
 };
 
 export interface TopicEvidence {
