@@ -150,11 +150,6 @@ if ($prebuilt) { $env:DEMO_PUBLISHED_IMAGE = 'true' }
 
 # -- Defaults: the same values as demo.sh ---------------------------------------------------
 Set-Default BIND_ADDR '127.0.0.1'
-Set-Default DEMO_CONTROL_ENABLED 'true'
-if ($env:DEMO_CONTROL_ENABLED -notin @('true', 'false')) { throw 'DEMO_CONTROL_ENABLED must be true or false.' }
-if ($env:DEMO_CONTROL_ENABLED -eq 'true' -and $env:BIND_ADDR -notin @('127.0.0.1', '::1')) {
-    throw 'Demo Control Center requires loopback BIND_ADDR; set DEMO_CONTROL_ENABLED=false for an exposed demo.'
-}
 Set-Default EXPLORER_PORT '8080'
 Set-Default KAFKA_PORT '9092'
 Set-Default KAFKA_IMAGE 'apache/kafka:4.4.0'
@@ -187,6 +182,13 @@ Set-Default SPECTRA_API_PORT '8089'
 Set-Default LLM_CHAT_MODEL_NAME 'qwen2.5-7b-instruct'
 Set-Default LLM_CHAT_MODEL_FILE 'Qwen2.5-7B-Instruct-Q4_K_M.gguf'
 Set-Default SPECTRA_AUTO_INSTALL_MODELS 'true'
+
+# Follow latest published Explorer/Forecast images only in the prebuilt Forecast demo.
+# Versioned defaults remain for other stacks; explicit tags from the environment/.env win.
+if ($prebuilt) {
+    Set-Default EXPLORER_IMAGE_TAG 'latest'
+    Set-Default FORECAST_IMAGE_TAG 'latest'
+}
 
 # Forecasting.
 Set-Default FORECAST_ENVIRONMENTS 'local'
@@ -282,6 +284,7 @@ function Test-ForecastPreflight {
         }
     }
     if ($offline) { Write-Host 'Offline check: all images are local.' }
+    Write-Host "Demo images: $($env:EXPLORER_IMAGE_NAMESPACE)/kafkaexplorer:$($env:EXPLORER_IMAGE_TAG); ghcr.io/devdownin/kex-forecast:$($env:FORECAST_IMAGE_TAG)"
     Write-Host 'Preflight OK.'
 }
 
@@ -331,32 +334,27 @@ function Wait-ForecastReady {
 
 function Set-ForecastScenario([string] $Name) {
     if (-not $forecastOnly) { throw 'scenario is available in forecast mode only.' }
-    $file = Join-Path $env:FORECAST_CONFIG_DIR 'demo-scenario.conf'
-    $running = [string]((Invoke-Compose ps -q explorer) | Select-Object -First 1)
+    $controlDirectory = Join-Path $env:FORECAST_CONFIG_DIR 'demo-control'
+    $file = Join-Path $controlDirectory 'demo-scenario.conf'
     if (-not $Name) {
-        if ($running) {
-            Invoke-Compose exec -T explorer sh -c 'cat /app/demo-control/demo-scenario.conf 2>/dev/null || echo normal'
-        } elseif (Test-Path -LiteralPath $file) {
-            Write-Host ([IO.File]::ReadAllText((Resolve-Path $file).Path).Trim())
-        } else { Write-Host 'normal' }
+        if (Test-Path -LiteralPath $file) { Write-Host (([IO.File]::ReadAllText((Resolve-Path $file).Path).Trim() -split '\|', 2)[0]) }
+        else { Write-Host 'normal' }
         return
     }
     if ($Name -notin @('normal', 'overload', 'incident', 'recover', 'seasonal')) {
         throw 'Valid scenarios: normal, overload, incident, recover, seasonal.'
     }
-    if ($running) {
-        # The selected name is allowlisted. The volume is shared with the browser controller.
-        Invoke-Compose exec -T explorer sh -c 'printf "%s\n" "$0" > /app/demo-control/demo-scenario.conf' $Name | Out-Null
-    } else {
-        New-Item -ItemType Directory -Path $env:FORECAST_CONFIG_DIR -Force | Out-Null
-        [IO.File]::WriteAllText((Join-Path (Resolve-Path $env:FORECAST_CONFIG_DIR).Path 'demo-scenario.conf'),
-            "$Name`n", $Utf8NoBom)
-        Write-Host 'Scenario saved for the first startup; an existing stopped demo keeps its Docker-volume state.'
-    }
+    New-Item -ItemType Directory -Path $controlDirectory -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path (Resolve-Path $controlDirectory).Path 'demo-scenario.conf'),
+        "$Name`n", $Utf8NoBom)
     Write-Host "Live Kafka scenario: $Name (applied at the next tick, default 15 s)."
 }
 
 function Start-Demo {
+    if ($forecastOnly) {
+        # Isolate the writable scenario receipts from the private forecast config.
+        New-Item -ItemType Directory -Path (Join-Path $env:FORECAST_CONFIG_DIR 'demo-control') -Force | Out-Null
+    }
     if (-not $forecastOnly -and -not (Test-EnvSet 'OPENROUTER_API_KEY')) {
         Write-Warning ('OPENROUTER_API_KEY is empty - Process Mining answers without its LLM half and the ' +
             "agent starts DEGRADED. Set it (`$env:OPENROUTER_API_KEY = 'sk-or-...', or in .env) and rerun.")

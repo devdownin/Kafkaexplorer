@@ -34,6 +34,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SIGNALS="${SIGNALS:-$HERE/signals.awk}"
 TICK="${DEMO_LIVE_TICK:-15}"
 SCENARIO_FILE="${DEMO_SCENARIO_FILE:-/demo-control/demo-scenario.conf}"
+APPLIED_FILE="${DEMO_SCENARIO_APPLIED_FILE:-/demo-control/demo-scenario-applied.conf}"
 
 # <first topic> <second topic> <curve in signals.awk>: one line per pair, the one place to add one.
 PAIRS="demo.live.orders demo.live.shipped unshipped
@@ -94,20 +95,102 @@ hold() { # <offsets> <left topic> <right topic> <target> <now>
     >"$FIFOS/$topic"
 }
 
+# Verify *observed Kafka offsets*, not FIFO writes. Async Kafka producers can
+# persist a tick over multiple offset polls; requiring an exact integer match at a
+# particular second left overload stuck in APPLYING even after its demo metrics had
+# crossed their thresholds. Use the same scenario thresholds as the public smoke,
+# and a bounded tolerance for time-varying signals. Unrelated pairs keep evolving
+# and must not block overload, incident or seasonal acknowledgement.
+targets_reached() { # <offset snapshot> <epoch> <scenario>
+  printf '%s\n' "$PAIRS" | while read -r left right curve; do
+    case "$3:$curve" in
+      overload:unshipped|overload:backlog|incident:shift|incident:jitter|seasonal:backlog|recover:*|normal:*)
+        actual=$(( $(count_of "$left" "$1") - $(count_of "$right" "$1") ))
+        wanted=$(signal "$2" "$curve" "$3")
+        delta=$((actual - wanted))
+        [ "$delta" -ge 0 ] || delta=$((-delta))
+        case "$3:$curve" in
+          # Bounded threshold windows around the fixed scenario targets
+          # (480/185 and 195/180) exclude both the old baseline and a
+          # still-unsettled overshoot. Never confirm arbitrary excess traffic.
+          overload:unshipped) [ "$actual" -ge 460 ] && [ "$actual" -le 510 ] || return 1 ;;
+          overload:backlog)   [ "$actual" -ge 165 ] && [ "$actual" -le 215 ] || return 1 ;;
+          incident:shift)    [ "$actual" -ge 175 ] && [ "$actual" -le 225 ] || return 1 ;;
+          incident:jitter)   [ "$actual" -ge 155 ] && [ "$actual" -le 210 ] || return 1 ;;
+          # Return close to every fixed recovery baseline; the public demo
+          # specifically requires requests <= 40 and tickets <= 70.
+          recover:*) [ "$delta" -le 20 ] || return 1 ;;
+          # A minute boundary may shift baseline noise before a subsequent
+          # offset poll. Never require an exact match for continuous signals.
+          *) [ "$delta" -le 30 ] || return 1 ;;
+        esac
+        ;;
+    esac
+  done
+}
+# A container restart invalidates a previous generator's heartbeat immediately.
+[ ! -d "${APPLIED_FILE%/*}" ] || rm -f "$APPLIED_FILE"
+previous_request=''
+previous_at=''
+previous_mode=''
+pending_ticks=0
 echo "Producing live traffic every ${TICK}s (five topic pairs: orders, requests, imports, events, tickets)."
 while :; do
   now=$(date +%s)
   offsets=$(end_offsets) || offsets=""
-  mode=normal
+  request=normal
   if [ -r "$SCENARIO_FILE" ]; then
-    IFS= read -r mode < "$SCENARIO_FILE" || true
-    mode=$(printf "%s" "$mode" | tr -d "\r")
+    IFS= read -r request < "$SCENARIO_FILE" || true
+    request=$(printf '%s' "$request" | tr -d "\r")
   fi
-  case "$mode" in normal|overload|incident|recover|seasonal) ;; *) mode=normal ;; esac
+  mode=${request%%|*}
+  case "$mode" in normal|overload|incident|recover|seasonal) ;; *) mode=normal; request=normal ;; esac
+  if [ "$request" != "$previous_request" ]; then
+    pending_ticks=0
+    echo "Demo traffic request: $mode (Kafka offset verification pending)"
+  fi
   if [ -n "$offsets" ]; then
+    # A new request is only ACTIVE after a complete tick has been observed in Kafka.
+    # Recheck every tick; a stalled producer never gets a success receipt.
+    if [ "$request" = "$previous_request" ] && [ -n "$previous_at" ] &&
+       [ -d "${APPLIED_FILE%/*}" ] &&
+       targets_reached "$offsets" "$previous_at" "$previous_mode"; then
+      receipt_tmp="${APPLIED_FILE}.pending"
+      started=$now
+      if [ -r "$APPLIED_FILE" ]; then
+        old_receipt=$(cat "$APPLIED_FILE" 2>/dev/null || true)
+        case "$old_receipt" in
+          v2\|*)
+            old_rest=${old_receipt#v2|}
+            old_started=${old_rest##*|}
+            old_rest=${old_rest%|*}
+            old_request=${old_rest%|*}
+            if [ "$old_request" = "$request" ]; then
+              case "$old_started" in *[!0-9]*|'') ;; *) started=$old_started ;; esac
+            fi
+            ;;
+        esac
+      fi
+      printf 'v2|%s|%s|%s\n' "$request" "$now" "$started" > "$receipt_tmp"
+      mv -f "$receipt_tmp" "$APPLIED_FILE"
+      if [ "$started" = "$now" ]; then
+        echo "Demo traffic verified: $mode at Kafka offsets ($now)"
+      fi
+      pending_ticks=0
+    else
+      pending_ticks=$((pending_ticks + 1))
+      # Lightweight operational breadcrumb when an overloaded runner cannot
+      # drain the Kafka producer buffers. Do not log individual records.
+      if [ "$((pending_ticks % 4))" -eq 0 ]; then
+        echo "Scenario $mode pending ($pending_ticks offset polls): orders=$(( $(count_of demo.live.orders "$offsets") - $(count_of demo.live.shipped "$offsets") )), requests=$(( $(count_of demo.live.requests "$offsets") - $(count_of demo.live.processed "$offsets") )), tickets=$(( $(count_of demo.live.tickets "$offsets") - $(count_of demo.live.resolved "$offsets") )), events=$(( $(count_of demo.live.events "$offsets") - $(count_of demo.live.archived "$offsets") ))"
+      fi
+    fi
     printf '%s\n' "$PAIRS" | while read -r left right curve; do
       hold "$offsets" "$left" "$right" "$(signal "$now" "$curve" "$mode")" "$now"
     done
+    previous_request=$request
+    previous_at=$now
+    previous_mode=$mode
   fi
   sleep "$TICK"
 done

@@ -1353,7 +1353,7 @@ export type McpOutcome = 'OK' | 'DENIED' | 'ERROR';
  * qu'il soit déclaré comme tel. Le préfixe `Mcp` évite la collision qu'un type nommé `State`
  * provoquerait dans un fichier de types partagé.
  *
- * @java State
+ * @java Visibility.State
  */
 export type McpVisibilityState = 'EXPOSED' | 'EXPOSED_WITH_APPROVAL' | 'HIDDEN';
 
@@ -1742,10 +1742,14 @@ export interface ForecastCovariateComparison {
 export interface ForecastActivationRefusal {
   reason: string;
 }
-/** @java DemoControlController.ControlStatus */
+/** @java DemoControlController.State */
 export interface DemoControlStatus {
-  scenario: string;
-  changedAt: number | null;
+  enabled: boolean;
+  scenario: string | null;
+  requestedScenario: string;
+  phase: string;
+  appliedAt: number | null;
+  startedAt: number | null;
 }
 
 /** @java ForecastController.Status */

@@ -1,5 +1,73 @@
 # Metrics demo test scenarios
 
+## Forecast Demo Control Center (P2)
+
+The **Metrics** page shows a Demo Control Center only when the Explorer runs with
+`EXPLORER_DEMO_CONTROL_ENABLED=true` (set by `compose/demo-forecast.yml`). It reports
+live demo metric counts, forecast series and READY results, and lets the operator
+switch between **normal**, **overload**, **incident**, **recover**, and **seasonal**
+traffic. Disruptive scenarios show their affected metrics before confirmation; **Return to normal**
+remains a one-click escape route. Historical observations and existing forecasts are preserved.
+
+### Scenario application is verified
+
+The API distinguishes the **requested** scenario from the **confirmed** scenario. A scenario
+is *Applying* until the generator has executed a complete tick, then inspected Kafka's
+log end offsets on the following tick and confirmed that the scenario-affected topic pairs reflect
+the requested values. Unaffected topic pairs continue their independent curves and cannot block
+confirmation of an otherwise applied incident. Only then does it write a timestamped acknowledgement
+(`demo-scenario-applied.conf`) to the local shared control directory. The UI shows
+*Active* with the generator's verification time, or *Generator unavailable* when the
+receipt becomes stale (default 75 seconds). A UUID on UI requests prevents a previous
+acknowledgement from being mistaken for the new request; the CLI's plain single-word
+scenario commands remain compatible. A request is not proof of delivery.
+
+During the first load, metric/forecast counters say *Loading*, never a fabricated zero;
+unavailable forecast data is labelled *Unavailable*, separately from a genuine zero
+series. A failed control API request produces a retryable error panel instead of silently
+hiding the demo; an intentional 404 still hides it in non-demo deployments.
+
+The endpoint is disabled (404) in regular deployments, validates a fixed allowlist,
+rejects cross-origin browser writes and never runs shell commands. The demo binds
+its UI to loopback by default; do not expose demo control on a public host.
+
+**Published-image note:** this UI and API require a KafkaExplorer image built from
+this change or a subsequent published release. The no-build demo now follows
+`compagnonsdudev/kafkaexplorer:latest` by default; the Control Center appears
+once that moving tag includes the merged P2 change. Until then, CLI scenario control
+(`./demo-forecast.sh scenario <name>`) remains available.
+
+## Scenario Studio — lots B and C
+
+In the Metrics **Forecast Demo Control Center**, choose **Manage scenarios** to see
+five compact mini-curve previews. Those previews illustrate the shape of a scenario;
+they are explicitly **not observed Kafka measurements**. Selected cards describe the
+affected business signals before the generator request is sent. **View impacted metrics**
+focuses the actual relevant metric cards and clears other filters; **Show all metrics**
+restores the unfiltered list.
+
+The **Guided demonstration** runs a three-step narrative:
+**Baseline → Incident → Recovery**. Each action changes the real Kafka demo generator;
+an incident still needs explicit confirmation, and Recovery stays a one-click action.
+The UI distinguishes a requested change from Kafka-verified activation. After
+confirmation it refreshes the affected metrics once, without issuing a refresh on every
+generator heartbeat.
+
+The resulting first-verified activation time stays stable as new heartbeats arrive.
+Metric cards and the detailed Forecast chart place a vertical event marker only when
+that time falls **inside non-imputed, measured history**. Until then, the note says the
+event is not yet represented; it does not draw a future observation or invent a delta.
+The detailed view also offers **Compare with previous forecast**, using the existing
+previous-prediction overlay. The post-event mean observed-minus-predicted difference
+is computed **only at exact matching timestamps**; when no measured point is available,
+it explicitly says so. Forecast model uncertainty and out-of-range intervals are
+never implied to be actual observations.
+
+The responsive layout supports narrow 320 px screens and touch, uses keyboard-reachable
+buttons with focus rings and accessible status messages, and avoids motion-dependent
+feedback. If the viewer prefers reduced motion, scrolling to metrics is immediate.
+The visual surfaces use KafkaExplorer's theme tokens instead of hard-coded colors.
+
 ## No-build forecast demo (published images)
 
 This is the shortest way to run the **complete live Metrics/Forecast demo** without compiling
@@ -22,9 +90,14 @@ TimesFM bearer and MCP bearer are generated once and reused across launches. No 
 is needed. `COMPOSE_PROJECT_NAME` defaults to `kafka-explorer-demo`, bound to loopback on
 8080 (Explorer), 8085 (Schema Registry) and 9092 (Kafka).
 
-The scripts **pull**, but never build, the pinned published Explorer
-(`compagnonsdudev/kafkaexplorer:2.9.1` by default) and forecast
-(`ghcr.io/devdownin/kex-forecast:0.3.0` by default) images.
+The scripts **pull**, but never build, the latest published Explorer
+(`compagnonsdudev/kafkaexplorer:latest`) and Forecast/TimesFM
+(`ghcr.io/devdownin/kex-forecast:latest`) images by default.
+Only the prebuilt Forecast demo uses these moving tags: other Compose stacks
+retain versioned defaults. Override either image independently by setting
+`EXPLORER_IMAGE_TAG` and/or `FORECAST_IMAGE_TAG` in the environment or root
+`.env`, e.g. `EXPLORER_IMAGE_TAG=2.9.1 FORECAST_IMAGE_TAG=0.3.0 ./demo-forecast.sh`.
+Use versioned overrides to reproduce an older demonstration.
 A missing/unavailable image is a hard failure rather than an implicit local build. The
 forecast image already includes model checkpoints; `forecast-model-prefetch` is not started.
 Allow roughly **4 CPUs and 8 GiB RAM** for TimesFM, plus Kafka and PostgreSQL.
@@ -64,7 +137,7 @@ A successful HTTP health request alone does **not** mean the demo is ready.
 
 ### Fully offline launch
 
-First run the normal launcher once so all pinned images are present, or import those
+First run the normal launcher once so the selected images are present, or import those
 images from `docker save` archives using `docker load`. Then launch with
 `--offline` on Linux/macOS or `-Offline` on Windows. Offline mode **fails
 before starting** if an image is missing. It uses `docker compose up --no-build
@@ -75,10 +148,12 @@ specifically disables image/model fetching.
 ### Interactive live traffic scenarios
 
 These commands work on an already-running stack and are applied at the next live
-producer tick (normally 15 seconds), by writing `demo-scenario.conf` into a
-**dedicated named Docker volume** shared with the browser control panel. The generator
-mounts that volume read-only. A mode chosen before the first startup is staged in
-`.forecast-stack/config/demo-scenario.conf` and imported by `demo-control-init`.
+producer tick (normally 15 seconds), by writing `demo-scenario.conf` into the
+host-side `.forecast-stack/config/demo-control` directory. This dedicated
+writable directory keeps scenario requests and Kafka-verified receipts separate
+from `.forecast-stack/config/forecasts.yml`; the forecast stack bootstrap resets
+the parent directory permissions during every CLI call. The producer reads
+requests and writes receipts in the dedicated directory.
 They change **real Kafka topic offsets** and thus the next live observations; they
 do not rewrite the pre-seeded historical observations or spoof forecasts.
 
@@ -95,12 +170,12 @@ For example, run `./demo-forecast.sh scenario incident`, observe Metrics and
 the difference between the previous forecast and reality, then run
 `./demo-forecast.sh scenario recover` and `./demo-forecast.sh scenario normal`.
 The equivalent Windows commands begin `.\\demo-forecast.cmd`.
-A running scenario persists across container restarts until changed. `reset`
-deletes the scenario volume; an optional host-side pre-start selection remains and
-can be imported on first startup. Select `normal` before a clean demonstration. Forecast results are not instant: their cadence
+A scenario persists across container restarts until changed; `reset` deletes
+volumes but deliberately preserves the local scenario file. Select `normal`
+before a clean demonstration. Forecast results are not instant: their cadence
 and the time needed for new observed measurements still apply.
 
-The dedicated `.github/workflows/forecast-prebuilt-smoke.yml` checks the *published
+The dedicated `.github/workflows/forecast-prebuilt-smoke.yml` checks the *published latest
 images* via the same launcher, validates the initial READY forecast, exercises
 the incident and recovery scenarios against real Kafka metrics, and restarts
 offline. It is separate from the source-build CI regression job.
@@ -109,42 +184,6 @@ Requires Docker Compose **2.24+** (for `!reset` / `!override`); on Linux/macOS
 the Bash launcher also needs `curl` and `openssl` for health checks and first-run credentials.
 The original `./demo.sh --forecast` / `.\demo.cmd -Forecast` still run the
 source-build demo; its forecast-only mode now also waits for full forecast readiness.
-
-## Demo Control Center — P2 (source builds and subsequent releases)
-
-On **Metrics**, an opt-in `Forecast Demo Control Center` appears above the filters when
-the Explorer image includes the demo endpoint and is launched with the Forecast demo
-Compose overlay. It is **not present in a normal KafkaExplorer deployment**:
-`GET /api/demo-control` returns 404 unless `EXPLORER_DEMO_CONTROL_ENABLED=true`.
-
-The five scenario buttons — **Normal**, **Overload**, **Incident**, **Recovery**, and
-**Seasonality** — change the live generator on its next tick (15 seconds by default).
-Their visual state is confirmed by the server rather than assumed on click. The CLI
-`./demo-forecast.sh scenario overload` and `.\\demo-forecast.cmd scenario overload`
-use the same isolated Docker volume, so a CLI change is reflected in the UI's next poll.
-The existing nine hours of synthetic history are not modified by scenario changes.
-
-The panel shows **observational** indicators for the Explorer API, recent Kafka-derived
-metric readings, available history context, and ready TimesFM forecasts. These do not
-claim to be Docker container health statuses. The **JSON** and **HTML** export actions
-save a point-in-time report of the five demo metrics, thresholds, available observed
-samples, forecast states, predicted points and quality metrics. No credentials, model
-tokens, database connection strings or complete raw history are exported.
-
-**Isolation:** the `demo_control` named volume is writable only from Explorer (UID 10001)
-and read-only in the live Kafka generator; `demo-control-init` initializes its ownership.
-No Docker socket is mounted. The optional browser endpoint accepts only the five named
-modes and requires a JSON request with `X-Kex-Demo-Control: change-scenario`.
-The demo is unauthenticated and must remain bound to loopback (default
-`BIND_ADDR=127.0.0.1`); do not enable the control API in an externally reachable
-instance. Removing the demo overlay removes the endpoint. `reset` deletes the scenario
-volume along with the other demo volumes.
-
-**Published image caveat:** `demo-forecast.sh` deliberately uses a pinned published
-Explorer image (currently 2.9.1). Until a release containing this P2 backend/frontend
-is published and selected via `EXPLORER_IMAGE_TAG`, the older image has no
-`/api/demo-control` route and the panel remains hidden. CLI scenarios continue to work
-without a local build on the existing pinned image.
 
 ## The forecast demo: two live metrics that are forecast from the first minutes
 

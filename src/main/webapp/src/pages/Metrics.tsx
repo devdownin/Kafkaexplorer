@@ -29,11 +29,12 @@ import type {
 } from '../api/types';
 import { hasRunningMetric } from './metricsHealth';
 import { MetricsPulseBackdrop } from '../components/metrics/MetricsPulseBackdrop';
-import { DemoControlCenter } from '../components/metrics/DemoControlCenter';
 
 const BACKDROP_KEY = 'kse:metrics-backdrop';
 import { ForecastSetupWizard } from '../components/metrics/ForecastSetupWizard';
 import { ForecastPanel } from '../components/metrics/ForecastPanel';
+import { DemoControlCenter } from '../components/metrics/DemoControlCenter';
+import type { DemoScenarioEvent } from '../components/metrics/demoScenarios';
 import { AutoCreateRefused, createForecastFromMetric } from '../components/metrics/forecastAutoCreate';
 import { about, forecastStage, type ForecastStageSummary } from '../components/metrics/forecastStage';
 import { EMPTY_REACH_MEMORY, forecastReadDue, groupReasons, keepUnchanged, nextReachMemory } from './metricsPolling';
@@ -173,6 +174,11 @@ const Metrics: React.FC = () => {
   const [creatingForecastId, setCreatingForecastId] = useState('');
   // The panel's own poll feeds the cards: one request for both, not one per card.
   const [forecastStatus, setForecastStatus] = useState<ForecastStatus | null>(null);
+  const [demoEvent, setDemoEvent] = useState<DemoScenarioEvent | null>(null);
+  const [demoFocus, setDemoFocus] = useState<string[] | null>(null);
+  const lastDemoConfirmation = useRef('');
+
+  const [forecastStatusQueried, setForecastStatusQueried] = useState(false);
   const [forecastRevision, setForecastRevision] = useState(0);
   // The page's one clock, handed to the forecast panel so both read on the same tick.
   const [forecastClock, setForecastClock] = useState(0);
@@ -963,6 +969,36 @@ const Metrics: React.FC = () => {
     }
   };
 
+  // Only a confirmed scenario triggers an immediate metric recomputation. A generator
+  // heartbeat must never fan out into repeated POST /refresh requests.
+  const onDemoConfirmed = useCallback((event: DemoScenarioEvent) => {
+    const key = `${event.scenario}:${event.at}`;
+    if (lastDemoConfirmation.current === key) return;
+    const first = lastDemoConfirmation.current === '';
+    lastDemoConfirmation.current = key;
+    // Opening a new demo at its default normal state must not trigger five expensive
+    // refresh requests; only an actual scenario transition should recompute them.
+    if (first && event.scenario === 'normal') return;
+    setDemoEvent(event);
+    void Promise.allSettled(event.metricIds.map(metricId =>
+      axios.post(`/api/metrics/${encodeURIComponent(metricId)}/refresh`, undefined, { timeout: 10000 })))
+      .then(() => void fetchMetrics());
+  }, [fetchMetrics]);
+
+  const onInspectDemoMetrics = useCallback((ids: string[]) => {
+    setDemoFocus(ids);
+    setFilterType('all');
+    setFilterStatus('all');
+    setFilterForecast('all');
+    // The list is already mounted; focus the chart section for keyboard users too.
+    window.requestAnimationFrame(() => {
+      const target = document.getElementById('demo-metrics-results');
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView?.({ block: 'start',
+        behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    });
+  }, []);
+
   const counts = metrics.reduce(
     (acc, m) => { acc[getStatus(m)]++; return acc; },
     { ok: 0, warning: 0, critical: 0, error: 0, pending: 0 }
@@ -1136,6 +1172,7 @@ const Metrics: React.FC = () => {
       refused.length && !started ? 'error' : 'success');
   };
   const filteredMetrics = metrics
+    .filter(m => !demoFocus || demoFocus.includes(m.id))
     .filter(m => filterType === 'all' || m.type === filterType)
     .filter(m => filterStatus === 'all' || getStatus(m) === filterStatus)
     .filter(m => filterForecast === 'all'
@@ -1150,7 +1187,7 @@ const Metrics: React.FC = () => {
       }
       return SEVERITY_ORDER[getStatus(a)] - SEVERITY_ORDER[getStatus(b)];
     });
-  const filtersActive = filterType !== 'all' || filterStatus !== 'all' || filterForecast !== 'all';
+  const filtersActive = demoFocus !== null || filterType !== 'all' || filterStatus !== 'all' || filterForecast !== 'all';
 
   return (
     // `relative` ancre le fond animé de la page, et rien de plus : surtout pas `isolate`, qui
@@ -1181,6 +1218,11 @@ const Metrics: React.FC = () => {
         }
       />
 
+      <DemoControlCenter metricCount={metrics.filter(metric => metric.id.startsWith('demo-live-')).length}
+        metrics={metrics}
+        metricsLoading={loading} forecasts={forecastStatus} forecastsQueried={forecastStatusQueried}
+        onConfirmed={onDemoConfirmed} onInspectMetrics={onInspectDemoMetrics} />
+
       {/* Summary bar */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Stat label="Total" value={metrics.length} />
@@ -1188,8 +1230,6 @@ const Metrics: React.FC = () => {
         <Stat label="Warning" value={counts.warning} tone={counts.warning > 0 ? 'warning' : 'none'} />
         <Stat label="Critical" value={counts.critical + counts.error} tone={(counts.critical + counts.error) > 0 ? 'error' : 'none'} />
       </div>
-
-      <DemoControlCenter metrics={metrics} forecast={forecastStatus} clock={forecastClock} now={forecastNow} />
 
       {/* Filters */}
       {!loading && metrics.length > 0 && (
@@ -1252,7 +1292,7 @@ const Metrics: React.FC = () => {
             ))}
           </div>
           {filtersActive && (
-            <button onClick={() => { setFilterType('all'); setFilterStatus('all'); setFilterForecast('all'); }}
+            <button onClick={() => { setFilterType('all'); setFilterStatus('all'); setFilterForecast('all'); setDemoFocus(null); }}
               className="text-[12px] text-on-surface-variant hover:text-on-surface transition-colors flex items-center gap-1">
               <span className="material-symbols-outlined text-[16px]">close</span>Clear filters
             </button>
@@ -1286,6 +1326,14 @@ const Metrics: React.FC = () => {
         <ErrorPanel error={listError} onRetry={() => void fetchMetrics()} />
       )}
 
+      {demoFocus && <div role="note" aria-label="Demo metric spotlight"
+        className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
+        <p className="text-on-surface"><strong>Scenario spotlight</strong> · {filteredMetrics.length} relevant metrics shown
+          {demoEvent ? ` · ${demoEvent.scenario} confirmed at ${new Date(demoEvent.at).toLocaleTimeString()}` : ''}</p>
+        <button type="button" className="min-h-11 rounded-lg px-3 text-primary hover:bg-primary/10"
+          onClick={() => setDemoFocus(null)}>Show all metrics</button>
+      </div>}
+      <div id="demo-metrics-results" tabIndex={-1} className="scroll-mt-24 outline-none" aria-label="Demo metrics results" />
       {/* Content */}
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" role="status" aria-label="Loading metrics">
@@ -1330,6 +1378,7 @@ const Metrics: React.FC = () => {
               forecastUnavailableReason={forecastReasons.get(metric.id)}
               forecast={forecastStages.get(metric.id) ?? (createdForecastMetricId === metric.id ? STARTED_STAGE : undefined)}
               forecastSeries={forecastSeriesByMetric.get(metric.id)}
+              demoEvent={demoEvent?.metricIds.includes(metric.id) ? demoEvent : null}
               forecastNow={forecastReaches.has(metric.id) ? forecastNow : undefined}
               nextForecastAt={forecastSeriesByMetric.has(metric.id) ? forecastStatus?.nextCycleAt ?? null : null}
               refreshDurationMs={refreshCosts?.metrics[metric.id]?.lastDurationMs}
@@ -1362,7 +1411,8 @@ const Metrics: React.FC = () => {
             setForecastRevision(v => v + 1);
           }} />
       </section>}
-      <ForecastPanel refresh={forecastRevision} clock={forecastClock} focus={forecastFocus} metricNames={metricNames} metricThresholds={metricThresholds} onStatus={status => {
+      <ForecastPanel refresh={forecastRevision} clock={forecastClock} focus={forecastFocus} metricNames={metricNames} metricThresholds={metricThresholds} demoEvent={demoEvent} onStatus={status => {
+        setForecastStatusQueried(true);
         if (status) forecastReads.current = { lastAt: Date.now(), nextCycleAt: status.nextCycleAt ?? null };
         // Series by series, as the list: a series that did not move stays the same object.
         setForecastStatus(previous => {

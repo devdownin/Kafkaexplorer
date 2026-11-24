@@ -85,13 +85,6 @@ fi
 
 # ── Defaults ─────────────────────────────────────────────────────────────────────
 export BIND_ADDR=${BIND_ADDR:-127.0.0.1}
-export DEMO_CONTROL_ENABLED=${DEMO_CONTROL_ENABLED:-true}
-[[ $DEMO_CONTROL_ENABLED == true || $DEMO_CONTROL_ENABLED == false ]] ||
-  { echo 'DEMO_CONTROL_ENABLED must be true or false.' >&2; exit 2; }
-if [[ $DEMO_CONTROL_ENABLED == true && $BIND_ADDR != 127.0.0.1 && $BIND_ADDR != ::1 ]]; then
-  echo 'Demo Control Center requires loopback BIND_ADDR; use DEMO_CONTROL_ENABLED=false for an exposed demo.' >&2
-  exit 2
-fi
 export EXPLORER_PORT=${EXPLORER_PORT:-8080}
 export KAFKA_PORT=${KAFKA_PORT:-9092}
 export KAFKA_IMAGE=${KAFKA_IMAGE:-apache/kafka:4.4.0}
@@ -130,6 +123,14 @@ export SPECTRA_API_PORT=${SPECTRA_API_PORT:-8089}
 export LLM_CHAT_MODEL_NAME=${LLM_CHAT_MODEL_NAME:-qwen2.5-7b-instruct}
 export LLM_CHAT_MODEL_FILE=${LLM_CHAT_MODEL_FILE:-Qwen2.5-7B-Instruct-Q4_K_M.gguf}
 export SPECTRA_AUTO_INSTALL_MODELS=${SPECTRA_AUTO_INSTALL_MODELS:-true}
+
+# The prebuilt Forecast demo follows published application/model images by default.
+# Other stacks retain versioned pins; an explicit environment/.env tag always wins.
+# Keep this outside Compose so the repository's production image-pin checks stay strict.
+if [[ $DEMO_PREBUILT == true ]]; then
+  export EXPLORER_IMAGE_TAG=${EXPLORER_IMAGE_TAG:-latest}
+  export FORECAST_IMAGE_TAG=${FORECAST_IMAGE_TAG:-latest}
+fi
 
 # Forecasting.
 export FORECAST_ENVIRONMENTS=${FORECAST_ENVIRONMENTS:-local}
@@ -227,6 +228,7 @@ doctor() {
   done < <(compose config --images | sort -u)
   (( missing == 0 )) || return 1
   [[ $DEMO_OFFLINE != true ]] || echo 'Offline check: all images are available locally.'
+  echo "Demo images: ${EXPLORER_IMAGE_NAMESPACE}/kafkaexplorer:${EXPLORER_IMAGE_TAG}; ghcr.io/devdownin/kex-forecast:${FORECAST_IMAGE_TAG}"
   echo 'Preflight OK.'
 }
 
@@ -288,30 +290,16 @@ wait_forecast_ready() {
 }
 set_scenario() {
   [[ $DEMO_MODE == forecast ]] || { echo 'scenario is available in forecast mode only.' >&2; return 2; }
-  local name=${1:-} file="${FORECAST_CONFIG_DIR}/demo-scenario.conf" running
-  # The browser and the live generator share a Docker volume. Retain a host fallback for
-  # a scenario selected before the first startup (the volume initializer imports it once).
-  running=$(compose ps -q explorer 2>/dev/null || true)
+  local name=${1:-} file="${FORECAST_CONFIG_DIR}/demo-control/demo-scenario.conf"
   if [[ -z $name ]]; then
-    if [[ -n $running ]]; then
-      compose exec -T explorer sh -c 'cat /app/demo-control/demo-scenario.conf 2>/dev/null || echo normal'
-    elif [[ -f $file ]]; then
-      cat "$file"
-    else
-      echo normal
-    fi
+    if [[ -f $file ]]; then IFS='|' read -r current _ < "$file" || true; echo "${current:-normal}"; else echo normal; fi
     return 0
   fi
   case $name in normal|overload|incident|recover|seasonal) ;; *)
     echo 'Usage: scenario [normal|overload|incident|recover|seasonal]' >&2; return 2 ;; esac
-  if [[ -n $running ]]; then
-    # The value has already passed the fixed allowlist; no shell expansion of arbitrary input.
-    compose exec -T explorer sh -c 'printf "%s\\n" "$1" > /app/demo-control/demo-scenario.conf' -- "$name"
-  else
-    mkdir -p "$FORECAST_CONFIG_DIR"
-    printf '%s\n' "$name" > "$file"
-    echo 'Scenario stored for initial startup. An existing stopped stack retains its Docker-volume state.'
-  fi
+  mkdir -p "${FORECAST_CONFIG_DIR}/demo-control"
+  chmod 0777 "${FORECAST_CONFIG_DIR}/demo-control"
+  printf '%s\n' "$name" > "$file"
   echo "Live Kafka scenario set to $name (next generator tick, default 15 s)."
 }
 
@@ -335,12 +323,19 @@ up() {
     echo 'WARN: OPENROUTER_API_KEY is empty — Process Mining answers without its LLM half and the' >&2
     echo '      agent starts DEGRADED. Export it (or put it in .env) and rerun ./demo.sh.' >&2
   fi
+  if [[ $DEMO_MODE == forecast ]]; then
+    # A dedicated writable demo-only mount survives forecast-stack.sh --prepare-only,
+    # which intentionally restores mode 0755 on the *parent* config directory for
+    # every CLI invocation (including "scenario" and "verify").
+    mkdir -p "${FORECAST_CONFIG_DIR}/demo-control"
+    chmod 0777 "${FORECAST_CONFIG_DIR}/demo-control"
+  fi
   if [[ $DEMO_PREBUILT == true ]]; then
     for secret in FORECAST_POSTGRES_PASSWORD TIMESFM_TOKEN EXPLORER_MCP_AUTH_TOKEN; do
       [[ -n ${!secret:-} ]] || { echo "Missing $secret. Check .env and .forecast-stack/.env." >&2; exit 1; }
     done
     doctor
-    echo "Prebuilt forecast demo: using pinned KafkaExplorer and TimesFM images; no local build or model download."
+    echo "Prebuilt forecast demo: published KafkaExplorer and TimesFM images; no local build or model download."
     echo "TimesFM resources: ${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT}. Model licence: services/timesfm/licenses/NOTICE.md"
     compose config --quiet
     if [[ $DEMO_OFFLINE != true ]]; then compose pull --quiet --ignore-buildable; fi

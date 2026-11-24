@@ -58,6 +58,10 @@ const API = [
   [m => m.startsWith('/api/topic/') && m.endsWith('/search'), () => F.topicSearch],
   [m => m.startsWith('/api/topic/') && m.endsWith('/consumers'), () => F.topicConsumers],
   [m => m.startsWith('/api/topic/'), () => F.topicDetail],
+  // The screenshot server is not a demo-mode deployment: the real controller
+  // deliberately answers 404 when the feature is disabled. This explicit stub
+  // prevents the Metrics screenshots from being captured with an unstubbed API.
+  [m => m === '/api/demo-control', () => ({ [STATUS]: 404 })],
   [m => m === '/api/forecasts', () => F.forecastStatus],
   // Card-driven creation uses this route before the screenshot can show the started state.
   [m => m === '/api/forecasts/series', () => F.forecastApplied],

@@ -113,14 +113,16 @@ The stacks above are a base plus overlays, so several carry two `-f`. Set `COMPO
 ### Forecast demo without a local build
 
 ```bash
-./demo-forecast.sh             # Docker Compose pulls published images, initializes secrets and starts live metrics
+./demo-forecast.sh             # pulls latest Explorer and Forecast images; initializes secrets and starts live metrics
 ./demo-forecast.sh logs demo-forecast-seed
 ./demo-forecast.sh down        # keep data; reset deletes volumes
 ```
 
 On Windows: `.\\demo-forecast.cmd` (same `ps`, `logs`, `down` and `reset` commands).
-
-**Forecast demo (P2):** the Metrics page includes an opt-in Demo Control Center for switching live Kafka scenarios and exporting JSON/HTML forecast reports, when the selected Explorer image contains this feature. It stays hidden on standard deployments and older published images. See [Metrics demo scenarios](docs/metrics-demo-scenarios.md#demo-control-center--p2-source-builds-and-subsequent-releases).
+The no-build Forecast demo pulls `compagnonsdudev/kafkaexplorer:latest` and
+`ghcr.io/devdownin/kex-forecast:latest` on each online launch. To pin a
+reproducible demo, set `EXPLORER_IMAGE_TAG` and/or `FORECAST_IMAGE_TAG`;
+other deployment stacks keep their versioned defaults.
 
 The launcher first checks Docker, Compose >= 2.24, ports, memory and images, then
 waits until the five historical metrics and a real **READY TimesFM forecast** exist
@@ -133,7 +135,7 @@ and `scenario normal`. The scenario control does not modify seeded history.
 No Maven, npm, local Docker image build or model-weight download is required; Docker Compose 2.24+
 and image pulls are required. The stack includes Kafka, Schema Registry, MCP,
 PostgreSQL, TimesFM and five continuously updated demo metrics with seeded history.
-The pinned forecast image bundles Timestral-28M under a [restricted model license](services/timesfm/licenses/NOTICE.md);
+The Forecast image bundles Timestral-28M under a [restricted model license](services/timesfm/licenses/NOTICE.md);
 review it even if Timestral shadow mode is disabled. See the
 [forecast demo scenarios](docs/metrics-demo-scenarios.md) for defaults and walkthroughs.
 

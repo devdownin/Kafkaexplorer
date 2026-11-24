@@ -158,7 +158,13 @@ with tempfile.TemporaryDirectory() as tmp:
     # produce to the *second* one — the only way to see the keys it gives them.
     for left in ('orders', 'requests', 'imports', 'events', 'tickets'):
         (tmp / 'out' / f'demo.live.{left}').write_text(''.join(f'{left}-{i}|{{}}\n' for i in range(1, 601)))
-    env = {'PATH': '/usr/bin:/bin', 'OUT': str(tmp / 'out'), 'KAFKA_BIN': str(tmp / 'bin'), 'DEMO_LIVE_TICK': '1'}
+    # Exercise the request/ack protocol under the stub broker as well as topic offsets.
+    control = tmp / 'control'
+    control.mkdir()
+    (control / 'demo-scenario.conf').write_text('normal|test-revision\n')
+    env = {'PATH': '/usr/bin:/bin', 'OUT': str(tmp / 'out'), 'KAFKA_BIN': str(tmp / 'bin'),
+           'DEMO_LIVE_TICK': '1', 'DEMO_SCENARIO_FILE': str(control / 'demo-scenario.conf'),
+           'DEMO_SCENARIO_APPLIED_FILE': str(control / 'demo-scenario-applied.conf')}
     try:
         subprocess.run(['sh', str(DIR / 'live.sh'), 'stub:9092'], env=env, capture_output=True, text=True, timeout=5)
     except subprocess.TimeoutExpired:
@@ -170,6 +176,14 @@ with tempfile.TemporaryDirectory() as tmp:
     def lines(topic):
         path = tmp / 'out' / topic
         return path.read_text().splitlines() if path.exists() else []
+
+    receipt = control / 'demo-scenario-applied.conf'
+    if not receipt.exists():
+        problems.append('live.sh did not acknowledge a scenario after Kafka offsets reflected the completed tick')
+    else:
+        parts = receipt.read_text().strip().split('|')
+        if len(parts) != 5 or parts[:3] != ['v2', 'normal', 'test-revision'] or not all(p.isdigit() for p in parts[3:]):
+            problems.append('live.sh receipt does not identify the exact request and verified tick')
 
     ended = int(time.time())
     for left, right, curve in (('demo.live.orders', 'demo.live.shipped', 'unshipped(t)'),
@@ -191,6 +205,18 @@ with tempfile.TemporaryDirectory() as tmp:
         elif [l.split('|')[0] for l in first[:shared]] != [l.split('|')[0] for l in second[:shared]]:
             problems.append(f'live.sh gave {left} and {right} different keys: a key traced in Stream Flow would not be found in both')
 
+    # A constant overload must become verified even as unrelated pairs retain
+    # their baseline oscillations. This reproduces the prebuilt smoke transition.
+    (control / 'demo-scenario.conf').write_text('overload|test-overload\n')
+    try:
+        subprocess.run(['sh', str(DIR / 'live.sh'), 'stub:9092'], env=env,
+                       capture_output=True, text=True, timeout=7)
+    except subprocess.TimeoutExpired:
+        pass
+    time.sleep(1)
+    if not receipt.exists() or not receipt.read_text().startswith('v2|overload|test-overload|'):
+        problems.append('live.sh did not verify an overload transition against Kafka offsets')
+
 # 3. Both platforms, and the compose registry, name the overlay — and layer the same files. The two
 # scripts are twins that nothing else compares; the forecast-only mode (`--forecast` / `-Forecast`)
 # is the newest thing they must agree about.
@@ -210,6 +236,19 @@ for name in ('demo.sh', 'demo.ps1'):
 if 'compose/demo-forecast.yml' not in (ROOT / '.github/workflows/ci.yml').read_text():
     problems.append('ci.yml does not name compose/demo-forecast.yml among the overlays it resolves')
 overlay = (ROOT / 'compose/demo-forecast.yml').read_text()
+# The normal forecast preparer chmods its configuration directory to 0755 on
+# every invocation. Sharing that *parent* with demo-live made the receipt write
+# fail after the first "scenario" CLI call, and restart the producer repeatedly.
+control_mount = '${FORECAST_CONFIG_DIR:-./.forecast-stack/config}/demo-control:'
+if overlay.count(control_mount) != 2:
+    problems.append('demo control must use its own writable subdirectory in both explorer and generator mounts')
+for launcher in ('demo.sh', 'demo.ps1'):
+    if 'demo-control/demo-scenario.conf' not in (ROOT / launcher).read_text() and (
+        launcher != 'demo.ps1' or "Join-Path $controlDirectory 'demo-scenario.conf'" not in (ROOT / launcher).read_text()):
+        problems.append(f'{launcher} must write to the isolated demo-control directory')
+if '.forecast-stack/config/demo-control/demo-scenario-applied.conf' not in (
+    ROOT / 'ci/prebuilt-demo-scenarios.py').read_text():
+    problems.append('smoke test must read acknowledgements from the same isolated demo-control directory')
 for script in ('live.sh', 'seed.sh', 'signals.awk'):
     if not (DIR / script).is_file():
         problems.append(f'scripts/demo-forecast/{script} is missing')

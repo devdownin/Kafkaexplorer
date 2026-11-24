@@ -1,156 +1,296 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
-import { Badge, Button, Card } from '../ui';
-import type { DemoControlStatus, ForecastStatus, MetricConfig } from '../../api/types';
+import type { ForecastStatus, MetricConfig } from '../../api/types';
 import { demoSnapshot, downloadDemoReport } from './demoReport';
+import { type Scenario, type DemoScenarioEvent, SCENARIOS, scenarioFor, previewPath } from './demoScenarios';
 
-type Scenario = 'normal' | 'overload' | 'incident' | 'recover' | 'seasonal';
-const SCENARIOS: { key: Scenario; title: string; detail: string; icon: string }[] = [
-  { key: 'normal', title: 'Normal', detail: 'Natural traffic patterns', icon: 'check_circle' },
-  { key: 'overload', title: 'Overload', detail: 'Orders and requests back up', icon: 'trending_up' },
-  { key: 'incident', title: 'Incident', detail: 'Ticket and event spikes', icon: 'warning' },
-  { key: 'recover', title: 'Recovery', detail: 'Drain outstanding work', icon: 'restart_alt' },
-  { key: 'seasonal', title: 'Seasonality', detail: 'Fast, repeating request peaks', icon: 'waves' },
-];
+type Phase = 'ACTIVE' | 'APPLYING' | 'STALE';
+type DemoState = {
+  enabled: boolean;
+  scenario: Scenario | null;
+  requestedScenario: Scenario;
+  phase: Phase;
+  appliedAt: number | null;
+  startedAt: number | null;
+};
+type View = 'loading' | 'hidden' | 'ready' | 'error';
 
-/**
- * Mounted only for the opt-in demo API (404 is an ordinary production deployment).
- * Reuses the Metrics page's visible-tab clock — no independent polling loop.
- */
-export function DemoControlCenter({ metrics, forecast, clock, now }: {
-  metrics: MetricConfig[]; forecast: ForecastStatus | null; clock: number; now: number;
+function ScenarioPreview({ scenario }: { scenario: Scenario }) {
+  const option = scenarioFor(scenario);
+  return <svg className="mt-2 h-11 w-full" viewBox="0 0 152 44" preserveAspectRatio="none"
+    role="img" aria-label={`Illustrative ${option.label.toLowerCase()} traffic shape, not live data`}>
+    <path d="M0 40 H152" stroke="currentColor" strokeOpacity={0.12} fill="none" />
+    <path d={previewPath(option.preview)} fill="none" stroke="currentColor" strokeWidth="2.5"
+      strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+  </svg>;
+}
+
+/** Opt-in controller: 404 means absent by design, not an error banner on normal installations. */
+export function DemoControlCenter({ metricCount, metrics = [], metricsLoading, forecasts, forecastsQueried, onConfirmed, onInspectMetrics }: {
+  metricCount: number;
+  metrics?: MetricConfig[];
+  metricsLoading: boolean;
+  forecasts: ForecastStatus | null;
+  forecastsQueried: boolean;
+  onConfirmed?: (event: DemoScenarioEvent) => void;
+  onInspectMetrics?: (metricIds: string[]) => void;
 }) {
-  const [status, setStatus] = useState<DemoControlStatus | null>(null);
-  const [available, setAvailable] = useState(true);
+  const [view, setView] = useState<View>('loading');
+  const [state, setState] = useState<DemoState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [expanded, setExpanded] = useState(false);
+  const [candidate, setCandidate] = useState<Scenario | null>(null);
+  const [guided, setGuided] = useState(false);
 
-  useEffect(() => {
-    // A normal deployment returns 404: discover once, not on every Metrics poll.
-    if (!available) return;
-    const controller = new AbortController();
-    axios.get<DemoControlStatus>('/api/demo-control', { signal: controller.signal, timeout: 7000 })
-      .then(({ data }) => {
-        if (controller.signal.aborted) return;
-        if (!data || !SCENARIOS.some(item => item.key === data.scenario)) { setAvailable(false); return; }
-        setAvailable(true); setStatus(data); setError('');
-      })
-      .catch(e => {
-        if (controller.signal.aborted) return;
-        if (axios.isAxiosError(e) && e.response?.status === 404) { setAvailable(false); return; }
-        setError('Demo control connection failed. The scenario remains unchanged.');
-      });
-    return () => controller.abort();
-  }, [clock, available]);
-
-  const demoMetrics = useMemo(() => metrics.filter(m => m.id.startsWith('demo-live-')), [metrics]);
-  const demoSeries = useMemo(() => (forecast?.series ?? []).filter(s => s.metricId.startsWith('demo-live-')), [forecast]);
-  const ready = demoSeries.filter(s => s.result?.state === 'READY' && s.result?.strategy === 'TIMESFM').length;
-  const historyAvailable = demoSeries.some(s => (s.result?.context?.observedPoints ?? 0) >= 500);
-  const trafficRecent = demoMetrics.some(m => m.lastUpdateTime != null
-    && now - m.lastUpdateTime < 120_000 && !m.errorMessage);
-
-  if (!available || !status) return null;
-
-  async function choose(scenario: Scenario) {
-    if (busy || !status || status.scenario === scenario) return;
-    setBusy(true); setError(''); setNotice('');
+  const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
-      const { data } = await axios.post<DemoControlStatus>('/api/demo-control/scenario', { scenario }, {
-        headers: { 'X-Kex-Demo-Control': 'change-scenario' }, timeout: 10000,
-      });
-      setStatus(data);
-      setNotice(`${SCENARIOS.find(s => s.key === scenario)?.title} selected. Kafka traffic changes on the next generator tick (up to 15 s).`);
-    } catch {
-      setError('Could not apply the scenario. Check demo-live and Explorer logs; the previous mode was kept.');
-    } finally {
-      setBusy(false);
+      const response = await axios.get<DemoState>('/api/demo-control', { signal, timeout: 10000 });
+      if (signal?.aborted) return;
+      if (!response.data?.enabled || !response.data.requestedScenario || !response.data.phase)
+        throw new Error('Invalid demo control response');
+      setState(response.data);
+      setView('ready');
+      setError('');
+    } catch (err) {
+      if (signal?.aborted) return;
+      if (axios.isAxiosError(err) && err.response?.status === 404) {
+        setState(null);
+        setView('hidden');
+      } else {
+        setView('error');
+        setError('Demo control status is unavailable. Check the Explorer service and retry.');
+      }
     }
-  }
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    void Promise.resolve().then(() => refresh(controller.signal));
+    return () => controller.abort();
+  }, [refresh]);
+  useEffect(() => {
+    if (view === 'hidden' || view === 'loading') return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh();
+    }, view === 'error' || state?.phase !== 'ACTIVE' ? 4000 : 12000);
+    return () => window.clearInterval(interval);
+  }, [view, state?.phase, refresh]);
+
+  // A heartbeat updates appliedAt every tick; startedAt remains constant across ticks.
+  // Emit once per genuinely confirmed scenario, never on merely requested state.
+  useEffect(() => {
+    if (view !== 'ready' || state?.phase !== 'ACTIVE' || !state.startedAt || !state.scenario) return;
+    const event: DemoScenarioEvent = { scenario: state.scenario, at: state.startedAt,
+      metricIds: scenarioFor(state.scenario).metricIds };
+    void Promise.resolve().then(() => onConfirmed?.(event));
+  }, [view, state?.phase, state?.scenario, state?.startedAt, onConfirmed]);
+
+  if (view === 'loading' || view === 'hidden') return null;
+  if (view === 'error' || !state) return <section aria-label="Forecast demo control center"
+    className="rounded-2xl border border-outline-variant/60 bg-surface-container-low p-4">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h2 className="font-semibold text-on-surface">Forecast Demo Control Center</h2>
+        <p role="alert" className="text-sm text-error mt-1">{error}</p>
+      </div>
+      <button type="button" onClick={() => void refresh()}
+        className="min-h-10 rounded-lg border border-outline-variant px-4 py-2 text-sm text-primary">Retry</button>
+    </div>
+  </section>;
+
+  const ready = forecasts?.series.filter(s => s.result?.state === 'READY').length ?? 0;
+  const seriesCount = forecasts?.series.length ?? 0;
+  const forecastUnavailable = forecastsQueried && (!forecasts || !forecasts.enabled);
+  const forecastNumber = !forecastsQueried ? 'Loading…' : forecastUnavailable ? 'Unavailable' : String(seriesCount);
+  const readyNumber = !forecastsQueried ? 'Loading…' : forecastUnavailable ? 'Unavailable' : String(ready);
+  const selectedScenario = SCENARIOS.find(s => s.id === candidate);
+  const activeOption = SCENARIOS.find(s => s.id === state.scenario);
+  const inspectIds = activeOption?.metricIds ?? scenarioFor(state.requestedScenario).metricIds;
+  const active = state.phase === 'ACTIVE';
+  const appliedTime = state.appliedAt ? new Date(state.appliedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : null;
+  const phaseText = active ? 'Active · verified against Kafka offsets'
+    : state.phase === 'APPLYING' ? 'Applying · waiting for Kafka offsets'
+    : 'Generator unavailable · acknowledgement expired';
 
   function exportReport(format: 'json' | 'html') {
-    downloadDemoReport(demoSnapshot(status!.scenario, metrics, forecast), format);
-    setNotice(`${format.toUpperCase()} snapshot exported from the latest Metrics and Forecast readings.`);
+    // Retain the evidence-based report shipped on main (#674) while making
+    // Kafka-requested and Kafka-verified states unambiguous in either format.
+    const current = state;
+    if (!current) return;
+    const snapshot = demoSnapshot(current.scenario ?? 'not verified', metrics, forecasts);
+    const report = {
+      ...snapshot,
+      note: `${snapshot.note} Requested: ${current.requestedScenario}; confirmation: ${current.phase}.`,
+      control: {
+        requested: current.requestedScenario,
+        confirmed: active ? current.scenario : null,
+        phase: current.phase,
+        appliedAt: current.appliedAt,
+        startedAt: current.startedAt,
+        affectedMetrics: active && current.scenario ? scenarioFor(current.scenario).metricIds : [],
+      },
+      availability: {
+        metrics: metricsLoading ? 'LOADING' : 'AVAILABLE',
+        forecasts: !forecastsQueried ? 'LOADING' : forecastUnavailable ? 'UNAVAILABLE' : 'AVAILABLE',
+      },
+    };
+    downloadDemoReport(report, format);
   }
 
-  const evidence = [
-    { label: 'Explorer API', value: 'Connected', ok: true, icon: 'dns' },
-    { label: 'Kafka traffic', value: trafficRecent ? 'Recent metrics' : 'Waiting for refresh', ok: trafficRecent, icon: 'hub' },
-    { label: 'History store', value: historyAvailable ? 'Forecast context loaded' : 'Awaiting history', ok: historyAvailable, icon: 'database' },
-    { label: 'TimesFM', value: ready ? `${ready} ready` : 'Awaiting forecast', ok: ready > 0, icon: 'query_stats' },
-  ];
+  async function choose(scenario: Scenario) {
+    if (busy || state?.requestedScenario === scenario) return;
+    setBusy(true); setError(''); setCandidate(null);
+    try {
+      const response = await axios.put<DemoState>('/api/demo-control', { scenario }, { timeout: 10000 });
+      if (!response.data?.requestedScenario || !response.data.phase)
+        throw new Error('Invalid demo control response');
+      setState(response.data);
+    } catch {
+      setError('Scenario change failed. No application was confirmed; retry the action.');
+    } finally { setBusy(false); }
+  }
 
-  return (
-    <section aria-label="Forecast Demo Control Center" className="scroll-mt-20">
-      <Card className="relative overflow-hidden p-4 md:p-5">
-        <div aria-hidden="true" className="pointer-events-none absolute -top-24 right-0 size-56 rounded-full bg-primary/5 blur-3xl" />
-        <div className="relative">
-          <div className="flex flex-wrap gap-3 items-start justify-between">
-            <div className="flex items-start gap-3 min-w-0">
-              <span aria-hidden="true" className="material-symbols-outlined text-primary text-[23px] mt-0.5">tune</span>
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="font-semibold text-base tracking-tight text-on-surface">Forecast Demo Control Center</h2>
-                  <Badge tone="success">Local demo</Badge>
-                </div>
-                <p className="text-[12px] mt-0.5 text-on-surface-variant">Control the live Kafka scenarios and capture an evidence-based forecast snapshot.</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2 items-center">
-              <Button size="sm" variant="outline" icon="download" onClick={() => exportReport('json')} aria-label="Export demo report as JSON">JSON</Button>
-              <Button size="sm" variant="outline" icon="description" onClick={() => exportReport('html')} aria-label="Export demo report as HTML">HTML</Button>
-            </div>
-          </div>
+  function startGuide() {
+    setGuided(true);
+    setExpanded(true);
+    if (state?.requestedScenario !== 'normal') void choose('normal');
+  }
+  function selectScenario(scenario: Scenario) {
+    const option = SCENARIOS.find(s => s.id === scenario);
+    if (!option || busy || scenario === state?.requestedScenario) return;
+    if (option.disruptive) setCandidate(scenario);
+    else void choose(scenario); // Normal and Recovery stay one-click escape routes.
+  }
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4" aria-label="Live demo indicators">
-            {evidence.map(item => (
-              <div key={item.label} className="rounded-xl border border-outline-variant/70 bg-surface-container-low/60 px-3 py-2.5 min-w-0">
-                <div className="flex gap-1.5 items-center text-[11px] text-on-surface-variant">
-                  <span className="material-symbols-outlined text-[15px]" aria-hidden="true">{item.icon}</span>
-                  {item.label}
-                </div>
-                <div className="flex items-center gap-1.5 mt-1">
-                  <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${item.ok ? 'bg-success' : 'bg-warning'}`} />
-                  <span className="text-xs font-medium text-on-surface truncate" title={item.value}>{item.value}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="flex flex-wrap justify-between items-center gap-2 mt-4 mb-2">
-            <h3 className="text-[12px] font-semibold tracking-wide text-on-surface">Traffic scenarios</h3>
-            <span className="text-[11px] text-on-surface-variant">
-              {demoMetrics.length}/5 metrics · {ready}/{demoSeries.length} ready TimesFM forecasts
-              {status.changedAt && ` · mode updated ${new Date(status.changedAt).toLocaleTimeString()}`}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2" role="group" aria-label="Choose a demo traffic scenario">
-            {SCENARIOS.map(item => {
-              const selected = item.key === status.scenario;
-              return (
-                <button key={item.key} type="button" disabled={busy} aria-pressed={selected}
-                  onClick={() => void choose(item.key)}
-                  className={`kse-control min-h-[88px] rounded-xl p-3 text-left border transition-colors disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary ${selected
-                    ? 'border-primary/60 bg-primary/10 text-on-surface shadow-sm'
-                    : 'border-outline-variant/70 bg-surface-container-low/50 text-on-surface hover:bg-surface-container-high'}`}>
-                  <span className="flex items-center justify-between gap-2">
-                    <span aria-hidden="true" className={`material-symbols-outlined text-[19px] ${selected ? 'text-primary' : 'text-on-surface-variant'}`}>{item.icon}</span>
-                    {selected && <span className="text-[10px] font-semibold text-primary">ACTIVE</span>}
-                  </span>
-                  <span className="block font-semibold text-[12px] mt-1">{item.title}</span>
-                  <span className="block text-[11px] leading-snug mt-0.5 text-on-surface-variant">{item.detail}</span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 mt-3 text-[11px] text-on-surface-variant">
-            <span>Indicators are derived from observed metrics and forecast results, not Docker container health.</span>
-            <span aria-live="polite">{busy ? 'Applying scenario…' : notice}</span>
-          </div>
-          {error && <p role="alert" className="text-error text-[12px] mt-2">{error}</p>}
+  return <section aria-label="Forecast demo control center"
+    className="kse-surface relative overflow-hidden rounded-2xl border border-outline-variant/60 bg-surface-container-low/80 shadow-sm">
+    <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
+      <div className="flex items-center gap-3 min-w-0">
+        <span className="material-symbols-outlined text-primary" aria-hidden="true">tune</span>
+        <div><h2 className="text-base font-semibold text-on-surface">Forecast Demo Control Center</h2>
+          <p className="text-xs text-on-surface-variant">Local demo · Kafka-verified scenario control</p></div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => exportReport('json')}
+          className="min-h-11 rounded-xl border border-outline-variant px-3 py-2 text-sm text-on-surface hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary motion-safe:transition-colors">
+          <span className="material-symbols-outlined text-base align-middle mr-1" aria-hidden="true">download</span>
+          Export JSON
+        </button>
+        <button type="button" onClick={() => exportReport('html')}
+          className="min-h-11 rounded-xl border border-outline-variant px-3 py-2 text-sm text-on-surface hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary motion-safe:transition-colors">
+          <span className="material-symbols-outlined text-base align-middle mr-1" aria-hidden="true">description</span>
+          Export HTML
+        </button>
+        <button type="button" onClick={() => setExpanded(v => !v)} aria-expanded={expanded}
+          className="min-h-10 rounded-lg border border-outline-variant px-3 py-2 text-sm text-on-surface hover:bg-primary/10">
+          {expanded ? 'Hide controls' : 'Manage scenarios'}
+          <span className="material-symbols-outlined text-base align-middle ml-1" aria-hidden="true">{expanded ? 'expand_less' : 'expand_more'}</span>
+        </button>
+      </div>
+    </div>
+    <div className="grid grid-cols-1 min-[375px]:grid-cols-2 lg:grid-cols-4 gap-2 px-4 pb-4 sm:px-5 text-sm">
+      <div className="rounded-xl bg-surface-container/70 p-3"><p className="text-xs text-on-surface-variant">Demo metrics</p>
+        <strong className="tabular-nums">{metricsLoading ? 'Loading…' : `${metricCount} / 5`}</strong></div>
+      <div className="rounded-xl bg-surface-container/70 p-3"><p className="text-xs text-on-surface-variant">Forecast series</p>
+        <strong className="tabular-nums">{forecastNumber}</strong></div>
+      <div className="rounded-xl bg-surface-container/70 p-3"><p className="text-xs text-on-surface-variant">Ready forecasts</p>
+        <strong className="tabular-nums">{readyNumber}</strong></div>
+      <div className="rounded-xl bg-surface-container/70 p-3"><p className="text-xs text-on-surface-variant">Confirmed scenario</p>
+        <strong className="capitalize">{state.scenario ?? 'Not verified'}</strong></div>
+    </div>
+    <div className="flex flex-wrap gap-2 items-center justify-between border-t border-outline-variant/60 px-4 py-3 sm:px-5">
+      <div role="status" aria-live="polite" className="flex flex-wrap gap-2 items-center text-xs text-on-surface-variant">
+        <span aria-hidden="true" className={`h-2 w-2 rounded-full ${active ? 'bg-success' : state.phase === 'APPLYING' ? 'bg-warning' : 'bg-error'}`} />
+        <span>{phaseText}</span>
+        {!active && <span>Requested: <strong className="text-on-surface">{state.requestedScenario}</strong></span>}
+        {appliedTime && <span>Last verified: {appliedTime}</span>}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {onInspectMetrics && <button type="button" onClick={() => onInspectMetrics(inspectIds)}
+          className="min-h-11 rounded-xl px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary">
+          View impacted metrics
+        </button>}
+      {state.requestedScenario !== 'normal' && <button type="button" disabled={busy}
+        onClick={() => void choose('normal')}
+        className="min-h-10 rounded-lg border border-outline-variant px-3 py-2 text-xs font-medium text-primary hover:bg-primary/10 disabled:opacity-50">
+        Return to normal
+      </button>}</div>
+    </div>
+    <div className="flex flex-wrap justify-between gap-2 border-t border-outline-variant/60 px-4 py-3 sm:px-5">
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-on-surface">Guided demonstration</p>
+        <p className="text-xs text-on-surface-variant">Baseline → incident → recovery. Every step uses real Kafka traffic.</p>
+      </div>
+      <button type="button" onClick={() => guided ? setGuided(false) : startGuide()}
+        aria-expanded={guided} className="min-h-11 rounded-xl border border-outline-variant px-3 py-2 text-sm text-primary hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary">
+        {guided ? 'Exit guide' : 'Start guide'}
+      </button>
+    </div>
+    {guided && <div className="border-t border-outline-variant/60 px-4 py-4 sm:px-5">
+      <ol className="grid gap-3 sm:grid-cols-3" aria-label="Three demo steps">
+        <li className="min-w-0 rounded-xl bg-surface-container/70 p-3">
+          <p className="text-xs font-semibold text-primary">01 · Baseline</p>
+          <p className="mt-1 text-xs text-on-surface-variant">Observe nominal traffic and the current prediction.</p>
+          <button type="button" onClick={() => { void choose('normal'); onInspectMetrics?.(scenarioFor('normal').metricIds); }}
+            className="mt-2 min-h-11 rounded-lg border border-outline-variant px-3 text-xs text-primary focus-visible:outline-2 focus-visible:outline-primary">
+            Show baseline</button>
+        </li>
+        <li className="min-w-0 rounded-xl bg-surface-container/70 p-3">
+          <p className="text-xs font-semibold text-warning">02 · Incident</p>
+          <p className="mt-1 text-xs text-on-surface-variant">Apply an incident after reviewing its impact.</p>
+          <button type="button" onClick={() => { setCandidate('incident'); setExpanded(true); }}
+            disabled={state.phase !== 'ACTIVE' || state.scenario !== 'normal' || busy}
+            className="mt-2 min-h-11 rounded-lg border border-outline-variant px-3 text-xs text-primary disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-primary">
+            Trigger incident</button>
+        </li>
+        <li className="min-w-0 rounded-xl bg-surface-container/70 p-3">
+          <p className="text-xs font-semibold text-primary">03 · Recovery</p>
+          <p className="mt-1 text-xs text-on-surface-variant">Watch measured traffic return to a stable baseline.</p>
+          <button type="button" onClick={() => void choose('recover')}
+            disabled={state.phase !== 'ACTIVE' || state.scenario !== 'incident' || busy}
+            className="mt-2 min-h-11 rounded-lg border border-outline-variant px-3 text-xs text-primary disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-primary">
+            Recover traffic</button>
+        </li>
+      </ol>
+      <p className="mt-3 text-xs text-on-surface-variant" role="status">
+        Current step: {state.phase !== 'ACTIVE' ? 'Waiting for Kafka confirmation'
+          : state.scenario === 'incident' ? 'Incident active — compare observed vs predicted'
+            : state.scenario === 'recover' ? 'Recovery active — inspect the metrics' : 'Baseline'}
+      </p>
+    </div>}
+    {expanded && <div className="border-t border-outline-variant/60 px-4 py-4 sm:px-5">
+      <p className="text-xs text-on-surface-variant mb-3">Select a scenario. Changes reach Kafka on the next traffic tick; the confirmation waits for broker offsets.</p>
+      {selectedScenario && <div role="group" aria-label="Confirm traffic scenario"
+        className="mt-3 rounded-xl border border-warning/40 bg-warning/5 p-3">
+        <p className="text-sm font-medium text-on-surface">Apply {selectedScenario.label}?</p>
+        <p className="text-xs text-on-surface-variant mt-1">{selectedScenario.impact} The change affects demo Kafka data only and does not rewrite historical metrics.</p>
+        <div className="flex flex-wrap gap-2 mt-3">
+          <button type="button" onClick={() => void choose(selectedScenario.id)} disabled={busy}
+            className="min-h-10 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-on-primary">Apply scenario</button>
+          <button type="button" onClick={() => setCandidate(null)} disabled={busy}
+            className="min-h-10 rounded-lg border border-outline-variant px-4 py-2 text-sm text-on-surface">Cancel</button>
         </div>
-      </Card>
-    </section>
-  );
+      </div>}
+      <div className="grid grid-cols-1 min-[440px]:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-2">
+        {SCENARIOS.map(s => <button type="button" key={s.id} disabled={busy || s.id === state.requestedScenario}
+          aria-pressed={active && state.scenario === s.id} onClick={() => selectScenario(s.id)}
+          className={`min-h-32 text-left rounded-xl border bg-surface-container-low/60 p-3 motion-safe:transition-[background-color,border-color,box-shadow] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary ${state.requestedScenario === s.id ? 'border-primary bg-primary/10' : 'border-outline-variant hover:bg-primary/5'}`}>
+          <span className="material-symbols-outlined text-xl text-primary" aria-hidden="true">{s.icon}</span>
+          <span className="block text-sm font-medium text-on-surface">{s.label}</span>
+          <span className="block text-xs text-on-surface-variant mt-1">{s.detail}</span>
+          <ScenarioPreview scenario={s.id} />
+          <span className="block mt-1 text-[10px] text-on-surface-variant">Illustrative pattern</span>
+        </button>)}
+      </div>
+      {onInspectMetrics && <p className="mt-3 text-xs text-on-surface-variant">
+        The chart previews are illustrative. Use <strong>View impacted metrics</strong> for live observed data.
+      </p>}
+      <div className="flex items-center justify-between gap-2 mt-3">
+        <span className="text-xs text-on-surface-variant" role="status">{busy ? 'Sending scenario request…' : 'Select a scenario to update live traffic'}</span>
+        <button type="button" onClick={() => void refresh()} className="min-h-10 px-2 text-xs text-primary underline underline-offset-2">Refresh status</button>
+      </div>
+    </div>}
+    {error && <p role="alert" className="px-5 pb-4 text-sm text-error">{error}</p>}
+  </section>;
 }
