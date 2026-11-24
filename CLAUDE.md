@@ -136,9 +136,11 @@ process, Windows 11 refusing unsigned scripts by default. Docker Desktop is the 
 Four rules bind:
 
 - **Edit `demo.sh` and `demo.ps1` together.** Same compose files in the same order, same overrides,
-  same precedence (environment > `.env` > `.forecast-stack/.env` > default). Nothing checks that
-  the two agree, so a file or override added on one side only is a stack that differs by platform.
-  A default belongs in the compose file; the scripts keep only what the demo overrides or prints.
+  same precedence (environment > `.env` > `.forecast-stack/.env` > default). A default belongs in
+  the compose file; the scripts keep only what the demo overrides or prints, and
+  `docs/check-demo-defaults.py` fails a copy, an undeclared override, or twins that disagree on a
+  default. It does not read the file list, so a compose file added on one side only is still a stack
+  that differs by platform.
 - **`demo.ps1` stays ASCII.** Windows PowerShell 5.1 reads a BOM-less script as the ANSI code
   page, so one em dash becomes mojibake in every message that carries it.
 - **What it writes is UTF-8 without a BOM, with LF.** It generates `.forecast-stack/.env` itself

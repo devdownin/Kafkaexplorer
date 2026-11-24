@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **CI check against drifting demo defaults** (`docs/check-demo-defaults.py`, run with the other
+  `docs/check-*.py`). A default in `demo.sh` / `demo.ps1` must be an override of a compose default,
+  declared with its reason, or a value the launcher reads itself; a copy of a compose default, an
+  undeclared difference, or twins that disagree now fails. Replayed on the tree before the previous
+  simplification it reports 35 problems, among them the agent at 0.10.0 and SpectraLLM at 0.12.3
+  that went unnoticed for a month.
+
 - **Simpler demo scripts and forecast overlay.** `demo.sh` and `demo.ps1` no longer restate
   nineteen defaults that the compose files already carry, three of them stale: `./demo.sh` ran
   `kex-agent-ai` 0.10.0 and SpectraLLM 0.12.3 (and, with `DEMO_PUBLISHED_IMAGE`, the Explorer
