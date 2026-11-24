@@ -168,6 +168,7 @@ python3 docs/check-api-types.py    # api/types.ts still matches the Java records
 python3 docs/check-image-pins.py   # compose images: pinned, consistent, and the current release
 python3 docs/check-compose.py      # compose vars documented in .env.example; prompt budget fits the window
 python3 docs/check-eval-fixture.py # the Process Mining eval fixture still matches setup-demo.sh
+python3 docs/check-demo-defaults.py # demo.sh / demo.ps1 defaults: overrides or reads, never copies of compose's
 ```
 
 ```bash

@@ -26,7 +26,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import axios from 'axios';
 import type * as ThreeModule from 'three';
-import type { TopicActivity } from '../api/types';
+import type { MetricConfig, TopicActivity } from '../api/types';
 
 const drawn = vi.hoisted(() => ({
   scene: null as ThreeModule.Scene | null,
@@ -68,7 +68,7 @@ function series(topic: string, counts: number[]): TopicActivity {
   };
 }
 
-interface Stub { topics: string[]; activityFails: boolean }
+interface Stub { topics: string[]; activityFails: boolean; metrics: MetricConfig[] }
 let stub: Stub;
 
 function install() {
@@ -92,6 +92,7 @@ function install() {
       } });
     }
     if (url === '/api/lineage') return Promise.resolve({ data: { nodes: [], edges: [], warnings: [] } });
+    if (url === '/api/metrics') return Promise.resolve({ data: stub.metrics });
     return Promise.reject(new Error('not stubbed: ' + url));
   });
 }
@@ -127,7 +128,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   drawn.scene = null;
   drawn.camera = null;
-  stub = { topics: ['orders', 'payments'], activityFails: false };
+  stub = { topics: ['orders', 'payments'], activityFails: false, metrics: [] };
   install();
   window.history.replaceState(null, '', '/strata');
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
@@ -288,4 +289,98 @@ describe('Strata3D page', () => {
       window.matchMedia = original;
     }
   });
+
+  describe('families and flows', () => {
+    const pipeline = ['orders', 'payments', 'demo.orders.1.received', 'demo.orders.2.validated',
+      'demo.orders.3.enriched', 'demo.sc.01.order.placed.in'];
+    const hue = (topic: string) => {
+      const base = columns().get(topic)!.children[0] as THREE.Mesh;
+      return (base.material as THREE.MeshBasicMaterial).color.getHSL({ h: 0, s: 0, l: 0 }).h;
+    };
+    const links = () => {
+      const found: THREE.Line[] = [];
+      drawn.scene?.traverse(object => { if (object instanceof THREE.Line && object.userData.link) found.push(object); });
+      return found;
+    };
+    const particles = () => {
+      const found: THREE.Mesh[] = [];
+      drawn.scene?.traverse(object => { if (object instanceof THREE.Mesh && object.userData.flow) found.push(object); });
+      return found;
+    };
+    const showInferred = async (user: ReturnType<typeof userEvent.setup>) => {
+      await user.click(screen.getByRole('button', { name: /Layers ·/ }));
+      await user.click(screen.getByRole('checkbox', { name: /Inferred links/ }));
+    };
+
+    it('gives a family one hue and another family another', async () => {
+      stub.topics = pipeline;
+      await renderPage();
+      await waitFor(() => expect(columns().has('demo.sc.01.order.placed.in')).toBe(true));
+      expect(hue('demo.orders.1.received')).toBeCloseTo(hue('demo.orders.3.enriched'), 5);
+      expect(Math.abs(hue('demo.orders.1.received') - hue('demo.sc.01.order.placed.in'))).toBeGreaterThan(0.02);
+    });
+
+    it('lays a pipeline out along its stages on request, and keeps the choice in the URL', async () => {
+      const user = userEvent.setup();
+      stub.topics = pipeline;
+      await renderPage();
+      const spiral = columns().get('demo.orders.2.validated')!.position.clone();
+      await user.click(screen.getByRole('button', { name: 'Pipeline lanes' }));
+      await waitFor(() => expect(columns().get('demo.orders.2.validated')!.position.equals(spiral)).toBe(false));
+      const [received, validated, enriched] = ['demo.orders.1.received', 'demo.orders.2.validated', 'demo.orders.3.enriched']
+        .map(name => columns().get(name)!.position);
+      expect(received.x).toBeLessThan(validated.x);
+      expect(validated.x).toBeLessThan(enriched.x);
+      expect(received.z).toBe(enriched.z);
+      expect(window.location.search).toContain('sv.layout=lanes');
+      // The spiral keeps its stable slots: switching back puts every column where it was.
+      await user.click(screen.getByRole('button', { name: 'Spiral' }));
+      await waitFor(() => expect(columns().get('demo.orders.2.validated')!.position.equals(spiral)).toBe(true));
+    });
+
+    it('draws links guessed from names only on their own layer, with what the target produced', async () => {
+      const user = userEvent.setup();
+      stub.topics = pipeline;
+      await renderPage();
+      expect(links().some(line => line.userData.link.inferred)).toBe(false);
+      await showInferred(user);
+      await waitFor(() => expect(links().length).toBeGreaterThan(0));
+      const pairs = links().map(line => `${line.userData.link.from} -> ${line.userData.link.to}`);
+      expect(pairs).toContain('demo.orders.1.received -> demo.orders.2.validated');
+      expect(links().every(line => line.userData.link.inferred)).toBe(true);
+      // Every target produced 30 records per bucket: particles travel each link.
+      expect(particles().length).toBeGreaterThanOrEqual(links().length);
+    });
+
+    it('turns a link red when the count comparison over its two topics is critical', async () => {
+      const user = userEvent.setup();
+      stub.topics = pipeline;
+      stub.metrics = [{
+        id: 'gap', name: 'lost between received and validated', type: 'GAUGE', sql: null, description: '',
+        warningThreshold: 5, criticalThreshold: 20, lastValue: 40, lastUpdateTime: 1, errorMessage: null,
+        history: [], lastSummary: null, createTableSql: null, templateType: 'TOPIC_COUNT_DELTA',
+        templateParams: { leftTopic: 'demo.orders.1.received', rightTopic: 'demo.orders.2.validated' },
+        executionMode: null, labelTopic: null, labelFields: null, componentHistory: null,
+      }];
+      await renderPage();
+      await showInferred(user);
+      await waitFor(() => expect(links().length).toBeGreaterThan(0));
+      const breached = links().find(line => line.userData.link.to === 'demo.orders.2.validated')!;
+      expect(breached.userData.link.health).toBe('critical');
+      expect((breached.material as THREE.LineDashedMaterial).color.getHex()).toBe(0xdd5b59);
+      const calm = links().find(line => line.userData.link.to === 'demo.orders.3.enriched')!;
+      expect(calm.userData.link.health).toBeNull();
+    });
+
+    it('lists the families in view and filters on one', async () => {
+      const user = userEvent.setup();
+      stub.topics = pipeline;
+      await renderPage();
+      const chip = await screen.findByRole('button', { name: /^Filter on family demo\.orders, 3 topics/ });
+      await user.click(chip);
+      expect(screen.getByRole('textbox', { name: 'Filter topics' })).toHaveValue('demo.orders');
+      expect(chip).toHaveAttribute('aria-pressed', 'true');
+    });
+  });
 });
+

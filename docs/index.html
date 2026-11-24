@@ -211,7 +211,8 @@
                     <p class="text-primary text-sm font-bold tracking-wide uppercase mb-4">Kafka Strata 3D · Spatial observability</p>
                     <h2 id="strata-title" class="text-4xl lg:text-5xl font-semibold text-ink tracking-tight mb-6">Follow the evidence, not just the animation.</h2>
                     <p class="text-lg text-muted leading-relaxed mb-6">Explore topics in a Three.js scene with twelve aligned activity intervals over the latest 30 minutes. Focus partitions, inspect declared Flink lineage and compare measured production without treating missing data as zero.</p>
-                    <p class="text-muted leading-relaxed mb-8">The guided investigation walks through offset coverage, declared dependencies, one selected consumer group and optional key tracing. An on-demand WebGL diagnostics panel reports frame and renderer statistics; local JSON snapshots exclude Kafka message keys and payloads.</p>
+                    <p class="text-muted leading-relaxed mb-6">The guided investigation walks through offset coverage, declared dependencies, one selected consumer group and optional key tracing. An on-demand WebGL diagnostics panel reports frame and renderer statistics; local JSON snapshots exclude Kafka message keys and payloads.</p>
+                    <p class="text-muted leading-relaxed mb-8">Topics are coloured by family, with a socle shape as a second channel. Arrange a pipeline in lanes along its stages, show the links its naming suggests, and watch particles travel each link in proportion to what was measured. A count-comparison metric in breach turns its link red.</p>
                     <div class="flex flex-wrap gap-3">
                         <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/STRATA-3D.md" class="inline-flex items-center gap-2 px-5 py-3 bg-primary text-on-primary font-semibold rounded-lg hover:opacity-90 transition-opacity">Read the operator guide <span class="material-symbols-outlined text-lg" aria-hidden="true">open_in_new</span></a>
                         <a href="https://github.com/devdownin/Kafkaexplorer/blob/main/docs/notes/strata-3d-audit.md" class="inline-flex items-center gap-2 px-5 py-3 border border-border rounded-lg text-ink font-semibold hover:border-primary transition-colors">Technical audit</a>
@@ -232,17 +233,17 @@
                         <div class="h-48 rounded-t-2xl border border-secondary/40 bg-secondary/10 flex flex-col-reverse justify-around p-3">
                             <span class="block h-2 rounded-full bg-secondary/30"></span><span class="block h-2 rounded-full bg-secondary/60"></span><span class="block h-2 rounded-full bg-secondary/40"></span><span class="block h-2 rounded-full bg-secondary/20"></span>
                         </div>
-                        <div class="h-40 rounded-t-2xl border border-primary/40 bg-primary/10 flex flex-col-reverse justify-around p-3">
-                            <span class="block h-2 rounded-full bg-primary/20"></span><span class="block h-2 rounded-full bg-primary/40"></span><span class="block h-2 rounded-full bg-primary/60"></span><span class="block h-2 rounded-full bg-primary/30"></span>
+                        <div class="h-40 rounded-t-2xl border flex flex-col-reverse justify-around p-3" style="border-color: hsl(290 55% 60% / 0.45); background: hsl(290 55% 60% / 0.1)">
+                            <span class="block h-2 rounded-full" style="background: hsl(290 55% 60% / 0.25)"></span><span class="block h-2 rounded-full" style="background: hsl(290 55% 60% / 0.45)"></span><span class="block h-2 rounded-full" style="background: hsl(290 55% 60% / 0.65)"></span><span class="block h-2 rounded-full" style="background: hsl(290 55% 60% / 0.35)"></span>
                         </div>
                     </div>
                     <div class="grid grid-cols-3 gap-4 text-center text-xs font-medium text-muted mb-5">
-                        <span>Topic A</span><span>Topic B</span><span>Topic C</span>
+                        <span>orders · stage 1</span><span>orders · stage 2</span><span>payments</span>
                     </div>
-                    <figcaption class="rounded-xl bg-surface border border-border px-4 py-3 text-sm text-muted">Offset-production evidence, not individual message trajectories. Unknown coverage stays unknown; chronological matches do not establish causality.</figcaption>
+                    <figcaption class="rounded-xl bg-surface border border-border px-4 py-3 text-sm text-muted">One colour per topic family, a shade per stage. Offset-production evidence, not individual message trajectories. Unknown coverage stays unknown; chronological matches do not establish causality.</figcaption>
                 </figure>
             </div>
-            <div class="grid md:grid-cols-3 gap-4 mt-12">
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mt-12">
                 <div class="rounded-2xl border border-border bg-surface p-5">
                     <span class="material-symbols-outlined text-primary mb-3" aria-hidden="true">monitoring</span>
                     <h3 class="font-semibold text-ink mb-2">Measured performance</h3>
@@ -257,6 +258,11 @@
                     <span class="material-symbols-outlined text-primary mb-3" aria-hidden="true">file_download</span>
                     <h3 class="font-semibold text-ink mb-2">Share evidence safely</h3>
                     <p class="text-sm text-muted">Download an allowlisted, timestamped JSON snapshot locally; check topic and group names before sharing.</p>
+                </div>
+                <div class="rounded-2xl border border-border bg-surface p-5">
+                    <span class="material-symbols-outlined text-primary mb-3" aria-hidden="true">conversion_path</span>
+                    <h3 class="font-semibold text-ink mb-2">Families, lanes and flows</h3>
+                    <p class="text-sm text-muted">Family colours and a filtering legend, pipeline lanes, opt-in inferred links, and particles sized by measured production. A breached count comparison turns its link red.</p>
                 </div>
             </div>
         </div>

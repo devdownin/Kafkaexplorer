@@ -28,12 +28,16 @@ these features in a deployed image. See the [container operations guide](DOCKERH
 | Element | Meaning | Evidence |
 |---|---|---|
 | Column | Kafka topic | `GET /api/dashboard` |
+| Column colour and socle shape | The topic's **family** (the first two segments of its name); the shade darkens along numbered stages. Presentation only, never a measurement | The topic name |
 | Twelve rings, bottom to top | Consecutive 2.5-minute offsets-produced buckets in the last 30 minutes | `POST /api/dashboard/activity` |
 | Ring radius (logarithmic) | Relative **offset** production, not current record count | Offset differences by timestamp |
 | Horizontal translucent plane | Currently selected time bucket, **same bucket** on every topic | Activity response shared time window |
 | Amber highlighted ring | **Candidate** deviation from previous four complete buckets | Client-side, conservative heuristic |
 | Dashed line | Flink INSERT dependency **declared** by Lineage | `GET /api/lineage` |
-| Teal arc | Chronological matches for a searched Kafka key, **not proven causal transfer** | `POST /api/stream-flow/stream` |
+| Fine grey dotted line (*Inferred links* layer, off by default) | A link a **naming convention suggests** (stage *n* → *n + 1*, `.in` → `.out`), never declared, never presented as one | The topic names |
+| Particles travelling a link | As many as the target produced in the **latest** bucket, on the rings' log scale; none when unmeasured | `POST /api/dashboard/activity` |
+| Red or orange link | A `TOPIC_COUNT_DELTA` metric over the two topics is **critical** or **warning** | `GET /api/metrics` |
+| Teal path through the columns | Chronological matches for a searched Kafka key, each **at the height of its instant**, so the slope is the latency; faint when outside the window. **Not proven causal transfer** | `POST /api/stream-flow/stream` |
 | Coloured satellites | Lag per partition of the **selected consumer group** | `GET /api/topic/{name}/consumers` |
 | Partition ribbons in focus | Per-partition offset-production for each 2.5-minute interval; ribbon width follows each partition's **own measured** rate | `GET /api/dashboard/partition-activity?topic=...` |
 | Forecast canopy (solid teal / violet / translucent band) | Measured metric history, projected q50, and model q10–q90 for a **single explicitly scoped** topic | `GET /api/forecasts` and `GET /api/forecasts/{seriesId}` |
@@ -44,6 +48,11 @@ Flink edges are only drawn when explicit source-topic table → read edge → IN
 job → write edge → sink table → target-topic relationships exist. Arbitrary
 topic proximity and matching names do not create a link. Parser warnings are
 shown. No link is not evidence of absent activity.
+
+**Arrange.** *Spiral* gives every topic the slot it was first given. *Pipeline lanes* puts one family per
+lane, its numbered stages left to right, so a pipeline reads along its length; the choice is part of
+the view link (`sv.layout`). The **Families** legend in the navigator names the families present and
+filters on one.
 
 ## Using the view
 

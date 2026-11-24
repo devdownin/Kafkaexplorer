@@ -4,6 +4,7 @@
 /** URL-only spatial view state. No message keys, traces or record payloads are shared. */
 export type StrataQuality = 'auto' | 'detail' | 'economy';
 export type StrataViewMode = 'investigate' | 'compare';
+export type StrataLayout = 'spiral' | 'lanes';
 export interface StrataView {
   mode: StrataViewMode;
   topic: string | null;
@@ -12,9 +13,10 @@ export interface StrataView {
   filter: string;
   bucket: number;
   quality: StrataQuality;
+  layout: StrataLayout;
 }
 
-const KEYS = ['sv.mode', 'sv.topic', 'sv.peer', 'sv.focus', 'sv.filter', 'sv.bucket', 'sv.quality'] as const;
+const KEYS = ['sv.mode', 'sv.topic', 'sv.peer', 'sv.focus', 'sv.filter', 'sv.bucket', 'sv.quality', 'sv.layout'] as const;
 const MAX_TOPIC = 249;
 const MAX_FILTER = 160;
 const DEFAULT_BUCKET = 11;
@@ -45,6 +47,7 @@ export function readStrataView(params: URLSearchParams): StrataView {
     filter: safeString(params.get('sv.filter'), MAX_FILTER) ?? '',
     bucket,
     quality,
+    layout: params.get('sv.layout') === 'lanes' ? 'lanes' : 'spiral',
   };
 }
 
@@ -59,6 +62,7 @@ export function writeStrataView(params: URLSearchParams, view: StrataView): URLS
   if (view.filter) next.set('sv.filter', view.filter.slice(0, MAX_FILTER));
   if (view.bucket !== DEFAULT_BUCKET) next.set('sv.bucket', String(Math.max(0, Math.min(11, Math.trunc(view.bucket)))));
   if (view.quality !== 'auto') next.set('sv.quality', view.quality);
+  if (view.layout === 'lanes') next.set('sv.layout', 'lanes');
   return next;
 }
 
