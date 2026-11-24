@@ -30,10 +30,13 @@ RUN chown -R timesfm:timesfm /app
 # build, not a container at 3 a.m. The pins are build arguments, but they are also what
 # `compose/forecast-offline.yml` defaults to: change them together.
 FROM base AS offline
+# The three name one checkpoint: another TIMESTRAL_MODEL needs its own revision and digest.
+ARG TIMESTRAL_MODEL=mistralai/Timestral-28M
 ARG TIMESTRAL_REVISION=49b26409ac87b5935539a5d8ffe7f397b720db47
 ARG TIMESTRAL_SHA256=dfc83c6220937ce5fc6687b35a4df94cd25e28a2cfe6fb92a23dad6301b2015d
 ENV TIMESFM_CACHE_DIR=/models \
     HF_HOME=/models \
+    TIMESTRAL_MODEL=${TIMESTRAL_MODEL} \
     TIMESTRAL_REVISION=${TIMESTRAL_REVISION} \
     TIMESTRAL_SHA256=${TIMESTRAL_SHA256}
 USER 10001:10001

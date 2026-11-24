@@ -20,6 +20,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The Timestral shadow model is a setting.** `TIMESTRAL_MODEL` (default `mistralai/Timestral-28M`)
+  chooses the checkpoint the forecast service loads; the compose stacks hand the same variable to
+  the Explorer as `explorer.forecasting.inference.shadow.model-id`, which every shadow answer must
+  name. Mistral AI's 5M, 123M and 209M load through the same adapter. The pin
+  (`TIMESTRAL_REVISION`, `TIMESTRAL_SHA256`) is read for one model, so changing the model means
+  changing the pin; a mismatch is refused with the model and revision named. The 28M keeps its
+  adapter version `kex-timestral-28m-v1`, so existing shadow records keep their identity. The
+  published forecast image still bakes only the 28M.
+
 - **Forecast demo with the agent, from published images.** `./demo.sh --forecast --prebuilt --agent`
   (`.\demo-forecast.cmd -Agent` on Windows) adds the Kex-anHarness agent and the Explorer's
   OpenRouter model to the forecast demo, through the overlays `--no-spectra` already uses. The

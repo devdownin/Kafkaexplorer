@@ -846,7 +846,9 @@ public final class ForecastPilotService {
         id,
         r.state(),
         r.reason(),
-        TimesFmClient.Model.SHADOW.modelId(),
+        // The model that produced this record; a record with no forecast names the configured one.
+        r.forecast() != null ? r.forecast().modelId()
+            : shadow != null ? shadow.client().model().modelId() : TimesFmClient.Model.SHADOW.modelId(),
         r.revision() != null ? r.revision() : r.forecast() == null ? null : r.forecast().modelRevision(),
         r.generatedAt(),
         r.evaluatedPoints(),

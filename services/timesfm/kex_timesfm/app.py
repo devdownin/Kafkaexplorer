@@ -100,8 +100,8 @@ def create_app(worker, token: str, *, shadow_worker=None, shadow_pin=None, manag
         # The shadow yields to the primary: both share the container's CPUs, and only one answer counts.
         if worker.busy:
             return busy()
-        return await answer(shadow_worker, request, timestral.MODEL_ID, shadow_pin.revision,
-                            timestral.ADAPTER_VERSION)
+        return await answer(shadow_worker, request, shadow_pin.model_id, shadow_pin.revision,
+                            shadow_pin.adapter_version)
 
     return app
 

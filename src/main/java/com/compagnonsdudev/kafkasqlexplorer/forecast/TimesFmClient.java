@@ -46,8 +46,26 @@ public final class TimesFmClient implements AutoCloseable {
         String label, String path, String modelId, String revision, String adapterVersion, String meterPrefix) {
         public static final Model PRIMARY =
             new Model("TimesFM", "/v1/forecast", MODEL_ID, MODEL_REVISION, ADAPTER_VERSION, "explorer_forecasting_");
-        public static final Model SHADOW = new Model("Timestral shadow", "/v1/shadow/forecast", "mistralai/Timestral-28M", null,
-            "kex-timestral-28m-v1", "explorer_forecasting_shadow_");
+        public static final String SHADOW_PATH = "/v1/shadow/forecast";
+        /** The default shadow, Timestral-28M. Another checkpoint is {@link #shadow(String)}. */
+        public static final Model SHADOW = shadow(TimesFmInferenceProperties.Shadow.DEFAULT_MODEL_ID);
+
+        /**
+         * The shadow answering as {@code modelId}. Its adapter version is derived the way
+         * {@code services/timesfm}'s {@code timestral.adapter_version} derives it, so the 28M keeps
+         * {@code kex-timestral-28m-v1} and the records already written keep their identity: edit the
+         * two together, or every shadow answer is refused as another model's.
+         */
+        public static Model shadow(String modelId) {
+            String name = modelId.substring(modelId.indexOf('/') + 1).toLowerCase(java.util.Locale.ROOT);
+            if (name.startsWith("timestral-")) name = name.substring("timestral-".length());
+            return new Model("Timestral shadow", SHADOW_PATH, modelId, null,
+                "kex-timestral-" + name + "-v1", "explorer_forecasting_shadow_");
+        }
+
+        boolean isShadow() {
+            return SHADOW_PATH.equals(path);
+        }
 
         boolean accepts(String answered) {
             return revision == null ? answered != null && answered.matches("[0-9a-f]{40}") : revision.equals(answered);
@@ -74,7 +92,9 @@ public final class TimesFmClient implements AutoCloseable {
 
     /** The Timestral shadow on the same service: same origin and token, its own path, timeout and meters. */
     public static TimesFmClient shadow(TimesFmInferenceProperties properties, MeterRegistry registry) {
-        return new TimesFmClient(properties, registry, Model.SHADOW, properties.getShadow().validatedTimeout());
+        var shadow = properties.getShadow();
+        var model = Model.shadow(TimesFmInferenceProperties.Shadow.validatedModelId(shadow.getModelId()));
+        return new TimesFmClient(properties, registry, model, shadow.validatedTimeout());
     }
 
     private TimesFmClient(TimesFmInferenceProperties properties, MeterRegistry registry, Model model, Duration timeout) {
@@ -96,6 +116,11 @@ public final class TimesFmClient implements AutoCloseable {
             .publishPercentiles(0.5, 0.95).register(registry);
     }
 
+    /** Which answer this client accepts, the shadow's configured checkpoint included. */
+    public Model model() {
+        return model;
+    }
+
     /** Readiness probe only; no model execution, redirects or response body retained. */
     public boolean isReady() throws Exception {
         var request = HttpRequest.newBuilder(endpoint.resolve("/health/ready"))
@@ -114,7 +139,7 @@ public final class TimesFmClient implements AutoCloseable {
      * answer 422. Each covariate must sit on the context's exact grid, point for point.
      */
     public MetricForecast forecast(PreparedMetricSeries context, List<PreparedMetricSeries> covariates, int horizon) {
-        if (!Model.SHADOW.equals(model)) throw new IllegalArgumentException("Covariates are a shadow-only input");
+        if (!model.isShadow()) throw new IllegalArgumentException("Covariates are a shadow-only input");
         if (covariates.isEmpty() || covariates.size() > ForecastPilotProperties.MAX_COVARIATES)
             throw new IllegalArgumentException("Shadow covariates must number 1 to " + ForecastPilotProperties.MAX_COVARIATES);
         var grid = context.points().stream().map(PreparedMetricSeries.Point::endAt).toList();

@@ -154,6 +154,40 @@ class TimesFmClientTest {
         }
     }
 
+    @Test void aConfiguredShadowModelIsTheOnlyOneItsClientAccepts() throws Exception {
+        mutate = root -> root.put("modelId", "mistralai/Timestral-123M").put("modelRevision", SHADOW_REVISION)
+            .put("adapterVersion", "kex-timestral-123m-v1");
+        start(Duration.ofSeconds(2));
+        properties.getShadow().setModelId("mistralai/Timestral-123M");
+        try (var shadow = TimesFmClient.shadow(properties, meters)) {
+            var forecast = shadow.forecast(List.of(context("a", PreparedMetricSeries.Status.READY)), 2).getFirst();
+            assertEquals("mistralai/Timestral-123M", forecast.modelId());
+            assertEquals("kex-timestral-123m-v1", forecast.adapterVersion());
+            // The service still on the default: its answer names another model and is refused.
+            mutate = TimesFmClientTest::answerAsTimestral;
+            assertEquals(INVALID_OUTPUT, assertThrows(TimesFmInferenceException.class,
+                () -> shadow.forecast(List.of(context("a", PreparedMetricSeries.Status.READY)), 2)).state());
+        }
+    }
+
+    @Test void theShadowModelDefaultsTo28MAndRefusesWhatIsNotARepositoryId() throws Exception {
+        start(Duration.ofSeconds(2));
+        properties.getShadow().setModelId(" ");
+        try (var shadow = TimesFmClient.shadow(properties, meters)) {
+            assertEquals(TimesFmClient.Model.SHADOW, shadow.model());
+        }
+        for (String bad : List.of("Timestral-28M", "../x/y", "https://hf.co/a/b", "a/b/c", TimesFmClient.MODEL_ID)) {
+            properties.getShadow().setModelId(bad);
+            assertThrows(IllegalArgumentException.class, () -> TimesFmClient.shadow(properties, meters), bad);
+        }
+    }
+
+    @Test void theShadowAdapterVersionKeepsThe28mIdentity() {
+        assertEquals("kex-timestral-28m-v1", TimesFmClient.Model.shadow("mistralai/Timestral-28M").adapterVersion());
+        assertEquals("kex-timestral-209m-v1", TimesFmClient.Model.shadow("mistralai/Timestral-209M").adapterVersion());
+        assertEquals("kex-timestral-my-finetune-v1", TimesFmClient.Model.shadow("acme/my-finetune").adapterVersion());
+    }
+
     @Test void covariatesTravelOnlyToTheShadowAndOnlyOnTheTargetsGrid() throws Exception {
         mutate = TimesFmClientTest::answerAsTimestral;
         start(Duration.ofSeconds(2));

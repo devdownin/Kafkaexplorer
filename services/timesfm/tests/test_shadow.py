@@ -54,6 +54,30 @@ def test_no_pin_means_no_shadow_and_half_a_pin_fails_closed():
             TimestralPin.from_environment(environ)
 
 
+def test_the_model_is_a_setting_and_defaults_to_the_28m():
+    assert PIN.model_id == "mistralai/Timestral-28M"
+    assert TimestralPin.from_environment({"TIMESTRAL_REVISION": "a" * 40, "TIMESTRAL_SHA256": "b" * 64,
+                                          "TIMESTRAL_MODEL": "  "}) == PIN
+    larger = TimestralPin.from_environment({"TIMESTRAL_REVISION": "a" * 40, "TIMESTRAL_SHA256": "b" * 64,
+                                            "TIMESTRAL_MODEL": "mistralai/Timestral-123M"})
+    assert (larger.model_id, larger.adapter_version) == ("mistralai/Timestral-123M", "kex-timestral-123m-v1")
+    # A model alone enables nothing: the shadow still waits for its pin.
+    assert TimestralPin.from_environment({"TIMESTRAL_MODEL": "mistralai/Timestral-123M"}) is None
+
+
+@pytest.mark.parametrize("model", ["Timestral-28M", "mistralai/", "../models/x", "https://hf.co/a/b",
+                                   "mistralai/Timestral-28M/extra", "a/b c"])
+def test_a_model_that_is_not_a_repository_id_is_refused(model):
+    with pytest.raises(ValueError):
+        TimestralPin("a" * 40, "b" * 64, model)
+
+
+def test_the_adapter_version_keeps_the_28m_identity_and_names_the_others():
+    assert timestral.adapter_version("mistralai/Timestral-28M") == "kex-timestral-28m-v1"
+    assert timestral.adapter_version("mistralai/Timestral-5M") == "kex-timestral-5m-v1"
+    assert timestral.adapter_version("acme/my-finetune") == "kex-timestral-my-finetune-v1"
+
+
 def test_shorter_contexts_are_left_padded_as_missing_not_as_zero():
     data = payload(n=2)
     data["series"][0]["values"] = [float(i) for i in range(128)]
@@ -107,12 +131,20 @@ def test_shadow_answers_under_its_own_identity_behind_the_same_boundary():
         body = http.post("/v1/shadow/forecast", headers=HEADERS, json=payload(n=2)).json()
         assert body["modelId"] == "mistralai/Timestral-28M"
         assert body["modelRevision"] == PIN.revision
-        assert body["adapterVersion"] == timestral.ADAPTER_VERSION
+        assert body["adapterVersion"] == "kex-timestral-28m-v1"
         assert body["centralStatistic"] == "MEDIAN"
         assert body["series"][0]["q90"] == [0.9, 0.9]
         primary_body = http.post("/v1/forecast", headers=HEADERS, json=payload()).json()
         assert primary_body["modelId"] == "google/timesfm-2.5-200m-pytorch"
         assert (primary.calls, shadow.calls) == (1, 1)
+
+
+def test_the_shadow_answers_as_the_configured_model():
+    pin = TimestralPin("a" * 40, "b" * 64, "mistralai/Timestral-209M")
+    app = create_app(PrimaryStub(), TOKEN, shadow_worker=ShadowStub(), shadow_pin=pin, manage_worker=False)
+    with TestClient(app) as http:
+        body = http.post("/v1/shadow/forecast", headers=HEADERS, json=payload()).json()
+        assert (body["modelId"], body["adapterVersion"]) == ("mistralai/Timestral-209M", "kex-timestral-209m-v1")
 
 
 def test_shadow_yields_while_the_primary_is_computing():
