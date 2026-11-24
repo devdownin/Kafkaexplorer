@@ -80,7 +80,43 @@ function chartLine(points: THREE.Vector3[], color: number, width = 0.027): THREE
   );
 }
 
-/** A separate, labelled metric axis, not a continuation of offset-production rings. */
+/**
+ * A text billboard drawn on a 2D canvas. Returns null where no 2D context exists (jsdom, a
+ * locked-down browser): the scene then simply carries no text, the HTML panels keep the figures.
+ */
+export function textSprite(text: string, dark: boolean, width = 2.6): THREE.Sprite | null {
+  const canvas = document.createElement('canvas');
+  canvas.width = 320;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  context.fillStyle = dark ? 'rgba(14, 30, 48, .9)' : 'rgba(249, 252, 255, .92)';
+  context.fillRect(0, 0, 320, 64);
+  context.font = '600 26px system-ui, sans-serif';
+  context.fillStyle = dark ? '#E4ECF7' : '#1D334B';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(text, 160, 33, 304);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture, transparent: true, depthTest: false, depthWrite: false,
+  }));
+  sprite.scale.set(width, width / 5, 1);
+  return sprite;
+}
+
+/** Three significant digits: an axis label, not a measurement readout. */
+export function axisValue(value: number, unit: string): string {
+  const figure = Number.isFinite(value) ? value.toLocaleString(undefined, { maximumSignificantDigits: 3 }) : '—';
+  return unit ? `${figure} ${unit}` : figure;
+}
+
+/**
+ * A separate metric axis, not a continuation of offset-production rings. Its top and bottom are
+ * labelled with their values and the metric's unit, and the two halves are named: without
+ * them the canopy was a shape whose height meant nothing that could be read.
+ */
 export function createForecastCanopy(
   forecast: StrataProjection, position: THREE.Vector3, dark: boolean,
 ): THREE.Group {
@@ -131,5 +167,17 @@ export function createForecastCanopy(
       transparent: true, opacity: 0.55, dashSize: 0.18, gapSize: 0.12 }));
   boundary.computeLineDistances();
   root.add(boundary);
+  const labels: Array<[string, number, number, number]> = [
+    [axisValue(min + span, forecast.unit), -0.9, fy(min + span), 2.2],
+    [axisValue(min, forecast.unit), -0.9, fy(min), 2.2],
+    ['Measured', 1.05, 5.75, 1.8],
+    ['Forecast q10–q90', 3.8, 5.75, 2.6],
+  ];
+  for (const [text, x, y, width] of labels) {
+    const sprite = textSprite(text, dark, width);
+    if (!sprite) continue;
+    sprite.position.set(x, y, 0);
+    root.add(sprite);
+  }
   return root;
 }

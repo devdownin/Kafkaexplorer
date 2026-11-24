@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import type { PartitionActivityResponse, TopicActivity, TopicActivityResponse } from '../api/types';
-import { activityHistogram, comparisonDelta, partitionFrameMatches, topicEvidence, topicMapPositions } from './strataWorkspace';
+import { activityHistogram, activityScaleMax, comparisonDelta, isDoubleTap, partitionFrameMatches, shouldRefit, stableLayout, topicEvidence, topicMapPositions } from './strataWorkspace';
 
 const topic = (counts = Array(12).fill(20), coveredFromMs: number | null = null): TopicActivity => ({
   topic: 'orders',
@@ -99,4 +99,54 @@ describe('Strata workspace evidence', () => {
     expect(partitionFrameMatches(null, snapshot)).toBe(false);
   });
 
+});
+
+describe('Strata stable layout', () => {
+  it('keeps every existing slot when a topic that sorts first is created', () => {
+    const first = stableLayout(new Map(), ['orders', 'payments']);
+    expect([...first]).toEqual([['orders', 0], ['payments', 1]]);
+    const next = stableLayout(first, ['aaa', 'orders', 'payments']);
+    expect(next.get('orders')).toBe(0);
+    expect(next.get('payments')).toBe(1);
+    expect(next.get('aaa')).toBe(2);
+  });
+
+  it('frees a deleted topic slot for the next new one', () => {
+    const first = stableLayout(new Map(), ['a', 'b', 'c']);
+    const next = stableLayout(first, ['a', 'c', 'd']);
+    expect([...next].sort()).toEqual([['a', 0], ['c', 2], ['d', 1]]);
+  });
+});
+
+describe('Strata refit decision', () => {
+  it('follows the cluster while the operator has not moved the camera', () => {
+    expect(shouldRefit(['a'], ['a', 'b'], false, false)).toBe(true);
+  });
+
+  it('keeps a moved camera when topics are only added', () => {
+    expect(shouldRefit(['a'], ['a', 'b'], false, true)).toBe(false);
+  });
+
+  it('re-frames when a visible topic disappears or the filter changes', () => {
+    expect(shouldRefit(['a', 'b'], ['a'], false, true)).toBe(true);
+    expect(shouldRefit(['a'], ['a', 'b'], true, true)).toBe(true);
+  });
+});
+
+describe('Strata ring scale', () => {
+  it('is the largest measured bucket in view, never below 1', () => {
+    const values = Array(12).fill(20);
+    values[4] = 75;
+    expect(activityScaleMax([{ activity: topic(values) }, { activity: undefined }], 12)).toBe(75);
+    expect(activityScaleMax([], 12)).toBe(1);
+  });
+});
+
+describe('Strata double tap', () => {
+  it('completes on a second tap of the same column within the delay only', () => {
+    expect(isDoubleTap(null, 'a', 100)).toBe(false);
+    expect(isDoubleTap({ topic: 'a', atMs: 100 }, 'a', 400)).toBe(true);
+    expect(isDoubleTap({ topic: 'a', atMs: 100 }, 'b', 200)).toBe(false);
+    expect(isDoubleTap({ topic: 'a', atMs: 100 }, 'a', 500)).toBe(false);
+  });
 });

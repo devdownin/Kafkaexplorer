@@ -28,7 +28,7 @@ these features in a deployed image. See the [container operations guide](DOCKERH
 | Element | Meaning | Evidence |
 |---|---|---|
 | Column | Kafka topic | `GET /api/dashboard` |
-| Twelve rings, bottom to top | Consecutive 2.5-minute offsets-produced buckets in the last 30 minutes | `GET /api/dashboard/activity` |
+| Twelve rings, bottom to top | Consecutive 2.5-minute offsets-produced buckets in the last 30 minutes | `POST /api/dashboard/activity` |
 | Ring radius (logarithmic) | Relative **offset** production, not current record count | Offset differences by timestamp |
 | Horizontal translucent plane | Currently selected time bucket, **same bucket** on every topic | Activity response shared time window |
 | Amber highlighted ring | **Candidate** deviation from previous four complete buckets | Client-side, conservative heuristic |
@@ -53,7 +53,7 @@ shown. No link is not evidence of absent activity.
    the adjacent topic navigator and its accessible mini-map controls.
 2. Use **Temporal lens** to select an interval. The plane and highlighted ring
    correspond to the same server-provided interval across all topics.
-   **Most recent** returns to the latest bucket. A new activity snapshot is
+   **Latest** returns to the latest bucket. A new activity snapshot is
    retrieved every 30 seconds while the tab is visible.
 3. Select a topic to show retained-offset estimates, time-bucket production
    and consumer groups. Choose a group to inspect per-partition lag. No commit
@@ -155,7 +155,7 @@ figurent dans l'[audit complet du module](notes/strata-3d-audit.md).
 - **Focus:** double-click a topic column or a topic in the list, or activate **Focus partitions and forecast** in the inspector. The camera smoothly approaches that topic and reveals its partition ribbons. Use **Return to overview** to restore the whole cluster. Camera easing follows the motion preference; with motion disabled, the transition snaps directly into place.
 - **Stable placement:** columns are laid out using each topic's position in the complete, sorted cluster list. Filtering does not reshuffle the remaining topics. Changing which topics are visible re-fits the camera around their world-space bounds.
 - **Partition production:** only the focused topic triggers the bounded partition API. Each ribbon's width is proportional to a logarithm of the offsets produced by that **partition**, in that time bucket. An absent reading or a bucket preceding the partition's retention boundary has **no segment**. A missing ribbon does not mean an idle partition. The scope is capped at 24 partitions and the configured global offset-lookup budget; omissions and failed partitions are declared by the endpoint. The partition detail is refreshed while the tab is visible, not collected for all topics.
-- **Replay history:** the **Replay history** control advances the time lens through the existing measured 12-bucket window. Speeds of 0.5×, 1×, 2× and 4× are available. This replay uses the latest snapshot only and does not read individual Kafka records. A new broker sample may replace the displayed window between steps; this is a live replay, **not a historical persisted recording**.
+- **Replay history:** the **Replay** control advances the time lens through the existing measured 12-bucket window. Speeds of 0.5×, 1×, 2× and 4× are available. This replay uses the latest snapshot only and does not read individual Kafka records. A new broker sample may replace the displayed window between steps; this is a live replay, **not a historical persisted recording**.
 
 
 ## Advanced diagnostic workspace — P2
@@ -187,7 +187,7 @@ workspace. The mode toggle changes the analysis, without resetting the time lens
 - Choose **Compare**, select topic **A** in the topic list or 3D scene, then choose
   a distinct visible topic **B**. Cyan and violet halos distinguish both columns.
   No line between them is invented simply because comparison is active.
-- Both curves use **the same `GET /api/dashboard/activity` snapshot**, window,
+- Both curves use **the same `POST /api/dashboard/activity` snapshot**, window,
   bucket boundaries and the one shared time-lens cursor. The readout compares
   produced offsets in the selected bucket and average offsets/minute only when
   all twelve bucket values have complete partition and retention coverage.
@@ -204,6 +204,25 @@ workspace. The mode toggle changes the analysis, without resetting the time lens
   conservative local deviation in the selected slice.
 
 ### Limits and accessibility
+
+**Reading the scene.** A legend in the scene's top-left corner states the ring scale: width is
+offsets produced per 2.5-minute bucket on a log scale, against the largest bucket among the
+*visible* topics — it names that number, and filtering changes it. A column keeps its position
+and its colour for the whole session: a topic created or deleted elsewhere moves nothing, and
+the camera re-frames only when the filter changes, a visible topic disappears or the camera was
+never moved. The forecast canopy carries its top and bottom values with the metric's unit.
+
+**Touch screens.** One finger scrolls the page; two fingers orbit and zoom; a double tap on a
+column focuses it. **Escape** steps back one level: it leaves the focused topic, then the
+comparison.
+
+**When a refresh fails.** The last activity sample is kept and an alert says the refresh failed;
+readings turn *stale* after 90 seconds rather than disappearing. The inspector and the status
+bar are not live regions, so a screen reader is not interrupted by each 30-second poll.
+
+**Why a POST.** The activity is requested with the topic list in the body: 48 names of up to 249
+characters overflow the 8 KB request line a default Tomcat accepts. `GET /api/dashboard/activity`
+remains for short lists.
 
 The workspace uses the existing 48-topic visible limit; correlations apply
 only to topics included in that bounded snapshot. Filtering that hides a topic

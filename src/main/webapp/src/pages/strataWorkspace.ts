@@ -93,3 +93,68 @@ export function partitionFrameMatches(
     && partition.partitionsMeasured <= partition.partitionsTotal
     && partition.partitions.every(row => !row.available || row.counts.length === snapshot.buckets));
 }
+
+/**
+ * Sunflower slots that survive topic creation and deletion. Ranking every name alphabetically
+ * moved every topic sorted after a new one, which changed the scene's signature and re-framed
+ * the camera on the next metadata poll, throwing away the operator's orbit. A name keeps the
+ * slot it was first given; a new name takes the lowest free slot, in alphabetical order, and a
+ * deleted topic's slot is freed for the next one.
+ */
+export function stableLayout(previous: ReadonlyMap<string, number>, names: readonly string[]): Map<string, number> {
+  const present = new Set(names);
+  const next = new Map<string, number>();
+  const taken = new Set<number>();
+  for (const [name, slot] of previous) {
+    if (present.has(name) && !taken.has(slot)) { next.set(name, slot); taken.add(slot); }
+  }
+  let free = 0;
+  for (const name of [...names].sort((a, b) => a.localeCompare(b))) {
+    if (next.has(name)) continue;
+    while (taken.has(free)) free++;
+    next.set(name, free);
+    taken.add(free);
+  }
+  return next;
+}
+
+/**
+ * Whether a change in the visible topics should re-frame the camera. The operator's view is
+ * kept unless they changed the filter themselves, a topic they could see is gone (the frame may
+ * now point at nothing), or they never moved the camera, in which case the overview simply
+ * follows the cluster.
+ */
+export function shouldRefit(previous: readonly string[], next: readonly string[],
+  frameChanged: boolean, userMoved: boolean): boolean {
+  if (frameChanged || !userMoved) return true;
+  const visible = new Set(next);
+  return previous.some(name => !visible.has(name));
+}
+
+/**
+ * The largest measured bucket among the visible topics: every ring's radius is scaled against
+ * it, so the legend must quote the same number. It is relative to what is in view, and the
+ * legend says so, since filtering the topics changes it.
+ */
+export function activityScaleMax(topics: readonly { activity?: TopicActivity }[], buckets: number): number {
+  let max = 1;
+  for (const topic of topics) {
+    for (let index = 0; index < buckets; index++) {
+      const value = bucketReading(topic.activity, index);
+      if (value !== null && value > max) max = value;
+    }
+  }
+  return max;
+}
+
+export interface StrataTap { topic: string; atMs: number }
+export const DOUBLE_TAP_MS = 350;
+
+/**
+ * A touch screen fires no reliable `dblclick`, so the second tap on the same column within
+ * {@link DOUBLE_TAP_MS} is the focus gesture there. Returns whether this tap completes one.
+ */
+export function isDoubleTap(previous: StrataTap | null, topic: string, atMs: number): boolean {
+  return Boolean(previous && previous.topic === topic && atMs - previous.atMs >= 0
+    && atMs - previous.atMs <= DOUBLE_TAP_MS);
+}

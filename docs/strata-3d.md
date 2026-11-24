@@ -56,5 +56,4 @@ activity, not a topology of broker networking or replica placement.
 
 Implementation:
 - `src/main/webapp/src/pages/Strata3D.tsx`: page, requests and accessible UI.
-- `src/main/webapp/src/pages/strata3d/model.ts`: pure measurement semantics and layout.
-- `src/main/webapp/src/pages/strata3d/StrataScene.tsx`: Three.js scene, OrbitControls and GPU cleanup.
+- The scene, OrbitControls and GPU cleanup now live in `StrataCanvas` inside `Strata3D.tsx`; the pure helpers are the `pages/strata*.ts` modules.
