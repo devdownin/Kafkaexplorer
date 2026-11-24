@@ -9,10 +9,14 @@ import java.util.Map;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.compagnonsdudev.kafkasqlexplorer.config.ExplorerConfig;
 import com.compagnonsdudev.kafkasqlexplorer.config.KafkaConfig;
@@ -118,7 +122,29 @@ public class DashboardController {
             @RequestParam(name = "topics") List<String> topics,
             @RequestParam(name = "windowMs", required = false) Long windowMs,
             @RequestParam(name = "buckets", required = false) Integer buckets) {
+        return measureActivity(topics, windowMs, buckets);
+    }
 
+    /** The body of {@code POST /api/dashboard/activity}: the same three parameters as the GET. */
+    public record ActivityRequest(List<String> topics, Long windowMs, Integer buckets) {
+    }
+
+    /**
+     * The same read as the GET, with the topics in the body. Kafka names run to 249 characters, so
+     * a page asking for its forty-eight columns by query string can pass twelve kilobytes of URL —
+     * past the 8 KB of request header a default Tomcat accepts, which answers that with a 400
+     * before this controller is reached. Kafka Strata asks this way; the GET stays for the callers
+     * whose lists are short and for anyone who scripted it.
+     */
+    @PostMapping("/activity")
+    public TopicActivityResponse postTopicActivity(@RequestBody ActivityRequest request) {
+        if (request == null || request.topics() == null || request.topics().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "topics is required");
+        }
+        return measureActivity(request.topics(), request.windowMs(), request.buckets());
+    }
+
+    private TopicActivityResponse measureActivity(List<String> topics, Long windowMs, Integer buckets) {
         int maxTopics = Math.max(1, explorerConfig.getActivityMaxTopics());
         List<String> requested = topics.stream()
                 .map(String::trim)

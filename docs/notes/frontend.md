@@ -901,3 +901,32 @@ in its own final shape, as the forecast panel does with its 260 px chart) instea
 sentence: the sentence is replaced by content of another height, which pushes everything below it,
 and a skeleton of the right shape does not. The skeleton carries `role="status"` and a label; the
 shimmer itself is hidden from assistive technology.
+
+## Strata 3D — what the scene owes the operator
+
+`pages/Strata3D.tsx` (the `StrataCanvas` inside it owns the Three.js scene) with its pure helpers in
+`pages/strata*.ts`; `docs/STRATA-3D.md` is the operator guide. `Strata3D.test.tsx` drives the page
+against a stand-in `WebGLRenderer` that keeps the scene and camera it is asked to draw — the rest of
+Three.js is real — and each of its cases fails on the code it replaced. What each rule below cost:
+
+- **Emphasis is re-applied after every rebuild** (`applyEmphasis`). The time lens, the deviation
+  colour and the selection scale lived in an effect whose dependencies differed from the rebuild's,
+  so a partition poll or a quality change brought every ring back at its base opacity.
+- **A topic keeps its slot and its colour** (`stableLayout`, `columnHue`). Positions were the rank in
+  the alphabetical list, so a topic created elsewhere moved every one after it and the camera
+  re-framed on the next metadata poll; colours were the rank among the *visible* topics, so filtering
+  repainted them. The camera re-frames only when `shouldRefit` says so.
+- **A failed activity refresh keeps the last sample** and says so; `topicEvidence` turns it stale.
+  Blanking it showed neutral rings under "Activity not measured yet", the wrong sentence.
+- **Nothing polled is a live region.** The inspector was `aria-live` around the consumer panel and
+  the status bar was `role="status"`: a screen reader was interrupted every 30 s.
+- **Geometries and label textures are shared** (`StrataAssets`), rings per 1/32 of the scale. Each
+  rebuild used to allocate and upload ~17 geometries per column and re-rasterise every label. Draw
+  calls are unchanged: a mesh still owns its material, because its opacity is its own.
+- **One finger scrolls on a touch screen**; two orbit and zoom, a double tap focuses. OrbitControls
+  sets `touch-action: none` on a canvas at least 510 px tall, which left a phone almost nothing to
+  scroll with.
+- **The scale is stated.** The legend quotes the largest bucket in view (`activityScaleMax`, the
+  same number the rings are scaled against); the forecast canopy carries its values and unit.
+- **The activity is asked by `POST`.** 48 names of up to 249 characters overflow the 8 KB request
+  line of a default Tomcat, which answers 400 before the controller is reached.

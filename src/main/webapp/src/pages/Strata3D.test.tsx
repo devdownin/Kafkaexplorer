@@ -73,21 +73,22 @@ let stub: Stub;
 
 function install() {
   mockedAxios.isCancel.mockReturnValue(false);
-  mockedAxios.get.mockImplementation((url: string, config?: { params?: unknown }) => {
+  mockedAxios.post.mockImplementation((url: string, body?: unknown) => {
+    if (url !== '/api/dashboard/activity') return Promise.reject(new Error('not stubbed: ' + url));
+    if (stub.activityFails) return Promise.reject(new Error('broker timeout'));
+    const asked = (body as { topics: string[] }).topics;
+    return Promise.resolve({ data: {
+      topics: Object.fromEntries(asked.map(t => [t, series(t, Array(12).fill(30))])),
+      windowStartMs: WINDOW_START, windowEndMs: WINDOW_START + 12 * BUCKET_MS,
+      bucketMs: BUCKET_MS, buckets: 12, available: true, warnings: [],
+    } });
+  });
+  mockedAxios.get.mockImplementation((url: string) => {
     if (url === '/api/dashboard') {
       return Promise.resolve({ data: {
         topics: stub.topics, topicSizes: Object.fromEntries(stub.topics.map(t => [t, 100])),
         totalMessages: 0, tables: [], health: true, clusterName: 'test', bootstrapServers: 'x',
         topicLastMessages: {}, internalTopicPrefix: '',
-      } });
-    }
-    if (url === '/api/dashboard/activity') {
-      if (stub.activityFails) return Promise.reject(new Error('broker timeout'));
-      const asked = ((config?.params as { topics?: string } | undefined)?.topics ?? '').split(',').filter(Boolean);
-      return Promise.resolve({ data: {
-        topics: Object.fromEntries(asked.map(t => [t, series(t, Array(12).fill(30))])),
-        windowStartMs: WINDOW_START, windowEndMs: WINDOW_START + 12 * BUCKET_MS,
-        bucketMs: BUCKET_MS, buckets: 12, available: true, warnings: [],
       } });
     }
     if (url === '/api/lineage') return Promise.resolve({ data: { nodes: [], edges: [], warnings: [] } });
@@ -136,7 +137,21 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  document.documentElement.classList.remove('dark');
 });
+
+function ground(): THREE.GridHelper {
+  const grid = drawn.scene?.children.find(child => child instanceof THREE.GridHelper);
+  if (!(grid instanceof THREE.GridHelper)) throw new Error('no ground');
+  return grid;
+}
+
+const columnColor = (topic: string) => {
+  const crown = columns().get(topic)!.children.find(child =>
+    child instanceof THREE.Mesh && child.geometry instanceof THREE.TorusGeometry
+    && child.userData.bucketIndex === undefined) as THREE.Mesh;
+  return (crown.material as THREE.MeshBasicMaterial).color.getHex();
+};
 
 describe('Strata3D page', () => {
   it('keeps the time-lens emphasis when the scene is rebuilt', async () => {
@@ -200,5 +215,77 @@ describe('Strata3D page', () => {
     expect(inspector.closest('[aria-live]')).toBeNull();
     expect(inspector.parentElement?.closest('aside aside')).toBeNull();
     expect(screen.getByText(/^Sampled /).closest('[role="status"]')).toBeNull();
+  });
+
+  it('asks for the activity in a request body, never in the URL', async () => {
+    await renderPage();
+    expect(mockedAxios.post).toHaveBeenCalledWith('/api/dashboard/activity',
+      expect.objectContaining({ topics: ['orders', 'payments'], buckets: 12 }), expect.anything());
+    expect(mockedAxios.get.mock.calls.some(([url]) => url === '/api/dashboard/activity')).toBe(false);
+  });
+
+  it('reuses ring geometries across a rebuild instead of allocating them again', async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    const before = ring('orders', 3);
+    await user.click(screen.getByRole('button', { name: /^payments/ }));
+    await waitFor(() => expect(ring('orders', 3)).not.toBe(before));
+    expect(ring('orders', 3).geometry).toBe(before.geometry);
+    // Same measured value, same quantised size: one geometry for every equal ring.
+    expect(ring('payments', 3).geometry).toBe(before.geometry);
+  });
+
+  it('keeps a topic colour when the filter changes what is in view', async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    const color = columnColor('payments');
+    await user.type(screen.getByLabelText('Filter topics'), 'pay');
+    await waitFor(() => expect(columns().has('orders')).toBe(false));
+    expect(columnColor('payments')).toBe(color);
+  });
+
+  it('states the ring scale it draws with', async () => {
+    await renderPage();
+    const legend = screen.getByTestId('strata-ring-legend');
+    expect(legend).toHaveTextContent('2.5-minute bucket');
+    expect(within(legend).getByText('30')).toBeInTheDocument();
+  });
+
+  it('recolours the floor with the theme and grows it with the frame', async () => {
+    const user = userEvent.setup();
+    stub.topics = Array.from({ length: 40 }, (_, i) => `t${String(i).padStart(2, '0')}`).concat(['orders']);
+    window.history.replaceState(null, '', '/strata?sv.filter=orders');
+    await renderPage();
+    const small = ground().userData.size as number;
+    expect(ground().userData.dark).toBe(false);
+
+    await user.clear(screen.getByLabelText('Filter topics'));
+    await waitFor(() => expect(ground().userData.size as number).toBeGreaterThan(small));
+
+    act(() => { document.documentElement.classList.add('dark'); });
+    await waitFor(() => expect(ground().userData.dark).toBe(true));
+  });
+
+  it('leaves the comparison on Escape once nothing is focused', async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    const workspace = screen.getByRole('region', { name: 'Spatial view presets' });
+    await user.click(within(workspace).getByRole('button', { name: 'Compare' }));
+    expect(within(workspace).getByRole('button', { name: 'Compare' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(document.body);
+    await user.keyboard('{Escape}');
+    expect(within(workspace).getByRole('button', { name: 'Overview' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('lets one finger scroll the page on a touch screen', async () => {
+    const original = window.matchMedia;
+    window.matchMedia = (query: string) => ({ ...original(query), matches: query === '(pointer: coarse)' });
+    try {
+      await renderPage();
+      expect(document.querySelector('canvas')!.style.touchAction).toBe('pan-y');
+      expect(screen.getByText(/Two fingers orbit and zoom · Double-tap to focus/)).toBeInTheDocument();
+    } finally {
+      window.matchMedia = original;
+    }
   });
 });

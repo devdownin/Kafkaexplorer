@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Kafka Strata 3D audit fixes.** The time lens survives scene rebuilds; columns keep their
+  position, colour and the operator's camera when topics are created elsewhere; a failed activity
+  refresh keeps the last sample and says so; polled panels are no longer live regions. One finger
+  scrolls the page on touch screens (two orbit, double tap focuses), the ring scale and the
+  forecast axis are labelled, the floor follows the frame and the theme, Escape leaves comparison,
+  and geometries and label textures are shared across rebuilds. Activity is now requested with
+  `POST /api/dashboard/activity` (topics in the body); the GET is unchanged.
+
 - **Optional MCP OAuth JWT resource-server mode:** external issuer/JWK validation,
   required audience and separate `mcp:invoke` / `mcp:admin` transport scopes.
   Legacy shared-token mode remains the default; MCP Tasks and per-tool OAuth RBAC

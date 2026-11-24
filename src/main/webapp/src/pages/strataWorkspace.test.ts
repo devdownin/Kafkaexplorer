@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from 'vitest';
 import type { PartitionActivityResponse, TopicActivity, TopicActivityResponse } from '../api/types';
-import { activityHistogram, comparisonDelta, partitionFrameMatches, shouldRefit, stableLayout, topicEvidence, topicMapPositions } from './strataWorkspace';
+import { activityHistogram, activityScaleMax, comparisonDelta, isDoubleTap, partitionFrameMatches, shouldRefit, stableLayout, topicEvidence, topicMapPositions } from './strataWorkspace';
 
 const topic = (counts = Array(12).fill(20), coveredFromMs: number | null = null): TopicActivity => ({
   topic: 'orders',
@@ -130,5 +130,23 @@ describe('Strata refit decision', () => {
   it('re-frames when a visible topic disappears or the filter changes', () => {
     expect(shouldRefit(['a', 'b'], ['a'], false, true)).toBe(true);
     expect(shouldRefit(['a'], ['a', 'b'], true, true)).toBe(true);
+  });
+});
+
+describe('Strata ring scale', () => {
+  it('is the largest measured bucket in view, never below 1', () => {
+    const values = Array(12).fill(20);
+    values[4] = 75;
+    expect(activityScaleMax([{ activity: topic(values) }, { activity: undefined }], 12)).toBe(75);
+    expect(activityScaleMax([], 12)).toBe(1);
+  });
+});
+
+describe('Strata double tap', () => {
+  it('completes on a second tap of the same column within the delay only', () => {
+    expect(isDoubleTap(null, 'a', 100)).toBe(false);
+    expect(isDoubleTap({ topic: 'a', atMs: 100 }, 'a', 400)).toBe(true);
+    expect(isDoubleTap({ topic: 'a', atMs: 100 }, 'b', 200)).toBe(false);
+    expect(isDoubleTap({ topic: 'a', atMs: 100 }, 'a', 500)).toBe(false);
   });
 });

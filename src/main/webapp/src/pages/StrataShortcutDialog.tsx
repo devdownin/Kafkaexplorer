@@ -10,7 +10,7 @@ const shortcuts = [
   { key: 'O', action: 'Return to cluster overview' },
   { key: 'C', action: 'Compare two topics' },
   { key: 'Space', action: 'Play or pause the temporal replay' },
-  { key: 'Escape', action: 'Close help or return to overview' },
+  { key: 'Escape', action: 'Close help, leave the focused topic, then leave comparison' },
   { key: '← / →', action: 'Navigate the time slider; resize handles when focused' },
   { key: 'Shift + Enter', action: 'Focus a topic from the mini-map or list' },
   { key: 'Ctrl/⌘ + K', action: 'Open the application-wide command palette' },

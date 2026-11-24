@@ -130,3 +130,31 @@ export function shouldRefit(previous: readonly string[], next: readonly string[]
   const visible = new Set(next);
   return previous.some(name => !visible.has(name));
 }
+
+/**
+ * The largest measured bucket among the visible topics: every ring's radius is scaled against
+ * it, so the legend must quote the same number. It is relative to what is in view, and the
+ * legend says so, since filtering the topics changes it.
+ */
+export function activityScaleMax(topics: readonly { activity?: TopicActivity }[], buckets: number): number {
+  let max = 1;
+  for (const topic of topics) {
+    for (let index = 0; index < buckets; index++) {
+      const value = bucketReading(topic.activity, index);
+      if (value !== null && value > max) max = value;
+    }
+  }
+  return max;
+}
+
+export interface StrataTap { topic: string; atMs: number }
+export const DOUBLE_TAP_MS = 350;
+
+/**
+ * A touch screen fires no reliable `dblclick`, so the second tap on the same column within
+ * {@link DOUBLE_TAP_MS} is the focus gesture there. Returns whether this tap completes one.
+ */
+export function isDoubleTap(previous: StrataTap | null, topic: string, atMs: number): boolean {
+  return Boolean(previous && previous.topic === topic && atMs - previous.atMs >= 0
+    && atMs - previous.atMs <= DOUBLE_TAP_MS);
+}

@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PartitionActivity, PartitionActivityResponse } from '../api/types';
 import * as THREE from 'three';
-import { partitionBucketReading, createPartitionRibbons } from './strataImmersive';
+import { axisValue, partitionBucketReading, createPartitionRibbons } from './strataImmersive';
 
 const p: PartitionActivity = {
   partition: 3, counts: [5, 0, 12, 6], coveredFromMs: 1100, available: true, note: null,
@@ -22,5 +22,13 @@ describe('measured partition ribbons', () => {
     expect(meshes.children).toHaveLength(1);
     expect(meshes.children[0].userData.partition).toBe(3);
     expect((meshes.children[0] as THREE.Mesh).geometry.getAttribute('position').count).toBe(12);
+  });
+});
+
+describe('forecast axis labels', () => {
+  it('quote three significant digits and the metric unit', () => {
+    expect(axisValue(1234.567, 'msg/s')).toBe('1,230 msg/s');
+    expect(axisValue(0.04567, '')).toBe('0.0457');
+    expect(axisValue(Number.NaN, 'ms')).toBe('— ms');
   });
 });
