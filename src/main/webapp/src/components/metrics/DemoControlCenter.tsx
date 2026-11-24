@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useCallback, useEffect, useState } from 'react';
 import axios from 'axios';
-import type { ForecastStatus } from '../../api/types';
+import type { ForecastStatus, MetricConfig } from '../../api/types';
+import { demoSnapshot, downloadDemoReport } from './demoReport';
 import { type Scenario, type DemoScenarioEvent, SCENARIOS, scenarioFor, previewPath } from './demoScenarios';
 
 type Phase = 'ACTIVE' | 'APPLYING' | 'STALE';
@@ -26,8 +27,9 @@ function ScenarioPreview({ scenario }: { scenario: Scenario }) {
 }
 
 /** Opt-in controller: 404 means absent by design, not an error banner on normal installations. */
-export function DemoControlCenter({ metricCount, metricsLoading, forecasts, forecastsQueried, onConfirmed, onInspectMetrics }: {
+export function DemoControlCenter({ metricCount, metrics = [], metricsLoading, forecasts, forecastsQueried, onConfirmed, onInspectMetrics }: {
   metricCount: number;
+  metrics?: MetricConfig[];
   metricsLoading: boolean;
   forecasts: ForecastStatus | null;
   forecastsQueried: boolean;
@@ -111,35 +113,27 @@ export function DemoControlCenter({ metricCount, metricsLoading, forecasts, fore
     : state.phase === 'APPLYING' ? 'Applying · waiting for Kafka offsets'
     : 'Generator unavailable · acknowledgement expired';
 
-  function exportReport() {
-    // Do not report a scenario as active before it is verified by the Kafka generator.
+  function exportReport(format: 'json' | 'html') {
+    // Retain the evidence-based report shipped on main (#674) while making
+    // Kafka-requested and Kafka-verified states unambiguous in either format.
+    const snapshot = demoSnapshot(state.scenario ?? 'not verified', metrics, forecasts);
     const report = {
-      kind: 'kafkaexplorer-forecast-demo',
-      exportedAt: new Date().toISOString(),
-      scenario: {
-        requested: state?.requestedScenario, confirmed: state?.scenario,
-        phase: state?.phase, appliedAt: state?.appliedAt, startedAt: state?.startedAt,
-        affectedMetrics: state?.scenario ? scenarioFor(state.scenario).metricIds : [],
+      ...snapshot,
+      note: `${snapshot.note} Requested: ${state.requestedScenario}; confirmation: ${state.phase}.`,
+      control: {
+        requested: state.requestedScenario,
+        confirmed: active ? state.scenario : null,
+        phase: state.phase,
+        appliedAt: state.appliedAt,
+        startedAt: state.startedAt,
+        affectedMetrics: active && state.scenario ? scenarioFor(state.scenario).metricIds : [],
       },
-      metrics: { active: metricsLoading ? null : metricCount, expected: 5 },
-      forecasts: {
-        status: !forecastsQueried ? 'LOADING' : forecastUnavailable ? 'UNAVAILABLE' : 'AVAILABLE',
-        total: forecastUnavailable || !forecastsQueried ? null : seriesCount,
-        ready: forecastUnavailable || !forecastsQueried ? null : ready,
-        series: (forecasts?.series ?? []).map(series => ({
-          metricId: series.metricId,
-          state: series.result?.state ?? 'UNAVAILABLE',
-          strategy: series.result?.strategy ?? null,
-          generatedAt: series.result?.generatedAt ?? null,
-          quality: series.result?.quality ?? null,
-        })),
+      availability: {
+        metrics: metricsLoading ? 'LOADING' : 'AVAILABLE',
+        forecasts: !forecastsQueried ? 'LOADING' : forecastUnavailable ? 'UNAVAILABLE' : 'AVAILABLE',
       },
     };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
-    const link = document.createElement('a');
-    link.href = url; link.download = 'kafkaexplorer-forecast-demo-report.json';
-    document.body.appendChild(link); link.click(); link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    downloadDemoReport(report, format);
   }
 
   async function choose(scenario: Scenario) {
@@ -176,10 +170,15 @@ export function DemoControlCenter({ metricCount, metricsLoading, forecasts, fore
           <p className="text-xs text-on-surface-variant">Local demo · Kafka-verified scenario control</p></div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={exportReport}
+        <button type="button" onClick={() => exportReport('json')}
           className="min-h-11 rounded-xl border border-outline-variant px-3 py-2 text-sm text-on-surface hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary motion-safe:transition-colors">
           <span className="material-symbols-outlined text-base align-middle mr-1" aria-hidden="true">download</span>
-          Export report
+          Export JSON
+        </button>
+        <button type="button" onClick={() => exportReport('html')}
+          className="min-h-11 rounded-xl border border-outline-variant px-3 py-2 text-sm text-on-surface hover:bg-primary/10 focus-visible:outline-2 focus-visible:outline-primary motion-safe:transition-colors">
+          <span className="material-symbols-outlined text-base align-middle mr-1" aria-hidden="true">description</span>
+          Export HTML
         </button>
         <button type="button" onClick={() => setExpanded(v => !v)} aria-expanded={expanded}
           className="min-h-10 rounded-lg border border-outline-variant px-3 py-2 text-sm text-on-surface hover:bg-primary/10">

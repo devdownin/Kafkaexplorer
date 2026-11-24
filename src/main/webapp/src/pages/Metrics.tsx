@@ -1219,6 +1219,7 @@ const Metrics: React.FC = () => {
       />
 
       <DemoControlCenter metricCount={metrics.filter(metric => metric.id.startsWith('demo-live-')).length}
+        metrics={metrics}
         metricsLoading={loading} forecasts={forecastStatus} forecastsQueried={forecastStatusQueried}
         onConfirmed={onDemoConfirmed} onInspectMetrics={onInspectDemoMetrics} />
 

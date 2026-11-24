@@ -728,11 +728,13 @@ requires a successful seeder exit, five histories of >=500 points each,
 a healthy TimesFM service and a READY forecast. `doctor` and `verify` expose
 the checks as CLI actions on Linux/macOS and Windows.
 
-`compose/demo-forecast.yml` mounts the forecast configuration directory
-read-only in `demo-live` as `/demo-control`. The host-side `scenario` verb writes
-`demo-scenario.conf` (normal, overload, incident, recover, seasonal); `live.sh`
-reads it on each tick and calls the shared `signals.awk` override, changing
-real producer outputs, not the seed's cloned PostgreSQL observations.
+`compose/demo-forecast.yml` uses a dedicated named `demo_control` volume,
+initialized by `demo-control-init` and mounted read-only in `demo-live` as
+`/demo-control` and read-write in Explorer as `/app/demo-control`. The CLI and
+browser scenario actions write the same `demo-scenario.conf` (normal, overload,
+incident, recover, seasonal); `live.sh` reads it on each tick and calls the
+shared `signals.awk` override, changing real producer outputs, not the seed's
+cloned PostgreSQL observations. No Docker socket is exposed to the UI.
 The published-image CI workflow, `.github/workflows/forecast-prebuilt-smoke.yml`,
 verifies this operational contract independently of source builds.
 
