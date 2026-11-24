@@ -16,7 +16,10 @@ import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strata
 import { Link } from 'react-router-dom';
 import { readStrataView, shareStrataUrl, strataRenderBudget, writeStrataView, type StrataQuality } from './strataView';
 import { copyText } from '../clipboard';
-import { DEFAULT_STRATA_LAYERS, partitionFrameMatches, topicEvidence, type StrataLayer } from './strataWorkspace';
+import {
+  DEFAULT_STRATA_LAYERS, partitionFrameMatches, shouldRefit, stableLayout, topicEvidence,
+  type StrataLayer, type StrataLayers,
+} from './strataWorkspace';
 import {
   StrataHoverCard, StrataLayerMenu, StrataMiniMap, StrataResizeHandle, StrataTimelineDock,
 } from './StrataWorkspaceUI';
@@ -171,10 +174,43 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
   return group;
 }
 
+/** What the operator is pointing at, as opposed to what was measured. */
+type StrataEmphasis = {
+  topics: Topic[]; selected: string | null; selectedBucket: number; lensAvailable: boolean; layers: StrataLayers;
+};
+
+/**
+ * Applies the time lens, the deviation colour and the selection scale to the current columns.
+ * It runs after every rebuild as well as on every change of the emphasis itself: the rebuild
+ * replaces the rings with fresh ones at their base opacity, and when the two lived in separate
+ * effects a partition poll or a quality change wiped the lens until the next bucket change.
+ */
+function applyEmphasis(current: { groups: THREE.Group[]; lens: THREE.Mesh }, emphasis: StrataEmphasis) {
+  const { topics, selected, selectedBucket, lensAvailable, layers } = emphasis;
+  current.lens.position.y = 0.35 + selectedBucket * 0.43;
+  current.lens.visible = lensAvailable && layers.activity;
+  const measurements = new Map(topics.map(topic => [topic.name, topic.activity]));
+  for (const group of current.groups) {
+    group.scale.setScalar(group.userData.topic === selected ? 1.04 : 1);
+    const anomaly = layers.anomalies ? detectActivityAnomaly(measurements.get(group.userData.topic as string), selectedBucket) : null;
+    for (const object of group.children) {
+      if (!(object instanceof THREE.Mesh) || object.userData.bucketIndex === undefined) continue;
+      const material = object.material as THREE.MeshBasicMaterial;
+      const active = object.userData.bucketIndex === selectedBucket;
+      material.setValues({ opacity: Math.min(1,
+        (object.userData.baseOpacity as number) * (active ? 1.4 : 0.42) * ((group.userData.dimFactor as number | undefined) ?? 1)) });
+      material.color.copy(object.userData.baseColor as THREE.Color);
+      if (active && anomaly) material.color.setHex(0xe7a044);
+    }
+  }
+}
+
 function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect, onFocus,
   focused, partitionActivity, forecast,
-  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, onHover, onPerformance }: {
+  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, frameKey, onHover, onPerformance }: {
   topics: Topic[];
+  /** Changes when the operator changes what is in view (the filter): the camera re-frames then. */
+  frameKey: string;
   selected: string | null;
   compareWith: string | null;
   diagnosticMode: DiagnosticMode;
@@ -217,6 +253,9 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     groups: THREE.Group[];
     lens: THREE.Mesh;
     signature: string;
+    visible: string[];
+    frameKey: string;
+    userMoved: boolean;
     rebuildMs: number | null;
     invalidate: () => void;
     fit: (items: Topic[]) => void;
@@ -289,6 +328,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     const current = {
       scene, camera, renderer, controls, content: contentGroup,
       groups: [] as THREE.Group[], lens, signature: topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000'),
+      visible: topics.map(t => t.name), frameKey, userMoved: false,
       positions: new Map<string, THREE.Vector3>(),
       rebuildMs: null as number | null,
       overview: { position: camera.position.clone(), target: controlsTarget.clone(), zoom: 1 },
@@ -362,6 +402,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     };
     current.fit = (items: Topic[]) => {
       transition = null;
+      current.userMoved = false;
       const frame = sceneFrame(items);
       halfHeight = frame.extent;
       camera.position.set(frame.center.x + frame.extent * 1.2, frame.extent * 1.05,
@@ -455,6 +496,9 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     current.invalidate = requestRender;
     const onOrbitChange = () => requestRender();
     controls.addEventListener('change', onOrbitChange);
+    // 'start' fires on the operator's own drag, pinch or wheel, never on a programmatic move.
+    const onOrbitStart = () => { current.userMoved = true; };
+    controls.addEventListener('start', onOrbitStart);
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') requestRender();
       else { cancelAnimationFrame(frame); frame = 0; }
@@ -481,6 +525,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       observer.disconnect();
       document.removeEventListener('visibilitychange', onVisibilityChange);
       controls.removeEventListener('change', onOrbitChange);
+      controls.removeEventListener('start', onOrbitStart);
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
       renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
@@ -502,14 +547,27 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const emphasis = useRef<StrataEmphasis>({ topics, selected, selectedBucket, lensAvailable, layers });
+  useEffect(() => {
+    emphasis.current = { topics, selected, selectedBucket, lensAvailable, layers };
+    const current = state.current;
+    if (!current) return;
+    applyEmphasis(current, emphasis.current);
+    current.invalidate();
+  }, [topics, selected, selectedBucket, lensAvailable, layers]);
+
   useEffect(() => {
     const current = state.current;
     if (!current) return;
     const signature = topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000');
     if (signature !== current.signature) {
+      const visible = topics.map(t => t.name);
+      // A topic created elsewhere must not throw away the operator's orbit.
+      if (shouldRefit(current.visible, visible, frameKey !== current.frameKey, current.userMoved)) current.fit(topics);
       current.signature = signature;
-      current.fit(topics);
+      current.visible = visible;
     }
+    current.frameKey = frameKey;
     // Replace measured geometry without tearing down WebGL, orbit or pointer handlers.
     const rebuildStarted = performance.now();
     disposeGroup(current.content);
@@ -628,40 +686,19 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       const center = lookup.get(forecast.topic);
       if (center) current.content.add(createForecastCanopy(forecast, center, dark));
     }
+    applyEmphasis(current, emphasis.current);
     current.rebuildMs = performance.now() - rebuildStarted;
     current.invalidate();
-  }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments, layers]);
+  }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments, layers, frameKey]);
 
   const scopeKey = topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000');
-  useEffect(() => { state.current?.focus(focused); }, [focused, scopeKey]);
-
+  // A change of scope re-aims a focused camera; with nothing focused it must leave the camera
+  // alone, or every topic created elsewhere sent the operator back to the overview.
+  const lastFocus = useRef<string | null>(null);
   useEffect(() => {
-    const groups = state.current?.groups;
-    if (!groups) return;
-    for (const group of groups) group.scale.setScalar(group.userData.topic === selected ? 1.04 : 1);
-    state.current?.invalidate();
-  }, [selected, topics]);
-
-  useEffect(() => {
-    const current = state.current;
-    if (!current) return;
-    current.lens.position.y = 0.35 + selectedBucket * 0.43;
-    current.lens.visible = lensAvailable && layers.activity;
-    const measurements = new Map(topics.map(topic => [topic.name, topic.activity]));
-    for (const group of current.groups) {
-      const anomaly = layers.anomalies ? detectActivityAnomaly(measurements.get(group.userData.topic as string), selectedBucket) : null;
-      for (const object of group.children) {
-        if (!(object instanceof THREE.Mesh) || object.userData.bucketIndex === undefined) continue;
-        const material = object.material as THREE.MeshBasicMaterial;
-        const active = object.userData.bucketIndex === selectedBucket;
-        material.setValues({ opacity: Math.min(1,
-          (object.userData.baseOpacity as number) * (active ? 1.4 : 0.42) * (group.userData.dimFactor as number ?? 1)) });
-        material.color.copy(object.userData.baseColor as THREE.Color);
-        if (active && anomaly) material.color.setHex(0xe7a044);
-      }
-    }
-    current.invalidate();
-  }, [selectedBucket, topics, links, trace, selectedGroup, selected, compareWith, diagnosticMode, focused, themeRevision, lensAvailable, layers]);
+    if (focused || lastFocus.current) state.current?.focus(focused);
+    lastFocus.current = focused;
+  }, [focused, scopeKey]);
 
   return (
     <div ref={host} role="img"
@@ -695,6 +732,7 @@ export default function Strata3D() {
   } | null>(null);
   const [lineage, setLineage] = useState<StrataLineage | null>(null);
   const [lineageError, setLineageError] = useState<string | null>(null);
+  const [activityError, setActivityError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(initialView.topic);
   const [diagnosticMode, setDiagnosticMode] = useState<DiagnosticMode>(initialView.mode);
@@ -833,7 +871,11 @@ export default function Strata3D() {
 
   const names = useMemo(() => (dashboard?.topics ?? []).slice().sort((a, b) => a.localeCompare(b)), [dashboard]);
   const scoped = useMemo(() => names.filter(name => name.toLocaleLowerCase().includes(filteredQuery.toLocaleLowerCase())).slice(0, MAX_TOPICS), [names, filteredQuery]);
-  const layoutIndices = useMemo(() => new Map(names.map((name, index) => [name, index])), [names]);
+  const [layout, setLayout] = useState<{ names: string[]; slots: Map<string, number> }>(
+    () => ({ names: [], slots: new Map() }));
+  const layoutIndices = layout.names === names ? layout.slots : stableLayout(layout.slots, names);
+  if (layout.names !== names) setLayout({ names, slots: layoutIndices });
+  const layoutExtent = Math.max(names.length, ...Array.from(layoutIndices.values(), slot => slot + 1));
   const activeFocus = focused && scoped.includes(focused) ? focused : null;
   const scope = scoped.join(',');
 
@@ -850,10 +892,13 @@ export default function Strata3D() {
           params: { topics: scope, windowMs: WINDOW_MS, buckets: BUCKETS },
           timeout: 20000, signal: controller.signal,
         });
-        if (active) setActivitySnapshot({ scope, data, receivedAt: Date.now() });
+        if (active) { setActivitySnapshot({ scope, data, receivedAt: Date.now() }); setActivityError(null); }
       } catch (failure) {
+        // Keep the last sample, as the cluster metadata does, and say so: blanking it turned
+        // every ring neutral while the page claimed activity had simply not been measured yet.
+        // `topicEvidence` marks the sample stale once it is older than 90 seconds.
         if (active && !axios.isCancel(failure)) {
-          setActivitySnapshot(previous => previous?.scope === scope ? null : previous);
+          setActivityError('Topic activity could not be refreshed. Readings shown come from the last successful sample.');
         }
       } finally {
         busy = false;
@@ -1088,14 +1133,16 @@ export default function Strata3D() {
           className="mt-2 w-full rounded-lg border border-outline-variant bg-surface px-2 py-1 text-xs text-on-surface" />}
       </div>}
       {error && <p role="alert" className="rounded-lg bg-error-container p-3 text-on-error-container">{error}</p>}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-on-surface-variant" role="status">
+      {activityError && <p role="alert" className="rounded-lg bg-error-container p-3 text-on-error-container">{activityError}</p>}
+      {/* Not a live region: it changes on every 30-second poll and would be read out each time. */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-on-surface-variant">
         <span>{topics.length}/{names.length} visible topics</span>
         <span>{measured} with readings · {incomplete} partial</span>
         <span>{links.length} declared lineage paths</span>
         {anomalies.length > 0 && <span className="text-amber-700 dark:text-amber-300">{anomalies.length} deviations in slice</span>}
         <span>{activitySnapshot?.scope === scope
-          ? 'Sampled ' + new Date(activitySnapshot.receivedAt).toLocaleTimeString()
-          : 'Activity not measured yet'}</span>
+          ? (activityError ? 'Last sample ' : 'Sampled ') + new Date(activitySnapshot.receivedAt).toLocaleTimeString()
+          : activityError ? 'Activity unavailable' : 'Activity not measured yet'}</span>
       </div>
       <StrataPerformancePanel reading={performanceStats} />
       {names.length > MAX_TOPICS && <p className="text-xs text-on-surface-variant">
@@ -1116,7 +1163,7 @@ export default function Strata3D() {
               maxLength={160} placeholder="Topic name"
               className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface" />
           </label>
-          <StrataMiniMap items={topics} totalTopics={names.length} selected={selected} peer={activeCompareWith}
+          <StrataMiniMap items={topics} totalTopics={layoutExtent} selected={selected} peer={activeCompareWith}
             leads={leads} onSelect={chooseTopic} onFocus={focusTopic} />
           <div>
             <h3 className="mb-2 text-xs font-semibold text-on-surface">Topics in view</h3>
@@ -1157,7 +1204,8 @@ export default function Strata3D() {
                 focused={activeFocus} partitionActivity={alignedPartitionActivity} forecast={visibleForecast} motion={motion}
                 quality={quality} layers={layers} onHover={updateHovered} onPerformance={setPerformanceStats}
                 links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
-                selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
+                selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace}
+                frameKey={filteredQuery} /> :
               <p className="p-8 text-sm text-on-surface-variant">{dashboard ? 'No matching topics.' : 'Loading cluster…'}</p>}
             {hovered && hoveredTopic && <StrataHoverCard name={hoveredTopic.name} activity={hoveredTopic.activity}
               bucket={selectedBucket} receivedAt={activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null}
@@ -1202,15 +1250,17 @@ export default function Strata3D() {
               behavior: motion ? 'smooth' : 'auto', block: 'start',
             })}
             onSnapshot={saveInvestigation} />}
-        <aside className="rounded-xl border border-outline-variant bg-surface p-4" aria-live="polite">
-          <h2 className="font-semibold text-on-surface mb-3">Topic inspector</h2>
+        {/* A section, not a nested <aside>; and not a live region, since it holds the consumer
+            panel and polled figures that a screen reader would otherwise announce every 30 s. */}
+        <section className="rounded-xl border border-outline-variant bg-surface p-4" aria-labelledby="strata-topic-inspector">
+          <h2 id="strata-topic-inspector" className="font-semibold text-on-surface mb-3">Topic inspector</h2>
           {selectedTopic ? <>
             <p className="break-all font-medium text-on-surface">{selectedTopic.name}</p>
             <button type="button" onClick={() => activeFocus === selectedTopic.name ? setFocused(null) : focusTopic(selectedTopic.name)}
               className="mt-2 rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">
               {activeFocus === selectedTopic.name ? 'Return to overview' : 'Focus partitions and forecast'}
             </button>
-            <p className="mt-3 text-xs text-on-surface-variant" role="status">
+            <p className="mt-3 text-xs text-on-surface-variant">
               Evidence: <strong className="text-on-surface capitalize">{selectedEvidence.status}</strong> ·
               {selectedEvidence.measuredBuckets}/{selectedEvidence.totalBuckets} complete intervals
             </p>
@@ -1234,7 +1284,7 @@ export default function Strata3D() {
             <Link className="mt-4 inline-block text-sm font-medium text-primary hover:underline"
               to={`/topic/${encodeURIComponent(selectedTopic.name)}`}>Open Topic Explorer →</Link>
           </> : <p className="text-sm text-on-surface-variant">Select a column or topic to see consumer and partition lag.</p>}
-        </aside>
+        </section>
         </aside>}
       </div>
       <section id="strata-evidence-details" className="space-y-4 rounded-2xl border border-outline-variant bg-surface-container-low p-3 sm:p-5"
