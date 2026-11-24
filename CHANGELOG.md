@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Strata 3D: count comparisons are links, and names are written where they help.** A
+  `TOPIC_COUNT_DELTA` metric now draws a link between the two topics it compares (**Count
+  comparisons** layer, on by default), green within its thresholds and red or orange in breach. The
+  verdict used to colour only a link another rule drew, and the demo's five count comparisons are
+  over `demo.live.*` topics nothing else links, so the alarm colour never showed in the demo. Past
+  twelve columns, only the selected, compared, focused, hovered and traced topics and the eight
+  busiest keep their name written; **All names** writes them all.
 - **Strata 3D: topics told apart, flows made visible.** A column's colour is now its *family* (the
   first two segments of its name), on eight hues spread round the wheel and kept clear of the colours
   that carry a meaning, with the shade stepping along numbered stages and a socle shape per family as
