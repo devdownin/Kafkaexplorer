@@ -543,8 +543,20 @@ that differs is `-NoSpectra` for `--no-spectra`, a PowerShell switch rather than
 **Nothing checks that the two scripts agree**, so they are edited together. A compose file added
 to one list, or a default moved on one side, is a stack that silently differs by platform — and
 the Windows half is the one CI never runs. What has to match: the `files` list and its two
-branches, every default, the `DEMO_SPECTRA` validation, the three waits and their budgets, and the
-`--remove-orphans` on `up`, `down` and `reset`.
+branches, every line of the block that sets the demo's values, the `DEMO_SPECTRA` validation, the
+three waits and their budgets, and the `--remove-orphans` on `up`, `down` and `reset`.
+
+**That block holds overrides and reads, never copies.** A line is there because the demo changes the
+compose files' own default (OpenRouter rather than Anthropic, Schema Registry on 8085 beside the
+agent, the Timestral shadow off) or because the script reads the value itself, for a message or a
+request. Every other default — image tags, thread counts, timeouts, the forecast identities — is the
+compose files' `${VAR:-…}`, written once. The block used to restate thirty-one of them, and three
+had drifted: the demo ran the agent at 0.10.0, SpectraLLM at 0.12.3 and the Explorer at 2.9.1 for a
+month after the compose files, which CI exercises, had moved to 0.20.0, 0.20.0 and 2.9.4, with
+nothing to say so. Measured by rendering `docker compose config` for the eight modes before and
+after dropping them: three identical, and in the five others the only difference was those three
+tags. A new default goes in the compose file; it goes in the script only when it is an override or
+something the script prints.
 
 **`demo.cmd` exists for the execution policy.** Windows 11 client editions refuse to run an
 unsigned script by default, so `.\demo.ps1` fails before its first line on a fresh machine.

@@ -161,11 +161,14 @@ if ($env:DEMO_AGENT -notin @('true', 'false')) { throw 'DEMO_AGENT must be true 
 $agentOn = $env:DEMO_AGENT -eq 'true'
 if ($agentOn -and -not $forecastOnly) { throw '-Agent is for the forecast demo (-Forecast); the full suite already runs the agent.' }
 
-# -- Defaults: the same values as demo.sh ---------------------------------------------------
-Set-Default BIND_ADDR '127.0.0.1'
+# -- What the demo sets: the same lines as demo.sh ------------------------------------------
+# Two kinds of line live here, and only two: an override of the compose files' own default
+# (OpenRouter rather than Anthropic, Schema Registry beside the agent, the shadow off), and a value
+# this script reads itself, for a message or a request. Every other default - image tags, thread
+# counts, timeouts, forecast identities - is the compose files' `${VAR:-...}`, written once. A copy
+# here is a second value that drifts.
 Set-Default EXPLORER_PORT '8080'
 Set-Default KAFKA_PORT '9092'
-Set-Default KAFKA_IMAGE 'apache/kafka:4.4.0'
 Set-Default KEX_AGENT_PORT '8081'
 # 8081 belongs to the agent in the shared port plan; Schema Registry moves aside.
 Set-Default SCHEMA_REGISTRY_PORT '8085'
@@ -179,51 +182,34 @@ Set-Default EXPLORER_ASSISTANT_ENABLED $(if ($forecastOnly -and -not $agentOn) {
 
 # Agent and MCP. The MCP token defaults to the generated one from .forecast-stack/.env.
 Set-Default KEX_AGENT_IMAGE_NAMESPACE 'compagnonsdudev'
-# The prebuilt forecast demo with -Agent follows `latest`, like the Explorer and forecast images below.
-if ($prebuilt -and $agentOn) { Set-Default KEX_AGENT_IMAGE_TAG 'latest' }
-Set-Default KEX_AGENT_IMAGE_TAG '0.10.0'
 Set-Default KEX_AGENT_API_KEY 'dev-only-agent-key'
 Set-Default EXPLORER_MCP_AUTH_TOKEN 'dev-only-mcp-token'
-Set-Default EXPLORER_MCP_READONLY 'true'
 
 # SpectraLLM. Its MCP server refuses to run without SPECTRA_API_KEY, and with one set its own UI
 # answers 401 (it sends no key); the agent and the API are unaffected.
 Set-Default SPECTRA_API_KEY 'dev-only-spectra-key'
-Set-Default SPECTRA_IMAGE_NAMESPACE 'compagnonsdudev'
-Set-Default SPECTRA_IMAGE_TAG '0.12.3'
 Set-Default SPECTRA_UI_PORT '8088'
 Set-Default SPECTRA_API_PORT '8089'
-# The three must agree (.env.example); a laptop wants the 3B named there.
+# The name and the file must agree (.env.example); a laptop wants the 3B named there.
 Set-Default LLM_CHAT_MODEL_NAME 'qwen2.5-7b-instruct'
-Set-Default LLM_CHAT_MODEL_FILE 'Qwen2.5-7B-Instruct-Q4_K_M.gguf'
-Set-Default SPECTRA_AUTO_INSTALL_MODELS 'true'
 
-# Follow latest published Explorer/Forecast images only in the prebuilt Forecast demo.
-# Versioned defaults remain for other stacks; explicit tags from the environment/.env win.
+# The prebuilt Forecast demo follows the published images (the agent too, with -Agent).
+# Other stacks keep the compose files' versioned pins; explicit tags from the environment/.env win.
 if ($prebuilt) {
     Set-Default EXPLORER_IMAGE_TAG 'latest'
     Set-Default FORECAST_IMAGE_TAG 'latest'
+    if ($agentOn) { Set-Default KEX_AGENT_IMAGE_TAG 'latest' }
 }
 
 # Forecasting.
-Set-Default FORECAST_ENVIRONMENTS 'local'
-Set-Default FORECAST_CLUSTER_ID 'local'
-Set-Default FORECAST_COLLECTOR_ID 'kafkaexplorer'
-Set-Default FORECAST_RUNTIME_APPROVAL 'true'
 Set-Default FORECAST_CONFIG_DIR './.forecast-stack/config'
-Set-Default FORECAST_IMAGE_TAG '0.3.0'
-Set-Default TIMESFM_THREADS '4'
 Set-Default TIMESFM_CPUS '4.0'
 Set-Default TIMESFM_MEM_LIMIT '8g'
-Set-Default TIMESFM_TIMEOUT '35s'
 Set-Default TIMESTRAL_SHADOW_ENABLED 'false'
-Set-Default TIMESTRAL_TIMEOUT '15s'
-Set-Default TIMESTRAL_THREADS '1'
 
 # Explorer image: built from this checkout by default; DEMO_PUBLISHED_IMAGE=true pulls the release.
 Set-Default DEMO_PUBLISHED_IMAGE 'false'
 Set-Default EXPLORER_IMAGE_NAMESPACE 'compagnonsdudev'
-Set-Default EXPLORER_IMAGE_TAG '2.9.1'
 
 # SpectraLLM on by default; false drops its seven services and their ~4.8 GB first download.
 Set-Default DEMO_SPECTRA 'true'
@@ -404,8 +390,7 @@ function Start-Demo {
         if ($agentOn) {
             Wait-Http 'Kex-anHarness' "http://127.0.0.1:$($env:KEX_AGENT_PORT)/api/agent/mcp/servers" 300 `
                 @{ Authorization = "Bearer $($env:KEX_AGENT_API_KEY)" } | Out-Null
-            $agentLine = "Kex-anHarness ......... http://localhost:$($env:KEX_AGENT_PORT)     (Bearer $($env:KEX_AGENT_API_KEY); " +
-                "$($env:KEX_AGENT_IMAGE_NAMESPACE)/kex-agent-ai:$($env:KEX_AGENT_IMAGE_TAG))`n" +
+            $agentLine = "Kex-anHarness ......... http://localhost:$($env:KEX_AGENT_PORT)     (Bearer $($env:KEX_AGENT_API_KEY))`n" +
                 "LLM ................... OpenRouter $($env:OPENROUTER_MODEL) (Explorer, agent); SpectraLLM not started"
         }
         Write-Host @"

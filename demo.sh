@@ -97,11 +97,15 @@ if [[ $DEMO_AGENT == true && $DEMO_MODE != forecast ]]; then
   exit 2
 fi
 
-# ── Defaults ─────────────────────────────────────────────────────────────────────
-export BIND_ADDR=${BIND_ADDR:-127.0.0.1}
+# ── What the demo sets ───────────────────────────────────────────────────────────
+# Two kinds of line live here, and only two: an override of the compose files' own default
+# (OpenRouter rather than Anthropic, Schema Registry beside the agent, the shadow off), and a value
+# this script reads itself, for a message or a request. Every other default — image tags, thread
+# counts, timeouts, forecast identities — is the compose files' `${VAR:-…}`, written once. A copy
+# here is a second value that drifts: this block kept the agent at 0.10.0 and SpectraLLM at 0.12.3
+# for a month after the compose files moved to 0.20.0, and nothing said so.
 export EXPLORER_PORT=${EXPLORER_PORT:-8080}
 export KAFKA_PORT=${KAFKA_PORT:-9092}
-export KAFKA_IMAGE=${KAFKA_IMAGE:-apache/kafka:4.4.0}
 export KEX_AGENT_PORT=${KEX_AGENT_PORT:-8081}
 # 8081 belongs to the agent in the shared port plan; Schema Registry moves aside.
 export SCHEMA_REGISTRY_PORT=${SCHEMA_REGISTRY_PORT:-8085}
@@ -110,7 +114,6 @@ export SCHEMA_REGISTRY_PORT=${SCHEMA_REGISTRY_PORT:-8085}
 export OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
 export OPENROUTER_MODEL=${OPENROUTER_MODEL:-openai/gpt-4o-mini}
 export KEX_AGENT_LLM_PROVIDER=${KEX_AGENT_LLM_PROVIDER:-openai}
-export ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
 # The SQL & metric assistant, on the same OpenRouter model (false turns it off). It needs that model,
 # which the forecast demo has only with --agent: off there otherwise.
 if [[ $DEMO_MODE == forecast && $DEMO_AGENT != true ]]; then
@@ -121,54 +124,35 @@ fi
 
 # Agent and MCP. The MCP token defaults to the generated one from .forecast-stack/.env.
 export KEX_AGENT_IMAGE_NAMESPACE=${KEX_AGENT_IMAGE_NAMESPACE:-compagnonsdudev}
-# The prebuilt forecast demo with --agent follows `latest`, like the Explorer and forecast images below.
-if [[ $DEMO_PREBUILT == true && $DEMO_AGENT == true ]]; then
-  export KEX_AGENT_IMAGE_TAG=${KEX_AGENT_IMAGE_TAG:-latest}
-fi
-export KEX_AGENT_IMAGE_TAG=${KEX_AGENT_IMAGE_TAG:-0.10.0}
 export KEX_AGENT_API_KEY=${KEX_AGENT_API_KEY:-dev-only-agent-key}
 export EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
-export EXPLORER_MCP_READONLY=${EXPLORER_MCP_READONLY:-true}
 
 # SpectraLLM. Its MCP server refuses to run without SPECTRA_API_KEY, and with one set its own UI
 # answers 401 (it sends no key); the agent and the API are unaffected.
 export SPECTRA_API_KEY=${SPECTRA_API_KEY:-dev-only-spectra-key}
-export SPECTRA_IMAGE_NAMESPACE=${SPECTRA_IMAGE_NAMESPACE:-compagnonsdudev}
-export SPECTRA_IMAGE_TAG=${SPECTRA_IMAGE_TAG:-0.12.3}
 export SPECTRA_UI_PORT=${SPECTRA_UI_PORT:-8088}
 export SPECTRA_API_PORT=${SPECTRA_API_PORT:-8089}
-# The three must agree (.env.example); a laptop wants the 3B named there.
+# The name and the file must agree (.env.example); a laptop wants the 3B named there.
 export LLM_CHAT_MODEL_NAME=${LLM_CHAT_MODEL_NAME:-qwen2.5-7b-instruct}
-export LLM_CHAT_MODEL_FILE=${LLM_CHAT_MODEL_FILE:-Qwen2.5-7B-Instruct-Q4_K_M.gguf}
-export SPECTRA_AUTO_INSTALL_MODELS=${SPECTRA_AUTO_INSTALL_MODELS:-true}
 
-# The prebuilt Forecast demo follows published application/model images by default.
-# Other stacks retain versioned pins; an explicit environment/.env tag always wins.
+# The prebuilt Forecast demo follows the published images (the agent too, with --agent).
+# Other stacks keep the compose files' versioned pins; an explicit environment/.env tag always wins.
 # Keep this outside Compose so the repository's production image-pin checks stay strict.
 if [[ $DEMO_PREBUILT == true ]]; then
   export EXPLORER_IMAGE_TAG=${EXPLORER_IMAGE_TAG:-latest}
   export FORECAST_IMAGE_TAG=${FORECAST_IMAGE_TAG:-latest}
+  [[ $DEMO_AGENT != true ]] || export KEX_AGENT_IMAGE_TAG=${KEX_AGENT_IMAGE_TAG:-latest}
 fi
 
 # Forecasting.
-export FORECAST_ENVIRONMENTS=${FORECAST_ENVIRONMENTS:-local}
-export FORECAST_CLUSTER_ID=${FORECAST_CLUSTER_ID:-local}
-export FORECAST_COLLECTOR_ID=${FORECAST_COLLECTOR_ID:-kafkaexplorer}
-export FORECAST_RUNTIME_APPROVAL=${FORECAST_RUNTIME_APPROVAL:-true}
 export FORECAST_CONFIG_DIR=${FORECAST_CONFIG_DIR:-./.forecast-stack/config}
-export FORECAST_IMAGE_TAG=${FORECAST_IMAGE_TAG:-0.3.0}
-export TIMESFM_THREADS=${TIMESFM_THREADS:-4}
 export TIMESFM_CPUS=${TIMESFM_CPUS:-4.0}
 export TIMESFM_MEM_LIMIT=${TIMESFM_MEM_LIMIT:-8g}
-export TIMESFM_TIMEOUT=${TIMESFM_TIMEOUT:-35s}
 export TIMESTRAL_SHADOW_ENABLED=${TIMESTRAL_SHADOW_ENABLED:-false}
-export TIMESTRAL_TIMEOUT=${TIMESTRAL_TIMEOUT:-15s}
-export TIMESTRAL_THREADS=${TIMESTRAL_THREADS:-1}
 
 # Explorer image: built from this checkout by default; DEMO_PUBLISHED_IMAGE=true pulls the release.
 export DEMO_PUBLISHED_IMAGE=${DEMO_PUBLISHED_IMAGE:-false}
 export EXPLORER_IMAGE_NAMESPACE=${EXPLORER_IMAGE_NAMESPACE:-compagnonsdudev}
-export EXPLORER_IMAGE_TAG=${EXPLORER_IMAGE_TAG:-2.9.1}
 
 # SpectraLLM on by default; false drops its seven services and their ~4.8 GB first download.
 export DEMO_SPECTRA=${DEMO_SPECTRA:-true}
@@ -384,7 +368,7 @@ up() {
     if [[ $DEMO_AGENT == true ]]; then
       wait_for_http 'Kex-anHarness' "http://127.0.0.1:${KEX_AGENT_PORT}/api/agent/mcp/servers" 300 \
         -H "Authorization: Bearer ${KEX_AGENT_API_KEY}" || true
-      agent_line="Kex-anHarness ......... http://localhost:${KEX_AGENT_PORT}     (Bearer ${KEX_AGENT_API_KEY}; ${KEX_AGENT_IMAGE_NAMESPACE}/kex-agent-ai:${KEX_AGENT_IMAGE_TAG})
+      agent_line="Kex-anHarness ......... http://localhost:${KEX_AGENT_PORT}     (Bearer ${KEX_AGENT_API_KEY})
 LLM ................... OpenRouter ${OPENROUTER_MODEL} (Explorer, agent); SpectraLLM not started"
     fi
     cat <<EOF

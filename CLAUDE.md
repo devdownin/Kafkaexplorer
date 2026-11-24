@@ -135,9 +135,10 @@ $env:OPENROUTER_API_KEY = 'sk-or-...'
 process, Windows 11 refusing unsigned scripts by default. Docker Desktop is the only prerequisite.
 Four rules bind:
 
-- **Edit `demo.sh` and `demo.ps1` together.** Same compose files in the same order, same defaults,
+- **Edit `demo.sh` and `demo.ps1` together.** Same compose files in the same order, same overrides,
   same precedence (environment > `.env` > `.forecast-stack/.env` > default). Nothing checks that
-  the two agree, so a file or default added on one side only is a stack that differs by platform.
+  the two agree, so a file or override added on one side only is a stack that differs by platform.
+  A default belongs in the compose file; the scripts keep only what the demo overrides or prints.
 - **`demo.ps1` stays ASCII.** Windows PowerShell 5.1 reads a BOM-less script as the ANSI code
   page, so one em dash becomes mojibake in every message that carries it.
 - **What it writes is UTF-8 without a BOM, with LF.** It generates `.forecast-stack/.env` itself
