@@ -20,6 +20,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **Simpler demo scripts and forecast overlay.** `demo.sh` and `demo.ps1` no longer restate
+  nineteen defaults that the compose files already carry, three of them stale: `./demo.sh` ran
+  `kex-agent-ai` 0.10.0 and SpectraLLM 0.12.3 (and, with `DEMO_PUBLISHED_IMAGE`, the Explorer
+  2.9.1) after the compose files, and so every CI smoke test, had moved to 0.20.0, 0.20.0 and
+  2.9.4. **The full demo now starts those versions**; set `KEX_AGENT_IMAGE_TAG` /
+  `SPECTRA_IMAGE_TAG` to keep an older one. Nothing else in the rendered configuration changes,
+  checked by rendering `docker compose config` for the eight demo modes and twenty-eight
+  overlay combinations before and after. `compose/forecasts.yml`'s `explorer` now extends
+  `compose/timesfm.yml`'s instead of copying its inference settings.
+
 - **The Timestral shadow model is a setting.** `TIMESTRAL_MODEL` (default `mistralai/Timestral-28M`)
   chooses the checkpoint the forecast service loads; the compose stacks hand the same variable to
   the Explorer as `explorer.forecasting.inference.shadow.model-id`, which every shadow answer must
