@@ -25,7 +25,7 @@ services:
     # Demo-only endpoint; disabled in every other stack. The directory is shared with
     # the live generator and never exposes Docker or host shell access.
     environment:
-      EXPLORER_DEMO_CONTROL_ENABLED: 'true'
+      EXPLORER_DEMO_CONTROL_ENABLED: ${DEMO_CONTROL_ENABLED:-true}
       EXPLORER_DEMO_CONTROL_DIRECTORY: /app/demo-control
     volumes:
       - ${FORECAST_CONFIG_DIR:-./.forecast-stack/config}:/app/demo-control
