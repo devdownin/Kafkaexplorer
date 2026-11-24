@@ -60,7 +60,8 @@ jobs:
         if: failure()
         run: |
           ./demo-forecast.sh ps || true
-          ./demo-forecast.sh logs demo-live || true
+          # The public launcher uses `docker compose logs -f` (follow forever).
+          # CI diagnostics must exit so cleanup and the failed job can finish.
           cid=$(docker ps -aq --filter 'label=com.docker.compose.project=kafka-explorer-demo' --filter 'label=com.docker.compose.service=demo-live' | head -n 1)
           if [[ -n $cid ]]; then
             docker inspect -f 'demo-live: restarts={{.RestartCount}} OOM={{.State.OOMKilled}} exit={{.State.ExitCode}} status={{.State.Status}}' "$cid" || true
