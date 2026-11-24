@@ -116,17 +116,19 @@ export function DemoControlCenter({ metricCount, metrics = [], metricsLoading, f
   function exportReport(format: 'json' | 'html') {
     // Retain the evidence-based report shipped on main (#674) while making
     // Kafka-requested and Kafka-verified states unambiguous in either format.
-    const snapshot = demoSnapshot(state.scenario ?? 'not verified', metrics, forecasts);
+    const current = state;
+    if (!current) return;
+    const snapshot = demoSnapshot(current.scenario ?? 'not verified', metrics, forecasts);
     const report = {
       ...snapshot,
-      note: `${snapshot.note} Requested: ${state.requestedScenario}; confirmation: ${state.phase}.`,
+      note: `${snapshot.note} Requested: ${current.requestedScenario}; confirmation: ${current.phase}.`,
       control: {
-        requested: state.requestedScenario,
-        confirmed: active ? state.scenario : null,
-        phase: state.phase,
-        appliedAt: state.appliedAt,
-        startedAt: state.startedAt,
-        affectedMetrics: active && state.scenario ? scenarioFor(state.scenario).metricIds : [],
+        requested: current.requestedScenario,
+        confirmed: active ? current.scenario : null,
+        phase: current.phase,
+        appliedAt: current.appliedAt,
+        startedAt: current.startedAt,
+        affectedMetrics: active && current.scenario ? scenarioFor(current.scenario).metricIds : [],
       },
       availability: {
         metrics: metricsLoading ? 'LOADING' : 'AVAILABLE',
