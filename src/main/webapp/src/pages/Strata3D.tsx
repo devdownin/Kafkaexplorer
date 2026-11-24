@@ -16,7 +16,10 @@ import { deriveStrataLinks, type StrataLineage, type StrataLink } from './strata
 import { Link } from 'react-router-dom';
 import { readStrataView, shareStrataUrl, strataRenderBudget, writeStrataView, type StrataQuality } from './strataView';
 import { copyText } from '../clipboard';
-import { DEFAULT_STRATA_LAYERS, partitionFrameMatches, topicEvidence, type StrataLayer } from './strataWorkspace';
+import {
+  DEFAULT_STRATA_LAYERS, activityScaleMax, isDoubleTap, partitionFrameMatches, shouldRefit, stableLayout,
+  topicEvidence, type StrataLayer, type StrataLayers, type StrataTap,
+} from './strataWorkspace';
 import {
   StrataHoverCard, StrataLayerMenu, StrataMiniMap, StrataResizeHandle, StrataTimelineDock,
 } from './StrataWorkspaceUI';
@@ -58,21 +61,67 @@ function sceneFrame(topics: Topic[]): { center: THREE.Vector3; extent: number } 
   };
 }
 
+/**
+ * Geometries and label textures shared by every rebuild. A rebuild used to allocate a fresh
+ * geometry for each of the ~17 meshes of every column and re-rasterise each topic's label on a
+ * 2D canvas, then upload all of it to the GPU again — every 30 s for 48 topics, plus at each
+ * selection. Rings are shared per quantised size (1/32 of the scale), which no eye separates.
+ * Draw calls are unchanged: every mesh still carries its own material, because its opacity is
+ * its own.
+ */
+class StrataAssets {
+  private readonly geometries = new Map<string, THREE.BufferGeometry>();
+  private readonly labels = new Map<string, THREE.CanvasTexture | null>();
+
+  geometry(key: string, make: () => THREE.BufferGeometry): THREE.BufferGeometry {
+    let geometry = this.geometries.get(key);
+    if (!geometry) {
+      geometry = make();
+      geometry.userData.shared = true;
+      this.geometries.set(key, geometry);
+    }
+    return geometry;
+  }
+
+  label(name: string, dark: boolean): THREE.CanvasTexture | null {
+    const key = (dark ? 'd:' : 'l:') + name;
+    if (!this.labels.has(key)) this.labels.set(key, drawLabel(name, dark));
+    return this.labels.get(key) ?? null;
+  }
+
+  /** Labels of topics no longer in view, or drawn for the other theme, are released. */
+  keepLabels(names: readonly string[], dark: boolean) {
+    const keep = new Set(names.map(name => (dark ? 'd:' : 'l:') + name));
+    for (const [key, texture] of this.labels) {
+      if (!keep.has(key)) { texture?.dispose(); this.labels.delete(key); }
+    }
+  }
+
+  get geometryCount() { return this.geometries.size; }
+
+  dispose() {
+    this.geometries.forEach(geometry => geometry.dispose());
+    this.labels.forEach(texture => texture?.dispose());
+    this.geometries.clear();
+    this.labels.clear();
+  }
+}
+
 function disposeGroup(group: THREE.Group) {
   group.traverse(object => {
     if (object instanceof THREE.Sprite) {
-      object.material.map?.dispose();
+      if (!object.material.map?.userData.shared) object.material.map?.dispose();
       object.material.dispose();
     }
     if (!(object instanceof THREE.Mesh || object instanceof THREE.Line)) return;
-    object.geometry.dispose();
+    if (!object.geometry.userData.shared) object.geometry.dispose();
     const materials = Array.isArray(object.material) ? object.material : [object.material];
     materials.forEach(material => material.dispose());
   });
 }
 
-/** One billboard per topic, readable from every orbit angle. Canvas textures never leave the browser. */
-function topicLabel(name: string, dark: boolean): THREE.Sprite | null {
+/** One billboard texture per topic, readable from every orbit angle. Canvas textures never leave the browser. */
+function drawLabel(name: string, dark: boolean): THREE.CanvasTexture | null {
   const canvas = document.createElement('canvas');
   canvas.width = 384;
   canvas.height = 72;
@@ -91,6 +140,13 @@ function topicLabel(name: string, dark: boolean): THREE.Sprite | null {
   context.fillText(label, 192, 36, 362);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  texture.userData.shared = true;
+  return texture;
+}
+
+function topicLabel(name: string, dark: boolean, assets: StrataAssets): THREE.Sprite | null {
+  const texture = assets.label(name, dark);
+  if (!texture) return null;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
     map: texture, transparent: true, depthTest: false, depthWrite: false,
   }));
@@ -99,24 +155,35 @@ function topicLabel(name: string, dark: boolean): THREE.Sprite | null {
   return sprite;
 }
 
-function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean,
-  highlight: 'primary' | 'comparison' | null, ringSegments: number, showActivity: boolean): THREE.Group {
+/**
+ * A column's colour follows its stable slot, not its rank among the topics in view: filtering
+ * used to repaint the same topic. The hue stays within green-cyan-blue (0.42–0.62), clear of
+ * the violet that marks the comparison peer and the forecast.
+ */
+export function columnHue(layoutIndex: number): number {
+  return ((layoutIndex * 0.137508) % 1) * 0.2 + 0.42;
+}
+
+const RING_STEPS = 32;
+
+function createTopic(topic: Topic, maxRate: number, dark: boolean,
+  highlight: 'primary' | 'comparison' | null, ringSegments: number, showActivity: boolean,
+  assets: StrataAssets): THREE.Group {
   const group = new THREE.Group();
   group.position.copy(position(topic.layoutIndex));
   group.userData.topic = topic.name;
   const counts = Array.from({ length: BUCKETS }, (_, bucket) => bucketReading(topic.activity, bucket));
   const hasData = showActivity && counts.some(value => value !== null);
-  const hue = (index * 0.137508) % 1;
-  const color = new THREE.Color().setHSL(hue * 0.25 + 0.48, dark ? 0.7 : 0.64, dark ? 0.68 : 0.45);
+  const color = new THREE.Color().setHSL(columnHue(topic.layoutIndex), dark ? 0.7 : 0.64, dark ? 0.68 : 0.45);
   const base = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.96, 0.96, 0.10, 40),
+    assets.geometry('base', () => new THREE.CylinderGeometry(0.96, 0.96, 0.10, 40)),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22, depthWrite: false }),
   );
   base.position.y = 0.05;
   group.add(base);
   const height = 5.6;
   const shell = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.86, 0.86, height, 40, 1, true),
+    assets.geometry('shell', () => new THREE.CylinderGeometry(0.86, 0.86, height, 40, 1, true)),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: hasData ? 0.055 : 0.025, side: THREE.DoubleSide, depthWrite: false }),
   );
   shell.position.y = height / 2 + 0.12;
@@ -124,10 +191,13 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
   if (showActivity) for (let i = 0; i < BUCKETS; i++) {
     const value = counts[i];
     const measured = value !== null;
-    const normalized = measured ? Math.log1p(value) / Math.log1p(Math.max(1, maxRate)) : 0;
-    const radius = measured ? 0.38 + 0.56 * normalized : 0.43;
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(radius, measured ? 0.025 + normalized * 0.035 : 0.014, 6, ringSegments),
+    const normalized = measured
+      ? Math.round(Math.log1p(value) / Math.log1p(Math.max(1, maxRate)) * RING_STEPS) / RING_STEPS : 0;
+    const geometry = measured
+      ? assets.geometry(`ring:${normalized}:${ringSegments}`, () =>
+        new THREE.TorusGeometry(0.38 + 0.56 * normalized, 0.025 + normalized * 0.035, 6, ringSegments))
+      : assets.geometry(`ring:none:${ringSegments}`, () => new THREE.TorusGeometry(0.43, 0.014, 6, ringSegments));
+    const ring = new THREE.Mesh(geometry,
       new THREE.MeshBasicMaterial({ color: measured ? color : 0x8b9aaa, transparent: true, opacity: measured ? 0.4 + normalized * 0.48 : 0.22, depthWrite: false }),
     );
     ring.rotation.x = Math.PI / 2;
@@ -138,7 +208,7 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
     group.add(ring);
   }
   const crown = new THREE.Mesh(
-    new THREE.TorusGeometry(0.89, 0.028, 8, 48),
+    assets.geometry('crown', () => new THREE.TorusGeometry(0.89, 0.028, 8, 48)),
     new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8 }),
   );
   crown.rotation.x = Math.PI / 2;
@@ -147,10 +217,10 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
   // A real activity series is required before rendering any moving activity indicator.
   if (hasData && counts.some(n => n !== null && n > 0)) {
     const glow = new THREE.Mesh(
-      new THREE.SphereGeometry(0.10, 10, 8),
+      assets.geometry('glow', () => new THREE.SphereGeometry(0.10, 10, 8)),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.95 }),
     );
-    glow.userData.pulse = index * 0.41;
+    glow.userData.pulse = topic.layoutIndex * 0.41;
     glow.position.set(0, 0.3, 0);
     group.add(glow);
   }
@@ -158,7 +228,7 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
     const accent = highlight === 'primary' ? 0x0c9da9 : 0x9b76db;
     for (const y of [0.12, height + 0.13]) {
       const halo = new THREE.Mesh(
-        new THREE.TorusGeometry(1.15, 0.065, 8, 54),
+        assets.geometry('halo', () => new THREE.TorusGeometry(1.15, 0.065, 8, 54)),
         new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.93, depthWrite: false }),
       );
       halo.rotation.x = Math.PI / 2;
@@ -166,15 +236,63 @@ function createTopic(topic: Topic, index: number, maxRate: number, dark: boolean
       group.add(halo);
     }
   }
-  const label = topicLabel(topic.name, dark);
+  const label = topicLabel(topic.name, dark, assets);
   if (label) group.add(label);
   return group;
 }
 
+/** The floor follows the scene's extent and the theme; a grid sized once at mount was too small for a widened filter. */
+function createGround(size: number, dark: boolean): THREE.GridHelper {
+  const ground = new THREE.GridHelper(size, 24, dark ? 0x4f6a80 : 0x7794ab, dark ? 0x2f4253 : 0xb1c1cf);
+  ground.userData.size = size;
+  ground.userData.dark = dark;
+  return ground;
+}
+
+const isDarkTheme = () => document.documentElement.classList.contains('dark') ||
+  document.documentElement.getAttribute('data-theme') === 'dark';
+
+/** Touch screens get one-finger page scrolling; orbiting and zooming take two fingers there. */
+export const coarsePointer = () => typeof window.matchMedia === 'function'
+  && window.matchMedia('(pointer: coarse)').matches;
+
+/** What the operator is pointing at, as opposed to what was measured. */
+type StrataEmphasis = {
+  topics: Topic[]; selected: string | null; selectedBucket: number; lensAvailable: boolean; layers: StrataLayers;
+};
+
+/**
+ * Applies the time lens, the deviation colour and the selection scale to the current columns.
+ * It runs after every rebuild as well as on every change of the emphasis itself: the rebuild
+ * replaces the rings with fresh ones at their base opacity, and when the two lived in separate
+ * effects a partition poll or a quality change wiped the lens until the next bucket change.
+ */
+function applyEmphasis(current: { groups: THREE.Group[]; lens: THREE.Mesh }, emphasis: StrataEmphasis) {
+  const { topics, selected, selectedBucket, lensAvailable, layers } = emphasis;
+  current.lens.position.y = 0.35 + selectedBucket * 0.43;
+  current.lens.visible = lensAvailable && layers.activity;
+  const measurements = new Map(topics.map(topic => [topic.name, topic.activity]));
+  for (const group of current.groups) {
+    group.scale.setScalar(group.userData.topic === selected ? 1.04 : 1);
+    const anomaly = layers.anomalies ? detectActivityAnomaly(measurements.get(group.userData.topic as string), selectedBucket) : null;
+    for (const object of group.children) {
+      if (!(object instanceof THREE.Mesh) || object.userData.bucketIndex === undefined) continue;
+      const material = object.material as THREE.MeshBasicMaterial;
+      const active = object.userData.bucketIndex === selectedBucket;
+      material.setValues({ opacity: Math.min(1,
+        (object.userData.baseOpacity as number) * (active ? 1.4 : 0.42) * ((group.userData.dimFactor as number | undefined) ?? 1)) });
+      material.color.copy(object.userData.baseColor as THREE.Color);
+      if (active && anomaly) material.color.setHex(0xe7a044);
+    }
+  }
+}
+
 function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect, onFocus,
   focused, partitionActivity, forecast,
-  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, onHover, onPerformance }: {
+  motion, quality, links, selectedGroup, themeRevision, selectedBucket, trace, lensAvailable, layers, frameKey, onHover, onPerformance }: {
   topics: Topic[];
+  /** Changes when the operator changes what is in view (the filter): the camera re-frames then. */
+  frameKey: string;
   selected: string | null;
   compareWith: string | null;
   diagnosticMode: DiagnosticMode;
@@ -216,7 +334,13 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     content: THREE.Group;
     groups: THREE.Group[];
     lens: THREE.Mesh;
+    assets: StrataAssets;
+    /** `null` keeps that half as it is: a re-frame changes the size, a theme change the colours. */
+    setGround: (size: number | null, dark: boolean | null) => void;
     signature: string;
+    visible: string[];
+    frameKey: string;
+    userMoved: boolean;
     rebuildMs: number | null;
     invalidate: () => void;
     fit: (items: Topic[]) => void;
@@ -270,6 +394,13 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     controls.minZoom = 0.5;
     controls.maxZoom = 5;
     controls.enablePan = true;
+    if (coarsePointer()) {
+      // OrbitControls claims every touch (`touch-action: none`), and the canvas is at least 510 px
+      // tall: on a phone, the page could hardly be scrolled at all. One finger now scrolls the
+      // page; two fingers orbit and zoom.
+      controls.touches = { ONE: null, TWO: THREE.TOUCH.DOLLY_ROTATE };
+      renderer.domElement.style.touchAction = 'pan-y';
+    }
     controls.update();
     const contentGroup = new THREE.Group();
     scene.add(contentGroup);
@@ -283,12 +414,26 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     lens.position.copy(initialFrame.center);
     lens.position.y = 0.35 + 11 * 0.43;
     scene.add(lens);
-    const ground = new THREE.GridHelper(Math.max(40, extent * 2.8), 24, 0x7794ab, 0xb1c1cf);
+    let ground = createGround(Math.max(40, extent * 2.8), isDarkTheme());
     ground.position.set(initialFrame.center.x, -0.12, initialFrame.center.z);
     scene.add(ground);
+    const assets = new StrataAssets();
     const current = {
-      scene, camera, renderer, controls, content: contentGroup,
+      scene, camera, renderer, controls, content: contentGroup, assets,
+      setGround: (size: number | null, dark: boolean | null) => {
+        const nextSize = size ?? ground.userData.size as number;
+        const nextDark = dark ?? ground.userData.dark as boolean;
+        if (ground.userData.size === nextSize && ground.userData.dark === nextDark) return;
+        const next = createGround(nextSize, nextDark);
+        next.position.copy(ground.position);
+        scene.remove(ground);
+        ground.geometry.dispose();
+        (ground.material as THREE.Material).dispose();
+        scene.add(next);
+        ground = next;
+      },
       groups: [] as THREE.Group[], lens, signature: topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000'),
+      visible: topics.map(t => t.name), frameKey, userMoved: false,
       positions: new Map<string, THREE.Vector3>(),
       rebuildMs: null as number | null,
       overview: { position: camera.position.clone(), target: controlsTarget.clone(), zoom: 1 },
@@ -317,12 +462,23 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       while (item && !item.userData.topic) item = item.parent;
       return typeof item?.userData.topic === 'string' ? item.userData.topic as string : null;
     };
+    let lastTap: StrataTap | null = null;
     const onPointerUp = (event: PointerEvent) => {
       const start = down;
       down = null;
       if (!start || Math.hypot(start.x - event.clientX, start.y - event.clientY) > 5) return;
       const topic = pickedTopic(event);
-      if (topic) onSelectRef.current(topic);
+      if (!topic) { lastTap = null; return; }
+      onSelectRef.current(topic);
+      if (event.pointerType !== 'touch') return;
+      // No reliable dblclick on a touch screen: the second tap on the same column focuses it.
+      if (isDoubleTap(lastTap, topic, event.timeStamp)) {
+        lastTap = null;
+        onHoverRef.current(null);
+        onFocusRef.current(topic);
+      } else {
+        lastTap = { topic, atMs: event.timeStamp };
+      }
     };
     let lastHoverAt = 0;
     const onPointerMove = (event: PointerEvent) => {
@@ -362,6 +518,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     };
     current.fit = (items: Topic[]) => {
       transition = null;
+      current.userMoved = false;
       const frame = sceneFrame(items);
       halfHeight = frame.extent;
       camera.position.set(frame.center.x + frame.extent * 1.2, frame.extent * 1.05,
@@ -373,6 +530,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
         position: camera.position.clone(), target: controls.target.clone(), zoom: 1,
       };
       ground.position.set(frame.center.x, -0.12, frame.center.z);
+      current.setGround(Math.max(40, frame.extent * 2.8), null);
       current.lens.position.x = frame.center.x;
       current.lens.position.z = frame.center.z;
       const planeSize = Math.max(28, extent * 2.65);
@@ -455,6 +613,9 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
     current.invalidate = requestRender;
     const onOrbitChange = () => requestRender();
     controls.addEventListener('change', onOrbitChange);
+    // 'start' fires on the operator's own drag, pinch or wheel, never on a programmatic move.
+    const onOrbitStart = () => { current.userMoved = true; };
+    controls.addEventListener('start', onOrbitStart);
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') requestRender();
       else { cancelAnimationFrame(frame); frame = 0; }
@@ -481,6 +642,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       observer.disconnect();
       document.removeEventListener('visibilitychange', onVisibilityChange);
       controls.removeEventListener('change', onOrbitChange);
+      controls.removeEventListener('start', onOrbitStart);
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
       renderer.domElement.removeEventListener('webglcontextrestored', onContextRestored);
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
@@ -494,6 +656,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       (lens.material as THREE.Material).dispose();
       ground.geometry.dispose();
       (ground.material as THREE.Material).dispose();
+      assets.dispose();
       renderer.dispose();
       renderer.domElement.remove();
       state.current = null;
@@ -502,29 +665,41 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const emphasis = useRef<StrataEmphasis>({ topics, selected, selectedBucket, lensAvailable, layers });
+  useEffect(() => {
+    emphasis.current = { topics, selected, selectedBucket, lensAvailable, layers };
+    const current = state.current;
+    if (!current) return;
+    applyEmphasis(current, emphasis.current);
+    current.invalidate();
+  }, [topics, selected, selectedBucket, lensAvailable, layers]);
+
   useEffect(() => {
     const current = state.current;
     if (!current) return;
     const signature = topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000');
     if (signature !== current.signature) {
+      const visible = topics.map(t => t.name);
+      // A topic created elsewhere must not throw away the operator's orbit.
+      if (shouldRefit(current.visible, visible, frameKey !== current.frameKey, current.userMoved)) current.fit(topics);
       current.signature = signature;
-      current.fit(topics);
+      current.visible = visible;
     }
+    current.frameKey = frameKey;
     // Replace measured geometry without tearing down WebGL, orbit or pointer handlers.
     const rebuildStarted = performance.now();
     disposeGroup(current.content);
     current.content.clear();
-    const dark = document.documentElement.classList.contains('dark') ||
-      document.documentElement.getAttribute('data-theme') === 'dark';
+    const dark = isDarkTheme();
+    current.setGround(null, dark);
+    current.assets.keepLabels(topics.map(topic => topic.name), dark);
     (current.lens.material as THREE.MeshBasicMaterial).color.setHex(dark ? 0x83b9d5 : 0x5888af);
-    const values = layers.activity ? topics.flatMap(t => Array.from({ length: BUCKETS }, (_, bucket) => bucketReading(t.activity, bucket))
-      .filter((n): n is number => n !== null)) : [];
-    const maxRate = Math.max(1, ...values);
+    const maxRate = layers.activity ? activityScaleMax(topics, BUCKETS) : 1;
     current.positions = new Map(topics.map(topic => [topic.name, position(topic.layoutIndex)]));
-    current.groups = topics.map((topic, index) => {
+    current.groups = topics.map(topic => {
       const highlight = topic.name === selected ? 'primary' :
         diagnosticMode === 'compare' && topic.name === compareWith ? 'comparison' : null;
-      const column = createTopic(topic, index, maxRate, dark, highlight, budget.ringSegments, layers.activity);
+      const column = createTopic(topic, maxRate, dark, highlight, budget.ringSegments, layers.activity, current.assets);
       const contextTopic = focused ?? (diagnosticMode === 'investigate' && layers.lineage &&
         links.some(link => link.from === selected || link.to === selected) ? selected : null);
       const isNeighbor = layers.lineage && links.some(link =>
@@ -579,7 +754,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       for (let index = 0; index < visibleHits.length; index++) {
         const start = lookup.get(visibleHits[index].topic)!;
         const point = new THREE.Mesh(
-          new THREE.SphereGeometry(0.17, 14, 10),
+          current.assets.geometry('trace-point', () => new THREE.SphereGeometry(0.17, 14, 10)),
           new THREE.MeshBasicMaterial({ color: 0x1bafbd }),
         );
         point.position.set(start.x, 6.18, start.z);
@@ -613,7 +788,7 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
         const color = partition.lag === null ? 0x8d9ba8
           : partition.lag < 0 ? 0xd95b64 : partition.lag === 0 ? 0x4aaf99 : healthColor;
         const marker = new THREE.Mesh(
-          new THREE.SphereGeometry(0.12, 10, 8),
+          current.assets.geometry('lag-marker', () => new THREE.SphereGeometry(0.12, 10, 8)),
           new THREE.MeshBasicMaterial({ color }),
         );
         marker.position.set(point.x + Math.cos(angle) * 1.45, 0.42, point.z + Math.sin(angle) * 1.45);
@@ -628,40 +803,19 @@ function StrataCanvas({ topics, selected, compareWith, diagnosticMode, onSelect,
       const center = lookup.get(forecast.topic);
       if (center) current.content.add(createForecastCanopy(forecast, center, dark));
     }
+    applyEmphasis(current, emphasis.current);
     current.rebuildMs = performance.now() - rebuildStarted;
     current.invalidate();
-  }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments, layers]);
+  }, [topics, links, selectedGroup, selected, compareWith, diagnosticMode, focused, partitionActivity, forecast, themeRevision, trace, budget.ringSegments, layers, frameKey]);
 
   const scopeKey = topics.map(t => t.name + ':' + t.layoutIndex).join('\\u0000');
-  useEffect(() => { state.current?.focus(focused); }, [focused, scopeKey]);
-
+  // A change of scope re-aims a focused camera; with nothing focused it must leave the camera
+  // alone, or every topic created elsewhere sent the operator back to the overview.
+  const lastFocus = useRef<string | null>(null);
   useEffect(() => {
-    const groups = state.current?.groups;
-    if (!groups) return;
-    for (const group of groups) group.scale.setScalar(group.userData.topic === selected ? 1.04 : 1);
-    state.current?.invalidate();
-  }, [selected, topics]);
-
-  useEffect(() => {
-    const current = state.current;
-    if (!current) return;
-    current.lens.position.y = 0.35 + selectedBucket * 0.43;
-    current.lens.visible = lensAvailable && layers.activity;
-    const measurements = new Map(topics.map(topic => [topic.name, topic.activity]));
-    for (const group of current.groups) {
-      const anomaly = layers.anomalies ? detectActivityAnomaly(measurements.get(group.userData.topic as string), selectedBucket) : null;
-      for (const object of group.children) {
-        if (!(object instanceof THREE.Mesh) || object.userData.bucketIndex === undefined) continue;
-        const material = object.material as THREE.MeshBasicMaterial;
-        const active = object.userData.bucketIndex === selectedBucket;
-        material.setValues({ opacity: Math.min(1,
-          (object.userData.baseOpacity as number) * (active ? 1.4 : 0.42) * (group.userData.dimFactor as number ?? 1)) });
-        material.color.copy(object.userData.baseColor as THREE.Color);
-        if (active && anomaly) material.color.setHex(0xe7a044);
-      }
-    }
-    current.invalidate();
-  }, [selectedBucket, topics, links, trace, selectedGroup, selected, compareWith, diagnosticMode, focused, themeRevision, lensAvailable, layers]);
+    if (focused || lastFocus.current) state.current?.focus(focused);
+    lastFocus.current = focused;
+  }, [focused, scopeKey]);
 
   return (
     <div ref={host} role="img"
@@ -695,6 +849,7 @@ export default function Strata3D() {
   } | null>(null);
   const [lineage, setLineage] = useState<StrataLineage | null>(null);
   const [lineageError, setLineageError] = useState<string | null>(null);
+  const [activityError, setActivityError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(initialView.topic);
   const [diagnosticMode, setDiagnosticMode] = useState<DiagnosticMode>(initialView.mode);
@@ -707,6 +862,7 @@ export default function Strata3D() {
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [performanceStats, setPerformanceStats] = useState<StrataPerformance | null>(null);
   const [motion, setMotion] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const [touch] = useState(coarsePointer);
   useEffect(() => {
     const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
     const onChange = () => setMotion(!preference.matches);
@@ -833,7 +989,11 @@ export default function Strata3D() {
 
   const names = useMemo(() => (dashboard?.topics ?? []).slice().sort((a, b) => a.localeCompare(b)), [dashboard]);
   const scoped = useMemo(() => names.filter(name => name.toLocaleLowerCase().includes(filteredQuery.toLocaleLowerCase())).slice(0, MAX_TOPICS), [names, filteredQuery]);
-  const layoutIndices = useMemo(() => new Map(names.map((name, index) => [name, index])), [names]);
+  const [layout, setLayout] = useState<{ names: string[]; slots: Map<string, number> }>(
+    () => ({ names: [], slots: new Map() }));
+  const layoutIndices = layout.names === names ? layout.slots : stableLayout(layout.slots, names);
+  if (layout.names !== names) setLayout({ names, slots: layoutIndices });
+  const layoutExtent = Math.max(names.length, ...Array.from(layoutIndices.values(), slot => slot + 1));
   const activeFocus = focused && scoped.includes(focused) ? focused : null;
   const scope = scoped.join(',');
 
@@ -846,14 +1006,17 @@ export default function Strata3D() {
       if (document.visibilityState === 'hidden' || busy) return;
       busy = true;
       try {
-        const { data } = await axios.get<ActivityResponse>('/api/dashboard/activity', {
-          params: { topics: scope, windowMs: WINDOW_MS, buckets: BUCKETS },
-          timeout: 20000, signal: controller.signal,
-        });
-        if (active) setActivitySnapshot({ scope, data, receivedAt: Date.now() });
+        // POST, not GET: 48 names of up to 249 characters overflow a default request line.
+        const { data } = await axios.post<ActivityResponse>('/api/dashboard/activity',
+          { topics: scope.split(','), windowMs: WINDOW_MS, buckets: BUCKETS },
+          { timeout: 20000, signal: controller.signal });
+        if (active) { setActivitySnapshot({ scope, data, receivedAt: Date.now() }); setActivityError(null); }
       } catch (failure) {
+        // Keep the last sample, as the cluster metadata does, and say so: blanking it turned
+        // every ring neutral while the page claimed activity had simply not been measured yet.
+        // `topicEvidence` marks the sample stale once it is older than 90 seconds.
         if (active && !axios.isCancel(failure)) {
-          setActivitySnapshot(previous => previous?.scope === scope ? null : previous);
+          setActivityError('Topic activity could not be refreshed. Readings shown come from the last successful sample.');
         }
       } finally {
         busy = false;
@@ -968,6 +1131,9 @@ export default function Strata3D() {
   const activeCompareWith = diagnosticMode === 'compare' && compareWith !== selected &&
     topics.some(t => t.name === compareWith) ? compareWith : null;
   const measured = topics.filter(t => t.activity?.available).length;
+  const ringScaleMax = activityScaleMax(topics, BUCKETS);
+  const bucketMinutes = activity?.bucketMs ? activity.bucketMs / 60000 : WINDOW_MS / BUCKETS / 60000;
+  const bucketLabel = `${Number(bucketMinutes.toFixed(1)).toLocaleString()}-minute bucket`;
   const incomplete = topics.filter(t => topicEvidence(t.activity, selectedBucket,
     activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null).status === 'partial').length;
   const anomalies = topics.flatMap(topic => {
@@ -1010,14 +1176,16 @@ export default function Strata3D() {
           else { setSelectedBucket(0); setReplaying(true); }
           break;
         case 'escape':
+          // One step back at a time: leave the focus first, then the comparison.
           setHovered(null);
           if (focused) setFocused(null);
+          else if (diagnosticMode === 'compare') { setCompareWith(null); setDiagnosticMode('investigate'); }
           break;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [shortcutsOpen, activity?.available, selected, scoped, focusTopic, replaying, focused]);
+  }, [shortcutsOpen, activity?.available, selected, scoped, focusTopic, replaying, focused, diagnosticMode]);
 
   return (
     <div data-testid="strata-workspace" className="space-y-4 pb-8">
@@ -1088,14 +1256,16 @@ export default function Strata3D() {
           className="mt-2 w-full rounded-lg border border-outline-variant bg-surface px-2 py-1 text-xs text-on-surface" />}
       </div>}
       {error && <p role="alert" className="rounded-lg bg-error-container p-3 text-on-error-container">{error}</p>}
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-on-surface-variant" role="status">
+      {activityError && <p role="alert" className="rounded-lg bg-error-container p-3 text-on-error-container">{activityError}</p>}
+      {/* Not a live region: it changes on every 30-second poll and would be read out each time. */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-on-surface-variant">
         <span>{topics.length}/{names.length} visible topics</span>
         <span>{measured} with readings · {incomplete} partial</span>
         <span>{links.length} declared lineage paths</span>
         {anomalies.length > 0 && <span className="text-amber-700 dark:text-amber-300">{anomalies.length} deviations in slice</span>}
         <span>{activitySnapshot?.scope === scope
-          ? 'Sampled ' + new Date(activitySnapshot.receivedAt).toLocaleTimeString()
-          : 'Activity not measured yet'}</span>
+          ? (activityError ? 'Last sample ' : 'Sampled ') + new Date(activitySnapshot.receivedAt).toLocaleTimeString()
+          : activityError ? 'Activity unavailable' : 'Activity not measured yet'}</span>
       </div>
       <StrataPerformancePanel reading={performanceStats} />
       {names.length > MAX_TOPICS && <p className="text-xs text-on-surface-variant">
@@ -1116,7 +1286,7 @@ export default function Strata3D() {
               maxLength={160} placeholder="Topic name"
               className="w-full rounded-lg border border-outline-variant bg-surface px-3 py-2 text-sm text-on-surface" />
           </label>
-          <StrataMiniMap items={topics} totalTopics={names.length} selected={selected} peer={activeCompareWith}
+          <StrataMiniMap items={topics} totalTopics={layoutExtent} selected={selected} peer={activeCompareWith}
             leads={leads} onSelect={chooseTopic} onFocus={focusTopic} />
           <div>
             <h3 className="mb-2 text-xs font-semibold text-on-surface">Topics in view</h3>
@@ -1157,15 +1327,25 @@ export default function Strata3D() {
                 focused={activeFocus} partitionActivity={alignedPartitionActivity} forecast={visibleForecast} motion={motion}
                 quality={quality} layers={layers} onHover={updateHovered} onPerformance={setPerformanceStats}
                 links={links} selectedGroup={selectedGroup} themeRevision={themeRevision}
-                selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace} /> :
+                selectedBucket={selectedBucket} lensAvailable={Boolean(activity?.available)} trace={activeTrace}
+                frameKey={filteredQuery} /> :
               <p className="p-8 text-sm text-on-surface-variant">{dashboard ? 'No matching topics.' : 'Loading cluster…'}</p>}
             {hovered && hoveredTopic && <StrataHoverCard name={hoveredTopic.name} activity={hoveredTopic.activity}
               bucket={selectedBucket} receivedAt={activitySnapshot?.scope === scope ? activitySnapshot.receivedAt : null}
               x={hovered.x} y={hovered.y} />}
             <div className="absolute right-3 top-3 z-20"><StrataLayerMenu layers={layers} onChange={setLayer} /></div>
-            <p className="pointer-events-none absolute left-3 top-3 max-w-[60%] rounded-lg bg-surface/85 px-2.5 py-1.5 text-[11px] text-on-surface-variant backdrop-blur-md">
-              Drag to orbit · Scroll to zoom · Double-click to focus
-            </p>
+            <div className="pointer-events-none absolute left-3 top-3 max-w-[60%] space-y-1">
+              <p className="rounded-lg bg-surface/85 px-2.5 py-1.5 text-[11px] text-on-surface-variant backdrop-blur-md">
+                {touch ? 'One finger scrolls the page · Two fingers orbit and zoom · Double-tap to focus'
+                  : 'Drag to orbit · Scroll to zoom · Double-click to focus'}
+              </p>
+              {layers.activity && <p data-testid="strata-ring-legend"
+                className="rounded-lg bg-surface/85 px-2.5 py-1.5 text-[11px] text-on-surface-variant backdrop-blur-md">
+                Ring width: offsets produced per {bucketLabel}, log scale. Widest ring ={' '}
+                <strong className="text-on-surface tabular-nums">{ringScaleMax.toLocaleString()}</strong> offsets
+                (largest among the visible topics; filtering changes it). Thin grey ring: not measured.
+              </p>}
+            </div>
             <div className="absolute bottom-3 left-3 right-3 z-10">
               <StrataTimelineDock snapshot={activity} topics={topics} selectedBucket={selectedBucket}
                 onBucket={selectBucket} replaying={replaying}
@@ -1202,15 +1382,17 @@ export default function Strata3D() {
               behavior: motion ? 'smooth' : 'auto', block: 'start',
             })}
             onSnapshot={saveInvestigation} />}
-        <aside className="rounded-xl border border-outline-variant bg-surface p-4" aria-live="polite">
-          <h2 className="font-semibold text-on-surface mb-3">Topic inspector</h2>
+        {/* A section, not a nested <aside>; and not a live region, since it holds the consumer
+            panel and polled figures that a screen reader would otherwise announce every 30 s. */}
+        <section className="rounded-xl border border-outline-variant bg-surface p-4" aria-labelledby="strata-topic-inspector">
+          <h2 id="strata-topic-inspector" className="font-semibold text-on-surface mb-3">Topic inspector</h2>
           {selectedTopic ? <>
             <p className="break-all font-medium text-on-surface">{selectedTopic.name}</p>
             <button type="button" onClick={() => activeFocus === selectedTopic.name ? setFocused(null) : focusTopic(selectedTopic.name)}
               className="mt-2 rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">
               {activeFocus === selectedTopic.name ? 'Return to overview' : 'Focus partitions and forecast'}
             </button>
-            <p className="mt-3 text-xs text-on-surface-variant" role="status">
+            <p className="mt-3 text-xs text-on-surface-variant">
               Evidence: <strong className="text-on-surface capitalize">{selectedEvidence.status}</strong> ·
               {selectedEvidence.measuredBuckets}/{selectedEvidence.totalBuckets} complete intervals
             </p>
@@ -1234,7 +1416,7 @@ export default function Strata3D() {
             <Link className="mt-4 inline-block text-sm font-medium text-primary hover:underline"
               to={`/topic/${encodeURIComponent(selectedTopic.name)}`}>Open Topic Explorer →</Link>
           </> : <p className="text-sm text-on-surface-variant">Select a column or topic to see consumer and partition lag.</p>}
-        </aside>
+        </section>
         </aside>}
       </div>
       <section id="strata-evidence-details" className="space-y-4 rounded-2xl border border-outline-variant bg-surface-container-low p-3 sm:p-5"

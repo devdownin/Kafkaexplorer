@@ -116,7 +116,10 @@ export function topicActivity(url) {
   const start = end - bucketMs * buckets;
 
   const seedOf = (name) => [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 100_000, 7);
-  const topics = {};
+  // A Map, then Object.fromEntries: the topic names come from the request, and writing them as
+  // properties of a plain object (`topics[topic] = …`) lets a name such as `__proto__` reach the
+  // object's prototype — CodeQL's js/remote-property-injection.
+  const topics = new Map();
   for (const topic of requested) {
     let seed = seedOf(topic);
     const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
@@ -129,9 +132,11 @@ export function topicActivity(url) {
     // Ailleurs, le débit est dérivé de la taille du topic dans la même fixture : un lecteur
     // compare la courbe à la colonne « Messages » de la même ligne, et 600/jour en face de 18
     // messages se verrait. Le facteur 1,4 compense le creux nocturne de la forme ci-dessous.
+    // An own-property read: `topicSizes['__proto__']` would otherwise answer Object.prototype.
+    const size = Object.hasOwn(topicSizes, topic) ? topicSizes[topic] : undefined;
     const base = burstUntil
-      ? (topicSizes[topic] ?? 0) / burstUntil
-      : (topicSizes[topic] ?? 200) * 1.4 / buckets;
+      ? (size ?? 0) / burstUntil
+      : (size ?? 200) * 1.4 / buckets;
     const counts = Array.from({ length: buckets }, (_, i) => {
       // Une forme de journée : creux la nuit, pic en milieu d'après-midi.
       const hour = ((start + i * bucketMs) / 3_600_000) % 24;
@@ -139,14 +144,14 @@ export function topicActivity(url) {
       const stopped = burstUntil !== null && i >= burstUntil;
       return stopped ? 0 : Math.round(base * shape * (0.7 + 0.6 * next()));
     });
-    topics[topic] = {
+    topics.set(topic, {
       topic, windowStartMs: start, windowEndMs: end, bucketMs, counts,
       total: counts.reduce((a, b) => a + b, 0),
       coveredFromMs: null, partitionsMeasured: 3, partitionsTotal: 3,
       available: true, note: null,
-    };
+    });
   }
-  return { topics, windowStartMs: start, windowEndMs: end, bucketMs, buckets, available: true, warnings: [] };
+  return { topics: Object.fromEntries(topics), windowStartMs: start, windowEndMs: end, bucketMs, buckets, available: true, warnings: [] };
 }
 
 /** Same deterministic activity window as the topic rings, distributed over three partitions. */

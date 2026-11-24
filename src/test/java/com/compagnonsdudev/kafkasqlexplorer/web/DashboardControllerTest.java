@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -225,6 +226,39 @@ class DashboardControllerTest {
     @Test
     void refusesARequestThatNamesNoTopic() throws Exception {
         mockMvc.perform(get("/api/dashboard/activity"))
+            .andExpect(status().isBadRequest());
+    }
+
+    // ── POST /api/dashboard/activity ─────────────────────────────────────────
+
+    /**
+     * Forty-eight topic names of 249 characters do not fit in a default Tomcat request line, so
+     * Strata sends them in a body. Same read, same caps, same answer as the GET.
+     */
+    @Test
+    void measuresTheTopicsNamedInTheBody() throws Exception {
+        when(kafkaAdminService.getTopicActivity(anyList(), anyLong(), anyInt(), anyInt()))
+            .thenReturn(series("orders"));
+        String longName = "t".repeat(249);
+
+        mockMvc.perform(post("/api/dashboard/activity")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"topics\":[\"orders\",\"" + longName + "\"],\"windowMs\":1800000,\"buckets\":12}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.topics.orders.total").value(7));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> topics = ArgumentCaptor.forClass(List.class);
+        verify(kafkaAdminService).getTopicActivity(topics.capture(), Mockito.eq(1_800_000L),
+            Mockito.eq(12), Mockito.eq(explorerConfig.getActivityMaxLookups()));
+        assertEquals(List.of("orders", longName), topics.getValue());
+    }
+
+    @Test
+    void refusesABodyThatNamesNoTopic() throws Exception {
+        mockMvc.perform(post("/api/dashboard/activity")
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .content("{\"topics\":[]}"))
             .andExpect(status().isBadRequest());
     }
 }

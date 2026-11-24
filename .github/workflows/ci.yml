@@ -1634,6 +1634,7 @@ jobs:
     timeout-minutes: 25
     permissions:
       contents: read
+      actions: read # Check newly uploaded github-pages artifact visibility before deployment.
       pages: write
       id-token: write
     concurrency:
@@ -1652,12 +1653,37 @@ jobs:
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: './docs'
+      # upload-pages-artifact finalizes before the run-artifacts API indexes the name.
+      # deploy-pages may see only older artifacts for the first seconds and report
+      # "No artifacts named github-pages"; polling avoids racing that metadata.
+      - name: Wait for Pages artifact to be indexed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 18); do
+            if curl --fail --silent --show-error --retry 2 \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+              | jq -e '.artifacts[] | select(.name == "github-pages" and .expired == false)' >/dev/null; then
+              echo "Pages artifact is indexed"
+              exit 0
+            fi
+            echo "Waiting for Pages artifact metadata (attempt ${attempt}/18)"
+            sleep 5
+          done
+          echo "::error::github-pages artifact uploaded but not indexed after 90 seconds"
+          exit 1
       - name: Deploy to GitHub Pages
         id: deployment
         continue-on-error: true
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5
       # Retry only the publication step, not checkout, upload or the application build.
       # A second failure is fatal; the first failed outcome remains visible in the log.
+      - name: Back off before retrying Pages deployment
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 30
       - name: Retry GitHub Pages deployment once
         id: deployment_retry
         if: steps.deployment.outcome == 'failure'
