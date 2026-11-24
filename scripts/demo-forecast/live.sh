@@ -110,12 +110,13 @@ targets_reached() { # <offset snapshot> <epoch> <scenario>
         delta=$((actual - wanted))
         [ "$delta" -ge 0 ] || delta=$((-delta))
         case "$3:$curve" in
-          # These thresholds are below the fixed scenario targets (480/185,
-          # 195/180) and above any corresponding normal traffic value.
-          overload:unshipped) [ "$actual" -ge 460 ] || return 1 ;;
-          overload:backlog)   [ "$actual" -ge 165 ] || return 1 ;;
-          incident:shift)    [ "$actual" -ge 175 ] || return 1 ;;
-          incident:jitter)   [ "$actual" -ge 155 ] || return 1 ;;
+          # Bounded threshold windows around the fixed scenario targets
+          # (480/185 and 195/180) exclude both the old baseline and a
+          # still-unsettled overshoot. Never confirm arbitrary excess traffic.
+          overload:unshipped) [ "$actual" -ge 460 ] && [ "$actual" -le 510 ] || return 1 ;;
+          overload:backlog)   [ "$actual" -ge 165 ] && [ "$actual" -le 215 ] || return 1 ;;
+          incident:shift)    [ "$actual" -ge 175 ] && [ "$actual" -le 225 ] || return 1 ;;
+          incident:jitter)   [ "$actual" -ge 155 ] && [ "$actual" -le 210 ] || return 1 ;;
           # Return close to every fixed recovery baseline; the public demo
           # specifically requires requests <= 40 and tickets <= 70.
           recover:*) [ "$delta" -le 20 ] || return 1 ;;
