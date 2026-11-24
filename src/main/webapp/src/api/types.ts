@@ -1742,10 +1742,14 @@ export interface ForecastCovariateComparison {
 export interface ForecastActivationRefusal {
   reason: string;
 }
-/** @java DemoControlController.ControlStatus */
+/** @java DemoControlController.State */
 export interface DemoControlStatus {
-  scenario: string;
-  changedAt: number | null;
+  enabled: boolean;
+  scenario: string | null;
+  requestedScenario: string;
+  phase: string;
+  appliedAt: number | null;
+  startedAt: number | null;
 }
 
 /** @java ForecastController.Status */
