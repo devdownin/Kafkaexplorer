@@ -43,6 +43,10 @@ const API = [
   // Reçoit l'URL : la colonne d'activité ne mesure que les topics affichés, donc la réponse
   // dépend de la requête — les autres routes ignorent simplement l'argument.
   [m => m === '/api/dashboard/activity', url => F.topicActivity(url)],
+  // `DemoControlController` exists only under `explorer.demo.control.enabled=true`; every other
+  // deployment answers 404, which is what the Metrics page then hides its panel on. The
+  // screenshots document the product as shipped, not the demo build.
+  [m => m === '/api/demo-control', () => ({ [STATUS]: 404 })],
   [m => m === '/api/dashboard/partition-activity', url => F.partitionActivity(url)],
   [m => m === '/api/config', () => F.config],
   [m => m === '/api/cluster', () => F.cluster],
@@ -124,6 +128,26 @@ const server = http.createServer((req, res) => {
   // coquille répondrait 200 avec du HTML à une question qui attend une liste.
   if (pathname === '/__unstubbed') {
     return send(res, 200, JSON.stringify({ routes: [...unstubbed].sort() }), MIME['.json']);
+  }
+
+  // Kafka Strata asks for its activity by POST, the topics in a JSON body (48 long names overflow
+  // a request line); the fixture reads a URL, so the body is turned back into one.
+  if (req.method === 'POST' && pathname === '/api/dashboard/activity') {
+    let raw = '';
+    req.on('data', chunk => { raw += chunk; });
+    req.on('end', () => {
+      let body;
+      try { body = JSON.parse(raw || '{}'); } catch { body = {}; }
+      if (!Array.isArray(body.topics) || body.topics.length === 0) {
+        return send(res, 400, JSON.stringify({ message: 'topics is required' }), MIME['.json']);
+      }
+      const asked = new URL('/api/dashboard/activity', 'http://localhost');
+      asked.searchParams.set('topics', body.topics.join(','));
+      if (body.windowMs != null) asked.searchParams.set('windowMs', String(body.windowMs));
+      if (body.buckets != null) asked.searchParams.set('buckets', String(body.buckets));
+      send(res, 200, JSON.stringify(F.topicActivity(asked)), MIME['.json']);
+    });
+    return;
   }
 
   if (pathname.startsWith('/api/')) {
