@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Kafka Explorer Contributors
 
 import { useEffect, useRef, useState, type FC } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { NAV_ITEMS, CONFIG_ITEM, HELP_ITEM, groupNavItems } from '../navigation';
 
 interface SidebarProps {
@@ -26,7 +26,12 @@ const StreamMark: FC<{ size?: number }> = ({ size = 20 }) => (
 
 const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, onMobileClose }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const sections = groupNavItems(NAV_ITEMS);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
+  const activeGroup = sections.find(section => section.group && section.items.some(item =>
+    item.path === location.pathname || (item.path !== '/' && location.pathname.startsWith(`${item.path}/`)),
+  ))?.group;
   const navRef = useRef<HTMLElement>(null);
   const [moreBelow, setMoreBelow] = useState(false);
   const measureNav = () => {
@@ -116,14 +121,36 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
         {sections.map((section, i) => (
           <div key={section.group ?? `top-${i}`} className={i > 0 ? 'pt-3' : ''}>
             {section.group && !isCollapsed && (
-              <p className="px-3 pb-1.5 text-[12px] font-medium text-outline select-none">
-                {section.group}
-              </p>
+              <button
+                type="button"
+                className="kse-nav-group-trigger"
+                aria-expanded={!(collapsedGroups.has(section.group) && activeGroup !== section.group)}
+                aria-controls={`kse-nav-${section.group.toLowerCase()}`}
+                disabled={activeGroup === section.group}
+                onClick={() => setCollapsedGroups(current => {
+                  const next = new Set(current);
+                  if (next.has(section.group!)) next.delete(section.group!);
+                  else next.add(section.group!);
+                  return next;
+                })}
+              >
+                <span>{section.group}</span>
+                <span className="flex items-center gap-2">
+                  <span className="kse-nav-group-count">{section.items.length}</span>
+                  <span aria-hidden="true" className="material-symbols-outlined kse-nav-group-chevron">
+                    {collapsedGroups.has(section.group) && activeGroup !== section.group ? 'chevron_right' : 'expand_more'}
+                  </span>
+                </span>
+              </button>
             )}
             {section.group && isCollapsed && i > 0 && (
               <div className="mx-3 mb-3 border-t border-outline-variant/60" aria-hidden="true" />
             )}
-            <div className="space-y-0.5">
+            <div
+              id={section.group ? `kse-nav-${section.group.toLowerCase()}` : undefined}
+              className="space-y-0.5"
+              hidden={Boolean(section.group && !isCollapsed && collapsedGroups.has(section.group) && activeGroup !== section.group)}
+            >
               {section.items.map((item) => (
                 <NavLink
                   key={item.path}

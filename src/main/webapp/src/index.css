@@ -193,6 +193,42 @@ body { background: rgb(var(--kse-background)); }
   backdrop-filter: blur(var(--blur-regular)) saturate(155%);
 }
 
+/* Group headings are navigation controls, not decorative labels: a larger hit area,
+   explicit count and a restrained disclosure affordance make the hierarchy scannable. */
+.kse-nav-group-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 .75rem .25rem;
+  color: rgb(var(--kse-on-surface-variant) / .82);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+  text-align: left;
+  border-radius: 8px;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+.kse-nav-group-trigger:hover:not(:disabled) { color: rgb(var(--kse-on-surface)); background: rgb(var(--kse-primary) / .045); }
+.kse-nav-group-trigger:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.kse-nav-group-trigger:disabled { cursor: default; color: rgb(var(--kse-on-surface-variant)); }
+.kse-nav-group-count {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgb(var(--kse-surface-container-high));
+  color: rgb(var(--kse-on-surface-variant));
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.kse-nav-group-chevron { font-size: 17px; opacity: .72; }
+.kse-nav-group-trigger[aria-expanded="false"] .kse-nav-group-chevron { opacity: 1; }
+
 /* Active route: a tonal fill and an inset edge, not a saturated block. */
 .nav-active {
   background: var(--glass-selected-bg);

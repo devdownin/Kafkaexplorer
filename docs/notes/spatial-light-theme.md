@@ -237,3 +237,11 @@ contrast: the ratios above are computed from the tokens.
 The diagnostic tiles now navigate to meaningful filtered results instead of only scrolling to an unfiltered table. The empty shortcut uses strict all-partition count coverage; the silent shortcut freezes the set of topics measured on the visible page, avoiding a misleading claim of cluster-wide silence. Both display a removable active-filter badge and reset search/exclusion toggles before applying the filter.
 
 A compact, responsive five-item **Top producing topics** section uses the same two latest-offset snapshots as the throughput KPI. It sorts comparable topics by observed msg/s, shows the sampling window and coverage, and links each topic to the explorer. The panel is intentionally a ranked list rather than five full-sized cards: the focus remains on quick operational navigation and predictable density in both light and dark themes.
+
+## Ninth pass — navigation hierarchy and interaction
+
+The sidebar's Explore / Observe / Analyze sections are now real disclosure groups rather than static labels. Each heading is a keyboard-operable button with an explicit expanded state, a controlled region, and a quiet item count. Groups remain expanded by default to preserve the established first-run navigation; operators can collapse sections that are not relevant to the current task. Navigating to a route in a section always reveals that section again, including navigation initiated from the command palette.
+
+The header breadcrumb now carries the same group context (`Observe / Metrics`, for example) before the page title. The sidebar and header therefore share the same navigation taxonomy instead of making users infer which group a page belongs to. The active page remains the strongest visual signal; group labels and counts are secondary, and the accordion affordance is visible on hover and keyboard focus without adding another glass layer.
+
+No route, permission, API, or domain behavior changes. The collapsed rail keeps its existing icon-only separators; group disclosure is available in the expanded navigation and mobile drawer.

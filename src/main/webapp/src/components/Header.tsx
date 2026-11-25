@@ -3,7 +3,7 @@
 
 import type { FC } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { resolvePageName } from '../navigation';
+import { NAV_ITEMS, resolvePageName } from '../navigation';
 import { Switch } from './ui/Switch';
 import { connectionLabel, connectionTitle, connectionTone, type Health } from './connectionStatus';
 
@@ -50,6 +50,9 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
   const location = useLocation();
   const navigate = useNavigate();
   const pageName = resolvePageName(location.pathname);
+  const pageGroup = NAV_ITEMS.find(item =>
+    item.path === location.pathname || (item.path !== '/' && location.pathname.startsWith(`${item.path}/`)),
+  )?.group;
   const tone = connectionTone({ isHealthy });
 
   return (
@@ -78,8 +81,14 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
         </span>
 
         <nav aria-label="Breadcrumb" className="hidden md:flex items-center gap-2 min-w-0">
+          {pageGroup && (
+            <>
+              <span aria-hidden="true" className="text-outline-variant text-[13px]">/</span>
+              <span className="text-[12px] text-on-surface-variant truncate">{pageGroup}</span>
+            </>
+          )}
           <span aria-hidden="true" className="text-outline-variant text-[13px]">/</span>
-          <span className="text-[13px] font-medium text-on-surface truncate">{pageName || 'Dashboard'}</span>
+          <span className="text-[13px] font-semibold text-on-surface truncate">{pageName || 'Dashboard'}</span>
         </nav>
       </div>
 
