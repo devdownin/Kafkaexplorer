@@ -1368,17 +1368,17 @@ export default function Strata3D() {
           <span className="mr-1 text-xs font-semibold text-on-surface-variant">Workspace</span>
           <button type="button" aria-pressed={diagnosticMode === 'investigate' && !activeFocus}
             onClick={() => { setFocused(null); setCompareWith(null); setDiagnosticMode('investigate'); }}
-            className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">Overview</button>
+            className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface aria-pressed:border-primary aria-pressed:bg-primary/10 aria-pressed:text-primary focus-visible:outline-2 focus-visible:outline-primary transition-colors">Overview</button>
           <button type="button" aria-pressed={Boolean(activeFocus) && diagnosticMode === 'investigate'}
             disabled={!scoped.length}
             onClick={() => {
               const target = selected && scoped.includes(selected) ? selected : scoped[0];
               if (target) { focusTopic(target); setDiagnosticMode('investigate'); }
             }}
-            className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface disabled:opacity-45">Focus selected</button>
+            className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface aria-pressed:border-primary aria-pressed:bg-primary/10 aria-pressed:text-primary focus-visible:outline-2 focus-visible:outline-primary transition-colors disabled:opacity-45">Focus selected</button>
           <button type="button" aria-pressed={diagnosticMode === 'compare'}
             onClick={() => { setFocused(null); setDiagnosticMode('compare'); }}
-            className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface">Compare</button>
+            className="rounded-lg border border-outline-variant px-3 py-1.5 text-xs text-on-surface aria-pressed:border-primary aria-pressed:bg-primary/10 aria-pressed:text-primary focus-visible:outline-2 focus-visible:outline-primary transition-colors">Compare</button>
           <span className="ml-2 mr-1 text-xs font-semibold text-on-surface-variant">Arrange</span>
           <div role="group" aria-label="Arrangement of the topics" className="inline-flex rounded-lg border border-outline-variant">
             <button type="button" aria-pressed={arrangement === 'spiral'} onClick={() => setArrangement('spiral')}
@@ -1389,12 +1389,14 @@ export default function Strata3D() {
               className="rounded-r-lg border-l border-outline-variant px-3 py-1.5 text-xs text-on-surface aria-pressed:bg-primary/10 aria-pressed:text-primary">Pipeline lanes</button>
           </div>
         </section>
-        <div className="flex flex-wrap items-center gap-2">
+        <div role="group" aria-label="Workspace panels" className="flex flex-wrap items-center gap-2">
           <button type="button" aria-expanded={navigatorOpen}
-            className="rounded-lg border border-outline-variant px-2.5 py-1.5 text-xs text-on-surface"
+            aria-controls={navigatorOpen ? 'strata-topic-navigator' : undefined}
+            className="rounded-lg border border-outline-variant px-2.5 py-1.5 text-xs text-on-surface aria-expanded:border-primary aria-expanded:bg-primary/10 aria-expanded:text-primary focus-visible:outline-2 focus-visible:outline-primary transition-colors"
             onClick={() => setNavigatorOpen(value => !value)}>{navigatorOpen ? 'Hide topics' : 'Show topics'}</button>
           <button type="button" aria-expanded={inspectorOpen}
-            className="rounded-lg border border-outline-variant px-2.5 py-1.5 text-xs text-on-surface"
+            aria-controls={inspectorOpen ? 'strata-topic-inspector-panel' : undefined}
+            className="rounded-lg border border-outline-variant px-2.5 py-1.5 text-xs text-on-surface aria-expanded:border-primary aria-expanded:bg-primary/10 aria-expanded:text-primary focus-visible:outline-2 focus-visible:outline-primary transition-colors"
             onClick={() => setInspectorOpen(value => !value)}>{inspectorOpen ? 'Hide inspector' : 'Show inspector'}</button>
           <button type="button" onClick={() => { void copyViewLink(); }}
             className="rounded-lg bg-primary-container px-3 py-1.5 text-xs font-medium text-on-primary-container">
@@ -1432,10 +1434,11 @@ export default function Strata3D() {
       <div className="grid grid-cols-1 gap-3 2xl:grid-cols-[var(--strata-nav)_minmax(0,1fr)_var(--strata-inspector)]"
         style={{ '--strata-nav': navigatorOpen ? navigatorWidth + 'px' : '0px',
           '--strata-inspector': inspectorOpen ? inspectorWidth + 'px' : '0px' } as CSSProperties}>
-        {navigatorOpen && <aside className="relative order-2 2xl:order-1 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-low p-3 space-y-4 2xl:max-h-[min(75vh,760px)] 2xl:overflow-y-auto">
+        {navigatorOpen && <aside id="strata-topic-navigator" aria-labelledby="strata-topic-navigator-title"
+          className="relative order-2 2xl:order-1 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-low p-3 space-y-4 2xl:max-h-[min(75vh,760px)] 2xl:overflow-y-auto">
           <StrataResizeHandle side="left" value={navigatorWidth} onChange={setNavigatorWidth} />
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-on-surface">Topic navigator</h2>
+            <h2 id="strata-topic-navigator-title" className="text-sm font-semibold text-on-surface">Topic navigator</h2>
             <span className="text-[11px] text-on-surface-variant">{topics.length} visible</span>
           </div>
           <label className="block space-y-1 text-xs text-on-surface-variant">
@@ -1538,7 +1541,7 @@ export default function Strata3D() {
             </div>
           </div>
         </section>
-        {inspectorOpen && <aside className="relative order-3 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-low p-3 space-y-3 2xl:max-h-[min(75vh,760px)] 2xl:overflow-y-auto"
+        {inspectorOpen && <aside id="strata-topic-inspector-panel" className="relative order-3 min-w-0 rounded-2xl border border-outline-variant bg-surface-container-low p-3 space-y-3 2xl:max-h-[min(75vh,760px)] 2xl:overflow-y-auto"
           aria-label="Topic inspector and comparison">
           <StrataResizeHandle side="right" value={inspectorWidth} onChange={setInspectorWidth} />
           <div className="flex items-center justify-between gap-2">

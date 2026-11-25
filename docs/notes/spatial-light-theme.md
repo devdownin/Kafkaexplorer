@@ -253,3 +253,9 @@ The command palette now exposes a real combobox/listbox relationship: the search
 Keyboard navigation remains anchored in the search field. Arrow keys move the active option, Enter invokes the active command, Escape dismisses the palette, and Tab does not leak focus behind the modal. Result rows remain pointer-selectable but are removed from the tab sequence so the combobox keeps one predictable keyboard focus point. Closing/unmounting the palette restores focus to the control that opened it, including when a route action is selected.
 
 These changes improve how the global command surface connects navigation and operational work without changing command definitions, route targets, topic/table filtering, recents persistence or Kafka behavior. The modal remains a single floating surface; no new blur or translucent reading surfaces were introduced.
+
+## Eleventh pass — business workspace and panel relationships
+
+Strata 3D's Overview, Focus selected and Compare presets now use the same visible selected-state treatment as the arrangement switch, rather than relying on a state attribute with no corresponding visual hierarchy. The navigator and inspector toggles are grouped as workspace-panel controls, announce their expanded state, and reference the panel they reveal while it is present. Both panels now have explicit landmark names/IDs so assistive technology and the controls describe the same destinations.
+
+This makes the 3D scene, topic navigator and diagnostic inspector read as one workspace with three deliberate zones: spatial overview, scope/navigation and evidence/diagnostics. It does not change the topic selection, comparison, filtering, scene layout or evidence collection behavior. The existing 2XL resize handles and responsive stacking remain intact.

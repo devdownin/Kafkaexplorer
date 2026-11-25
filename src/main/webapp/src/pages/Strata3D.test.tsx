@@ -267,6 +267,32 @@ describe('Strata3D page', () => {
     await waitFor(() => expect(ground().userData.dark).toBe(true));
   });
 
+  it('connects workspace panel toggles to their panels and shows their expanded state', async () => {
+    const user = userEvent.setup();
+    await renderPage();
+
+    const panelControls = screen.getByRole('group', { name: 'Workspace panels' });
+    const hideTopics = within(panelControls).getByRole('button', { name: 'Hide topics' });
+    expect(hideTopics).toHaveAttribute('aria-expanded', 'true');
+    expect(hideTopics).toHaveAttribute('aria-controls', 'strata-topic-navigator');
+    expect(screen.getByRole('complementary', { name: 'Topic navigator' })).toBeInTheDocument();
+    await user.click(hideTopics);
+
+    const showTopics = within(panelControls).getByRole('button', { name: 'Show topics' });
+    expect(showTopics).toHaveAttribute('aria-expanded', 'false');
+    expect(showTopics).not.toHaveAttribute('aria-controls');
+    expect(screen.queryByRole('complementary', { name: 'Topic navigator' })).not.toBeInTheDocument();
+    await user.click(showTopics);
+    expect(screen.getByRole('complementary', { name: 'Topic navigator' })).toBeInTheDocument();
+
+    const hideInspector = within(panelControls).getByRole('button', { name: 'Hide inspector' });
+    expect(hideInspector).toHaveAttribute('aria-controls', 'strata-topic-inspector-panel');
+    expect(screen.getByRole('complementary', { name: 'Topic inspector and comparison' })).toBeInTheDocument();
+    await user.click(hideInspector);
+    expect(within(panelControls).getByRole('button', { name: 'Show inspector' })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('complementary', { name: 'Topic inspector and comparison' })).not.toBeInTheDocument();
+  });
+
   it('leaves the comparison on Escape once nothing is focused', async () => {
     const user = userEvent.setup();
     await renderPage();
