@@ -37,10 +37,51 @@ describe('CommandPalette', () => {
     const onClose = setup();
     const dialog = screen.getByRole('dialog');
 
-    await userEvent.click(screen.getByRole('textbox', { name: 'Search' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Search' }));
     expect(onClose).not.toHaveBeenCalled();
 
     await userEvent.click(dialog.parentElement!);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes a grouped listbox and keeps the active option in sync with keyboard navigation', async () => {
+    const user = userEvent.setup();
+    setup();
+    const input = screen.getByRole('combobox', { name: 'Search' });
+    const listbox = screen.getByRole('listbox', { name: 'Command results' });
+
+    expect(input).toHaveAttribute('aria-controls', listbox.id);
+    expect(screen.getByRole('group', { name: 'Actions' })).toBeInTheDocument();
+    await user.click(input);
+    await user.keyboard('{ArrowDown}');
+
+    const activeId = input.getAttribute('aria-activedescendant');
+    expect(activeId).toBe('command-option-1');
+    expect(document.getElementById(activeId!)).toHaveAttribute('aria-selected', 'true');
+    expect(document.getElementById(activeId!)).toHaveTextContent('Add metric');
+  });
+
+  it('keeps keyboard focus in the modal search field until dismissal', async () => {
+    const user = userEvent.setup();
+    setup();
+    const input = screen.getByRole('combobox', { name: 'Search' });
+    await user.tab();
+    expect(input).toHaveFocus();
+  });
+
+  it('restores focus to the opener when the palette unmounts', () => {
+    const opener = document.createElement('button');
+    opener.textContent = 'Open palette';
+    document.body.appendChild(opener);
+    opener.focus();
+
+    const palette = render(
+      <MemoryRouter>
+        <CommandPalette onClose={() => undefined} topics={[]} tables={[]} />
+      </MemoryRouter>,
+    );
+    palette.unmount();
+    expect(opener).toHaveFocus();
+    opener.remove();
   });
 });

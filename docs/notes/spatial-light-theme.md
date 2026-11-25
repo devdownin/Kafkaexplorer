@@ -245,3 +245,11 @@ The sidebar's Explore / Observe / Analyze sections are now real disclosure group
 The header breadcrumb now carries the same group context (`Observe / Metrics`, for example) before the page title. The sidebar and header therefore share the same navigation taxonomy instead of making users infer which group a page belongs to. The active page remains the strongest visual signal; group labels and counts are secondary, and the accordion affordance is visible on hover and keyboard focus without adding another glass layer.
 
 No route, permission, API, or domain behavior changes. The collapsed rail keeps its existing icon-only separators; group disclosure is available in the expanded navigation and mobile drawer.
+
+## Tenth pass — command palette and work navigation
+
+The command palette now exposes a real combobox/listbox relationship: the search field announces the result list, the active option is referenced through `aria-activedescendant`, and options are grouped by Actions, Pages, Recent topics, Topics and Tables. The empty-result message is announced as a status instead of being placed inside an empty listbox.
+
+Keyboard navigation remains anchored in the search field. Arrow keys move the active option, Enter invokes the active command, Escape dismisses the palette, and Tab does not leak focus behind the modal. Result rows remain pointer-selectable but are removed from the tab sequence so the combobox keeps one predictable keyboard focus point. Closing/unmounting the palette restores focus to the control that opened it, including when a route action is selected.
+
+These changes improve how the global command surface connects navigation and operational work without changing command definitions, route targets, topic/table filtering, recents persistence or Kafka behavior. The modal remains a single floating surface; no new blur or translucent reading surfaces were introduced.

@@ -52,16 +52,21 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
   const [rawActive, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const previouslyFocused = useRef<HTMLElement | null>(null);
 
   /*
    * La palette n'est montée que lorsqu'elle est ouverte (voir `Layout`), donc elle repart
    * naturellement d'une saisie vide : c'est le remontage qui réinitialise, là où un effet devait
-   * remettre à zéro deux états à chaque ouverture. Il ne reste qu'à donner le focus, une fois le
-   * portail monté — ce qui ne pose aucun état.
+   * remettre à zéro deux états à chaque ouverture. À l'ouverture, on mémorise le déclencheur et
+   * on donne le focus au champ ; au démontage, le focus revient au déclencheur s'il existe encore.
    */
   useEffect(() => {
+    previouslyFocused.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const frame = requestAnimationFrame(() => inputRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      if (previouslyFocused.current?.isConnected) previouslyFocused.current.focus();
+    };
   }, []);
 
   const go = (path: string) => { navigate(path); onClose(); };
@@ -140,10 +145,14 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
 
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') { e.preventDefault(); onClose(); return; }
+    // The input owns list navigation; options are pointer targets but never steal combobox focus.
+    if (e.target !== inputRef.current) return;
     if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, filtered.length - 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
     else if (e.key === 'Enter') { e.preventDefault(); filtered[active]?.run(); }
-    else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+    // A modal combobox keeps focus inside its single keyboard entry point until dismissed.
+    else if (e.key === 'Tab') { e.preventDefault(); inputRef.current?.focus(); }
   };
 
   // Sépare les groupes pour l'affichage tout en gardant l'index global continu.
@@ -174,7 +183,13 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
             value={query}
             onChange={e => { setQuery(e.target.value); setActive(0); }}
             placeholder="Search pages, topics, tables or actions…"
+            role="combobox"
             aria-label="Search"
+            aria-autocomplete="list"
+            aria-expanded={filtered.length > 0}
+            aria-controls={filtered.length > 0 ? 'command-palette-results' : undefined}
+            aria-activedescendant={filtered.length > 0 ? `command-option-${active}` : undefined}
+            aria-haspopup="listbox"
             className="flex-1 bg-transparent border-none outline-hidden text-[14px] text-on-surface placeholder:text-outline focus-visible:outline-2 focus-visible:outline-primary"
           />
           <kbd className="text-[11px] text-outline border border-outline-variant rounded px-1.5 py-0.5">Esc</kbd>
@@ -183,41 +198,46 @@ const CommandPalette: FC<CommandPaletteProps> = ({ onClose, topics, tables }) =>
         {/* Résultats */}
         <div ref={listRef} className="max-h-[52vh] overflow-y-auto custom-scrollbar py-2">
           {filtered.length === 0 ? (
-            <div className="px-4 py-10 text-center text-[13px] text-on-surface-variant">
+            <div className="px-4 py-10 text-center text-[13px] text-on-surface-variant" role="status">
               No results for “<span className="text-on-surface">{query}</span>”
             </div>
           ) : (
-            groups.map(group => {
-              const items = filtered.filter(c => c.group === group);
-              if (items.length === 0) return null;
-              return (
-                <div key={group} className="px-2 pb-1">
-                  <p className="px-2 py-1.5 text-[11px] font-medium uppercase tracking-[0.05em] text-outline select-none">{group}</p>
-                  {items.map(cmd => {
-                    runningIndex += 1;
-                    const idx = runningIndex;
-                    const isActive = idx === active;
-                    return (
-                      <button
-                        key={cmd.id}
-                        data-idx={idx}
-                        onClick={() => cmd.run()}
-                        onMouseMove={() => setActive(idx)}
-                        aria-selected={isActive}
-                        className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-left transition-colors ${
-                          isActive ? 'bg-primary/10 text-on-surface shadow-[inset_0_1px_0_rgb(var(--kse-primary)/.10)]' : 'text-on-surface-variant hover:bg-surface-container-high/70 hover:text-on-surface'
-                        }`}
-                      >
-                        <span aria-hidden="true" className={`material-symbols-outlined text-[19px] ${isActive ? 'text-primary' : 'text-on-surface-variant'}`}>{cmd.icon}</span>
-                        <span className={`flex-1 min-w-0 truncate text-[13px] ${cmd.group === 'Topics' || cmd.group === 'Tables' ? 'font-mono' : 'font-medium text-on-surface'}`}>{cmd.label}</span>
-                        {cmd.hint && <span className="text-[11px] text-outline shrink-0">{cmd.hint}</span>}
-                        {isActive && <span aria-hidden="true" className="material-symbols-outlined text-[16px] text-outline shrink-0">keyboard_return</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })
+            <div id="command-palette-results" role="listbox" aria-label="Command results">
+              {groups.map(group => {
+                const items = filtered.filter(c => c.group === group);
+                if (items.length === 0) return null;
+                return (
+                  <div key={group} role="group" aria-label={group} className="px-2 pb-1">
+                    <p className="px-2 py-1.5 text-[11px] font-medium uppercase tracking-[0.05em] text-outline select-none">{group}</p>
+                    {items.map(cmd => {
+                      runningIndex += 1;
+                      const idx = runningIndex;
+                      const isActive = idx === active;
+                      return (
+                        <button
+                          key={cmd.id}
+                          id={`command-option-${idx}`}
+                          role="option"
+                          tabIndex={-1}
+                          data-idx={idx}
+                          onClick={() => cmd.run()}
+                          onMouseMove={() => setActive(idx)}
+                          aria-selected={isActive}
+                          className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-left transition-colors ${
+                            isActive ? 'bg-primary/10 text-on-surface shadow-[inset_0_1px_0_rgb(var(--kse-primary)/.10)]' : 'text-on-surface-variant hover:bg-surface-container-high/70 hover:text-on-surface'
+                          }`}
+                        >
+                          <span aria-hidden="true" className={`material-symbols-outlined text-[19px] ${isActive ? 'text-primary' : 'text-on-surface-variant'}`}>{cmd.icon}</span>
+                          <span className={`flex-1 min-w-0 truncate text-[13px] ${cmd.group === 'Topics' || cmd.group === 'Tables' ? 'font-mono' : 'font-medium text-on-surface'}`}>{cmd.label}</span>
+                          {cmd.hint && <span className="text-[11px] text-outline shrink-0">{cmd.hint}</span>}
+                          {isActive && <span aria-hidden="true" className="material-symbols-outlined text-[16px] text-outline shrink-0">keyboard_return</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
 
