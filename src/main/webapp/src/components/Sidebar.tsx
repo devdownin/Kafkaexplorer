@@ -31,7 +31,7 @@ const Sidebar: FC<SidebarProps> = ({ isCollapsed, onToggle, mobileOpen = false, 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
   const activeGroup = sections.find(section => section.group && section.items.some(item =>
     item.path === location.pathname || (item.path !== '/' && location.pathname.startsWith(`${item.path}/`)),
-  ))?.group;
+  ))?.group ?? (location.pathname.startsWith('/topic/') ? 'Explore' : undefined);
   const navRef = useRef<HTMLElement>(null);
   const [moreBelow, setMoreBelow] = useState(false);
   const measureNav = () => {

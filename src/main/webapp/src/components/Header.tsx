@@ -52,7 +52,7 @@ const Header: FC<HeaderProps> = ({ onMenuClick, onSearchClick, isHealthy, cluste
   const pageName = resolvePageName(location.pathname);
   const pageGroup = NAV_ITEMS.find(item =>
     item.path === location.pathname || (item.path !== '/' && location.pathname.startsWith(`${item.path}/`)),
-  )?.group;
+  )?.group ?? (location.pathname.startsWith('/topic/') ? 'Explore' : undefined);
   const tone = connectionTone({ isHealthy });
 
   return (

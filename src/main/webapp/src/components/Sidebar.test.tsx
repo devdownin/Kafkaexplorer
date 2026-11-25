@@ -9,7 +9,12 @@ import Sidebar from './Sidebar';
 
 const RouteJump = () => {
   const navigate = useNavigate();
-  return <button onClick={() => navigate('/query')}>Open SQL route</button>;
+  return (
+    <>
+      <button onClick={() => navigate('/query')}>Open SQL route</button>
+      <button onClick={() => navigate('/topic/orders')}>Open topic route</button>
+    </>
+  );
 };
 
 describe('Sidebar navigation groups', () => {
@@ -31,6 +36,10 @@ describe('Sidebar navigation groups', () => {
     expect(screen.queryByRole('link', { name: /SQL Editor/ })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Open SQL route' }));
+    expect(screen.getByRole('link', { name: /SQL Editor/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Explore/ })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Open topic route' }));
     expect(screen.getByRole('link', { name: /SQL Editor/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Explore/ })).toBeDisabled();
   });
