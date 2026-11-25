@@ -196,6 +196,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   restores filters, zoom, deep links, copy actions and accessible mobile navigation;
   a PR preflight guard catches missing DOM controls or script inclusion.
 
+## [2.9.5] — 2026-11-25
+
+See [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.9.5).
+
 ## [2.9.4] — 2026-11-24
 
 See [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.9.4).
@@ -3230,7 +3234,8 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.4...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.5...HEAD
+[2.9.5]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.4...v2.9.5
 [2.9.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.3...v2.9.4
 [2.9.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.2...v2.9.3
 [2.9.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.1...v2.9.2
