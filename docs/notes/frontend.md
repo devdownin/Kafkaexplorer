@@ -681,6 +681,17 @@ the panel, a configured one does not. **The panel then shows the series that was
 (`onApplied(seriesId)` → `ForecastPanel`'s `focus`): it used to stay on the first series of the
 list, so the answer to "Start forecasting" was another metric's chart.
 
+**The assistant says which model will produce the forecast.** A *Forecast model* block under the
+summary lists the primary model (TimesFM: the one whose forecasts are stored and served) and the
+shadow (Timestral: scored beside it on the same history, never shown as a forecast), each with its
+checkpoint, its revision cut to Git's seven characters (the shadow's pin is the operator's, set on
+the inference service, so it says that instead of a number), its adapter version — the identity every
+stored answer carries — and whether it is switched on. It reads `Candidates.models`
+(`ForecastSetupService.models()`), built from `TimesFmClient.Model` rather than restated, so the page
+cannot drift from the identity the client accepts; a shadow id the client would refuse is named as
+configured and reported off. `enabled` is configuration, never reachability: the preparation probe
+says whether the service answers. A server that predates the field shows no block.
+
 **The assistant reads the metric's own history, and asks in time rather than points.** Choosing a
 metric (or an interval) reads `GET /api/forecasts/candidates/{metricId}/history?stepMillis=` —
 `ForecastSetupService.historyPreview`, the same series identity the approval would derive, so the

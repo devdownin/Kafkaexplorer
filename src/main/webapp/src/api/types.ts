@@ -1790,6 +1790,19 @@ export interface ForecastCandidate {
   blockers: string[];
   suggestedStepMillis: number;
 }
+/** @java ForecastSetupService.ModelInfo */
+export interface ForecastModelInfo {
+  /** `PRIMARY` produces the forecast that is stored and served; `SHADOW` is scored beside it and never served. */
+  role: 'PRIMARY' | 'SHADOW';
+  name: string;
+  /** The Hugging Face repository the inference service loads. */
+  modelId: string;
+  /** The pinned commit; null for the shadow, whose pin is the operator's and is recorded with each answer. */
+  revision: string | null;
+  adapterVersion: string;
+  /** Configuration, not reachability: the readiness probe says whether the service answers. */
+  enabled: boolean;
+}
 /** @java ForecastSetupService.Candidates */
 export interface ForecastCandidates {
   metrics: ForecastCandidate[];
@@ -1799,6 +1812,7 @@ export interface ForecastCandidates {
   collectorId: string;
   applyUnavailable: string | null;
   minimumContextPoints: number;
+  models: ForecastModelInfo[];
 }
 /** @java ForecastSetupService.HistoryPreview */
 export interface ForecastHistoryPreview {

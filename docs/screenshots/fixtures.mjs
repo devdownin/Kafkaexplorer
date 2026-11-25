@@ -1101,6 +1101,12 @@ export const forecastCandidates = {
       eligible: true, enrolled: true, blockers: [], suggestedStepMillis: 60000 },
   ],
   total: 2, truncated: false, clusterId: 'local', collectorId: 'kafkaexplorer', applyUnavailable: null, minimumContextPoints: 128,
+  models: [
+    { role: 'PRIMARY', name: 'TimesFM', modelId: 'google/timesfm-2.5-200m-pytorch',
+      revision: '1d952420fba87f3c6dee4f240de0f1a0fbc790e3', adapterVersion: 'kex-timesfm-2.5-v3', enabled: true },
+    { role: 'SHADOW', name: 'Timestral shadow', modelId: 'mistralai/Timestral-28M', revision: null,
+      adapterVersion: 'kex-timestral-28m-v1', enabled: false },
+  ],
 };
 
 /** POST /api/forecasts/series — runtime creation from the selected metric card. */
