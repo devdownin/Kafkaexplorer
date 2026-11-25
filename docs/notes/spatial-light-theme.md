@@ -267,5 +267,3 @@ This makes the 3D scene, topic navigator and diagnostic inspector read as one wo
 - Query Workbench: the execution toolbar has a stable surface contrast and an explicit accessible name; editor and results sizing and interactions remain unchanged.
 - Topic Explorer: detail tabs use the ARIA tablist/tab pattern, a single tab stop, and keyboard navigation with arrows, Home and End.
 - No API contract, Kafka, SQL or forecast logic changes.
-
-[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]

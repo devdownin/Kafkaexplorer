@@ -697,8 +697,7 @@ const QueryWorkbench: React.FC = () => {
    */
   const changelog = useMemo(
     () => describeChangelog(results && !results.error ? results.changelog : null),
-    [results],
-  );
+    [results],  );
 
   /** Le plan d'un EXPLAIN, à rendre comme du texte plutôt que comme une cellule de grille. */
   const plan = useMemo(
@@ -799,7 +798,6 @@ const QueryWorkbench: React.FC = () => {
     if (monaco && model) monaco.editor.setModelMarkers(model, 'kse-sql-error', []);
   }, [monaco, setSql]);
 
-[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]
   // ── Virtualisation de la grille de résultats ────────────────────────────────
   const resultsScrollRef = useRef<HTMLDivElement>(null);
   const [rowHeight, setRowHeight] = useState(EST_ROW_HEIGHT);
@@ -1398,8 +1396,7 @@ const QueryWorkbench: React.FC = () => {
     }
     batchRef.current = true;
     batchCancelRef.current = false;
-    let runs: Run[] = plan.map((p, i) => ({
-      index: i + 1,
+    let runs: Run[] = plan.map((p, i) => ({      index: i + 1,
       sql: p.text,
       kind: detectStatementType(p.text),
       status: 'pending',
@@ -1599,8 +1596,7 @@ const QueryWorkbench: React.FC = () => {
    * ordre que l'écran, sans que rien ne le signale.
    */
   const exportResults = (format: 'csv' | 'json') => {
-
-[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]    if (!results?.rows.length) return;
+    if (!results?.rows.length) return;
     // Le marqueur de changelog part avec les lignes : un fichier ne peut pas être interrogé, donc
     // celui qui ne dit pas lesquelles de ses lignes sont des corrections les présente comme des
     // résultats — le défaut même que le marqueur retire de l'écran.
@@ -2099,8 +2095,7 @@ const QueryWorkbench: React.FC = () => {
                   defaultLanguage="sql"
                   theme="kse-dark"
                   value={sql}
-                  onChange={val => updateSql(val || '')}
-                  onMount={(editor, monacoApi) => {
+                  onChange={val => updateSql(val || '')}                  onMount={(editor, monacoApi) => {
                     editorRef.current = editor;
                     // `onMount` reçoit l'API Monaco en second argument : elle est garantie prête
                     // à cet instant, là où `useMonaco()` peut l'être avant ou après le montage.
@@ -2400,8 +2395,7 @@ const QueryWorkbench: React.FC = () => {
                             Jump to line {queryError.location.line}:{queryError.location.column}
                           </button>
                         )}
-
-[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]                        <button onClick={() => setShowErrorDetails(s => !s)} className="text-[11px] text-on-surface-variant hover:text-on-surface transition-colors">
+                        <button onClick={() => setShowErrorDetails(s => !s)} className="text-[11px] text-on-surface-variant hover:text-on-surface transition-colors">
                           {showErrorDetails ? '▲ Hide raw error' : '▼ Show raw error'}
                         </button>
                       </div>
@@ -2514,5 +2508,3 @@ const QueryWorkbench: React.FC = () => {
 };
 
 export default QueryWorkbench;
-
-[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]

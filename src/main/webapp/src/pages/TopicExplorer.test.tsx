@@ -268,5 +268,3 @@ describe('Topic Explorer page', () => {
     expect(previewOf(long).length).toBeLessThan(long.length);
   });
 });
-
-[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]

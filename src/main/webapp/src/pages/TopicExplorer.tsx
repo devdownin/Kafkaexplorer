@@ -697,8 +697,7 @@ const TopicExplorer: React.FC = () => {
   /** Le critère de la passe affichée : le formulaire peut avoir bougé depuis. */
   const [ranCriteria, setRanCriteria] = useState<TopicSearchCriteria | null>(null);
   const [hits, setHits] = useState<TopicMessage[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<QueryErrorInfo | null>(null);
+  const [searching, setSearching] = useState(false);  const [searchError, setSearchError] = useState<QueryErrorInfo | null>(null);
   const [fieldErrors, setFieldErrors] = useState<SearchErrors>({});
   const [searchActive, setSearchActive] = useState(false);
   const [stopped, setStopped] = useState(false);
@@ -798,8 +797,7 @@ const TopicExplorer: React.FC = () => {
     }
   }, [fetchRecord, toast]);
 
-
-[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]  useEffect(() => {
+  useEffect(() => {
     // Guard against out-of-order responses: toggling read mode quickly fires several requests,
     // and without this a slower one could overwrite the newer result with stale data.
     let active = true;
@@ -1398,8 +1396,7 @@ const TopicExplorer: React.FC = () => {
                     dix secondes de scan. */}
                 <div className="relative">
                   <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[15px] absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none">filter_alt</span>
-                  <input
-                    value={hitFilter}
+                  <input                    value={hitFilter}
                     onChange={e => setHitFilter(e.target.value)}
                     placeholder="Filter these results…"
                     aria-label="Filter the results already fetched"
@@ -1599,8 +1596,7 @@ const TopicExplorer: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-outline-variant/40">
               {Object.entries(data.schema).map(([field, type]) => (
-
-[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]                <tr key={field} className="hover:bg-surface-container-high/40 transition-colors">
+                <tr key={field} className="hover:bg-surface-container-high/40 transition-colors">
                   <td className="px-5 py-3 font-medium text-on-surface">{field}</td>
                   <td className="px-5 py-3 text-right font-mono text-[11px] text-primary/80 uppercase">{type}</td>
                 </tr>
@@ -1613,5 +1609,3 @@ const TopicExplorer: React.FC = () => {
 };
 
 export default TopicExplorer;
-
-[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]
