@@ -798,7 +798,8 @@ const TopicExplorer: React.FC = () => {
     }
   }, [fetchRecord, toast]);
 
-  useEffect(() => {
+
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]  useEffect(() => {
     // Guard against out-of-order responses: toggling read mode quickly fires several requests,
     // and without this a slower one could overwrite the newer result with stale data.
     let active = true;
@@ -1209,7 +1210,7 @@ const TopicExplorer: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-outline-variant/60 overflow-x-auto">
+      <div role="tablist" aria-label="Topic details" className="flex gap-1 border-b border-outline-variant/70 overflow-x-auto">
         {([
           { key: 'samples', label: `Messages (${searchActive ? hits.length : data.samples.length})`, icon: 'mail' },
           { key: 'activity', label: 'Activity', icon: 'timeline' },
@@ -1220,7 +1221,19 @@ const TopicExplorer: React.FC = () => {
         ] as const).map(tab => (
           <button
             key={tab.key}
+            id={`topic-tab-${tab.key}`}
+            role="tab"
+            aria-selected={activeTab === tab.key}
+            tabIndex={activeTab === tab.key ? 0 : -1}
             onClick={() => setActiveTab(tab.key)}
+            onKeyDown={event => {
+              const keys = ['samples', 'activity', 'ddl', 'schema', 'partitions', 'consumers'] as const;
+              const current = keys.indexOf(tab.key);
+              const next = event.key === 'ArrowRight' ? (current + 1) % keys.length
+                : event.key === 'ArrowLeft' ? (current - 1 + keys.length) % keys.length
+                : event.key === 'Home' ? 0 : event.key === 'End' ? keys.length - 1 : -1;
+              if (next >= 0) { event.preventDefault(); setActiveTab(keys[next]); requestAnimationFrame(() => document.getElementById(`topic-tab-${keys[next]}`)?.focus()); }
+            }}
             className={`flex items-center gap-2 px-4 py-2.5 text-[13px] font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
               activeTab === tab.key
                 ? 'border-primary text-on-surface'
@@ -1586,7 +1599,8 @@ const TopicExplorer: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-outline-variant/40">
               {Object.entries(data.schema).map(([field, type]) => (
-                <tr key={field} className="hover:bg-surface-container-high/40 transition-colors">
+
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]                <tr key={field} className="hover:bg-surface-container-high/40 transition-colors">
                   <td className="px-5 py-3 font-medium text-on-surface">{field}</td>
                   <td className="px-5 py-3 text-right font-mono text-[11px] text-primary/80 uppercase">{type}</td>
                 </tr>
@@ -1599,3 +1613,5 @@ const TopicExplorer: React.FC = () => {
 };
 
 export default TopicExplorer;
+
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]

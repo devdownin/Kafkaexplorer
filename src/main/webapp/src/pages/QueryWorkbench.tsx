@@ -799,6 +799,7 @@ const QueryWorkbench: React.FC = () => {
     if (monaco && model) monaco.editor.setModelMarkers(model, 'kse-sql-error', []);
   }, [monaco, setSql]);
 
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]
   // ── Virtualisation de la grille de résultats ────────────────────────────────
   const resultsScrollRef = useRef<HTMLDivElement>(null);
   const [rowHeight, setRowHeight] = useState(EST_ROW_HEIGHT);
@@ -1598,7 +1599,8 @@ const QueryWorkbench: React.FC = () => {
    * ordre que l'écran, sans que rien ne le signale.
    */
   const exportResults = (format: 'csv' | 'json') => {
-    if (!results?.rows.length) return;
+
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]    if (!results?.rows.length) return;
     // Le marqueur de changelog part avec les lignes : un fichier ne peut pas être interrogé, donc
     // celui qui ne dit pas lesquelles de ses lignes sont des corrections les présente comme des
     // résultats — le défaut même que le marqueur retire de l'écran.
@@ -1864,7 +1866,7 @@ const QueryWorkbench: React.FC = () => {
       {/* ── Main Content ─────────────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
-        <header className="kse-workbench-toolbar min-h-14 border-b border-outline-variant/60 flex flex-wrap items-center px-3 md:px-5 py-2 justify-between gap-2 bg-surface-container-low/70 shrink-0">
+        <header aria-label="Query execution controls" className="kse-workbench-toolbar min-h-14 border-b border-outline-variant/70 flex flex-wrap items-center px-3 md:px-5 py-2 justify-between gap-2 bg-surface-container shrink-0 shadow-sm">
           {/* Les réglages de lecture défilent au lieu de disparaître. « Offset » était masqué sous
               `md`, « Rows » sous `lg` — mais ils continuaient de s'appliquer : sur une fenêtre
               étroite, la requête partait en EARLIEST/50 sans qu'aucun des deux ne soit visible,
@@ -2398,7 +2400,8 @@ const QueryWorkbench: React.FC = () => {
                             Jump to line {queryError.location.line}:{queryError.location.column}
                           </button>
                         )}
-                        <button onClick={() => setShowErrorDetails(s => !s)} className="text-[11px] text-on-surface-variant hover:text-on-surface transition-colors">
+
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]                        <button onClick={() => setShowErrorDetails(s => !s)} className="text-[11px] text-on-surface-variant hover:text-on-surface transition-colors">
                           {showErrorDetails ? '▲ Hide raw error' : '▼ Show raw error'}
                         </button>
                       </div>
@@ -2511,3 +2514,5 @@ const QueryWorkbench: React.FC = () => {
 };
 
 export default QueryWorkbench;
+
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]

@@ -798,7 +798,8 @@ const Metrics: React.FC = () => {
   const onTemplateTypeChange = (tt: string) => {
     clearPreview();
     setEditingMetric(m => {
-      const desc = templates.find(t => t.type === tt);
+
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]      const desc = templates.find(t => t.type === tt);
       const supported = desc?.supportedMetricTypes ?? ['GAUGE'];
       const nextType = tt !== RAW_SQL && !supported.includes(m.type ?? 'GAUGE') ? supported[0] : (m.type ?? 'GAUGE');
       return {
@@ -1233,7 +1234,7 @@ const Metrics: React.FC = () => {
 
       {/* Filters */}
       {!loading && metrics.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap">
+        <div role="group" aria-label="Metric filters and display" className="flex items-center gap-3 flex-wrap rounded-xl border border-outline-variant/70 bg-surface-container-low/70 p-2.5 shadow-sm">
           <Select value={filterType} onChange={e => setFilterType(e.target.value)} className="w-auto" aria-label="Filter by type">
             <option value="all">All types</option>
             <option value="GAUGE">GAUGE</option>
@@ -1598,7 +1599,8 @@ const Metrics: React.FC = () => {
                   {/* Type */}
                   <Field
                     label="Type"
-                    description={{ GAUGE: '→ explorer_metric_gauge{…}', COUNTER: '→ explorer_metric_counter_total{…}',
+
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]                    description={{ GAUGE: '→ explorer_metric_gauge{…}', COUNTER: '→ explorer_metric_counter_total{…}',
                       HISTOGRAM: '→ explorer_metric_histogram_bucket{le=…} — auto-bucketed over metric_value',
                       SUMMARY: '→ explorer_metric_summary{quantile=0.95,…}',
                     }[editingMetric.type ?? 'GAUGE']}
@@ -2023,3 +2025,5 @@ const Metrics: React.FC = () => {
 };
 
 export default Metrics;
+
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]

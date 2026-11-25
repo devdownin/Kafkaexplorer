@@ -41,6 +41,7 @@ vi.mock('@monaco-editor/react', () => ({
   useMonaco: () => null,
 }));
 vi.mock('../monaco-setup', () => ({}));
+vi.mock('../components/topic/TopicActivityPanel', () => ({ default: () => <div>Activity panel</div> }));
 
 vi.mock('../catalogStore', () => ({
   useCatalog: () => ({ topics: ['demo.orders.1.received'], tables: [], internalPrefix: '' }),
@@ -126,6 +127,23 @@ describe('Topic Explorer page', () => {
     );
     // Aucun critère dans l'URL : rien ne doit partir en recherche.
     expect(searchCalls()).toHaveLength(0);
+  });
+
+  it('exposes detail tabs as a keyboard-navigable tablist', async () => {
+    const user = userEvent.setup();
+    await renderAt('');
+    await waitFor(() => expect(screen.getByText(TOPIC)).toBeInTheDocument());
+
+    const tabs = screen.getByRole('tablist', { name: 'Topic details' });
+    const messages = within(tabs).getByRole('tab', { name: /Messages/ });
+    expect(messages).toHaveAttribute('aria-selected', 'true');
+    expect(messages).toHaveAttribute('tabindex', '0');
+
+    messages.focus();
+    await user.keyboard('{ArrowRight}');
+    const activity = within(tabs).getByRole('tab', { name: /Activity/ });
+    expect(activity).toHaveAttribute('aria-selected', 'true');
+    expect(activity).toHaveFocus();
   });
 
   it('opens on the newest records, with the read mode beside the sample it governs', async () => {
@@ -250,3 +268,5 @@ describe('Topic Explorer page', () => {
     expect(previewOf(long).length).toBeLessThan(long.length);
   });
 });
+
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]

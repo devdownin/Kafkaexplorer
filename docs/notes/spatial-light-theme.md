@@ -259,3 +259,13 @@ These changes improve how the global command surface connects navigation and ope
 Strata 3D's Overview, Focus selected and Compare presets now use the same visible selected-state treatment as the arrangement switch, rather than relying on a state attribute with no corresponding visual hierarchy. The navigator and inspector toggles are grouped as workspace-panel controls, announce their expanded state, and reference the panel they reveal while it is present. Both panels now have explicit landmark names/IDs so assistive technology and the controls describe the same destinations.
 
 This makes the 3D scene, topic navigator and diagnostic inspector read as one workspace with three deliberate zones: spatial overview, scope/navigation and evidence/diagnostics. It does not change the topic selection, comparison, filtering, scene layout or evidence collection behavior. The existing 2XL resize handles and responsive stacking remain intact.
+
+
+## Pass 12 - Business workspace consistency
+
+- Metrics: filters and presentation controls now share a distinct control surface without changing filter criteria, sorting or forecast actions.
+- Query Workbench: the execution toolbar has a stable surface contrast and an explicit accessible name; editor and results sizing and interactions remain unchanged.
+- Topic Explorer: detail tabs use the ARIA tablist/tab pattern, a single tab stop, and keyboard navigation with arrows, Home and End.
+- No API contract, Kafka, SQL or forecast logic changes.
+
+[executed on device: MINICP (df71bea1-d60a-4bba-8966-b7bb3d209c72)]
