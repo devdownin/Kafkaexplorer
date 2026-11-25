@@ -697,7 +697,8 @@ const Metrics: React.FC = () => {
     const draft = readQueueDraft(searchParams);
     if (!draft) return;
     const openFromUrl = () => {
-      setEditingMetric({ ...EMPTY_METRIC, ...queueMetricDraft(draft) });      setSelectedTopic(draft.queue);
+      setEditingMetric({ ...EMPTY_METRIC, ...queueMetricDraft(draft) });
+      setSelectedTopic(draft.queue);
       setNameIsAuto(false);
       setEditorTab('metric');
       clearPreview();
@@ -1396,7 +1397,8 @@ const Metrics: React.FC = () => {
           Au-dessus des gabarits génériques, parce qu'une proposition qui nomme un topic de ce
           cluster et la mesure dont elle sort vaut mieux qu'un COUNT(*) sur la première table
           trouvée — et en dessous des métriques existantes, qui restent le sujet de la page. */}
-      {canCreateForecast && forecastRequest && <section aria-labelledby="metric-forecast-preparation" className="space-y-3 scroll-mt-20">        <div className="flex items-center justify-between gap-3">
+      {canCreateForecast && forecastRequest && <section aria-labelledby="metric-forecast-preparation" className="space-y-3 scroll-mt-20">
+        <div className="flex items-center justify-between gap-3">
           <h3 id="metric-forecast-preparation" tabIndex={-1} className="text-lg font-semibold outline-none">Forecast setup</h3>
           <Button variant="ghost" size="sm" icon="close" onClick={() => setForecastRequest(null)}>Close forecast setup</Button>
         </div>

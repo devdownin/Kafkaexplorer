@@ -697,7 +697,8 @@ const QueryWorkbench: React.FC = () => {
    */
   const changelog = useMemo(
     () => describeChangelog(results && !results.error ? results.changelog : null),
-    [results],  );
+    [results],
+  );
 
   /** Le plan d'un EXPLAIN, à rendre comme du texte plutôt que comme une cellule de grille. */
   const plan = useMemo(
@@ -1396,7 +1397,8 @@ const QueryWorkbench: React.FC = () => {
     }
     batchRef.current = true;
     batchCancelRef.current = false;
-    let runs: Run[] = plan.map((p, i) => ({      index: i + 1,
+    let runs: Run[] = plan.map((p, i) => ({
+      index: i + 1,
       sql: p.text,
       kind: detectStatementType(p.text),
       status: 'pending',
@@ -2095,7 +2097,8 @@ const QueryWorkbench: React.FC = () => {
                   defaultLanguage="sql"
                   theme="kse-dark"
                   value={sql}
-                  onChange={val => updateSql(val || '')}                  onMount={(editor, monacoApi) => {
+                  onChange={val => updateSql(val || '')}
+                  onMount={(editor, monacoApi) => {
                     editorRef.current = editor;
                     // `onMount` reçoit l'API Monaco en second argument : elle est garantie prête
                     // à cet instant, là où `useMonaco()` peut l'être avant ou après le montage.

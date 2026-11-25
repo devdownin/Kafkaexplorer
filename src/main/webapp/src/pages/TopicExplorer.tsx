@@ -697,7 +697,8 @@ const TopicExplorer: React.FC = () => {
   /** Le critère de la passe affichée : le formulaire peut avoir bougé depuis. */
   const [ranCriteria, setRanCriteria] = useState<TopicSearchCriteria | null>(null);
   const [hits, setHits] = useState<TopicMessage[]>([]);
-  const [searching, setSearching] = useState(false);  const [searchError, setSearchError] = useState<QueryErrorInfo | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<QueryErrorInfo | null>(null);
   const [fieldErrors, setFieldErrors] = useState<SearchErrors>({});
   const [searchActive, setSearchActive] = useState(false);
   const [stopped, setStopped] = useState(false);
@@ -1230,7 +1231,7 @@ const TopicExplorer: React.FC = () => {
               const next = event.key === 'ArrowRight' ? (current + 1) % keys.length
                 : event.key === 'ArrowLeft' ? (current - 1 + keys.length) % keys.length
                 : event.key === 'Home' ? 0 : event.key === 'End' ? keys.length - 1 : -1;
-              if (next >= 0) { event.preventDefault(); setActiveTab(keys[next]); requestAnimationFrame(() => document.getElementById(`topic-tab-${keys[next]}`)?.focus()); }
+              if (next >= 0) { event.preventDefault(); document.getElementById(`topic-tab-${keys[next]}`)?.focus(); setActiveTab(keys[next]); }
             }}
             className={`flex items-center gap-2 px-4 py-2.5 text-[13px] font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
               activeTab === tab.key
@@ -1396,7 +1397,8 @@ const TopicExplorer: React.FC = () => {
                     dix secondes de scan. */}
                 <div className="relative">
                   <span aria-hidden="true" className="material-symbols-outlined text-on-surface-variant text-[15px] absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none">filter_alt</span>
-                  <input                    value={hitFilter}
+                  <input
+                    value={hitFilter}
                     onChange={e => setHitFilter(e.target.value)}
                     placeholder="Filter these results…"
                     aria-label="Filter the results already fetched"
