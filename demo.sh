@@ -324,12 +324,12 @@ set_scenario() {
 }
 
 wait_for_http() {
-  local name=$1 url=$2 deadline=$((SECONDS + $3))
+  local name=$1 url=$2 seconds=$3 deadline=$((SECONDS + $3))
   shift 3
   printf 'Waiting for %s ' "$name"
   until curl -fsS -o /dev/null "$@" "$url" 2>/dev/null; do
     if ((SECONDS >= deadline)); then
-      echo "— not ready after $3 s. See: ./demo.sh logs"
+      echo "— not ready after ${seconds} s. See: ./demo.sh logs"
       return 1
     fi
     printf '.'
