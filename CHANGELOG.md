@@ -20,6 +20,30 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **`demo-menu.sh` / `demo-menu.cmd`: a guided launcher for the demos.** It asks what to do (start, stop,
+  reset, ps, logs, show the credentials, renew the tokens), which demo (full suite, without SpectraLLM,
+  forecast), where the images come from (built, published, offline) and whether to start the agent,
+  offers only combinations `demo.sh` accepts, and runs the resulting `demo.sh` command. Around that:
+  "same as last time" first (`.forecast-stack/last-demo`, no secret in it); a recap of what will start
+  (services, ports, weights, RAM); each token shown masked with where it comes from (environment,
+  `.env`, generated, dev-only default); the OpenRouter key checked against `openrouter.ai` before a
+  long build and, only if asked, saved in `.env`; `r` reveals and `c` copies the agent token at the
+  confirmation; "renew" regenerates the agent and MCP tokens (never the PostgreSQL / TimesFM ones);
+  `--preset NAME` (`--presets` lists them) and `--yes` skip the questions for scripts, `--dry-run`
+  stops after the command. A demo that is already running is detected first and the menu opens on
+  what can be done to it (services, logs, stop, reset, start again). Colour only on a terminal, never
+  with `NO_COLOR` or `--no-color` / `-NoColor`, and never alone: every colour is backed by words.
+  It builds a command line and owns no default.
+
+- **`--prebuilt` now works for the whole suite, and the launcher defaults to it.** It was forecast-only,
+  so `./demo.sh` and `--no-spectra` always built the TimesFM image from this checkout: Maven plus base
+  images from Docker Hub, which fails behind a proxy that re-signs certificates
+  (`x509: certificate signed by unknown authority` on `auth.docker.io`). `./demo.sh --prebuilt` layers
+  the published forecast image over the full-suite files (rendered with no `build:` left, with and
+  without SpectraLLM); `demo-menu` offers published images first and its presets follow
+  (`full-build`, `forecast-build`... for a build). `demo-menu.ps1` also starts `demo.ps1` in its own
+  PowerShell process, as `demo.cmd` does, which ends "Only 'logs' takes service names".
+
 - **The forecast demos load the Kex-anHarness agent by default.** `./demo.sh --forecast` and
   `demo-forecast.sh|cmd` now start the agent with the tokens already configured (the agent's bearer and
   the MCP bearer, both generated once in `.forecast-stack/.env`; the MCP one is shared by the agent and the Explorer). No key is needed: without `OPENROUTER_API_KEY` the agent starts degraded and says so.

@@ -10,7 +10,8 @@
 #   OPENROUTER_API_KEY=sk-or-... ./demo.sh          # build, start, wait, print the endpoints
 #   ./demo.sh --no-spectra                           # the same without SpectraLLM (DEMO_SPECTRA=false)
 #   ./demo.sh --forecast                             # the forecast demo alone, builds local images
-#   ./demo.sh --forecast --prebuilt                  # demo from published images, no build
+#   ./demo.sh --prebuilt                             # the full suite from published images, no build
+#   ./demo.sh --forecast --prebuilt                  # the forecast demo from published images, no build
 #   ./demo.sh --forecast --prebuilt --no-agent       # the forecast demo without the agent
 #   ./demo-forecast.sh [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]] # prebuilt shorthand
 #   ./demo.sh [--no-spectra|--forecast|--prebuilt] down | reset | ps | logs [service] | probe | doctor | verify | scenario [name]
@@ -88,8 +89,10 @@ if [[ $DEMO_OFFLINE == true && $DEMO_PREBUILT != true ]]; then
   exit 2
 fi
 [[ $DEMO_PREBUILT == true || $DEMO_PREBUILT == false ]] || { echo 'DEMO_PREBUILT must be true or false.' >&2; exit 2; }
+# --prebuilt works for the full suite too: the forecast overlays that build from this checkout are
+# the ones compose/forecast-offline.yml and compose/demo-forecast-prebuilt.yml retarget to the
+# published image, and SpectraLLM and the agent are published images already.
 if [[ $DEMO_PREBUILT == true ]]; then
-  [[ $DEMO_MODE == forecast ]] || { echo '--prebuilt is supported only for the forecast demo (--forecast).' >&2; exit 2; }
   export DEMO_PUBLISHED_IMAGE=true
 fi
 # The forecast demo loads the Kex-anHarness agent by default (tokens defaulted below, no key needed:
@@ -144,7 +147,7 @@ export SPECTRA_API_PORT=${SPECTRA_API_PORT:-8089}
 # The name and the file must agree (.env.example); a laptop wants the 3B named there.
 export LLM_CHAT_MODEL_NAME=${LLM_CHAT_MODEL_NAME:-qwen2.5-7b-instruct}
 
-# The prebuilt Forecast demo follows the published images (the agent too, with --agent).
+# A prebuilt demo follows the published images (the agent too, with --agent).
 # Other stacks keep the compose files' versioned pins; an explicit environment/.env tag always wins.
 # Keep this outside Compose so the repository's production image-pin checks stay strict.
 if [[ $DEMO_PREBUILT == true ]]; then
@@ -193,8 +196,8 @@ compose() { docker compose "${files[@]}" "$@"; }
 
 # Diagnostics never compile or pull images. Docker owns the resource view, not host free(1).
 doctor() {
-  [[ $DEMO_MODE == forecast && $DEMO_PREBUILT == true ]] ||
-    { echo 'doctor is for the prebuilt forecast demo.' >&2; return 2; }
+  [[ $DEMO_PREBUILT == true ]] ||
+    { echo 'doctor is for the prebuilt demos (--prebuilt, --forecast --prebuilt).' >&2; return 2; }
   local version major minor ram_mb image port busy=0
   version=$(docker compose version --short | sed 's/^v//')
   if [[ $version =~ ^([0-9]+)\.([0-9]+) ]]; then
@@ -324,12 +327,12 @@ set_scenario() {
 }
 
 wait_for_http() {
-  local name=$1 url=$2 deadline=$((SECONDS + $3))
+  local name=$1 url=$2 seconds=$3 deadline=$((SECONDS + $3))
   shift 3
   printf 'Waiting for %s ' "$name"
   until curl -fsS -o /dev/null "$@" "$url" 2>/dev/null; do
     if ((SECONDS >= deadline)); then
-      echo "— not ready after $3 s. See: ./demo.sh logs"
+      echo "— not ready after ${seconds} s. See: ./demo.sh logs"
       return 1
     fi
     printf '.'
@@ -339,6 +342,10 @@ wait_for_http() {
 }
 
 up() {
+  # The agent's bearer, before the long part (build, pulls): it is what the Control Center asks for.
+  if [[ $DEMO_MODE == full || $DEMO_AGENT == true ]]; then
+    echo "Kex-anHarness bearer (KEX_AGENT_API_KEY): ${KEX_AGENT_API_KEY} -- http://localhost:${KEX_AGENT_PORT}"
+  fi
   if [[ ($DEMO_MODE == full || $DEMO_AGENT == true) && -z $OPENROUTER_API_KEY ]]; then
     echo 'WARN: OPENROUTER_API_KEY is empty — Process Mining answers without its LLM half and the' >&2
     echo '      agent starts DEGRADED. Export it (or put it in .env) and rerun ./demo.sh.' >&2
@@ -356,8 +363,8 @@ up() {
     done
     doctor
     local with_agent=''
-    [[ $DEMO_AGENT != true ]] || with_agent=' and the agent'
-    echo "Prebuilt forecast demo: published KafkaExplorer and TimesFM images${with_agent}; no local build or model download."
+    [[ $DEMO_AGENT != true && $DEMO_MODE != full ]] || with_agent=' and the agent'
+    echo "Prebuilt demo: published KafkaExplorer and TimesFM images${with_agent}; no local build or model download."
     echo "TimesFM resources: ${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT}. Model licence: services/timesfm/licenses/NOTICE.md"
     compose config --quiet
     if [[ $DEMO_OFFLINE != true ]]; then compose pull --quiet --ignore-buildable; fi
