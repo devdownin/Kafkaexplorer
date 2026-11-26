@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The forecast demos load the Kex-anHarness agent by default.** `./demo.sh --forecast` and
+  `demo-forecast.sh|cmd` now start the agent with the tokens already configured (the agent's bearer
+  `dev-only-agent-key`, and the MCP bearer generated in `.forecast-stack/.env`, one value on both
+  sides). No key is needed: without `OPENROUTER_API_KEY` the agent starts degraded and says so.
+  `--no-agent` (`-NoAgent`, `DEMO_AGENT=false`) restores the previous shape; `--offline` keeps it
+  off, the agent image not being baked in. `demo.sh` and `demo.ps1` change together.
+
 - **One forecast image per Timestral checkpoint.** `TIMESTRAL_MODEL` accepted the 5M, 28M, 123M and
   209M, but `ghcr.io/devdownin/kex-forecast` baked the 28M alone, so on `compose/forecast-offline.yml`
   any other value failed at start on a missing file. `forecast-image.yml` now publishes one image
