@@ -30,7 +30,10 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   long build and, only if asked, saved in `.env`; `r` reveals and `c` copies the agent token at the
   confirmation; "renew" regenerates the agent and MCP tokens (never the PostgreSQL / TimesFM ones);
   `--preset NAME` (`--presets` lists them) and `--yes` skip the questions for scripts, `--dry-run`
-  stops after the command. It builds a command line and owns no default.
+  stops after the command. A demo that is already running is detected first and the menu opens on
+  what can be done to it (services, logs, stop, reset, start again). Colour only on a terminal, never
+  with `NO_COLOR` or `--no-color` / `-NoColor`, and never alone: every colour is backed by words.
+  It builds a command line and owns no default.
 
 - **The forecast demos load the Kex-anHarness agent by default.** `./demo.sh --forecast` and
   `demo-forecast.sh|cmd` now start the agent with the tokens already configured (the agent's bearer and

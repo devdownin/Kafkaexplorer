@@ -9,6 +9,11 @@
 #   ./demo-menu.sh --preset forecast     # skip the questions (--presets lists them)
 #   ./demo-menu.sh --preset forecast --yes   # ...and the confirmation: for scripts
 #
+# Output: colour only on a terminal, never with NO_COLOR set or --no-color, and never alone: every
+# colour is backed by words ("[default]", "valid", "rejected"), and every answer is a number or a
+# letter, so a screen reader or a log reads the same thing a terminal shows.
+# A demo that is already running is detected first, and the menu starts from what you can do to it.
+#
 # Only coherent combinations are offered: SpectraLLM exists in the full suite only; published
 # images and offline are forecast-only; offline cannot start the agent (its image is not baked in).
 # Each question has a default (Enter). The flags are demo.sh's own (documented in its header), so
@@ -26,7 +31,7 @@ last_file=$state_dir/last-demo
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: ./demo-menu.sh [--dry-run] [--yes] [--preset NAME] | --presets | --help
+Usage: ./demo-menu.sh [--dry-run] [--yes] [--no-color] [--preset NAME] | --presets | --help
 USAGE
   exit "${1:-2}"
 }
@@ -44,11 +49,13 @@ PRESETS
 
 dry_run=false
 assume_yes=false
+no_color=false
 preset=''
 while [[ $# -gt 0 ]]; do
   case $1 in
     --dry-run) dry_run=true ;;
     --yes) assume_yes=true ;;
+    --no-color) no_color=true ;;
     --preset) shift; preset=${1:-}; [[ -n $preset ]] || usage ;;
     --presets) presets; exit 0 ;;
     -h | --help) usage 0 ;;
@@ -57,6 +64,16 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# ── Output ───────────────────────────────────────────────────────────────────
+
+c_bold='' c_dim='' c_green='' c_yellow='' c_off=''
+if [[ -t 1 && -z ${NO_COLOR:-} && ${TERM:-} != dumb && $no_color != true ]]; then
+  c_bold=$'\e[1m' c_dim=$'\e[2m' c_green=$'\e[32m' c_yellow=$'\e[33m' c_off=$'\e[0m'
+fi
+title() { printf '%s%s%s\n' "$c_bold" "$*" "$c_off"; }
+ok() { printf '%s%s%s\n' "$c_green" "$*" "$c_off"; }
+warn() { printf '%s%s%s\n' "$c_yellow" "$*" "$c_off"; }
+
 # ── Questions ────────────────────────────────────────────────────────────────
 
 # ask "Question" default "label1" "label2" ... -> sets REPLY_INDEX (1-based)
@@ -64,9 +81,9 @@ ask() {
   local question=$1 default=$2 i answer n=1
   shift 2
   echo
-  echo "$question"
+  title "$question"
   for i in "$@"; do
-    printf '  %d) %s%s\n' "$n" "$i" "$([[ $n == "$default" ]] && echo '  [default]')"
+    printf '  %d) %s%s\n' "$n" "$i" "$([[ $n == "$default" ]] && printf '  %s[default]%s' "$c_dim" "$c_off")"
     n=$((n + 1))
   done
   while true; do
@@ -76,7 +93,7 @@ ask() {
       REPLY_INDEX=$answer
       return 0
     fi
-    echo "Enter a number between 1 and $#."
+    warn "Enter a number between 1 and $# (or press Enter for the default)."
   done
 }
 
@@ -229,7 +246,7 @@ show_tokens() {
   local reveal=$1 key v shown
   shift
   echo
-  echo 'Credentials'
+  title 'Credentials'
   for key in "$@"; do
     v=$(value_of "$key")
     if [[ -z $v ]]; then shown='-'
@@ -253,10 +270,10 @@ random_token() { openssl rand -hex 32; }
 renew_tokens() {
   local f=$state_dir/.env tmp key note=''
   if [[ ! -f $f ]]; then
-    echo 'No generated credentials yet: they are created at the first start.'
+    echo 'No generated credentials yet: they are created at the first start. Start the demo once, then renew.'
     return 0
   fi
-  command -v openssl > /dev/null || { echo 'openssl is required to generate a token.' >&2; return 1; }
+  command -v openssl > /dev/null || { echo 'openssl is required to generate a token: install it, then run this again.' >&2; return 1; }
   for key in KEX_AGENT_API_KEY EXPLORER_MCP_AUTH_TOKEN; do
     [[ $(origin_of "$key") == generated ]] || note="$note $key"
   done
@@ -279,7 +296,7 @@ renew_tokens() {
     END { if (!seen_a) print "KEX_AGENT_API_KEY=" a; if (!seen_m) print "EXPLORER_MCP_AUTH_TOKEN=" m }' "$f" > "$tmp"
   chmod 600 "$tmp"
   mv "$tmp" "$f"
-  echo 'Renewed. Restart the demo (stop, then start) to apply them.'
+  ok 'Renewed. Restart the demo (stop, then start) to apply them.'
 }
 
 # OpenRouter: ok | invalid | unknown. The key travels on stdin to curl, never on its command line.
@@ -302,7 +319,7 @@ save_key() {
     [[ -z $last ]] || printf '\n' >> .env
   fi
   printf 'OPENROUTER_API_KEY=%s\n' "$1" >> .env
-  echo 'Saved in .env (git-ignored).'
+  ok 'Saved in .env (git-ignored).'
 }
 
 # Asks for the key when a model is involved and none is set, checks it, offers to keep it.
@@ -319,10 +336,10 @@ ensure_key() {
     fi
     result=$(check_key "$key")
     case $result in
-      ok) echo 'OpenRouter key checked: valid.'; break ;;
-      unknown) echo 'OpenRouter key not checked (no answer from openrouter.ai): continuing.'; break ;;
+      ok) ok 'OpenRouter key checked: valid.'; break ;;
+      unknown) warn 'OpenRouter key not checked (no answer from openrouter.ai): continuing.'; break ;;
       invalid)
-        echo "OpenRouter rejected this key ($origin)."
+        warn "OpenRouter rejected this key ($origin): it was refused with 401 or 403."
         [[ -t 0 ]] || break
         ask 'What now?' 1 'Enter another key' 'Continue anyway (the agent and Process Mining start degraded)' 'Cancel'
         case $REPLY_INDEX in
@@ -346,8 +363,8 @@ ensure_key() {
 
 recap() {
   echo
-  echo "Demo: $(describe "$mode" "$source_kind" "$agent")"
-  echo 'What will start'
+  title "Demo: $(describe "$mode" "$source_kind" "$agent")"
+  echo 'What will start:'
   printf '  %-36s %s\n' 'Kafka + demo topics' "localhost:${KAFKA_PORT:-9092}"
   printf '  %-36s %s\n' 'Kafka SQL Explorer + MCP' "http://localhost:${EXPLORER_PORT:-8080}"
   printf '  %-36s %s\n' 'Schema Registry' "http://localhost:${SCHEMA_REGISTRY_PORT:-8085}"
@@ -374,20 +391,54 @@ tokens_for_demo() { # fills the global array token_names
   if model_involved; then token_names+=(OPENROUTER_API_KEY); fi
 }
 
+# ── A demo that is already running ───────────────────────────────────────────
+
+# Prints the running services, comma separated; nothing when there is no daemon or no demo.
+running_services() {
+  command -v docker > /dev/null || return 0
+  local name=${COMPOSE_PROJECT_NAME:-$(read_kv .env COMPOSE_PROJECT_NAME)}
+  name=${name:-kafka-explorer-demo}
+  docker ps --filter "label=com.docker.compose.project=$name" \
+    --format '{{.Label "com.docker.compose.service"}}' 2> /dev/null | sort | paste -sd, - | sed 's/,/, /g' || true
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 verb=up
+running=$(running_services)
 if [[ -n $preset ]]; then
   preset_apply "$preset"
+  [[ -z $running ]] || warn "A demo is already running ($running): start will reconcile it with these options."
 else
-  ask 'What do you want to do?' 1 \
-    'Start the demo' \
-    'Stop it (keeps the data)' \
-    'Reset it (stops and deletes the data)' \
-    'Show the services (ps)' \
-    'Follow the logs' \
-    'Show the credentials' \
-    'Renew the agent and MCP tokens'
+  menu_index=''
+  if [[ -n $running ]]; then
+    ask "A demo is already running ($running). What do you want to do?" 1 \
+      'Show the services (ps)' \
+      'Follow the logs' \
+      'Stop it (keeps the data)' \
+      'Reset it (stops and deletes the data)' \
+      'Start it again with other options' \
+      'Something else (the full menu)'
+    case $REPLY_INDEX in
+      1) menu_index=4 ;;
+      2) menu_index=5 ;;
+      3) menu_index=2 ;;
+      4) menu_index=3 ;;
+      5) menu_index=1 ;;
+    esac
+  fi
+  if [[ -n $menu_index ]]; then
+    REPLY_INDEX=$menu_index
+  else
+    ask 'What do you want to do?' 1 \
+      'Start the demo' \
+      'Stop it (keeps the data)' \
+      'Reset it (stops and deletes the data)' \
+      'Show the services (ps)' \
+      'Follow the logs' \
+      'Show the credentials' \
+      'Renew the agent and MCP tokens'
+  fi
   verb=$(printf '%s\n' up down reset ps logs creds renew | sed -n "${REPLY_INDEX}p")
   case $verb in
     creds)
@@ -441,12 +492,12 @@ if [[ $assume_yes != true ]]; then
       r | R) [[ $verb != up ]] || show_tokens true "${token_names[@]}" ;;
       c | C)
         if [[ $verb == up ]] && copy_to_clipboard "$(value_of KEX_AGENT_API_KEY)"; then
-          echo 'Agent token copied.'
+          ok 'Agent token copied.'
         else
-          echo 'No clipboard tool found (pbcopy, wl-copy, xclip, clip.exe).'
+          warn 'No clipboard tool found (pbcopy, wl-copy, xclip, clip.exe): press r, then copy the token by hand.'
         fi
         ;;
-      *) echo 'Answer y, n, r or c.' ;;
+      *) warn 'Answer y to run, n to cancel, r to reveal the tokens, c to copy the agent token.' ;;
     esac
   done
 fi

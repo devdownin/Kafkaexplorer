@@ -9,6 +9,11 @@
 #   .\demo-menu.cmd -Preset forecast         # skip the questions (-Presets lists them)
 #   .\demo-menu.cmd -Preset forecast -Yes    # ...and the confirmation: for scripts
 #
+# Output: colour only on a terminal, never with NO_COLOR set or -NoColor, and never alone: every
+# colour is backed by words ("[default]", "valid", "rejected"), and every answer is a number or a
+# letter. A demo that is already running is detected first, and the menu starts from what you can
+# do to it.
+#
 # Credentials: each token is shown with where it comes from (environment, .env, generated in
 # .forecast-stack\.env, or the dev-only default), masked unless you ask. A secret is written only
 # when you say so: the OpenRouter key into .env on request, the agent and MCP tokens on "renew".
@@ -19,6 +24,7 @@
 param(
     [switch] $DryRun,
     [switch] $Yes,
+    [switch] $NoColor,
     [string] $Preset = '',
     [switch] $Presets
 )
@@ -31,6 +37,13 @@ $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $StateDir = '.forecast-stack'
 $LastFile = Join-Path $StateDir 'last-demo'
 $StateEnv = Join-Path $StateDir '.env'
+
+$UseColor = (-not $NoColor) -and (-not $env:NO_COLOR) -and [Environment]::UserInteractive -and (-not [Console]::IsOutputRedirected)
+# Kind: title (bold-ish white), ok (green), warn (yellow); anything else is plain.
+function Say([string] $Text, [string] $Kind = '') {
+    $color = switch ($Kind) { 'title' { 'White' } 'ok' { 'Green' } 'warn' { 'Yellow' } default { '' } }
+    if ($UseColor -and $color) { Write-Host $Text -ForegroundColor $color } else { Write-Host $Text }
+}
 
 function Show-Presets {
     @(
@@ -47,7 +60,7 @@ if ($Presets) { Show-Presets; exit 0 }
 # Returns the 1-based index of the chosen option; Enter takes the default.
 function Ask([string] $Question, [int] $Default, [string[]] $Options) {
     Write-Host ''
-    Write-Host $Question
+    Say $Question 'title'
     for ($i = 0; $i -lt $Options.Count; $i++) {
         $mark = if (($i + 1) -eq $Default) { '  [default]' } else { '' }
         Write-Host ("  {0}) {1}{2}" -f ($i + 1), $Options[$i], $mark)
@@ -57,7 +70,7 @@ function Ask([string] $Question, [int] $Default, [string[]] $Options) {
         if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
         $n = 0
         if ([int]::TryParse($answer, [ref] $n) -and $n -ge 1 -and $n -le $Options.Count) { return $n }
-        Write-Host "Enter a number between 1 and $($Options.Count)."
+        Say "Enter a number between 1 and $($Options.Count) (or press Enter for the default)." 'warn'
     }
 }
 
@@ -208,7 +221,7 @@ function Get-Masked([string] $v) {
 
 function Show-Tokens([bool] $Reveal, [string[]] $Names) {
     Write-Host ''
-    Write-Host 'Credentials'
+    Say 'Credentials' 'title'
     foreach ($name in $Names) {
         $v = Get-Value $name
         $shown = if (-not $v) { '-' } elseif ($Reveal) { $v } else { Get-Masked $v }
@@ -225,7 +238,7 @@ function New-Token {
 
 function Renew-Tokens {
     if (-not (Test-Path -LiteralPath $StateEnv)) {
-        Write-Host 'No generated credentials yet: they are created at the first start.'
+        Write-Host 'No generated credentials yet: they are created at the first start. Start the demo once, then renew.'
         return
     }
     $elsewhere = @()
@@ -249,7 +262,7 @@ function Renew-Tokens {
     }
     foreach ($key in $new.Keys) { if (-not $seen[$key]) { $out.Add("$key=$($new[$key])") } }
     [IO.File]::WriteAllText((Join-Path $PWD $StateEnv), (($out -join "`n") + "`n"), $Utf8NoBom)
-    Write-Host 'Renewed. Restart the demo (stop, then start) to apply them.'
+    Say 'Renewed. Restart the demo (stop, then start) to apply them.' 'ok'
 }
 
 # OpenRouter: ok | invalid | unknown.
@@ -273,7 +286,7 @@ function Save-Key([string] $Key) {
         if ($existing.Length -gt 0 -and -not $existing.EndsWith("`n")) { $existing += "`n" }
     }
     [IO.File]::WriteAllText((Join-Path $PWD '.env'), "${existing}OPENROUTER_API_KEY=$Key`n", $Utf8NoBom)
-    Write-Host 'Saved in .env (git-ignored).'
+    Say 'Saved in .env (git-ignored).' 'ok'
 }
 
 # Asks for the key when a model is involved and none is set, checks it, offers to keep it.
@@ -294,9 +307,9 @@ function Confirm-Key {
             $origin = 'typed'
         }
         $result = Test-Key $key
-        if ($result -eq 'ok') { Write-Host 'OpenRouter key checked: valid.'; break }
-        if ($result -eq 'unknown') { Write-Host 'OpenRouter key not checked (no answer from openrouter.ai): continuing.'; break }
-        Write-Host "OpenRouter rejected this key ($origin)."
+        if ($result -eq 'ok') { Say 'OpenRouter key checked: valid.' 'ok'; break }
+        if ($result -eq 'unknown') { Say 'OpenRouter key not checked (no answer from openrouter.ai): continuing.' 'warn'; break }
+        Say "OpenRouter rejected this key ($origin): it was refused with 401 or 403." 'warn'
         if (-not $interactive) { break }
         $c = Ask 'What now?' 1 @('Enter another key', 'Continue anyway (the agent and Process Mining start degraded)', 'Cancel')
         if ($c -eq 1) { $key = ''; continue }
@@ -321,8 +334,8 @@ function Get-Or([string] $Name, [string] $Default) {
 
 function Show-Recap {
     Write-Host ''
-    Write-Host ("Demo: " + (Get-DemoLabel $script:Mode $script:Source $script:Agent))
-    Write-Host 'What will start'
+    Say ("Demo: " + (Get-DemoLabel $script:Mode $script:Source $script:Agent)) 'title'
+    Write-Host 'What will start:'
     $rows = @(
         @('Kafka + demo topics', ('localhost:' + (Get-Or 'KAFKA_PORT' '9092'))),
         @('Kafka SQL Explorer + MCP', ('http://localhost:' + (Get-Or 'EXPLORER_PORT' '8080'))),
@@ -355,21 +368,52 @@ function Get-TokenNames {
     , $names
 }
 
+# -- A demo that is already running -----------------------------------------------
+
+# The running services, comma separated; nothing when there is no daemon or no demo.
+function Get-RunningServices {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { return '' }
+    $name = Get-EnvValue 'COMPOSE_PROJECT_NAME'
+    if (-not $name) { $name = Read-Kv '.env' 'COMPOSE_PROJECT_NAME' }
+    if (-not $name) { $name = 'kafka-explorer-demo' }
+    try {
+        $lines = & docker ps --filter "label=com.docker.compose.project=$name" --format '{{.Label "com.docker.compose.service"}}' 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $lines) { return '' }
+        (@($lines) | Sort-Object) -join ', '
+    } catch { '' }
+}
+
 # -- Main ----------------------------------------------------------------------
 
 $verb = 'up'
 $allTokens = @('KEX_AGENT_API_KEY', 'EXPLORER_MCP_AUTH_TOKEN', 'SPECTRA_API_KEY', 'OPENROUTER_API_KEY')
+$running = Get-RunningServices
 if ($Preset) {
     Set-FromPreset $Preset
+    if ($running) { Say "A demo is already running ($running): start will reconcile it with these options." 'warn' }
 } else {
-    $choice = Ask 'What do you want to do?' 1 @(
-        'Start the demo',
-        'Stop it (keeps the data)',
-        'Reset it (stops and deletes the data)',
-        'Show the services (ps)',
-        'Follow the logs',
-        'Show the credentials',
-        'Renew the agent and MCP tokens')
+    $choice = 0
+    if ($running) {
+        $r = Ask "A demo is already running ($running). What do you want to do?" 1 @(
+            'Show the services (ps)',
+            'Follow the logs',
+            'Stop it (keeps the data)',
+            'Reset it (stops and deletes the data)',
+            'Start it again with other options',
+            'Something else (the full menu)')
+        # The index of the same action in the full menu below.
+        if ($r -le 5) { $choice = @(4, 5, 2, 3, 1)[$r - 1] }
+    }
+    if ($choice -eq 0) {
+        $choice = Ask 'What do you want to do?' 1 @(
+            'Start the demo',
+            'Stop it (keeps the data)',
+            'Reset it (stops and deletes the data)',
+            'Show the services (ps)',
+            'Follow the logs',
+            'Show the credentials',
+            'Renew the agent and MCP tokens')
+    }
     $verb = @('up', 'down', 'reset', 'ps', 'logs', 'creds', 'renew')[$choice - 1]
     if ($verb -eq 'creds') {
         Show-Tokens $false $allTokens
@@ -418,10 +462,10 @@ if (-not $Yes) {
         if ($go -match '^[Rr]$' -and $verb -eq 'up') { Show-Tokens $true $tokenNames; continue }
         if ($go -match '^[Cc]$' -and $verb -eq 'up') {
             Set-Clipboard -Value (Get-Value 'KEX_AGENT_API_KEY')
-            Write-Host 'Agent token copied.'
+            Say 'Agent token copied.' 'ok'
             continue
         }
-        Write-Host 'Answer y, n, r or c.'
+        Say 'Answer y to run, n to cancel, r to reveal the tokens, c to copy the agent token.' 'warn'
     }
 }
 
