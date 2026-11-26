@@ -62,6 +62,13 @@ class TimestralPin:
         model_id = environ.get("TIMESTRAL_MODEL", "").strip() or DEFAULT_MODEL_ID
         if not revision and not digest:
             return None
+        baked = environ.get("TIMESTRAL_BAKED_MODEL", "").strip()
+        if baked and baked != model_id:
+            # An offline image holds one checkpoint and cannot fetch another; without this the
+            # failure is a missing file in the Hub cache, which names neither the model nor the fix.
+            raise ValueError(f"this image carries {baked} only, and TIMESTRAL_MODEL asks for {model_id}: "
+                             f"run the kex-forecast tag suffixed -{adapter_version(model_id)[4:-3]}, "
+                             "or compose/forecasts.yml without the offline overlay, which downloads it")
         # Half a pin is a deployment mistake, not a request for an unpinned shadow.
         return cls(revision, digest, model_id)
 

@@ -272,9 +272,17 @@ quantiles and covariate support. Three rules hold it together:
   lower-cased, so the 28M keeps `kex-timestral-28m-v1` and the records already written keep their
   identity. Edit the two together.
 
-The published forecast image bakes the 28M alone, and starts with the Hub unreachable, so another
-model there needs `compose/forecasts.yml`, which downloads at first start, or an image built with
-`--build-arg TIMESTRAL_MODEL` and its pin. `compose/local-ai.yml` writes the model out beside its
+The published forecast image starts with the Hub unreachable, so it can only load the checkpoint
+it carries: **it is published once per checkpoint** (`.github/workflows/forecast-image.yml`, one
+matrix row of model, revision and digest each). The plain tag keeps the 28M, which every existing
+deployment pulls; the others are `<version>-timestral-5m`, `-123m` and `-209m`. On
+`compose/forecast-offline.yml` the pin is the image's own — the overlay removes
+`TIMESTRAL_REVISION` and `TIMESTRAL_SHA256` so a pin read for another stack cannot contradict it —
+and choosing a model is two variables, `TIMESTRAL_MODEL` and `FORECAST_IMAGE_TAG`. The image
+records what it carries (`TIMESTRAL_BAKED_MODEL`), and a `TIMESTRAL_MODEL` it does not carry is
+refused at start by naming the tag to run: the alternative was a missing file in the Hub cache,
+which names neither the model nor the fix. Before this there was one package for a setting with
+four values, and only the default could run offline. `compose/local-ai.yml` writes the model out beside its
 literal pin, so a `TIMESTRAL_MODEL` exported for another stack cannot reach it.
 
 **The application scores it** when `explorer.forecasting.inference.shadow.enabled` is true

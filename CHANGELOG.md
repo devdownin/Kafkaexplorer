@@ -20,6 +20,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **One forecast image per Timestral checkpoint.** `TIMESTRAL_MODEL` accepted the 5M, 28M, 123M and
+  209M, but `ghcr.io/devdownin/kex-forecast` baked the 28M alone, so on `compose/forecast-offline.yml`
+  any other value failed at start on a missing file. `forecast-image.yml` now publishes one image
+  per checkpoint, each with its own pin: the plain tags stay the 28M, the others carry the suffix
+  `-timestral-5m`, `-timestral-123m`, `-timestral-209m`. The offline overlay takes the pin from the
+  image instead of restating the 28M's, and the worker refuses a `TIMESTRAL_MODEL` its image does not
+  carry by naming the tag to run.
+
 - **The forecast assistant says which model will produce the forecast.** A *Forecast model* block in
   the setup form lists the primary model (TimesFM) and the shadow (Timestral) with their checkpoint,
   revision, adapter version and whether each is switched on — read from `GET /api/forecasts/candidates`

@@ -65,6 +65,14 @@ def test_the_model_is_a_setting_and_defaults_to_the_28m():
     assert TimestralPin.from_environment({"TIMESTRAL_MODEL": "mistralai/Timestral-123M"}) is None
 
 
+def test_an_offline_image_refuses_a_model_it_does_not_carry_and_names_the_tag():
+    pinned = {"TIMESTRAL_REVISION": "a" * 40, "TIMESTRAL_SHA256": "b" * 64,
+              "TIMESTRAL_BAKED_MODEL": "mistralai/Timestral-28M"}
+    assert TimestralPin.from_environment(pinned) == PIN
+    with pytest.raises(ValueError, match="carries mistralai/Timestral-28M.*suffixed -timestral-123m"):
+        TimestralPin.from_environment({**pinned, "TIMESTRAL_MODEL": "mistralai/Timestral-123M"})
+
+
 @pytest.mark.parametrize("model", ["Timestral-28M", "mistralai/", "../models/x", "https://hf.co/a/b",
                                    "mistralai/Timestral-28M/extra", "a/b c"])
 def test_a_model_that_is_not_a_repository_id_is_refused(model):

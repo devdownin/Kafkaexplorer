@@ -31,6 +31,7 @@ RUN chown -R timesfm:timesfm /app
 # `compose/forecast-offline.yml` defaults to: change them together.
 FROM base AS offline
 # The three name one checkpoint: another TIMESTRAL_MODEL needs its own revision and digest.
+# `.github/workflows/forecast-image.yml` builds one image per checkpoint from its own row of pins.
 ARG TIMESTRAL_MODEL=mistralai/Timestral-28M
 ARG TIMESTRAL_REVISION=49b26409ac87b5935539a5d8ffe7f397b720db47
 ARG TIMESTRAL_SHA256=dfc83c6220937ce5fc6687b35a4df94cd25e28a2cfe6fb92a23dad6301b2015d
@@ -38,14 +39,17 @@ ENV TIMESFM_CACHE_DIR=/models \
     HF_HOME=/models \
     TIMESTRAL_MODEL=${TIMESTRAL_MODEL} \
     TIMESTRAL_REVISION=${TIMESTRAL_REVISION} \
-    TIMESTRAL_SHA256=${TIMESTRAL_SHA256}
+    TIMESTRAL_SHA256=${TIMESTRAL_SHA256} \
+    TIMESTRAL_BAKED_MODEL=${TIMESTRAL_MODEL}
+# TIMESTRAL_BAKED_MODEL is what this image can load, whatever TIMESTRAL_MODEL is later set to: the
+# service refuses a mismatch by naming the image to run instead of failing on a missing file.
 USER 10001:10001
 RUN /app/.venv/bin/python -m kex_timesfm.prefetch
 # After the download, never before: the prefetch above is the one thing that needs the Hub.
 ENV HF_HUB_OFFLINE=1
 COPY --chown=10001:10001 licenses /licenses
 LABEL org.opencontainers.image.title="kex-forecast" \
-      org.opencontainers.image.description="TimesFM 2.5 and Timestral-28M (shadow) forecast service with both checkpoints baked in; starts with no network access. WARNING: includes Timestral-28M (Mistral AI), whose licence excludes companies above USD 20M monthly revenue - see /licenses." \
+      org.opencontainers.image.description="TimesFM 2.5 and ${TIMESTRAL_MODEL} (shadow) forecast service with both checkpoints baked in; starts with no network access. WARNING: includes ${TIMESTRAL_MODEL} (Mistral AI), whose licence excludes companies above USD 20M monthly revenue - see /licenses." \
       org.opencontainers.image.licenses="AGPL-3.0-or-later AND Apache-2.0 AND LicenseRef-Timestral-Modified-MIT"
 EXPOSE 8000
 # No `uv run` here: it would resolve the environment again at start, which is network access
