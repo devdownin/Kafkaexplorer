@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The demo's agent uses the demo's OpenRouter model.** `OPENROUTER_MODEL` (default `openai/gpt-4o-mini`)
+  reached the Explorer only: `compose/ecosystem.yml` did not hand it to the agent, which then used its own
+  default, a `:free` model, and OpenRouter answered "this model is unavailable for free" — while the
+  banner said one model served both. The agent's environment now carries it.
+
 - **A demo with no SpectraLLM no longer logs "MCP server 'spectrallm' unreachable".** The forecast demos
   (which now start the agent) and `--no-spectra` layered an agent that still declared its SpectraLLM
   connection, so every start logged an error nobody could act on. `compose/demo-agent-no-spectra.yml`

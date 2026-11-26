@@ -58,6 +58,11 @@ services:
       KEX_AGENT_LLM_PROVIDER: ${KEX_AGENT_LLM_PROVIDER:-anthropic}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # The model the agent asks OpenRouter for. Not passing it left the agent on its own default, a
+      # `:free` model, while the Explorer beside it used OPENROUTER_MODEL: OpenRouter answers "this model
+      # is unavailable for free" to an account without credits or past the free quota, and the demo's
+      # banner claimed one model for both. Same default as compose/demo-llm.yml, so the two agree.
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
       # The bearer the Control Center and /api/** ask for. Without one the agent answers 503.
       KEX_AGENT_API_KEY: ${KEX_AGENT_API_KEY:-dev-only-agent-key}
       KAFKA_EXPLORER_URL: http://explorer:8080
