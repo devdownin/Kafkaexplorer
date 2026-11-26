@@ -102,6 +102,7 @@ docker compose up -d                                                       # bas
 ./demo-menu.sh                                                             # asks which demo / images / agent, recaps, checks the key, shows the demo.sh command, runs it (--dry-run, --preset NAME, --yes)
 OPENROUTER_API_KEY=sk-or-... ./demo.sh                                      # everything: + Avro, MCP, forecasts (live traffic + seeded history), SpectraLLM, agent
 OPENROUTER_API_KEY=sk-or-... ./demo.sh --no-spectra                         # the same without SpectraLLM and its 4.8 GB of weights
+OPENROUTER_API_KEY=sk-or-... ./demo.sh --prebuilt                              # the whole suite from published images: nothing is built (no Maven, no Docker Hub base image)
 ./demo.sh --forecast                                                        # the forecast demo alone: no key, no SpectraLLM, the agent included (degraded without a key), every variable defaulted
 ./demo.sh --forecast --prebuilt --no-agent                                  # the same without the agent (it is on by default in --forecast, except --offline)
 OPENROUTER_API_KEY=sk-or-... ./demo.sh --forecast --prebuilt                # forecast demo + the agent on OpenRouter, Explorer/forecast/agent images on latest, nothing built

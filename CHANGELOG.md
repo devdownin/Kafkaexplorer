@@ -35,6 +35,15 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   with `NO_COLOR` or `--no-color` / `-NoColor`, and never alone: every colour is backed by words.
   It builds a command line and owns no default.
 
+- **`--prebuilt` now works for the whole suite, and the launcher defaults to it.** It was forecast-only,
+  so `./demo.sh` and `--no-spectra` always built the TimesFM image from this checkout: Maven plus base
+  images from Docker Hub, which fails behind a proxy that re-signs certificates
+  (`x509: certificate signed by unknown authority` on `auth.docker.io`). `./demo.sh --prebuilt` layers
+  the published forecast image over the full-suite files (rendered with no `build:` left, with and
+  without SpectraLLM); `demo-menu` offers published images first and its presets follow
+  (`full-build`, `forecast-build`... for a build). `demo-menu.ps1` also starts `demo.ps1` in its own
+  PowerShell process, as `demo.cmd` does, which ends "Only 'logs' takes service names".
+
 - **The forecast demos load the Kex-anHarness agent by default.** `./demo.sh --forecast` and
   `demo-forecast.sh|cmd` now start the agent with the tokens already configured (the agent's bearer and
   the MCP bearer, both generated once in `.forecast-stack/.env`; the MCP one is shared by the agent and the Explorer). No key is needed: without `OPENROUTER_API_KEY` the agent starts degraded and says so.

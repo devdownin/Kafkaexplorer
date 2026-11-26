@@ -163,7 +163,6 @@ if ($env:DEMO_OFFLINE -eq 'true' -and $env:DEMO_PREBUILT -ne 'true') { throw 'Of
 if ($env:DEMO_PREBUILT -notin @('true', 'false')) { throw 'DEMO_PREBUILT must be true or false.' }
 $prebuilt = $env:DEMO_PREBUILT -eq 'true'
 $offline = $env:DEMO_OFFLINE -eq 'true'
-if ($prebuilt -and -not $forecastOnly) { throw '-Prebuilt is supported only with -Forecast.' }
 if ($prebuilt) { $env:DEMO_PUBLISHED_IMAGE = 'true' }
 # The forecast demo loads the Kex-anHarness agent by default (no key needed: it starts degraded
 # without one); -NoAgent / DEMO_AGENT=false drops it. -Offline keeps it off: its image is not baked.
@@ -204,7 +203,7 @@ Set-Default SPECTRA_API_PORT '8089'
 # The name and the file must agree (.env.example); a laptop wants the 3B named there.
 Set-Default LLM_CHAT_MODEL_NAME 'qwen2.5-7b-instruct'
 
-# The prebuilt Forecast demo follows the published images (the agent too, with -Agent).
+# A prebuilt demo follows the published images (the agent too, with -Agent).
 # Other stacks keep the compose files' versioned pins; explicit tags from the environment/.env win.
 if ($prebuilt) {
     Set-Default EXPLORER_IMAGE_TAG 'latest'
@@ -256,7 +255,7 @@ if ($agentOn) {
 Set-Default DEMO_FORECAST_READY_TIMEOUT '900'
 
 function Test-ForecastPreflight {
-    if (-not $prebuilt -or -not $forecastOnly) { throw 'doctor requires the prebuilt forecast demo.' }
+    if (-not $prebuilt) { throw 'doctor requires a prebuilt demo (-Prebuilt, -Forecast -Prebuilt).' }
     $versionText = [string]((& docker compose version --short) | Select-Object -First 1)
     if ($versionText -notmatch '^v?(\d+)\.(\d+)') { throw "Cannot identify Docker Compose version: $versionText" }
     $major = [int]$Matches[1]; $minor = [int]$Matches[2]
@@ -384,7 +383,7 @@ function Start-Demo {
             if (-not (Test-EnvSet $name)) { throw "Missing $name. Check .env or .forecast-stack/.env." }
         }
         Test-ForecastPreflight
-        Write-Host "Prebuilt forecast demo: published images$(if ($agentOn) { ' (agent included)' }), no build or model download."
+        Write-Host "Prebuilt demo: published images$(if ($agentOn -or -not $forecastOnly) { ' (agent included)' }), no build or model download."
         Write-Host "TimesFM resources: $($env:TIMESFM_CPUS) CPUs / $($env:TIMESFM_MEM_LIMIT). Licence: services/timesfm/licenses/NOTICE.md"
         Invoke-Compose config --quiet
         if (-not $offline) { Invoke-Compose pull --quiet --ignore-buildable }

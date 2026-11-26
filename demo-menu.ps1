@@ -47,12 +47,14 @@ function Say([string] $Text, [string] $Kind = '') {
 
 function Show-Presets {
     @(
-        'full               Full suite: Kafka, Avro, MCP, forecasts, SpectraLLM, agent',
-        'full-no-spectra    Full suite without SpectraLLM',
-        'forecast           Forecast demo, built from this checkout, with the agent',
-        'forecast-no-agent  Forecast demo, built from this checkout, without the agent',
-        'forecast-prebuilt  Forecast demo from published images, with the agent',
-        'forecast-offline   Forecast demo, models baked in, no download, no agent'
+        'full                   Full suite: Kafka, Avro, MCP, forecasts, SpectraLLM, agent (published images)',
+        'full-no-spectra        Full suite without SpectraLLM (published images)',
+        'forecast               Forecast demo with the agent (published images)',
+        'forecast-no-agent      Forecast demo without the agent (published images)',
+        'forecast-offline       Forecast demo, models baked in, no download, no agent',
+        'full-build             Full suite, built from this checkout',
+        'full-no-spectra-build  Full suite without SpectraLLM, built from this checkout',
+        'forecast-build         Forecast demo with the agent, built from this checkout'
     ) | ForEach-Object { Write-Host $_ }
 }
 if ($Presets) { Show-Presets; exit 0 }
@@ -76,18 +78,20 @@ function Ask([string] $Question, [int] $Default, [string[]] $Options) {
 
 # -- What a demo is: Mode (full|nospectra|forecast), Source (build|prebuilt|offline), Agent (yes|no)
 $script:Mode = ''
-$script:Source = 'build'
+$script:Source = 'prebuilt'
 $script:Agent = 'yes'
 
 function Set-FromPreset([string] $Name) {
-    $script:Source = 'build'; $script:Agent = 'yes'
+    $script:Source = 'prebuilt'; $script:Agent = 'yes'
     switch ($Name) {
         'full' { $script:Mode = 'full' }
         'full-no-spectra' { $script:Mode = 'nospectra' }
-        'forecast' { $script:Mode = 'forecast' }
+        { $_ -in @('forecast', 'forecast-prebuilt') } { $script:Mode = 'forecast' }
         'forecast-no-agent' { $script:Mode = 'forecast'; $script:Agent = 'no' }
-        'forecast-prebuilt' { $script:Mode = 'forecast'; $script:Source = 'prebuilt' }
         'forecast-offline' { $script:Mode = 'forecast'; $script:Source = 'offline'; $script:Agent = 'no' }
+        'full-build' { $script:Mode = 'full'; $script:Source = 'build' }
+        'full-no-spectra-build' { $script:Mode = 'nospectra'; $script:Source = 'build' }
+        'forecast-build' { $script:Mode = 'forecast'; $script:Source = 'build' }
         default {
             Write-Host "Unknown preset '$Name'. Known presets:"
             Show-Presets
@@ -97,9 +101,9 @@ function Set-FromPreset([string] $Name) {
 }
 
 function Get-DemoLabel([string] $M, [string] $S, [string] $A) {
-    if ($M -eq 'full') { return 'Full suite with SpectraLLM' }
-    if ($M -eq 'nospectra') { return 'Full suite without SpectraLLM' }
     $where = switch ($S) { 'build' { 'built here' } 'prebuilt' { 'published images' } 'offline' { 'offline' } }
+    if ($M -eq 'full') { return "Full suite with SpectraLLM, $where" }
+    if ($M -eq 'nospectra') { return "Full suite without SpectraLLM, $where" }
     $agentText = if ($A -eq 'yes') { 'with the agent' } else { 'without the agent' }
     "Forecast demo, $where, $agentText"
 }
@@ -108,12 +112,10 @@ function Get-DemoLabel([string] $M, [string] $S, [string] $A) {
 function Get-Switches {
     $list = @()
     if ($script:Mode -eq 'nospectra') { $list += 'NoSpectra' }
-    if ($script:Mode -eq 'forecast') {
-        $list += 'Forecast'
-        if ($script:Source -eq 'prebuilt') { $list += 'Prebuilt' }
-        if ($script:Source -eq 'offline') { $list += 'Offline' }
-        if ($script:Source -ne 'offline' -and $script:Agent -ne 'yes') { $list += 'NoAgent' }
-    }
+    if ($script:Mode -eq 'forecast') { $list += 'Forecast' }
+    if ($script:Source -eq 'prebuilt') { $list += 'Prebuilt' }
+    if ($script:Source -eq 'offline') { $list += 'Offline' }
+    if ($script:Mode -eq 'forecast' -and $script:Source -ne 'offline' -and $script:Agent -ne 'yes') { $list += 'NoAgent' }
     , $list
 }
 
@@ -122,14 +124,17 @@ function Ask-Demo {
         'Full suite: Kafka, Avro, MCP, forecasts, SpectraLLM, agent (needs OPENROUTER_API_KEY, ~4.8 GB of weights)',
         'Full suite without SpectraLLM (needs OPENROUTER_API_KEY)',
         'Forecast demo: live metrics and forecasts, the agent included')
-    $script:Source = 'build'; $script:Agent = 'yes'
+    $script:Agent = 'yes'
     $script:Mode = @('full', 'nospectra', 'forecast')[$m - 1]
+    # Published images first: nothing is built, so no Maven, no Docker Hub base image, no TLS
+    # surprise behind a proxy that re-signs certificates.
+    $options = @(
+        'Published images, nothing built (recommended)',
+        'Built from this checkout (Maven + base images from Docker Hub + the TimesFM download)')
+    if ($script:Mode -eq 'forecast') { $options += 'Offline: published images with the models baked in, no download, no agent' }
+    $s = Ask 'Where do the images come from?' 1 $options
+    $script:Source = @('prebuilt', 'build', 'offline')[$s - 1]
     if ($script:Mode -ne 'forecast') { return }
-    $s = Ask 'Where do the images come from?' 1 @(
-        'Built from this checkout (Maven + the TimesFM download on the first run)',
-        'Published images, nothing built (needs a pull)',
-        'Offline: published images with the models baked in, no download, no agent')
-    $script:Source = @('build', 'prebuilt', 'offline')[$s - 1]
     if ($script:Source -eq 'offline') { $script:Agent = 'no'; return }
     $a = Ask 'Start the Kex-anHarness agent?' 1 @(
         'Yes (it starts degraded without OPENROUTER_API_KEY)',
@@ -429,13 +434,14 @@ if ($Preset) {
 $service = ''
 if ($verb -eq 'logs' -and -not $Preset) { $service = Read-Host 'Service name (empty = all)' }
 
-# A hashtable, not an array: splatting an array hands '-Forecast' over as a positional string,
-# where a hashtable binds it as the switch it names.
+# demo.ps1 runs in its own PowerShell process, exactly as demo.cmd starts it: switches by name,
+# then the command and the service. Splatting into the script would depend on how this host binds
+# parameters, and a stray element lands in demo.ps1's -Services ("Only 'logs' takes service names").
+$childArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'demo.ps1'))
 $switchNames = @(Get-Switches)
-$parameters = @{}
-foreach ($name in $switchNames) { $parameters[$name] = $true }
-if ($verb -ne 'up') { $parameters['Command'] = $verb }
-if ($service) { $parameters['Services'] = @($service) }
+foreach ($name in $switchNames) { $childArguments += "-$name" }
+if ($verb -ne 'up') { $childArguments += $verb }
+if ($service) { $childArguments += $service }
 
 $shown = @($switchNames | ForEach-Object { "-$_" })
 if ($verb -ne 'up') { $shown += $verb }
@@ -470,5 +476,6 @@ if (-not $Yes) {
 }
 
 if ($verb -eq 'up') { Save-Demo }
-& (Join-Path $PSScriptRoot 'demo.ps1') @parameters
+$hostExe = (Get-Process -Id $PID).Path
+& $hostExe @childArguments
 exit $LASTEXITCODE

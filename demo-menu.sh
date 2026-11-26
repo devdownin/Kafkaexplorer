@@ -38,12 +38,14 @@ USAGE
 
 presets() {
   cat <<'PRESETS'
-full               Full suite: Kafka, Avro, MCP, forecasts, SpectraLLM, agent
-full-no-spectra    Full suite without SpectraLLM
-forecast           Forecast demo, built from this checkout, with the agent
-forecast-no-agent  Forecast demo, built from this checkout, without the agent
-forecast-prebuilt  Forecast demo from published images, with the agent
-forecast-offline   Forecast demo, models baked in, no download, no agent
+full                   Full suite: Kafka, Avro, MCP, forecasts, SpectraLLM, agent (published images)
+full-no-spectra        Full suite without SpectraLLM (published images)
+forecast               Forecast demo with the agent (published images)
+forecast-no-agent      Forecast demo without the agent (published images)
+forecast-offline       Forecast demo, models baked in, no download, no agent
+full-build             Full suite, built from this checkout
+full-no-spectra-build  Full suite without SpectraLLM, built from this checkout
+forecast-build         Forecast demo with the agent, built from this checkout
 PRESETS
 }
 
@@ -100,29 +102,31 @@ ask() {
 # ── What a demo is: mode (full|nospectra|forecast), source (build|prebuilt|offline), agent (yes|no)
 
 mode=''
-source_kind=build
+source_kind=prebuilt
 agent=yes
 
 preset_apply() {
-  source_kind=build agent=yes
+  source_kind=prebuilt agent=yes
   case $1 in
-    full) mode=full ;;
-    full-no-spectra) mode=nospectra ;;
-    forecast) mode=forecast ;;
-    forecast-no-agent) mode=forecast agent=no ;;
-    forecast-prebuilt) mode=forecast source_kind=prebuilt ;;
+    full) mode=full source_kind=prebuilt ;;
+    full-no-spectra) mode=nospectra source_kind=prebuilt ;;
+    forecast | forecast-prebuilt) mode=forecast source_kind=prebuilt ;;
+    forecast-no-agent) mode=forecast source_kind=prebuilt agent=no ;;
     forecast-offline) mode=forecast source_kind=offline agent=no ;;
+    full-build) mode=full source_kind=build ;;
+    full-no-spectra-build) mode=nospectra source_kind=build ;;
+    forecast-build) mode=forecast source_kind=build ;;
     *) echo "Unknown preset '$1'. Known presets:" >&2; presets >&2; exit 2 ;;
   esac
 }
 
 describe() { # mode source agent
-  case $1 in
-    full) echo 'Full suite with SpectraLLM'; return ;;
-    nospectra) echo 'Full suite without SpectraLLM'; return ;;
-  esac
   local s a
   case $2 in build) s='built here' ;; prebuilt) s='published images' ;; offline) s='offline' ;; esac
+  case $1 in
+    full) echo "Full suite with SpectraLLM, $s"; return ;;
+    nospectra) echo "Full suite without SpectraLLM, $s"; return ;;
+  esac
   [[ $3 == yes ]] && a='with the agent' || a='without the agent'
   echo "Forecast demo, $s, $a"
 }
@@ -131,12 +135,10 @@ flags_for() { # fills the global array flags
   flags=()
   case $mode in
     nospectra) flags+=(--no-spectra) ;;
-    forecast)
-      flags+=(--forecast)
-      case $source_kind in prebuilt) flags+=(--prebuilt) ;; offline) flags+=(--offline) ;; esac
-      [[ $source_kind == offline || $agent == yes ]] || flags+=(--no-agent)
-      ;;
+    forecast) flags+=(--forecast) ;;
   esac
+  case $source_kind in prebuilt) flags+=(--prebuilt) ;; offline) flags+=(--offline) ;; esac
+  [[ $mode != forecast || $source_kind == offline || $agent == yes ]] || flags+=(--no-agent)
 }
 
 ask_demo() {
@@ -144,14 +146,16 @@ ask_demo() {
     'Full suite: Kafka, Avro, MCP, forecasts, SpectraLLM, agent (needs OPENROUTER_API_KEY, ~4.8 GB of weights)' \
     'Full suite without SpectraLLM (needs OPENROUTER_API_KEY)' \
     'Forecast demo: live metrics and forecasts, the agent included'
-  source_kind=build agent=yes
+  agent=yes
   case $REPLY_INDEX in 1) mode=full ;; 2) mode=nospectra ;; 3) mode=forecast ;; esac
+  # Published images first: nothing is built, so no Maven, no Docker Hub base image, no TLS surprise
+  # behind a proxy that re-signs certificates.
+  local options=('Published images, nothing built (recommended)' \
+    'Built from this checkout (Maven + base images from Docker Hub + the TimesFM download)')
+  [[ $mode != forecast ]] || options+=('Offline: published images with the models baked in, no download, no agent')
+  ask 'Where do the images come from?' 1 "${options[@]}"
+  case $REPLY_INDEX in 1) source_kind=prebuilt ;; 2) source_kind=build ;; 3) source_kind=offline ;; esac
   [[ $mode == forecast ]] || return 0
-  ask 'Where do the images come from?' 1 \
-    'Built from this checkout (Maven + the TimesFM download on the first run)' \
-    'Published images, nothing built (needs a pull)' \
-    'Offline: published images with the models baked in, no download, no agent'
-  case $REPLY_INDEX in 1) source_kind=build ;; 2) source_kind=prebuilt ;; 3) source_kind=offline ;; esac
   if [[ $source_kind == offline ]]; then
     agent=no
   else
