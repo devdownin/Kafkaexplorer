@@ -91,8 +91,14 @@ function Initialize-ForecastStack {
     $envFile = Join-Path '.forecast-stack' '.env'
     if (-not (Test-Path -LiteralPath $envFile)) {
         $content = "FORECAST_POSTGRES_PASSWORD=$(New-Secret)`nTIMESFM_TOKEN=$(New-Secret)`n" +
-            "EXPLORER_MCP_AUTH_TOKEN=$(New-Secret)`nFORECAST_ENVIRONMENTS=local`n"
+            "EXPLORER_MCP_AUTH_TOKEN=$(New-Secret)`nKEX_AGENT_API_KEY=$(New-Secret)`nFORECAST_ENVIRONMENTS=local`n"
         [IO.File]::WriteAllText((Join-Path $PWD $envFile), $content, $Utf8NoBom)
+    }
+    # A state file written before the agent joined the demos has no bearer for it: add one, once.
+    if (-not (Select-String -LiteralPath $envFile -Pattern '^KEX_AGENT_API_KEY=' -Quiet)) {
+        $existing = [IO.File]::ReadAllText((Join-Path $PWD $envFile))
+        if ($existing.Length -gt 0 -and -not $existing.EndsWith("`n")) { $existing += "`n" }
+        [IO.File]::WriteAllText((Join-Path $PWD $envFile), "${existing}KEX_AGENT_API_KEY=$(New-Secret)`n", $Utf8NoBom)
     }
     $forecasts = Join-Path $config 'forecasts.yml'
     if (-not (Test-Path -LiteralPath $forecasts)) {

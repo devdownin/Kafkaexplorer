@@ -26,11 +26,17 @@ if [[ ! -e "$state_dir/.env" ]]; then
     echo "FORECAST_POSTGRES_PASSWORD=$(openssl rand -hex 32)"
     echo "TIMESFM_TOKEN=$(openssl rand -hex 32)"
     echo "EXPLORER_MCP_AUTH_TOKEN=$(openssl rand -hex 32)"
+    echo "KEX_AGENT_API_KEY=$(openssl rand -hex 32)"
     echo 'FORECAST_ENVIRONMENTS=local'
   } > "$env_tmp"
   if ln "$env_tmp" "$state_dir/.env" 2>/dev/null; then :; fi
   rm -f "$env_tmp"
   trap - EXIT
+fi
+# A state file written before the agent joined the demos has no bearer for it: add one, once.
+if ! grep -q '^KEX_AGENT_API_KEY=' "$state_dir/.env"; then
+  command -v openssl >/dev/null || { echo 'openssl is required to generate credentials.' >&2; exit 1; }
+  printf 'KEX_AGENT_API_KEY=%s\n' "$(openssl rand -hex 32)" >> "$state_dir/.env"
 fi
 if [[ ! -e "$state_dir/config/forecasts.yml" ]]; then
   (set -o noclobber; printf '# Save the reviewed configuration assistant export here.\n{}\n' > "$state_dir/config/forecasts.yml") || true

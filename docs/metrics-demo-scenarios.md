@@ -190,7 +190,7 @@ source-build demo; its forecast-only mode now also waits for full forecast readi
 **Start it with nothing to configure:** `./demo.sh --forecast` (Windows: `.\demo.cmd -Forecast`). That is the
 stack this demo needs and nothing else — Kafka and the demo topics, Schema Registry, the Explorer with MCP,
 PostgreSQL, TimesFM, the live traffic and its seeded history, and the Kex-anHarness agent (on
-http://localhost:8081, bearer `dev-only-agent-key`, reading the Explorer's MCP with the generated token) — with
+http://localhost:8081, bearer `KEX_AGENT_API_KEY` generated in `.forecast-stack/.env` and printed at the end, reading the Explorer's MCP with the generated token) — with
 every variable defaulted: no LLM key (the agent starts degraded until `OPENROUTER_API_KEY` is set), no SpectraLLM
 weights. `--no-agent` (`-NoAgent`, `DEMO_AGENT=false`) drops the agent; `--offline` never starts it, its image
 not being baked in. `./demo.sh` alone (the whole suite) starts the same overlay among the rest.

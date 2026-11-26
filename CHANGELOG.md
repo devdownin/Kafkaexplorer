@@ -21,9 +21,8 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 - **The forecast demos load the Kex-anHarness agent by default.** `./demo.sh --forecast` and
-  `demo-forecast.sh|cmd` now start the agent with the tokens already configured (the agent's bearer
-  `dev-only-agent-key`, and the MCP bearer generated in `.forecast-stack/.env`, one value on both
-  sides). No key is needed: without `OPENROUTER_API_KEY` the agent starts degraded and says so.
+  `demo-forecast.sh|cmd` now start the agent with the tokens already configured (the agent's bearer and
+  the MCP bearer, both generated once in `.forecast-stack/.env`; the MCP one is shared by the agent and the Explorer). No key is needed: without `OPENROUTER_API_KEY` the agent starts degraded and says so.
   `--no-agent` (`-NoAgent`, `DEMO_AGENT=false`) restores the previous shape; `--offline` keeps it
   off, the agent image not being baked in. `demo.sh` and `demo.ps1` change together.
 
