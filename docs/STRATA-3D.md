@@ -395,4 +395,3 @@ The JavaScript unit tests exercise missing/stale observations, scoped
 consumer lag, the non-causal signal vocabulary and the snapshot allowlist.
 The WebGL browser probe also exercises the telemetry disclosure, stage
 navigation and snapshot download.
-

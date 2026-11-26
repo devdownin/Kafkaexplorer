@@ -30,7 +30,7 @@ The audit reports themselves are at the root: `AUDIT-FEATURE-REVIEW.md`, `DOCKER
 `MOBILE-LAYOUT-SCOPE.md`, `PROCESS-MINING-LLM-SCOPE.md`, `PROCESS-MINING-LLM-CALLS-AUDIT.md`,
 `SQL-EDITOR-AUDIT.md`, `CODE-SIMPLIFICATION-AUDIT.md`, `MCP-AUDIT.md`, `TIMESFM-FORECAST-AUDIT.md`,
 `EMBEDDED-LLM-SCOPE.md`, `METRICS-CREATION-AUDIT.md`, `METRICS-FORECAST-UX-AUDIT.md`,
-`PAGES-SIMPLICITY-AUDIT.md`.
+`PAGES-SIMPLICITY-AUDIT.md`, `METRICS-FORECAST-AUDIT-2.md`.
 
 ## Commands
 
@@ -101,7 +101,7 @@ docker compose -f docker-compose.yml -f compose/mcp.yml up -d               # + 
 docker compose up -d                                                       # base: broker + app + demo topics
 OPENROUTER_API_KEY=sk-or-... ./demo.sh                                      # everything: + Avro, MCP, forecasts (live traffic + seeded history), SpectraLLM, agent
 OPENROUTER_API_KEY=sk-or-... ./demo.sh --no-spectra                         # the same without SpectraLLM and its 4.8 GB of weights
-./demo.sh --forecast                                                        # the forecast demo alone: no key, no SpectraLLM, no agent, every variable defaulted
+./demo.sh --forecast                                                        # the forecast demo alone: no key, no SpectraLLM, the agent included (degraded without a key), every variable defaulted
 ./demo.sh --forecast --prebuilt --no-agent                                  # the same without the agent (it is on by default in --forecast, except --offline)
 OPENROUTER_API_KEY=sk-or-... ./demo.sh --forecast --prebuilt                # forecast demo + the agent on OpenRouter, Explorer/forecast/agent images on latest, nothing built
 ./setup-demo.sh localhost:9092                                             # demo data (79 topics)

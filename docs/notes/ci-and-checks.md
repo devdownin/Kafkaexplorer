@@ -403,4 +403,3 @@ These run in the `docs-links` job of `ci.yml` — no network, no `needs`, second
 - **Ne jamais mettre de vraie clé en fallback Spring** : `${ANTHROPIC_API_KEY:sk-ant-...}` expose la clé dans git. Utiliser `${ANTHROPIC_API_KEY:}` (fallback vide).
 - Si une clé est commitée : `git reset --soft HEAD~N` pour réécrire le commit, puis recommiter proprement.
 - **Rebase conflicts** : dans un `git rebase`, `--theirs` = le commit local rejoué, `--ours` = la branche upstream. Pour accepter tous les fichiers conflictuels en faveur du commit local : `git checkout --theirs <fichiers> && git add -u && git rebase --continue`.
-
