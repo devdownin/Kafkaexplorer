@@ -11,20 +11,21 @@
 #   ./demo.sh --no-spectra                           # the same without SpectraLLM (DEMO_SPECTRA=false)
 #   ./demo.sh --forecast                             # the forecast demo alone, builds local images
 #   ./demo.sh --forecast --prebuilt                  # demo from published images, no build
-#   OPENROUTER_API_KEY=sk-or-... ./demo.sh --forecast --prebuilt --agent   # + the agent, every image latest, no build
+#   ./demo.sh --forecast --prebuilt --no-agent       # the forecast demo without the agent
 #   ./demo-forecast.sh [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]] # prebuilt shorthand
 #   ./demo.sh [--no-spectra|--forecast|--prebuilt] down | reset | ps | logs [service] | probe | doctor | verify | scenario [name]
 #
 # --forecast (DEMO_MODE=forecast) is the stack the forecast demo needs and nothing else: Kafka and the
 # demo topics, Schema Registry, the Explorer with MCP, PostgreSQL, TimesFM, the live traffic and its
-# seeded history (compose/demo-forecast.yml). No LLM key, no SpectraLLM, no agent: every variable has
-# a default, so `./demo.sh --forecast` is the whole command. See docs/metrics-demo-scenarios.md.
+# seeded history (compose/demo-forecast.yml), and the Kex-anHarness agent. No LLM key needed (the agent
+# starts degraded without one), no SpectraLLM: every variable has a default, so `./demo.sh --forecast`
+# is the whole command. See docs/metrics-demo-scenarios.md.
 #
-# --agent (DEMO_AGENT=true) adds the Kex-anHarness agent to the forecast demo, on OpenRouter, and
-# the Explorer's LLM half with it (compose/demo-no-spectra.yml + compose/demo-llm.yml, the shape
+# The agent is on by default in the forecast demo (except --offline); --no-agent (DEMO_AGENT=false)
+# drops it, --agent (DEMO_AGENT=true) forces it. It runs on OpenRouter, with the Explorer's LLM half (compose/demo-no-spectra.yml + compose/demo-llm.yml, the shape
 # --no-spectra already runs). With --prebuilt, the agent follows `latest` like the Explorer and the
-# forecast image, so nothing is compiled. The full suite already has the agent: --agent is for
-# --forecast only.
+# forecast image, so nothing is compiled. The full suite already has the agent: --agent / --no-agent
+# are for --forecast only.
 #
 # Precedence: exported variable > .env at the root > .forecast-stack/.env > default below.
 # Requires Docker Compose v2, curl and openssl (credentials are generated on the first run).
@@ -34,7 +35,7 @@ repo_dir=$(cd "$(dirname "$0")" && pwd)
 cd "$repo_dir"
 
 usage() {
-  echo 'Usage: ./demo.sh [--no-spectra|--forecast|--prebuilt|--offline|--agent] [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]]' >&2
+  echo 'Usage: ./demo.sh [--no-spectra|--forecast|--prebuilt|--offline|--agent|--no-agent] [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]]' >&2
   exit 2
 }
 
@@ -47,6 +48,7 @@ while [[ ${1:-} == --* ]]; do
     --prebuilt) export DEMO_PREBUILT=true DEMO_PUBLISHED_IMAGE=true ;;
     --offline) export DEMO_MODE=forecast DEMO_SPECTRA=false DEMO_PREBUILT=true DEMO_PUBLISHED_IMAGE=true DEMO_OFFLINE=true ;;
     --agent) export DEMO_AGENT=true ;;
+    --no-agent) export DEMO_AGENT=false ;;
     *) usage ;;
   esac
   shift
@@ -90,7 +92,14 @@ if [[ $DEMO_PREBUILT == true ]]; then
   [[ $DEMO_MODE == forecast ]] || { echo '--prebuilt is supported only for the forecast demo (--forecast).' >&2; exit 2; }
   export DEMO_PUBLISHED_IMAGE=true
 fi
-export DEMO_AGENT=${DEMO_AGENT:-false}
+# The forecast demo loads the Kex-anHarness agent by default (tokens defaulted below, no key needed:
+# without OPENROUTER_API_KEY it starts degraded and says so). --no-agent / DEMO_AGENT=false drops it.
+# --offline keeps it off: the agent image is not baked into the forecast image, so it needs a pull.
+if [[ $DEMO_MODE == forecast && $DEMO_OFFLINE != true ]]; then
+  export DEMO_AGENT=${DEMO_AGENT:-true}
+else
+  export DEMO_AGENT=${DEMO_AGENT:-false}
+fi
 [[ $DEMO_AGENT == true || $DEMO_AGENT == false ]] || { echo 'DEMO_AGENT must be true or false.' >&2; exit 2; }
 if [[ $DEMO_AGENT == true && $DEMO_MODE != forecast ]]; then
   echo '--agent is for the forecast demo (--forecast); the full suite already runs the agent.' >&2
@@ -364,7 +373,7 @@ up() {
   wait_for_http 'Kafka Explorer' "http://127.0.0.1:${EXPLORER_PORT}/actuator/health" 900
   if [[ $DEMO_MODE == forecast ]]; then
     wait_forecast_ready
-    local agent_line='LLM, agent, SpectraLLM  not started (--forecast): nothing to configure'
+    local agent_line='LLM, agent, SpectraLLM  not started (--no-agent / --offline): nothing to configure'
     if [[ $DEMO_AGENT == true ]]; then
       wait_for_http 'Kex-anHarness' "http://127.0.0.1:${KEX_AGENT_PORT}/api/agent/mcp/servers" 300 \
         -H "Authorization: Bearer ${KEX_AGENT_API_KEY}" || true

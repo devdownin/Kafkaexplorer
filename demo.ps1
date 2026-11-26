@@ -11,19 +11,20 @@
 #   .\demo.cmd -NoSpectra                                      # the same without SpectraLLM
 #   .\demo.cmd -Forecast                                       # forecast demo with local builds
 #   .\demo-forecast.cmd                                        # forecast demo from images, without builds
-#   .\demo-forecast.cmd -Agent                                 # + the agent; every image latest, no build
+#   .\demo-forecast.cmd -NoAgent                               # the same without the agent
 #   .\demo.cmd [-NoSpectra|-Forecast] down | reset | ps | logs [service] | probe
 #
 # -Forecast (DEMO_MODE=forecast) is the stack the forecast demo needs and nothing else: Kafka and the
 # demo topics, Schema Registry, the Explorer with MCP, PostgreSQL, TimesFM, the live traffic and its
-# seeded history (compose/demo-forecast.yml). No LLM key, no SpectraLLM, no agent: every variable has
-# a default, so `.\demo.cmd -Forecast` is the whole command. Same as `./demo.sh --forecast`.
+# seeded history (compose/demo-forecast.yml), and the Kex-anHarness agent. No LLM key needed (the agent
+# starts degraded without one), no SpectraLLM: every variable has a default, so `.\demo.cmd -Forecast`
+# is the whole command. Same as `./demo.sh --forecast`.
 #
-# -Agent (DEMO_AGENT=true) adds the Kex-anHarness agent to the forecast demo, on OpenRouter, and the
-# Explorer's LLM half with it (compose/demo-no-spectra.yml + compose/demo-llm.yml, the shape
+# The agent is on by default in the forecast demo (except -Offline); -NoAgent (DEMO_AGENT=false) drops
+# it, -Agent (DEMO_AGENT=true) forces it. It runs on OpenRouter, with the Explorer's LLM half (compose/demo-no-spectra.yml + compose/demo-llm.yml, the shape
 # -NoSpectra already runs). With -Prebuilt the agent follows `latest` like the Explorer and the
 # forecast image, so nothing is compiled: `.\demo.cmd -Forecast -Prebuilt -Agent`, or
-# `.\demo-forecast.cmd -Agent`. The full suite already has the agent: -Agent is for -Forecast only.
+# `.\demo-forecast.cmd`. The full suite already has the agent: -Agent / -NoAgent are for -Forecast only.
 #
 # demo.cmd only runs this file with -ExecutionPolicy Bypass, which Windows 11's default policy
 # would otherwise refuse. Runs on Windows PowerShell 5.1 and PowerShell 7; Docker Desktop with the
@@ -40,6 +41,7 @@ param(
     [switch] $Prebuilt,
     [switch] $Offline,
     [switch] $Agent,
+    [switch] $NoAgent,
     [Parameter(Position = 0)]
     [ValidateSet('up', 'down', 'reset', 'ps', 'logs', 'probe', 'doctor', 'verify', 'scenario')]
     [string] $Command = 'up',
@@ -89,8 +91,14 @@ function Initialize-ForecastStack {
     $envFile = Join-Path '.forecast-stack' '.env'
     if (-not (Test-Path -LiteralPath $envFile)) {
         $content = "FORECAST_POSTGRES_PASSWORD=$(New-Secret)`nTIMESFM_TOKEN=$(New-Secret)`n" +
-            "EXPLORER_MCP_AUTH_TOKEN=$(New-Secret)`nFORECAST_ENVIRONMENTS=local`n"
+            "EXPLORER_MCP_AUTH_TOKEN=$(New-Secret)`nKEX_AGENT_API_KEY=$(New-Secret)`nFORECAST_ENVIRONMENTS=local`n"
         [IO.File]::WriteAllText((Join-Path $PWD $envFile), $content, $Utf8NoBom)
+    }
+    # A state file written before the agent joined the demos has no bearer for it: add one, once.
+    if (-not (Select-String -LiteralPath $envFile -Pattern '^KEX_AGENT_API_KEY=' -Quiet)) {
+        $existing = [IO.File]::ReadAllText((Join-Path $PWD $envFile))
+        if ($existing.Length -gt 0 -and -not $existing.EndsWith("`n")) { $existing += "`n" }
+        [IO.File]::WriteAllText((Join-Path $PWD $envFile), "${existing}KEX_AGENT_API_KEY=$(New-Secret)`n", $Utf8NoBom)
     }
     $forecasts = Join-Path $config 'forecasts.yml'
     if (-not (Test-Path -LiteralPath $forecasts)) {
@@ -135,6 +143,7 @@ if ($Forecast) { $env:DEMO_MODE = 'forecast' }
 if ($Prebuilt) { $env:DEMO_PREBUILT = 'true'; $env:DEMO_PUBLISHED_IMAGE = 'true' }
 if ($Offline) { $env:DEMO_MODE = 'forecast'; $env:DEMO_PREBUILT = 'true'; $env:DEMO_PUBLISHED_IMAGE = 'true'; $env:DEMO_OFFLINE = 'true' }
 if ($Agent) { $env:DEMO_AGENT = 'true' }
+if ($NoAgent) { $env:DEMO_AGENT = 'false' }
 
 Initialize-ForecastStack
 Import-EnvFile '.env'
@@ -156,7 +165,9 @@ $prebuilt = $env:DEMO_PREBUILT -eq 'true'
 $offline = $env:DEMO_OFFLINE -eq 'true'
 if ($prebuilt -and -not $forecastOnly) { throw '-Prebuilt is supported only with -Forecast.' }
 if ($prebuilt) { $env:DEMO_PUBLISHED_IMAGE = 'true' }
-Set-Default DEMO_AGENT 'false'
+# The forecast demo loads the Kex-anHarness agent by default (no key needed: it starts degraded
+# without one); -NoAgent / DEMO_AGENT=false drops it. -Offline keeps it off: its image is not baked.
+Set-Default DEMO_AGENT $(if ($forecastOnly -and -not $offline) { 'true' } else { 'false' })
 if ($env:DEMO_AGENT -notin @('true', 'false')) { throw 'DEMO_AGENT must be true or false.' }
 $agentOn = $env:DEMO_AGENT -eq 'true'
 if ($agentOn -and -not $forecastOnly) { throw '-Agent is for the forecast demo (-Forecast); the full suite already runs the agent.' }
@@ -386,7 +397,7 @@ function Start-Demo {
     if ($forecastOnly -and -not $explorerReady) { throw 'Kafka Explorer did not become healthy. See: .\demo-forecast.cmd logs explorer timesfm' }
     if ($forecastOnly) {
         Wait-ForecastReady
-        $agentLine = 'LLM, agent, SpectraLLM  not started (-Forecast): nothing to configure'
+        $agentLine = 'LLM, agent, SpectraLLM  not started (-NoAgent / -Offline): nothing to configure'
         if ($agentOn) {
             Wait-Http 'Kex-anHarness' "http://127.0.0.1:$($env:KEX_AGENT_PORT)/api/agent/mcp/servers" 300 `
                 @{ Authorization = "Bearer $($env:KEX_AGENT_API_KEY)" } | Out-Null
