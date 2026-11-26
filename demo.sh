@@ -339,6 +339,10 @@ wait_for_http() {
 }
 
 up() {
+  # The agent's bearer, before the long part (build, pulls): it is what the Control Center asks for.
+  if [[ $DEMO_MODE == full || $DEMO_AGENT == true ]]; then
+    echo "Kex-anHarness bearer (KEX_AGENT_API_KEY): ${KEX_AGENT_API_KEY} -- http://localhost:${KEX_AGENT_PORT}"
+  fi
   if [[ ($DEMO_MODE == full || $DEMO_AGENT == true) && -z $OPENROUTER_API_KEY ]]; then
     echo 'WARN: OPENROUTER_API_KEY is empty — Process Mining answers without its LLM half and the' >&2
     echo '      agent starts DEGRADED. Export it (or put it in .env) and rerun ./demo.sh.' >&2

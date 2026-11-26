@@ -371,6 +371,10 @@ function Start-Demo {
         # Isolate the writable scenario receipts from the private forecast config.
         New-Item -ItemType Directory -Path (Join-Path $env:FORECAST_CONFIG_DIR 'demo-control') -Force | Out-Null
     }
+    # The agent's bearer, before the long part (build, pulls): it is what the Control Center asks for.
+    if (-not $forecastOnly -or $agentOn) {
+        Write-Host "Kex-anHarness bearer (KEX_AGENT_API_KEY): $($env:KEX_AGENT_API_KEY) -- http://localhost:$($env:KEX_AGENT_PORT)"
+    }
     if ((-not $forecastOnly -or $agentOn) -and -not (Test-EnvSet 'OPENROUTER_API_KEY')) {
         Write-Warning ('OPENROUTER_API_KEY is empty - Process Mining answers without its LLM half and the ' +
             "agent starts DEGRADED. Set it (`$env:OPENROUTER_API_KEY = 'sk-or-...', or in .env) and rerun.")
