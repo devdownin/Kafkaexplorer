@@ -779,8 +779,11 @@ The pinned image includes Timestral with a restricted licence; see
 `compose/forecast-offline.yml` is an overlay of `compose/forecasts.yml` (like `local-ai.yml`, it
 only retargets services that file defines, so it is checked on that one combination, by
 `docs/forecast-offline-check.py`) that runs `ghcr.io/devdownin/kex-forecast`: the `offline` target
-of `services/timesfm/Dockerfile`, with TimesFM 2.5 **and** Timestral-28M (Mistral AI) inside the
-image. The default image downloads on first start through `kex_timesfm.prefetch`; the offline one
+of `services/timesfm/Dockerfile`, with TimesFM 2.5 **and** one Timestral checkpoint (Mistral AI)
+inside the image — the 28M on the plain tags, the 5M / 123M / 209M on tags suffixed
+`-timestral-<size>`, one per `TIMESTRAL_MODEL` value (`docs/notes/timesfm-pilot.md` says why). The
+pin is the image's own: the overlay removes `TIMESTRAL_REVISION` / `TIMESTRAL_SHA256` rather than
+restating the 28M's. The default image downloads on first start through `kex_timesfm.prefetch`; the offline one
 runs that same prefetch **at build time**, so the SHA-256 checks that guard the volume guard the
 image, and a pin that stops matching fails the build rather than a start. After it, `HF_HUB_OFFLINE=1`
 and a `CMD` that calls `/app/.venv/bin/uvicorn` directly: `uv run` would resolve the environment

@@ -24,6 +24,11 @@
 #     for it: there is nothing left for it to fetch.
 #   * the Timestral pin is the baked one and the shadow is on, since the image carries it.
 #
+# **Which Timestral.** One image per checkpoint: the plain tag carries the 28M, and
+# `-timestral-5m`, `-timestral-123m`, `-timestral-209m` the others. Choose with two variables, the
+# model and its image, e.g. TIMESTRAL_MODEL=mistralai/Timestral-123M and
+# FORECAST_IMAGE_TAG=0.4.0-timestral-123m. A mismatch stops the worker with a message naming the tag.
+#
 # Pulling the images is the only network use left, and `docker compose pull` does it ahead of
 # time; `docker save` / `docker load` carries the five images to a host with no registry access.
 #
@@ -48,10 +53,13 @@ services:
       forecast-postgres:
         condition: service_healthy
     environment:
-      # Overrides compose/timesfm.yml's empty defaults, which would switch the baked shadow off.
-      # The same values as the Dockerfile's build arguments: change them together.
-      TIMESTRAL_REVISION: ${TIMESTRAL_REVISION:-49b26409ac87b5935539a5d8ffe7f397b720db47}
-      TIMESTRAL_SHA256: ${TIMESTRAL_SHA256:-dfc83c6220937ce5fc6687b35a4df94cd25e28a2cfe6fb92a23dad6301b2015d}
+      # The pin is the image's own (its ENV, set from the build arguments): removing compose/timesfm.yml's
+      # empty defaults lets it through, and an operator's TIMESTRAL_REVISION read for another stack
+      # cannot contradict the checkpoint the image carries. TIMESTRAL_MODEL stays the shared
+      # variable, so the Explorer and the worker name the same model; the worker refuses one its
+      # image does not carry (TIMESTRAL_BAKED_MODEL) and names the tag to run instead.
+      TIMESTRAL_REVISION: !reset null
+      TIMESTRAL_SHA256: !reset null
       HF_HUB_OFFLINE: "1"
 
   forecast-model-prefetch:
