@@ -42,7 +42,7 @@ services:
   agent:
     # Pinned like every other image here: `latest` would serve whatever was published on the
     # day of the pull, and the agent's MCP contract is tested against a given Explorer release.
-    image: ${KEX_AGENT_IMAGE_NAMESPACE:-compagnonsdudev}/kex-agent-ai:${KEX_AGENT_IMAGE_TAG:-0.20.0}
+    image: ${KEX_AGENT_IMAGE_NAMESPACE:-compagnonsdudev}/kex-agent-ai:${KEX_AGENT_IMAGE_TAG:-0.31.0}
     ports:
       - "${BIND_ADDR:-127.0.0.1}:${KEX_AGENT_PORT:-8081}:8081"
     # `service_started`: the agent's MCP clients connect lazily, at the first request, so
@@ -52,21 +52,28 @@ services:
         condition: service_started
       spectra-api:
         condition: service_started
+    # A mapping, not a list: an overlay can withdraw a key from a mapping with `!reset`, and cannot from
+    # a list (measured) — compose/demo-agent-no-spectra.yml withdraws the SpectraLLM connection that way.
     environment:
-      - KEX_AGENT_LLM_PROVIDER=${KEX_AGENT_LLM_PROVIDER:-anthropic}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      KEX_AGENT_LLM_PROVIDER: ${KEX_AGENT_LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # The model the agent asks OpenRouter for. Not passing it left the agent on its own default, a
+      # `:free` model, while the Explorer beside it used OPENROUTER_MODEL: OpenRouter answers "this model
+      # is unavailable for free" to an account without credits or past the free quota, and the demo's
+      # banner claimed one model for both. Same default as compose/demo-llm.yml, so the two agree.
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
       # The bearer the Control Center and /api/** ask for. Without one the agent answers 503.
-      - KEX_AGENT_API_KEY=${KEX_AGENT_API_KEY:-dev-only-agent-key}
-      - KAFKA_EXPLORER_URL=http://explorer:8080
-      - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
+      KEX_AGENT_API_KEY: ${KEX_AGENT_API_KEY:-dev-only-agent-key}
+      KAFKA_EXPLORER_URL: http://explorer:8080
+      EXPLORER_MCP_AUTH_TOKEN: ${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
       # SpectraLLM as a second MCP server, through the agent's own relaxed binding. The agent
       # keeps spectra_search, spectra_list_documents and spectra_preview_document, and refuses
       # spectra_ask and spectra_status unless told otherwise (its application.yml).
-      - SPECTRALLM_URL=http://spectra-api:8080
-      - SPECTRA_API_KEY=${SPECTRA_API_KEY:-dev-only-spectra-key}
-      - SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_URL=http://spectra-api:8080
-      - SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_ENDPOINT=/mcp
+      SPECTRALLM_URL: http://spectra-api:8080
+      SPECTRA_API_KEY: ${SPECTRA_API_KEY:-dev-only-spectra-key}
+      SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_URL: http://spectra-api:8080
+      SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_ENDPOINT: /mcp
     volumes:
       - agent_state:/var/lib/kex
     healthcheck:

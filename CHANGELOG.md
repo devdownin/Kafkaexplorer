@@ -20,6 +20,18 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The demo's agent uses the demo's OpenRouter model.** `OPENROUTER_MODEL` (default `openai/gpt-4o-mini`)
+  reached the Explorer only: `compose/ecosystem.yml` did not hand it to the agent, which then used its own
+  default, a `:free` model, and OpenRouter answered "this model is unavailable for free" — while the
+  banner said one model served both. The agent's environment now carries it.
+
+- **A demo with no SpectraLLM no longer logs "MCP server 'spectrallm' unreachable".** The forecast demos
+  (which now start the agent) and `--no-spectra` layered an agent that still declared its SpectraLLM
+  connection, so every start logged an error nobody could act on. `compose/demo-agent-no-spectra.yml`
+  withdraws the connection from the agent; `compose/ecosystem.yml` still declares it (CI asserts the agent
+  reports it unreachable instead of failing), and its agent environment is a mapping now so that an
+  overlay can remove a key. Full suite with SpectraLLM is unchanged.
+
 - **`demo-menu.sh` / `demo-menu.cmd`: a guided launcher for the demos.** It asks what to do (start, stop,
   reset, ps, logs, show the credentials, renew the tokens), which demo (full suite, without SpectraLLM,
   forecast), where the images come from (built, published, offline) and whether to start the agent,
@@ -233,6 +245,14 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on tablets. GitHub Pages now actually loads the external interactive controller,
   restores filters, zoom, deep links, copy actions and accessible mobile navigation;
   a PR preflight guard catches missing DOM controls or script inclusion.
+
+## [2.9.6] — 2026-11-25
+
+See [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.9.6).
+
+## [2.9.5] — 2026-11-24
+
+See [the release notes](https://github.com/devdownin/Kafkaexplorer/releases/tag/v2.9.5).
 
 ## [2.9.4] — 2026-11-24
 
@@ -3268,7 +3288,9 @@ a release builds anything.
 | [`0.0.2`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.2) | 2026-03-12 | Audit services and demo scripts |
 | [`0.0.1`](https://github.com/devdownin/Kafkaexplorer/releases/tag/0.0.1) | 2026-03-10 | Initial pre-release |
 
-[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.4...HEAD
+[Unreleased]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.6...HEAD
+[2.9.6]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.5...v2.9.6
+[2.9.5]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.4...v2.9.5
 [2.9.4]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.3...v2.9.4
 [2.9.3]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.2...v2.9.3
 [2.9.2]: https://github.com/devdownin/Kafkaexplorer/compare/v2.9.1...v2.9.2

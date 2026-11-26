@@ -4,8 +4,10 @@
 # The agent is taken from compose/ecosystem.yml rather than redefined, so its image pin and its
 # environment stay in one place. Only `depends_on` is replaced: `extends` carries that file's
 # dependency on `spectra-api`, which Compose refuses in a project that does not define it. The
-# SpectraLLM MCP connection stays declared and the agent reports it unreachable — exactly what
-# CI's `ecosystem-stack` job asserts of this same shape.
+# agent's SpectraLLM connection is withdrawn by compose/demo-agent-no-spectra.yml, layered right after
+# this file: a demo with no SpectraLLM has nothing to report, and the agent logged "MCP server
+# 'spectrallm' unreachable" at every start. ecosystem.yml itself still declares it, on purpose —
+# CI's `ecosystem-stack` job asserts that the agent reports it unreachable, not that it fails.
 services:
   agent:
     extends: { file: compose/ecosystem.yml, service: agent }

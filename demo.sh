@@ -181,13 +181,13 @@ fi
 # The forecast demo stops here unless --agent: the agent (compose/demo*.yml, ecosystem) and the
 # hosted model (demo-llm.yml) are what want a key, and nothing else it shows uses them.
 if [[ $DEMO_AGENT == true ]]; then
-  files+=(-f compose/demo-no-spectra.yml -f compose/demo-llm.yml)
+  files+=(-f compose/demo-no-spectra.yml -f compose/demo-agent-no-spectra.yml -f compose/demo-llm.yml)
 elif [[ $DEMO_MODE == full ]]; then
   if [[ $DEMO_SPECTRA == true ]]; then
     files+=(-f compose/demo.yml -f compose/spectra-hub.mcp.yml -f compose/spectra-hub.ingest.yml
       -f compose/ecosystem.yml)
   else
-    files+=(-f compose/demo-no-spectra.yml)
+    files+=(-f compose/demo-no-spectra.yml -f compose/demo-agent-no-spectra.yml)
   fi
   files+=(-f compose/demo-llm.yml)
 fi
@@ -412,7 +412,7 @@ EOF
   if [[ $DEMO_SPECTRA == true ]]; then
     wait_for_http 'SpectraLLM API' "http://127.0.0.1:${SPECTRA_API_PORT}/actuator/health/readiness" 600 || true
   fi
-  local spectra='SpectraLLM ............ off (--no-spectra); the agent reports its MCP connection unreachable'
+  local spectra='SpectraLLM ............ off (--no-spectra); the agent declares no SpectraLLM connection'
   [[ $DEMO_SPECTRA != true ]] || spectra="SpectraLLM UI ......... http://localhost:${SPECTRA_UI_PORT}     (401 while SPECTRA_API_KEY is set)
 SpectraLLM API ........ http://localhost:${SPECTRA_API_PORT}/swagger-ui   (/mcp, X-API-Key ${SPECTRA_API_KEY}) · ${LLM_CHAT_MODEL_NAME} local"
   cat <<EOF
