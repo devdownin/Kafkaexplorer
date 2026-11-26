@@ -21,11 +21,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 - **`demo-menu.sh` / `demo-menu.cmd`: a guided launcher for the demos.** It asks what to do (start, stop,
-  reset, ps, logs), which demo (full suite, without SpectraLLM, forecast), where the images come from
-  (built, published, offline) and whether to start the agent, offers only combinations `demo.sh`
-  accepts (SpectraLLM is full-suite only, offline never starts the agent), asks for
-  `OPENROUTER_API_KEY` only when a model is involved, shows the resulting `demo.sh` command and runs it.
-  `--dry-run` / `-DryRun` stops after printing it. It builds a command line and owns no default.
+  reset, ps, logs, show the credentials, renew the tokens), which demo (full suite, without SpectraLLM,
+  forecast), where the images come from (built, published, offline) and whether to start the agent,
+  offers only combinations `demo.sh` accepts, and runs the resulting `demo.sh` command. Around that:
+  "same as last time" first (`.forecast-stack/last-demo`, no secret in it); a recap of what will start
+  (services, ports, weights, RAM); each token shown masked with where it comes from (environment,
+  `.env`, generated, dev-only default); the OpenRouter key checked against `openrouter.ai` before a
+  long build and, only if asked, saved in `.env`; `r` reveals and `c` copies the agent token at the
+  confirmation; "renew" regenerates the agent and MCP tokens (never the PostgreSQL / TimesFM ones);
+  `--preset NAME` (`--presets` lists them) and `--yes` skip the questions for scripts, `--dry-run`
+  stops after the command. It builds a command line and owns no default.
 
 - **The forecast demos load the Kex-anHarness agent by default.** `./demo.sh --forecast` and
   `demo-forecast.sh|cmd` now start the agent with the tokens already configured (the agent's bearer and
