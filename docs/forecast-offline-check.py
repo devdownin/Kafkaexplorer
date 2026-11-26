@@ -9,7 +9,6 @@ pins the overlay that bakes them in, and each assertion is a way that overlay st
 without anything failing at `config` time.
 """
 import json
-import re
 import sys
 
 configuration = json.load(sys.stdin)
@@ -27,8 +26,11 @@ assert 'forecast-postgres' in worker.get('depends_on', {}), 'The tripwire that r
 # `config` leaves out a service in a profile nobody enabled, which is exactly the point.
 assert 'forecast-model-prefetch' not in services, 'The one-shot download must be off by default'
 assert worker['environment']['HF_HUB_OFFLINE'] == '1', 'The Hub client must be refused, not merely unused'
-assert re.fullmatch(r'[0-9a-f]{40}', worker['environment']['TIMESTRAL_REVISION']), 'The shadow needs its pinned revision'
-assert re.fullmatch(r'[0-9a-f]{64}', worker['environment']['TIMESTRAL_SHA256']), 'The shadow needs its weights digest'
+# The pin is the image's ENV: a value here would override the checkpoint the image carries.
+assert 'TIMESTRAL_REVISION' not in worker['environment'], 'The shadow revision is the image\'s own'
+assert 'TIMESTRAL_SHA256' not in worker['environment'], 'The shadow digest is the image\'s own'
+assert worker['environment']['TIMESTRAL_MODEL'] == explorer['environment']['EXPLORER_FORECASTING_INFERENCE_SHADOW_MODEL_ID'], \
+    'The worker and the Explorer name the same Timestral'
 assert set(worker['networks']) == {'timesfm_private'} and configuration['networks']['timesfm_private']['internal'], \
     'Inference stays on the internal network'
 assert explorer['environment']['EXPLORER_FORECASTING_INFERENCE_SHADOW_ENABLED'] == 'true', 'The baked shadow is scored by default'

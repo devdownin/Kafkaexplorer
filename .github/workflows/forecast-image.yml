@@ -1,4 +1,5 @@
-# Publishes the forecast service with both checkpoints baked in: TimesFM 2.5 and Timestral-28M.
+# Publishes the forecast service with both checkpoints baked in: TimesFM 2.5 and one Timestral
+# checkpoint, one image per checkpoint (see the matrix below).
 #
 # `compose/forecast-offline.yml` runs it, so a deployment with no route to the Hub starts the
 # whole forecast stack with `docker compose up`. The weights are downloaded here, once, by the
@@ -33,8 +34,33 @@ concurrency:
 
 jobs:
   publish:
-    name: Build and push the offline forecast image
+    name: Build and push the offline forecast image (Timestral-${{ matrix.size }})
     runs-on: ubuntu-latest
+    # One image per Timestral checkpoint: `TIMESTRAL_MODEL` is a setting, and an image that
+    # starts with the Hub unreachable can only load the checkpoint it carries. The 28M keeps the
+    # plain tags (`X.Y.Z`, `latest`) every existing deployment pulls; the others carry the suffix
+    # `-timestral-<size>`, lower-cased like the adapter version. Each pin is the Hub commit and the
+    # `model.safetensors` SHA-256 read for that checkpoint: change a row as a whole, never one field.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - size: 28M
+            suffix: ''
+            revision: 49b26409ac87b5935539a5d8ffe7f397b720db47
+            sha256: dfc83c6220937ce5fc6687b35a4df94cd25e28a2cfe6fb92a23dad6301b2015d
+          - size: 5M
+            suffix: -timestral-5m
+            revision: bdd20cfc15a3fea0e4cb5ccef37f8d3ca7aa335f
+            sha256: 7ace108c4987e7f2a99a75a445240019d1d31c2117139d1bd05ffdfd25aca738
+          - size: 123M
+            suffix: -timestral-123m
+            revision: 5a147287addda85f6acd8da3fb8858fe9af7e8f7
+            sha256: 599fafa73cadbbc800b5a346ca900fa741ee3e5fd22e3b4a4430e151e74f4bc2
+          - size: 209M
+            suffix: -timestral-209m
+            revision: 9874d252ab0aae16f7f7c999f98f98d6ad7d8365
+            sha256: 1456effb9927e3daa8c7234f10497e3424233869245a9c72b8ecebaf7ad2b7fa
     timeout-minutes: 45
     permissions:
       contents: read
@@ -73,6 +99,9 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=${{ inputs.tag || github.ref_name }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=latest,enable=${{ github.event_name == 'push' && !contains(github.ref_name, '-') }}
+          flavor: |
+            latest=false
+            suffix=${{ matrix.suffix }},onlatest=true
           # Stated here, not only in the Dockerfile: labels passed to the build override the
           # Dockerfile's LABELs, and metadata-action's defaults (title `Kafkaexplorer`, licence
           # `AGPL-3.0` read from the repository, an empty description) were what got published —
@@ -80,7 +109,7 @@ jobs:
           # Keep the description identical to the Dockerfile's.
           labels: |
             org.opencontainers.image.title=kex-forecast
-            org.opencontainers.image.description=TimesFM 2.5 and Timestral-28M (shadow) forecast service with both checkpoints baked in; starts with no network access. WARNING: includes Timestral-28M (Mistral AI), whose licence excludes companies above USD 20M monthly revenue - see /licenses.
+            org.opencontainers.image.description=TimesFM 2.5 and Timestral-${{ matrix.size }} (shadow) forecast service with both checkpoints baked in; starts with no network access. WARNING: includes Timestral-${{ matrix.size }} (Mistral AI), whose licence excludes companies above USD 20M monthly revenue - see /licenses.
             org.opencontainers.image.licenses=AGPL-3.0-or-later AND Apache-2.0 AND LicenseRef-Timestral-Modified-MIT
             org.opencontainers.image.documentation=https://github.com/devdownin/Kafkaexplorer/blob/main/services/timesfm/licenses/NOTICE.md
 
@@ -90,6 +119,10 @@ jobs:
         with:
           context: services/timesfm
           target: offline
+          build-args: |
+            TIMESTRAL_MODEL=mistralai/Timestral-${{ matrix.size }}
+            TIMESTRAL_REVISION=${{ matrix.revision }}
+            TIMESTRAL_SHA256=${{ matrix.sha256 }}
           # amd64 only: the CPU torch wheels are locked for it, and the arm64 build would run
           # `uv sync` under QEMU for a service nobody has asked to run there.
           platforms: linux/amd64
@@ -98,15 +131,15 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=timesfm-offline
-          cache-to: type=gha,mode=max,scope=timesfm-offline
+          cache-from: type=gha,scope=timesfm-offline-${{ matrix.size }}
+          cache-to: type=gha,mode=max,scope=timesfm-offline-${{ matrix.size }}
 
       - name: Summarise
         run: |
           {
-            echo "### Forecast image"
+            echo "### Forecast image (Timestral-${{ matrix.size }})"
             echo
-            echo "> **Licence warning.** This image carries Timestral-28M (Mistral AI), whose modified MIT"
+            echo "> **Licence warning.** This image carries Timestral-${{ matrix.size }} (Mistral AI), whose modified MIT"
             echo "> licence excludes companies above USD 20 M monthly revenue. See \`services/timesfm/licenses/NOTICE.md\`."
             echo
             echo "Digest: \`${{ steps.build.outputs.digest }}\`"
