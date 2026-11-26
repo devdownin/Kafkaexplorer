@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **`demo-menu.sh` / `demo-menu.cmd`: a guided launcher for the demos.** It asks what to do (start, stop,
+  reset, ps, logs), which demo (full suite, without SpectraLLM, forecast), where the images come from
+  (built, published, offline) and whether to start the agent, offers only combinations `demo.sh`
+  accepts (SpectraLLM is full-suite only, offline never starts the agent), asks for
+  `OPENROUTER_API_KEY` only when a model is involved, shows the resulting `demo.sh` command and runs it.
+  `--dry-run` / `-DryRun` stops after printing it. It builds a command line and owns no default.
+
 - **The forecast demos load the Kex-anHarness agent by default.** `./demo.sh --forecast` and
   `demo-forecast.sh|cmd` now start the agent with the tokens already configured (the agent's bearer and
   the MCP bearer, both generated once in `.forecast-stack/.env`; the MCP one is shared by the agent and the Explorer). No key is needed: without `OPENROUTER_API_KEY` the agent starts degraded and says so.
