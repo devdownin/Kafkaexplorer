@@ -953,6 +953,22 @@ jobs:
           docker compose $LOCAL_AI config --format json | python3 docs/local-ai-stack-check.py
           named="$named compose/local-ai.yml"
 
+          # The agent of a demo with no SpectraLLM: compose/demo-agent-no-spectra.yml only withdraws keys
+          # from the agent that compose/demo-no-spectra.yml extends, so alone it names a service with no
+          # image. Checked on the combination it exists for, on what it must remove and what it must keep.
+          NO_SPECTRA="-f docker-compose.yml -f compose/demo-no-spectra.yml -f compose/demo-agent-no-spectra.yml"
+          echo "· $NO_SPECTRA"
+          # shellcheck disable=SC2086 - the combination is a deliberate word list.
+          docker compose $NO_SPECTRA config --format json | python3 -c '
+          import json, sys
+          env = json.load(sys.stdin)["services"]["agent"]["environment"]
+          gone = [k for k in env if k.startswith("SPECTRALLM_") or "CONNECTIONS_SPECTRALLM" in k]
+          assert not gone, f"the SpectraLLM connection survived: {gone}"
+          assert "KAFKA_EXPLORER_URL" in env and "EXPLORER_MCP_AUTH_TOKEN" in env, sorted(env)
+          print("· the agent keeps the Explorer wiring and declares no SpectraLLM")
+          '
+          named="$named compose/demo-agent-no-spectra.yml"
+
           # The same shape, for the overlay that bakes the models in: it only retargets services
           # compose/forecasts.yml defines. Its contract is checked on the resolved model.
           OFFLINE="-f docker-compose.yml -f compose/forecasts.yml -f compose/forecast-offline.yml"

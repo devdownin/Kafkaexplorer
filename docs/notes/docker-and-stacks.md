@@ -263,8 +263,14 @@ file wires the pair. There were two, and the deletion of the other is the point:
   `./demo.sh --no-spectra` (or `DEMO_SPECTRA=false`) swaps the four SpectraLLM files for
   `compose/demo-no-spectra.yml`, which extends the agent from `ecosystem.yml` and replaces only its
   `depends_on` with `!override` — `extends` carries the dependency on `spectra-api`, and Compose
-  refuses a project that lacks it. The agent then reports the SpectraLLM connection unreachable,
-  as `ecosystem-stack` asserts. `up` and `down` pass `--remove-orphans`, so switching modes on
+  refuses a project that lacks it. `compose/demo-agent-no-spectra.yml`, layered right after it,
+  withdraws the agent's SpectraLLM connection with `!reset`: left declared, the agent logged
+  "MCP server 'spectrallm' unreachable" at every start of a demo that has no SpectraLLM. It is a file
+  of its own because Compose applies a `!reset` before resolving that file's `extends`, and it can only
+  remove keys from an environment written as a mapping — which is why `ecosystem.yml`'s agent
+  environment is one now. `ecosystem.yml` still declares the connection, as `ecosystem-stack` asserts
+  that the agent reports it unreachable rather than failing; the new file is checked in `compose-lint`
+  on the one combination it exists for. `up` and `down` pass `--remove-orphans`, so switching modes on
   the one project does not leave SpectraLLM's containers running.
 
   `demo.ps1` is its Windows 11 twin; see [Windows 11: `demo.ps1` and `demo.cmd`](#windows-11-demops1-and-democmd).

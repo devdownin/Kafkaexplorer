@@ -239,13 +239,13 @@ if ($env:DEMO_PUBLISHED_IMAGE -eq 'true') { $script:ComposeFiles += @('-f', 'com
 # The forecast demo stops here unless -Agent: the agent (compose/demo*.yml, ecosystem) and the
 # hosted model (demo-llm.yml) are what want a key, and nothing else it shows uses them.
 if ($agentOn) {
-    $script:ComposeFiles += @('-f', 'compose/demo-no-spectra.yml', '-f', 'compose/demo-llm.yml')
+    $script:ComposeFiles += @('-f', 'compose/demo-no-spectra.yml', '-f', 'compose/demo-agent-no-spectra.yml', '-f', 'compose/demo-llm.yml')
 } elseif (-not $forecastOnly) {
     if ($spectraOn) {
         $script:ComposeFiles += @('-f', 'compose/demo.yml', '-f', 'compose/spectra-hub.mcp.yml',
             '-f', 'compose/spectra-hub.ingest.yml', '-f', 'compose/ecosystem.yml')
     } else {
-        $script:ComposeFiles += @('-f', 'compose/demo-no-spectra.yml')
+        $script:ComposeFiles += @('-f', 'compose/demo-no-spectra.yml', '-f', 'compose/demo-agent-no-spectra.yml')
     }
     $script:ComposeFiles += @('-f', 'compose/demo-llm.yml')
 }
@@ -437,7 +437,7 @@ The forecast demo: Metrics has five live metrics (demo.live.*: orders, requests,
         "SpectraLLM UI ......... http://localhost:$($env:SPECTRA_UI_PORT)     (401 while SPECTRA_API_KEY is set)`n" +
         "SpectraLLM API ........ http://localhost:$($env:SPECTRA_API_PORT)/swagger-ui   (/mcp, X-API-Key $($env:SPECTRA_API_KEY)) - $($env:LLM_CHAT_MODEL_NAME) local"
     } else {
-        'SpectraLLM ............ off (-NoSpectra); the agent reports its MCP connection unreachable'
+        'SpectraLLM ............ off (-NoSpectra); the agent declares no SpectraLLM connection'
     }
     Write-Host @"
 

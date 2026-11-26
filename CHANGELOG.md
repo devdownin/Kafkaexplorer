@@ -20,6 +20,13 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **A demo with no SpectraLLM no longer logs "MCP server 'spectrallm' unreachable".** The forecast demos
+  (which now start the agent) and `--no-spectra` layered an agent that still declared its SpectraLLM
+  connection, so every start logged an error nobody could act on. `compose/demo-agent-no-spectra.yml`
+  withdraws the connection from the agent; `compose/ecosystem.yml` still declares it (CI asserts the agent
+  reports it unreachable instead of failing), and its agent environment is a mapping now so that an
+  overlay can remove a key. Full suite with SpectraLLM is unchanged.
+
 - **`demo-menu.sh` / `demo-menu.cmd`: a guided launcher for the demos.** It asks what to do (start, stop,
   reset, ps, logs, show the credentials, renew the tokens), which demo (full suite, without SpectraLLM,
   forecast), where the images come from (built, published, offline) and whether to start the agent,

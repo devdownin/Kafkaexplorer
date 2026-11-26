@@ -52,21 +52,23 @@ services:
         condition: service_started
       spectra-api:
         condition: service_started
+    # A mapping, not a list: an overlay can withdraw a key from a mapping with `!reset`, and cannot from
+    # a list (measured) — compose/demo-agent-no-spectra.yml withdraws the SpectraLLM connection that way.
     environment:
-      - KEX_AGENT_LLM_PROVIDER=${KEX_AGENT_LLM_PROVIDER:-anthropic}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      KEX_AGENT_LLM_PROVIDER: ${KEX_AGENT_LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       # The bearer the Control Center and /api/** ask for. Without one the agent answers 503.
-      - KEX_AGENT_API_KEY=${KEX_AGENT_API_KEY:-dev-only-agent-key}
-      - KAFKA_EXPLORER_URL=http://explorer:8080
-      - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
+      KEX_AGENT_API_KEY: ${KEX_AGENT_API_KEY:-dev-only-agent-key}
+      KAFKA_EXPLORER_URL: http://explorer:8080
+      EXPLORER_MCP_AUTH_TOKEN: ${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
       # SpectraLLM as a second MCP server, through the agent's own relaxed binding. The agent
       # keeps spectra_search, spectra_list_documents and spectra_preview_document, and refuses
       # spectra_ask and spectra_status unless told otherwise (its application.yml).
-      - SPECTRALLM_URL=http://spectra-api:8080
-      - SPECTRA_API_KEY=${SPECTRA_API_KEY:-dev-only-spectra-key}
-      - SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_URL=http://spectra-api:8080
-      - SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_ENDPOINT=/mcp
+      SPECTRALLM_URL: http://spectra-api:8080
+      SPECTRA_API_KEY: ${SPECTRA_API_KEY:-dev-only-spectra-key}
+      SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_URL: http://spectra-api:8080
+      SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_ENDPOINT: /mcp
     volumes:
       - agent_state:/var/lib/kex
     healthcheck:

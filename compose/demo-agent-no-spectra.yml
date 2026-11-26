@@ -1,0 +1,18 @@
+# Overlay: the agent of a demo that has no SpectraLLM — layered by ./demo.sh and demo.ps1 right
+# after compose/demo-no-spectra.yml, never alone.
+#
+# compose/ecosystem.yml declares the agent's SpectraLLM MCP connection so that the agent *reports* an
+# unreachable SpectraLLM instead of failing (CI's `ecosystem-stack` job asserts exactly that, on
+# ecosystem.yml itself). A demo that has no SpectraLLM at all has nothing to report: the agent logged
+# "MCP server 'spectrallm' unreachable" at every start, an error nobody can act on. This withdraws
+# the connection; the agent leaves SpectraLLM inert while its URL is unset.
+#
+# A file of its own, not more lines in demo-no-spectra.yml: Compose applies a `!reset` before it
+# resolves that file's `extends`, so the base's values came back (measured), while an overlay
+# merged afterwards removes them.
+services:
+  agent:
+    environment:
+      SPECTRALLM_URL: !reset null
+      SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_URL: !reset null
+      SPRING_AI_MCP_CLIENT_STREAMABLEHTTP_CONNECTIONS_SPECTRALLM_ENDPOINT: !reset null
