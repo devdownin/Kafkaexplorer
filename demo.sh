@@ -13,6 +13,8 @@
 #   ./demo.sh --prebuilt                             # the full suite from published images, no build
 #   ./demo.sh --forecast --prebuilt                  # the forecast demo from published images, no build
 #   ./demo.sh --forecast --prebuilt --no-agent       # the forecast demo without the agent
+#   ./demo.sh --prebuilt --local-llm                 # the Explorer AND the agent on the local model of the
+#                                                    # kex-llm image (Gemma 4 E4B), no OpenRouter key (DEMO_LLM=local)
 #   ./demo-forecast.sh [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]] # prebuilt shorthand
 #   ./demo.sh [--no-spectra|--forecast|--prebuilt] down | reset | ps | logs [service] | probe | doctor | verify | scenario [name]
 #
@@ -36,7 +38,7 @@ repo_dir=$(cd "$(dirname "$0")" && pwd)
 cd "$repo_dir"
 
 usage() {
-  echo 'Usage: ./demo.sh [--no-spectra|--forecast|--prebuilt|--offline|--agent|--no-agent] [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]]' >&2
+  echo 'Usage: ./demo.sh [--no-spectra|--forecast|--prebuilt|--offline|--agent|--no-agent|--local-llm] [up|down|reset|ps|logs [service]|probe|doctor|verify|scenario [name]]' >&2
   exit 2
 }
 
@@ -50,6 +52,7 @@ while [[ ${1:-} == --* ]]; do
     --offline) export DEMO_MODE=forecast DEMO_SPECTRA=false DEMO_PREBUILT=true DEMO_PUBLISHED_IMAGE=true DEMO_OFFLINE=true ;;
     --agent) export DEMO_AGENT=true ;;
     --no-agent) export DEMO_AGENT=false ;;
+    --local-llm) export DEMO_LLM=local ;;
     *) usage ;;
   esac
   shift
@@ -173,6 +176,13 @@ export DEMO_SPECTRA=${DEMO_SPECTRA:-true}
 
 export COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-kafka-explorer-demo}
 
+# Which model answers for the Explorer and the agent: OpenRouter (hosted, needs a key) or the local one
+# the kex-llm image carries. --local-llm sets it for one run.
+export DEMO_LLM=${DEMO_LLM:-openrouter}
+[[ $DEMO_LLM == openrouter || $DEMO_LLM == local ]] || { echo "DEMO_LLM must be openrouter or local, not '$DEMO_LLM'." >&2; exit 2; }
+llm_files=(-f compose/demo-llm.yml)
+[[ $DEMO_LLM != local ]] || llm_files=(-f compose/llama-cpp.yml -f compose/llama-cpp-offline.yml -f compose/demo-kex-llm.yml)
+
 files=(-f docker-compose.yml -f compose/schema-registry.yml -f compose/mcp.yml -f compose/forecasts.yml
   -f compose/demo-forecast.yml)
 if [[ $DEMO_PREBUILT == true ]]; then
@@ -182,7 +192,7 @@ fi
 # The forecast demo stops here unless --agent: the agent (compose/demo*.yml, ecosystem) and the
 # hosted model (demo-llm.yml) are what want a key, and nothing else it shows uses them.
 if [[ $DEMO_AGENT == true ]]; then
-  files+=(-f compose/demo-no-spectra.yml -f compose/demo-agent-no-spectra.yml -f compose/demo-llm.yml)
+  files+=(-f compose/demo-no-spectra.yml -f compose/demo-agent-no-spectra.yml "${llm_files[@]}")
 elif [[ $DEMO_MODE == full ]]; then
   if [[ $DEMO_SPECTRA == true ]]; then
     files+=(-f compose/demo.yml -f compose/spectra-hub.mcp.yml -f compose/spectra-hub.ingest.yml
@@ -190,7 +200,7 @@ elif [[ $DEMO_MODE == full ]]; then
   else
     files+=(-f compose/demo-no-spectra.yml -f compose/demo-agent-no-spectra.yml)
   fi
-  files+=(-f compose/demo-llm.yml)
+  files+=("${llm_files[@]}")
 fi
 
 compose() { docker compose "${files[@]}" "$@"; }
@@ -343,13 +353,25 @@ wait_for_http() {
 }
 
 up() {
+  # What the banners say about the model, from the one place that decides it.
+  local llm_line assistant_where
+  if [[ $DEMO_LLM == local ]]; then
+    llm_line="kex-llm ${LLAMA_CPP_MODEL_NAME:-gemma-4-e4b-it} on llama.cpp, local (Explorer, agent); http://localhost:${LLAMA_CPP_PORT:-8083}"
+    assistant_where='table and column names stay on this machine'
+  else
+    llm_line="OpenRouter ${OPENROUTER_MODEL} (Explorer, agent)"
+    assistant_where='table and column names go to OpenRouter'
+  fi
   # The agent's bearer, before the long part (build, pulls): it is what the Control Center asks for.
   if [[ $DEMO_MODE == full || $DEMO_AGENT == true ]]; then
     echo "Kex-anHarness bearer (KEX_AGENT_API_KEY): ${KEX_AGENT_API_KEY} -- http://localhost:${KEX_AGENT_PORT}"
   fi
-  if [[ ($DEMO_MODE == full || $DEMO_AGENT == true) && -z $OPENROUTER_API_KEY ]]; then
+  if [[ ($DEMO_MODE == full || $DEMO_AGENT == true) && $DEMO_LLM == openrouter && -z $OPENROUTER_API_KEY ]]; then
     echo 'WARN: OPENROUTER_API_KEY is empty — Process Mining answers without its LLM half and the' >&2
     echo '      agent starts DEGRADED. Export it (or put it in .env) and rerun ./demo.sh.' >&2
+  fi
+  if [[ $DEMO_LLM == local && ($DEMO_MODE == full || $DEMO_AGENT == true) ]]; then
+    echo 'kex-llm adds a ~5.5 GB image (Gemma 4 E4B inside), pulled once: the Explorer and the agent both answer from it.'
   fi
   if [[ $DEMO_MODE == forecast ]]; then
     # A dedicated writable demo-only mount survives forecast-stack.sh --prepare-only,
@@ -379,6 +401,11 @@ up() {
     compose up -d --build --remove-orphans
   fi
   wait_for_http 'Kafka Explorer' "http://127.0.0.1:${EXPLORER_PORT}/actuator/health" 900
+  # The server is healthy once the weights are loaded: until then the first answer of either app would
+  # only queue. Informational, like SpectraLLM's wait below.
+  if [[ $DEMO_LLM == local && ($DEMO_MODE == full || $DEMO_AGENT == true) ]]; then
+    wait_for_http 'kex-llm' "http://127.0.0.1:${LLAMA_CPP_PORT:-8083}/health" 600 || true
+  fi
   if [[ $DEMO_MODE == forecast ]]; then
     wait_forecast_ready
     local agent_line='LLM, agent, SpectraLLM  not started (--no-agent / --offline): nothing to configure'
@@ -386,7 +413,7 @@ up() {
       wait_for_http 'Kex-anHarness' "http://127.0.0.1:${KEX_AGENT_PORT}/api/agent/mcp/servers" 300 \
         -H "Authorization: Bearer ${KEX_AGENT_API_KEY}" || true
       agent_line="Kex-anHarness ......... http://localhost:${KEX_AGENT_PORT}     (Bearer ${KEX_AGENT_API_KEY})
-LLM ................... OpenRouter ${OPENROUTER_MODEL} (Explorer, agent); SpectraLLM not started"
+LLM ................... ${llm_line}; SpectraLLM not started"
     fi
     cat <<EOF
 
@@ -424,8 +451,8 @@ Kex-anHarness ......... http://localhost:${KEX_AGENT_PORT}     (Bearer ${KEX_AGE
 ${spectra}
 Schema Registry ....... http://localhost:${SCHEMA_REGISTRY_PORT}
 Kafka ................. localhost:${KAFKA_PORT}
-LLM ................... OpenRouter ${OPENROUTER_MODEL} (Explorer, agent)
-SQL assistant ......... ${EXPLORER_ASSISTANT_ENABLED} (editor ask bar, Suggest a fix, Metrics: Describe the metric; table and column names go to OpenRouter)
+LLM ................... ${llm_line}
+SQL assistant ......... ${EXPLORER_ASSISTANT_ENABLED} (editor ask bar, Suggest a fix, Metrics: Describe the metric; ${assistant_where})
 
 Demo topics (JSON + Avro) are seeded in the background: ./demo.sh logs demo-setup
 Forecast: Metrics → the five demo.live.* metrics have 9 h of seeded history (live traffic keeps them moving):

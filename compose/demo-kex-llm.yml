@@ -1,0 +1,55 @@
+# Overlay: the local model of the `kex-llm` image for BOTH apps — the Explorer and the agent —
+# layered LAST by ./demo.sh --local-llm, in place of compose/demo-llm.yml (hosted, OpenRouter).
+#
+#   -f compose/llama-cpp.yml -f compose/llama-cpp-offline.yml -f compose/demo-kex-llm.yml
+#
+# compose/llama-cpp.yml declares the server and points the Explorer at it (provider LLAMA_CPP, the
+# alias `gemma-4-e4b-it`, the assistant on). compose/llama-cpp-offline.yml swaps its image for
+# `ghcr.io/devdownin/kex-llm`, Gemma 4 E4B with its weights inside: no download at start, and nothing
+# leaves the host. What is left for this file is what the demo adds on top:
+#
+#   * the Explorer's bearer: forecasts.yml leaves it empty (503) and demo-llm.yml is the file that
+#     used to set it, so it is set here too. Layered last for the reason demo-llm.yml gives:
+#     compose/spectra-hub.mcp.yml hands the Explorer SPECTRA_API_KEY as CLAUDE_API_KEY, and left in
+#     place it would be sent to llama-server as a bearer it does not check.
+#   * the agent, on the same server. It speaks the OpenAI dialect to whatever OPENROUTER_BASE_URL
+#     names (Kex-anHarness's `spring.ai.openai.base-url`), so the provider stays `openai` and only
+#     the address, the model alias and a key that is never checked change. The agent cannot do
+#     without tool calling; llama-server serves it from the model's chat template.
+#   * the image is the PUBLISHED one in every mode. The offline overlay keeps a `build:` so a
+#     checkout can rebuild it, which would make `up --build` download 5 GB of weights from the Hub;
+#     here `build` is reset, so `up` pulls the package, and `pull --ignore-buildable` includes it.
+#
+# Two things measured nowhere yet, said so rather than assumed:
+#   * The window is 32 768 tokens, not llama-cpp.yml's 16 384. The agent sends its tools and its
+#     system prompt on every turn, and the Explorer's MCP tools alone are a large part of 16 384.
+#     The Explorer's prompt budget stays at llama-cpp.yml's value, which fits either.
+#   * One slot serves both apps, so a Process Mining analysis and a chat turn queue behind each
+#     other. A small model on CPU answers in tens of seconds to minutes: the agent's request and
+#     async timeouts are raised to match (they ship at 120 s and 150 s).
+services:
+  llama-cpp:
+    build: !reset null
+    environment:
+      LLAMA_CPP_CONTEXT: ${LLAMA_CPP_CONTEXT:-32768}
+
+  explorer:
+    environment:
+      - CLAUDE_API_KEY=
+      # The window the server gives the model, declared once: it caps the Explorer's prompt budgets.
+      - CLAUDE_CONTEXT_WINDOW_TOKENS=${LLAMA_CPP_CONTEXT:-32768}
+      - EXPLORER_MCP_AUTH_TOKEN=${EXPLORER_MCP_AUTH_TOKEN:-dev-only-mcp-token}
+
+  agent:
+    depends_on:
+      llama-cpp:
+        condition: service_started
+    environment:
+      KEX_AGENT_LLM_PROVIDER: openai
+      OPENROUTER_BASE_URL: http://llama-cpp:8080/v1
+      # llama-server checks no key, and the agent refuses to start its provider with an empty one.
+      OPENROUTER_API_KEY: local-llm-no-key
+      OPENROUTER_MODEL: ${LLAMA_CPP_MODEL_NAME:-gemma-4-e4b-it}
+      # Relaxed binding of kex.agent.request-timeout and spring.mvc.async.request-timeout.
+      KEX_AGENT_REQUESTTIMEOUT: 600s
+      SPRING_MVC_ASYNC_REQUESTTIMEOUT: 650s

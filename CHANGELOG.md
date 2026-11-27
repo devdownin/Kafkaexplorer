@@ -20,6 +20,22 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The demo can run the Explorer AND the agent on the model of the `kex-llm` image.** `./demo.sh
+  --local-llm` (`-LocalLlm`, `DEMO_LLM=local`) layers `compose/llama-cpp.yml`,
+  `compose/llama-cpp-offline.yml` and the new `compose/demo-kex-llm.yml` in place of `demo-llm.yml`: one
+  llama-server (`ghcr.io/devdownin/kex-llm`, Gemma 4 E4B, weights inside) answers Process Mining, the SQL
+  assistant and the agent, with no OpenRouter key and nothing leaving the host. The agent keeps its
+  `openai` provider and is pointed at the server through `OPENROUTER_BASE_URL` (a key it never checks,
+  the model's alias); the Explorer keeps `LLAMA_CPP`, whose structured output the hosted shape does not
+  get. The image is the published one in every mode (`build` is reset, or `up --build` would fetch 5 GB of
+  weights), the window is 32 768 tokens rather than 16 384 (the agent's tools and system prompt travel on
+  every turn), and the agent's request and async timeouts go from 120 s / 150 s to 600 s / 650 s. **None
+  of that is measured**: the authoring environment had no Docker daemon, so the resolved configuration is
+  checked (`docs/demo-kex-llm-check.py`, in `compose-lint`) and nothing has been booted. `demo-menu.sh` /
+  `demo-menu.ps1` ask "which model answers for the agent and the Explorer?" (last choice first, `llm=` in
+  `last-demo`; `--llm openrouter|local`; a preset takes OpenRouter; `DEMO_LLM` is shown, not asked), and the
+  local choice drops the key, the OpenRouter model and the catalogue checks. `down`, `ps` and `logs` follow
+  the last choice, since the files compose layers depend on it.
 - **The demo menu names, checks and remembers the OpenRouter model.** `demo-menu.sh` and `demo-menu.ps1`
   now show the model in the recap with where it comes from (`--model`, the environment, `.env`,
   `.forecast-stack/.env`, your choice, or the default `openrouter/free`) and ask for it when a model is

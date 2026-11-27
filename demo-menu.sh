@@ -9,6 +9,7 @@
 #   ./demo-menu.sh --preset forecast     # skip the questions (--presets lists them)
 #   ./demo-menu.sh --preset forecast --yes   # ...and the confirmation: for scripts
 #   ./demo-menu.sh --preset full --model openai/gpt-4o-mini   # one run on another OpenRouter model
+#   ./demo-menu.sh --preset full --llm local                  # the Explorer AND the agent on the kex-llm image's model
 #
 # Output: colour only on a terminal, never with NO_COLOR set or --no-color, and never alone: every
 # colour is backed by words ("[default]", "valid", "rejected"), and every answer is a number or a
@@ -25,6 +26,12 @@
 # when you say so: the OpenRouter key into .env on request, the agent and MCP tokens on "renew".
 # The state file .forecast-stack/last-demo holds the last choice and no secret.
 #
+# Which model answers for the agent and the Explorer: OpenRouter (hosted, a key, prompts leave the host) or
+# the local one the published kex-llm image carries (Gemma 4 E4B on llama.cpp: no key, nothing leaves, a
+# ~5.5 GB image). Asked when a model is involved and nothing names one, the last choice first; a preset
+# takes OpenRouter; DEMO_LLM in the environment or a .env is shown and not asked about. The local choice
+# skips everything below: there is no key to check and no OpenRouter model to pick.
+#
 # The OpenRouter model: asked when a model is involved and nothing already names one, with the last
 # choice first. Precedence is demo.sh's own (the environment, .env, .forecast-stack/.env), and
 # --model beats them for one run. Before the start the menu checks the model against the public
@@ -38,7 +45,7 @@ last_file=$state_dir/last-demo
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: ./demo-menu.sh [--dry-run] [--yes] [--no-color] [--preset NAME] [--model ID] | --presets | --help
+Usage: ./demo-menu.sh [--dry-run] [--yes] [--no-color] [--preset NAME] [--llm openrouter|local] [--model ID] | --presets | --help
 USAGE
   exit "${1:-2}"
 }
@@ -61,6 +68,7 @@ assume_yes=false
 no_color=false
 preset=''
 cli_model=''
+cli_llm=''
 # One definition of a model id, shared by the flag, the typed answer and the remembered one: it ends
 # up in a JSON body and a state file, so nothing outside this alphabet gets through.
 valid_model() { [[ ${#1} -le 100 && $1 =~ ^[A-Za-z0-9][A-Za-z0-9._:/+-]*$ ]]; }
@@ -73,6 +81,10 @@ while [[ $# -gt 0 ]]; do
     --yes) assume_yes=true ;;
     --no-color) no_color=true ;;
     --preset) shift; preset=${1:-}; [[ -n $preset ]] || usage ;;
+    --llm)
+      shift; cli_llm=${1:-}
+      [[ $cli_llm == openrouter || $cli_llm == local ]] || { echo "--llm expects openrouter or local, got '$cli_llm'." >&2; exit 2; }
+      ;;
     --model)
       shift; cli_model=${1:-}
       valid_model "$cli_model" || { echo "--model expects an OpenRouter model id such as openai/gpt-4o-mini, got '$cli_model'." >&2; exit 2; }
@@ -122,6 +134,8 @@ ask() {
 mode=''
 source_kind=prebuilt
 agent=yes
+llm=openrouter   # openrouter | local: what answers for the agent and the Explorer, once a model is involved
+llm_origin=''    # --llm | environment | .env | generated | chosen | last | default
 model=''         # the OpenRouter model, once model_involved and chosen
 model_origin=''  # --model | environment | .env | generated | chosen | default
 
@@ -159,12 +173,14 @@ flags_for() { # fills the global array flags
   esac
   case $source_kind in prebuilt) flags+=(--prebuilt) ;; offline) flags+=(--offline) ;; esac
   [[ $mode != forecast || $source_kind == offline || $agent == yes ]] || flags+=(--no-agent)
+  # Only where a model is involved: a demo with no agent and no Explorer LLM half has nothing to point.
+  ! model_involved || [[ $llm != local ]] || flags+=(--local-llm)
 }
 
 ask_demo() {
   ask 'Which demo?' 1 \
-    'Full suite: Kafka, Avro, MCP, forecasts, SpectraLLM, agent (needs OPENROUTER_API_KEY, ~4.8 GB of weights)' \
-    'Full suite without SpectraLLM (needs OPENROUTER_API_KEY)' \
+    'Full suite: Kafka, Avro, MCP, forecasts, SpectraLLM, agent (a model: an OpenRouter key or the local kex-llm; ~4.8 GB of SpectraLLM weights)' \
+    'Full suite without SpectraLLM (a model: an OpenRouter key or the local kex-llm)' \
     'Forecast demo: live metrics and forecasts, the agent included'
   agent=yes
   case $REPLY_INDEX in 1) mode=full ;; 2) mode=nospectra ;; 3) mode=forecast ;; esac
@@ -180,7 +196,7 @@ ask_demo() {
     agent=no
   else
     ask 'Start the Kex-anHarness agent?' 1 \
-      'Yes (it starts degraded without OPENROUTER_API_KEY)' \
+      'Yes (a model: an OpenRouter key, or the local kex-llm; degraded with neither)' \
       'No'
     [[ $REPLY_INDEX == 1 ]] && agent=yes || agent=no
   fi
@@ -218,12 +234,22 @@ saved_model() {
 # The model is rewritten only by an interactive choice: a one-off --model or a script's preset must not
 # replace what the person picked last, and the state of a run that named no model keeps the old one.
 remember_demo() {
-  local m
+  local m l
   m=$(saved_model)
+  l=$(saved_llm)
   [[ $model_origin != chosen ]] || m=$model
+  [[ $llm_origin != chosen ]] || l=$llm
   mkdir -p "$state_dir"
   printf 'mode=%s\nsource=%s\nagent=%s\n' "$mode" "$source_kind" "$agent" > "$last_file"
   if [[ -n $m ]]; then printf 'model=%s\n' "$m" >> "$last_file"; fi
+  if [[ -n $l ]]; then printf 'llm=%s\n' "$l" >> "$last_file"; fi
+}
+
+# The last interactive choice of what answers: openrouter or local, empty when there is none.
+saved_llm() {
+  local v
+  v=$(read_kv "$last_file" llm)
+  if [[ $v == openrouter || $v == local ]]; then printf '%s' "$v"; fi
 }
 
 # ── Credentials ──────────────────────────────────────────────────────────────
@@ -409,7 +435,7 @@ recap() {
   if [[ $agent == yes || $mode != forecast ]]; then
     printf '  %-36s %s\n' 'Kex-anHarness agent' "http://localhost:${KEX_AGENT_PORT:-8081}"
   fi
-  if model_involved; then recap_model; fi
+  if model_involved; then recap_llm; fi
   if [[ $mode == full ]]; then
     printf '  %-36s %s\n' 'SpectraLLM' "UI :${SPECTRA_UI_PORT:-8088}, API :${SPECTRA_API_PORT:-8089} - ~4.8 GB of weights, ~16 GB of RAM for the 7B model"
   fi
@@ -421,12 +447,75 @@ recap() {
 }
 
 model_involved() { [[ $mode != forecast || ( $agent == yes && $source_kind != offline ) ]]; }
+# The OpenRouter half of that: its key, its model, its catalogue. The local model has none of them.
+openrouter_involved() { model_involved && [[ $llm != local ]]; }
 
 tokens_for_demo() { # fills the global array token_names
   token_names=(EXPLORER_MCP_AUTH_TOKEN)
   if [[ $agent == yes || $mode != forecast ]]; then token_names+=(KEX_AGENT_API_KEY); fi
   if [[ $mode == full ]]; then token_names+=(SPECTRA_API_KEY); fi
-  if model_involved; then token_names+=(OPENROUTER_API_KEY); fi
+  if openrouter_involved; then token_names+=(OPENROUTER_API_KEY); fi
+}
+
+# ── What answers: OpenRouter or the local model ──────────────────────────────
+
+# Where demo.sh would already read DEMO_LLM from, in its precedence. Prints "value origin"; nothing when
+# none names a valid one.
+named_llm() {
+  local v
+  v=${DEMO_LLM:-}
+  if [[ $v == openrouter || $v == local ]]; then echo "$v environment"; return; fi
+  v=$(read_kv .env DEMO_LLM)
+  if [[ $v == openrouter || $v == local ]]; then echo "$v .env"; return; fi
+  v=$(read_kv "$state_dir/.env" DEMO_LLM)
+  if [[ $v == openrouter || $v == local ]]; then echo "$v generated"; fi
+}
+
+llm_label() {
+  case $1 in
+    openrouter) echo 'OpenRouter: a hosted model, needs a key, prompts and tool results leave this machine' ;;
+    local) echo 'kex-llm: the local Gemma 4 E4B, no key, nothing leaves this machine (a ~5.5 GB image, slower on a CPU)' ;;
+  esac
+}
+
+# Sets llm and llm_origin. Precedence is --llm, then what the environment or a .env names, then a
+# question to a person (the last choice first), then the default. A preset takes the default, so a script
+# gives the same demo whatever was picked last. A verb that only names the stack (down, ps, logs) is not
+# asked: it takes the last choice, since the files compose layers depend on it.
+choose_llm() {
+  local named last first other options=() values=() v
+  if [[ -n $cli_llm ]]; then llm=$cli_llm llm_origin=--llm; return 0; fi
+  named=$(named_llm)
+  if [[ -n $named ]]; then llm=${named%% *} llm_origin=${named#* }; return 0; fi
+  last=$(saved_llm)
+  if [[ $1 != up ]]; then llm=${last:-openrouter} llm_origin=last; return 0; fi
+  llm=openrouter llm_origin=default
+  [[ -z $preset ]] || return 0
+  first=${last:-openrouter}
+  [[ $first == openrouter ]] && other=local || other=openrouter
+  values=("$first" "$other")
+  for v in "${values[@]}"; do
+    if [[ -n $last && $v == "$last" ]]; then options+=("$(llm_label "$v"), same as last time")
+    else options+=("$(llm_label "$v")"); fi
+  done
+  ask 'Which model answers for the agent and the Explorer?' 1 "${options[@]}"
+  llm=${values[REPLY_INDEX - 1]} llm_origin=chosen
+}
+
+recap_llm() {
+  local where
+  if [[ $llm != local ]]; then recap_model; return 0; fi
+  case $llm_origin in
+    --llm) where='--llm, this run only' ;;
+    environment) where='DEMO_LLM, from the environment' ;;
+    .env) where='DEMO_LLM, from .env' ;;
+    generated) where='DEMO_LLM, from .forecast-stack/.env' ;;
+    chosen) where='your choice' ;;
+    last) where='the last choice' ;;
+    *) where='default' ;;
+  esac
+  printf '  %-36s %s\n' 'LLM (agent and Explorer)' "kex-llm, Gemma 4 E4B on llama.cpp, local ($where)"
+  printf '  %-36s %s\n' '' 'a ~5.5 GB image, pulled once; no OpenRouter key; one slot serves both apps'
 }
 
 # ── The model ────────────────────────────────────────────────────────────────
@@ -660,19 +749,30 @@ if [[ $verb == logs && -z $preset ]]; then
   read -r -p 'Service name (empty = all): ' service || service=
 fi
 
+# What answers is settled before the command is built: it adds --local-llm, and the compose files
+# a demo layers (so what down, ps and logs name) depend on it.
+if model_involved; then
+  choose_llm "$verb"
+elif [[ $verb == up && -n $cli_llm ]]; then
+  warn "This demo calls no model: --llm $cli_llm is ignored."
+fi
 flags_for
 command=(./demo.sh "${flags[@]}")
 [[ $verb == up ]] || command+=("$verb")
 [[ -z $service ]] || command+=("$service")
 
 if [[ $verb == up ]]; then
-  if model_involved; then
+  if openrouter_involved; then
     choose_model
   elif [[ -n $cli_model ]]; then
-    warn "This demo calls no model: --model $cli_model is ignored."
+    if model_involved; then warn "This demo runs on the local model, not OpenRouter: --model $cli_model is ignored."
+    else warn "This demo calls no model: --model $cli_model is ignored."; fi
   fi
   recap
-  if model_involved; then
+  # Exported for a run that chose or named it on the command line: demo.sh reads the environment first,
+  # so --llm openrouter also overrides a DEMO_LLM=local the environment or .env set.
+  if [[ $llm_origin == --llm || $llm_origin == chosen ]]; then export DEMO_LLM=$llm; fi
+  if openrouter_involved; then
     ensure_key
     while ! verify_model; do
       choose_model again

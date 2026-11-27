@@ -854,6 +854,41 @@ an AGPL project. `services/llama-cpp/licenses/NOTICE.md` carries the attribution
 built or booted outside CI; the model digest was checked against the Hub at the pinned revision,
 and the overlay resolves.
 
+## The demo on the local model, for both apps
+
+`./demo.sh --local-llm` (`-LocalLlm`, `DEMO_LLM=local`) is the demo with **no OpenRouter key**: the
+Explorer *and* the Kex-anHarness agent answer from the model the `kex-llm` image carries. It layers
+`compose/llama-cpp.yml`, `compose/llama-cpp-offline.yml` and `compose/demo-kex-llm.yml` **last**, in place
+of `compose/demo-llm.yml` — last for the reason that file already gives: `spectra-hub.mcp.yml` hands the
+Explorer SpectraLLM's key as `CLAUDE_API_KEY`, which would otherwise be sent to llama-server as a bearer.
+
+What `demo-kex-llm.yml` adds to the two existing overlays, and why each line is there:
+
+- **`build: !reset null`.** The offline overlay keeps a `build:` so a checkout can rebuild the image; under
+  `up --build` that would download 5 GB of weights from the Hub, and `pull --ignore-buildable` would skip
+  the image in the prebuilt mode. The demo always runs the *published* package.
+- **The agent on the same server.** Its provider stays `openai`; `OPENROUTER_BASE_URL` points it at
+  `http://llama-cpp:8080/v1` (Kex-anHarness's `spring.ai.openai.base-url`), `OPENROUTER_MODEL` is the
+  alias the server answers under, and `OPENROUTER_API_KEY` is a placeholder — llama-server checks no key,
+  and the agent refuses an empty one. It needs tool calling, which llama-server serves from the model's
+  chat template; **whether Gemma 4 E4B drives the agent's tool loop well is not known**.
+- **The Explorer's bearer** (`EXPLORER_MCP_AUTH_TOKEN`), which `demo-llm.yml` used to set and
+  `forecasts.yml` leaves empty (503 for the agent), and an empty `CLAUDE_API_KEY`.
+- **A 32 768-token window** instead of `llama-cpp.yml`'s 16 384, declared once (`LLAMA_CPP_CONTEXT`) for
+  the server and for the Explorer's `CLAUDE_CONTEXT_WINDOW_TOKENS`: the agent sends its tools and its
+  system prompt on every turn. **One slot serves both apps**, so an analysis and a chat turn queue.
+- **The agent's request and async timeouts at 600 s / 650 s** (shipped: 120 s / 150 s, sized for a hosted
+  model), by Spring's relaxed binding (`KEX_AGENT_REQUESTTIMEOUT`, `SPRING_MVC_ASYNC_REQUESTTIMEOUT`).
+
+`docs/demo-kex-llm-check.py` asserts all of it on the **resolved** model, in `compose-lint` and in
+`ci/test_demo_menu.py`: the overlay resolves cleanly while an app points somewhere else, which is what it
+exists to catch. SpectraLLM, in the full suite, keeps its own models: it is a third app with its own
+chat and embedding weights, not one of the two this switch moves.
+
+**Not verified here:** the authoring environment had no Docker daemon. `docker compose config` resolves
+both shapes (agent without SpectraLLM, full suite) and the check passes on them; nothing has been booted,
+so the window, the timeouts and the agent's behaviour on this model are choices, not measurements.
+
 ## The SQL & metric assistant in the stacks
 
 `explorer.assistant.enabled` ships **false**, because `claude.provider` ships as a hosted gateway
