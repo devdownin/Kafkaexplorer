@@ -124,7 +124,8 @@ export SCHEMA_REGISTRY_PORT=${SCHEMA_REGISTRY_PORT:-8085}
 
 # LLM — OpenRouter on both sides.
 export OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-export OPENROUTER_MODEL=${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+# The demo runs on the OpenRouter router for free models: no credits needed to try it.
+export OPENROUTER_MODEL=${OPENROUTER_MODEL:-openrouter/free}
 export KEX_AGENT_LLM_PROVIDER=${KEX_AGENT_LLM_PROVIDER:-openai}
 # The SQL & metric assistant, on the same OpenRouter model (false turns it off). It needs that model,
 # which the forecast demo has only with --agent: off there otherwise.

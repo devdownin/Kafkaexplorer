@@ -184,7 +184,8 @@ Set-Default KEX_AGENT_PORT '8081'
 Set-Default SCHEMA_REGISTRY_PORT '8085'
 
 # LLM - OpenRouter on both sides. An empty key stays unset: Windows has no empty variable.
-Set-Default OPENROUTER_MODEL 'openai/gpt-4o-mini'
+# The demo runs on the OpenRouter router for free models: no credits needed to try it.
+Set-Default OPENROUTER_MODEL 'openrouter/free'
 Set-Default KEX_AGENT_LLM_PROVIDER 'openai'
 # The SQL & metric assistant, on the same OpenRouter model (false turns it off). It needs that model,
 # which the forecast demo has only with -Agent: off there otherwise.

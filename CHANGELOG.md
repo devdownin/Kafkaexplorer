@@ -20,6 +20,27 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The demo menu names, checks and remembers the OpenRouter model.** `demo-menu.sh` and `demo-menu.ps1`
+  now show the model in the recap with where it comes from (`--model`, the environment, `.env`,
+  `.forecast-stack/.env`, your choice, or the default `openrouter/free`) and ask for it when a model is
+  involved and nothing already names one, the last choice first. `--model ID` / `-Model ID` sets it for one
+  run, and a preset still takes the default, so a script gives the same demo whatever was picked last.
+  Before the start the menu looks the model up in the public catalogue and warns when it does not declare
+  tool calling (which the agent needs) or is not listed; a router such as `openrouter/free` is neither
+  claimed nor refused, and an unreachable catalogue is "not checked", never "no". If you agree, one tiny
+  request then shows whether the model answers — no credits, 404, rate limit — with the provider's words
+  stripped of control characters; it is never sent on a dry run, with `--yes` or from a preset.
+  `ci/test_demo_menu.py` runs both menus against a fake `demo.sh` and a local stand-in for openrouter.ai,
+  and holds `demo-menu.ps1` to the same switches when `pwsh` is installed.
+  That test found a defect already in `demo-menu.ps1`: `Get-Switches` returned `, $list`, so the caller's
+  `@(...)` held one element and every switch after the first was shown and handed to `demo.ps1` without
+  its dash (`-Forecast Prebuilt`).
+
+- **The demo launchers default to `openrouter/free`.** `demo.sh`, `demo.ps1` — and so `demo-menu` — ran an
+  OpenRouter key on `openai/gpt-4o-mini`, a paid model: a fresh key with no credits got a refusal on the
+  first question. `OPENROUTER_MODEL` still wins when set, and the compose files keep `openai/gpt-4o-mini`
+  for a real install; the difference is declared in `docs/check-demo-defaults.py`.
+
 - **The demo's agent uses the demo's OpenRouter model.** `OPENROUTER_MODEL` (default `openai/gpt-4o-mini`)
   reached the Explorer only: `compose/ecosystem.yml` did not hand it to the agent, which then used its own
   default, a `:free` model, and OpenRouter answered "this model is unavailable for free" — while the

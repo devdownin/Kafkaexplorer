@@ -8,6 +8,7 @@
 #   .\demo-menu.cmd -DryRun                  # the same, run nothing
 #   .\demo-menu.cmd -Preset forecast         # skip the questions (-Presets lists them)
 #   .\demo-menu.cmd -Preset forecast -Yes    # ...and the confirmation: for scripts
+#   .\demo-menu.cmd -Preset full -Model openai/gpt-4o-mini   # one run on another OpenRouter model
 #
 # Output: colour only on a terminal, never with NO_COLOR set or -NoColor, and never alone: every
 # colour is backed by words ("[default]", "valid", "rejected"), and every answer is a number or a
@@ -19,6 +20,12 @@
 # when you say so: the OpenRouter key into .env on request, the agent and MCP tokens on "renew".
 # .forecast-stack\last-demo holds the last choice and no secret.
 #
+# The OpenRouter model: asked when a model is involved and nothing already names one, with the last
+# choice first. Precedence is demo.ps1's own (the environment, .env, .forecast-stack\.env), and -Model
+# beats them for one run. Before the start the menu checks the model against the public catalogue
+# (does it declare tool calling, which the agent needs) and, if you agree, with one tiny request.
+# DEMO_MENU_OPENROUTER_URL points those checks elsewhere (tests); it does not reroute the stack.
+#
 # Kept ASCII on purpose: Windows PowerShell 5.1 reads a BOM-less script as the ANSI code page.
 [CmdletBinding()]
 param(
@@ -26,7 +33,8 @@ param(
     [switch] $Yes,
     [switch] $NoColor,
     [string] $Preset = '',
-    [switch] $Presets
+    [switch] $Presets,
+    [string] $Model = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,6 +45,18 @@ $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $StateDir = '.forecast-stack'
 $LastFile = Join-Path $StateDir 'last-demo'
 $StateEnv = Join-Path $StateDir '.env'
+
+# One definition of a model id, shared by the switch, the typed answer and the remembered one: it ends
+# up in a JSON body and a state file, so nothing outside this alphabet gets through.
+function Test-ModelId([string] $Id) { $Id.Length -le 100 -and $Id -cmatch '^[A-Za-z0-9][A-Za-z0-9._:/+-]*$' }
+$DefaultModel = 'openrouter/free'
+$OpenRouterBase = if ($env:DEMO_MENU_OPENROUTER_URL) { $env:DEMO_MENU_OPENROUTER_URL.TrimEnd('/') } else { 'https://openrouter.ai/api/v1' }
+if ($Model -and -not (Test-ModelId $Model)) {
+    [Console]::Error.WriteLine("-Model expects an OpenRouter model id such as openai/gpt-4o-mini, got '$Model'.")
+    exit 2
+}
+$script:ModelId = ''        # the OpenRouter model, once a model is involved and chosen
+$script:ModelOrigin = ''    # -Model | environment | .env | generated | chosen | default
 
 $UseColor = (-not $NoColor) -and (-not $env:NO_COLOR) -and [Environment]::UserInteractive -and (-not [Console]::IsOutputRedirected)
 # Kind: title (bold-ish white), ok (green), warn (yellow); anything else is plain.
@@ -116,7 +136,10 @@ function Get-Switches {
     if ($script:Source -eq 'prebuilt') { $list += 'Prebuilt' }
     if ($script:Source -eq 'offline') { $list += 'Offline' }
     if ($script:Mode -eq 'forecast' -and $script:Source -ne 'offline' -and $script:Agent -ne 'yes') { $list += 'NoAgent' }
-    , $list
+    # Not `, $list`: the comma wraps the array in a one-element array, so the caller's @(...) held ONE
+    # element and every switch after the first printed, and was handed to demo.ps1, without its dash
+    # ("-Forecast Prebuilt"). Left to unroll, @() gets one element per switch, and none for none.
+    $list
 }
 
 function Ask-Demo {
@@ -164,9 +187,20 @@ function Choose-Demo {
     Ask-Demo
 }
 
+# The model of the last interactive choice, empty when there is none or it is not a model id.
+function Get-SavedModel {
+    $m = Read-Kv $LastFile 'model'
+    if ($m -and (Test-ModelId $m)) { $m } else { '' }
+}
+
+# The model is rewritten only by an interactive choice: a one-off -Model or a script's preset must not
+# replace what the person picked last, and the state of a run that named no model keeps the old one.
 function Save-Demo {
+    $m = Get-SavedModel
+    if ($script:ModelOrigin -eq 'chosen') { $m = $script:ModelId }
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
     $text = "mode=$($script:Mode)`nsource=$($script:Source)`nagent=$($script:Agent)`n"
+    if ($m) { $text += "model=$m`n" }
     [IO.File]::WriteAllText((Join-Path $PWD $LastFile), $text, $Utf8NoBom)
 }
 
@@ -273,7 +307,7 @@ function Renew-Tokens {
 # OpenRouter: ok | invalid | unknown.
 function Test-Key([string] $Key) {
     try {
-        Invoke-WebRequest -Uri 'https://openrouter.ai/api/v1/auth/key' -Headers @{ Authorization = "Bearer $Key" } `
+        Invoke-WebRequest -Uri "$OpenRouterBase/auth/key" -Headers @{ Authorization = "Bearer $Key" } `
             -UseBasicParsing -TimeoutSec 8 | Out-Null
         return 'ok'
     } catch {
@@ -354,6 +388,7 @@ function Show-Recap {
         $rows += , @('SpectraLLM', ('UI :' + (Get-Or 'SPECTRA_UI_PORT' '8088') + ', API :' + (Get-Or 'SPECTRA_API_PORT' '8089') + ' - ~4.8 GB of weights, ~16 GB of RAM for the 7B model'))
     }
     foreach ($row in $rows) { Write-Host ("  {0,-36} {1}" -f $row[0], $row[1]) }
+    if (Test-ModelInvolved) { Show-ModelRecap }
     switch ($script:Source) {
         'build' { Write-Host '  First start: Maven build of the Explorer and the TimesFM checkpoint download.' }
         'prebuilt' { Write-Host '  Pulls the published images; nothing is built.' }
@@ -371,6 +406,160 @@ function Get-TokenNames {
     if ($script:Mode -eq 'full') { $names += 'SPECTRA_API_KEY' }
     if (Test-ModelInvolved) { $names += 'OPENROUTER_API_KEY' }
     , $names
+}
+
+# -- The model -----------------------------------------------------------------
+
+function Get-ModelLabel([string] $Id) {
+    switch ($Id) {
+        $DefaultModel { "$Id (router over the free models: no credits needed)" }
+        'openai/gpt-4o-mini' { "$Id (paid: reliable tool calling)" }
+        default { $Id }
+    }
+}
+
+# Where demo.ps1 would already read a model from, with the same precedence: environment, .env, then
+# .forecast-stack\.env. $null when none of them names one.
+function Get-NamedModel {
+    $v = Get-EnvValue 'OPENROUTER_MODEL'
+    if ($v) { return @{ Value = $v; Origin = 'environment' } }
+    $v = Read-Kv '.env' 'OPENROUTER_MODEL'
+    if ($v) { return @{ Value = $v; Origin = '.env' } }
+    $v = Read-Kv $StateEnv 'OPENROUTER_MODEL'
+    if ($v) { return @{ Value = $v; Origin = 'generated' } }
+    $null
+}
+
+# Sets ModelId and ModelOrigin. Asked only when a person is answering and nothing names a model; a
+# preset takes the default, so a script gives the same demo whatever was picked last on this machine.
+# -Again skips every shortcut: the person refused the model those gave.
+function Choose-Model([switch] $Again) {
+    if (-not $Again) {
+        if ($Model) { $script:ModelId = $Model; $script:ModelOrigin = '--model'; return }
+        $named = Get-NamedModel
+        if ($named) { $script:ModelId = $named.Value; $script:ModelOrigin = $named.Origin; return }
+        $script:ModelId = $DefaultModel; $script:ModelOrigin = 'default'
+        if ($Preset) { return }
+    }
+    $last = Get-SavedModel
+    $first = if ($last) { $last } else { $DefaultModel }
+    $values = @($first)
+    if ($first -ne $DefaultModel) { $values += $DefaultModel }
+    if ($first -ne 'openai/gpt-4o-mini') { $values += 'openai/gpt-4o-mini' }
+    $options = @()
+    foreach ($v in $values) {
+        $label = Get-ModelLabel $v
+        if ($last -and $v -eq $last) { $label += ', same as last time' }
+        $options += $label
+    }
+    $options += 'Another model (type its OpenRouter id)'
+    while ($true) {
+        $c = Ask 'Which OpenRouter model?' 1 $options
+        if ($c -le $values.Count) { $script:ModelId = $values[$c - 1]; break }
+        $typed = Read-Host 'Model id (provider/model, Enter to go back)'
+        if (-not $typed) { continue }
+        if (Test-ModelId $typed) { $script:ModelId = $typed; break }
+        Say "'$typed' is not an OpenRouter model id (letters, digits and . _ : / + - only)." 'warn'
+    }
+    $script:ModelOrigin = 'chosen'
+}
+
+function Show-ModelRecap {
+    $where = switch ($script:ModelOrigin) {
+        '--model' { '-Model, this run only' }
+        'environment' { 'from the environment' }
+        '.env' { 'from .env' }
+        'generated' { 'from .forecast-stack\.env' }
+        'chosen' { 'your choice' }
+        default { 'default' }
+    }
+    Write-Host ("  {0,-36} {1}" -f 'OpenRouter model', "$($script:ModelId) ($where)")
+}
+
+# Does the public catalogue say this model takes tool calls? tools | no-tools | missing | unknown.
+# A measure that could not be taken is unknown, never "no": offline, nothing is claimed.
+function Get-ModelTools([string] $Id) {
+    $rows = $null
+    try {
+        $response = Invoke-WebRequest -Uri "$OpenRouterBase/models" -UseBasicParsing -TimeoutSec 8
+        $rows = ($response.Content | ConvertFrom-Json).data
+    } catch { return 'unknown' }
+    if ($null -eq $rows) { return 'unknown' }
+    $row = @($rows | Where-Object { $_.id -eq $Id -or $_.canonical_slug -eq $Id }) | Select-Object -First 1
+    if (-not $row) { return 'missing' }
+    if (@($row.supported_parameters) -contains 'tools') { 'tools' } else { 'no-tools' }
+}
+
+# One tiny completion. Result: ok | invalid-key | no-credits | unavailable | rate-limited | unknown;
+# Detail: the provider's own words, stripped of anything unprintable, when it gave some.
+function Test-ModelAnswer([string] $Key, [string] $Id) {
+    $body = '{"model":"' + $Id + '","max_tokens":8,"messages":[{"role":"user","content":"ok"}]}'
+    try {
+        Invoke-WebRequest -Uri "$OpenRouterBase/chat/completions" -Method Post -Headers @{ Authorization = "Bearer $Key" } `
+            -ContentType 'application/json' -Body $body -UseBasicParsing -TimeoutSec 30 | Out-Null
+        return [pscustomobject]@{ Result = 'ok'; Detail = '' }
+    } catch {
+        $code = 0
+        if ($_.Exception.Response) { $code = [int] $_.Exception.Response.StatusCode }
+        $detail = ''
+        try {
+            $raw = $_.ErrorDetails.Message
+            if (-not $raw -and $_.Exception.Response) {
+                $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                $raw = $reader.ReadToEnd()
+            }
+            if ($raw) { $detail = [string] ($raw | ConvertFrom-Json).error.message }
+        } catch { $detail = '' }
+        $detail = ($detail -replace '[^\x20-\x7E]', '')
+        if ($detail.Length -gt 160) { $detail = $detail.Substring(0, 160) }
+        $result = switch ($code) {
+            { $_ -in 401, 403 } { 'invalid-key' }
+            402 { 'no-credits' }
+            404 { 'unavailable' }
+            429 { 'rate-limited' }
+            default { 'unknown' }
+        }
+        [pscustomobject]@{ Result = $result; Detail = $detail }
+    }
+}
+
+# Checks the chosen model before the start. Findings warn; they never block, except that an
+# interactive run is offered the way out. Returns $false when the person asked to choose another model.
+function Confirm-Model {
+    $id = $script:ModelId
+    $bad = $false
+    switch (Get-ModelTools $id) {
+        'tools' { Say "Model checked: $id declares tool calling." 'ok' }
+        'no-tools' { Say "$id does not declare tool calling on OpenRouter: the agent could not use its tools with it." 'warn'; $bad = $true }
+        'missing' {
+            if ($id.StartsWith('openrouter/')) { Write-Host "$id is a router: the model behind it changes, so tool calling is not checked." }
+            else { Say "$id is not in the OpenRouter catalogue: check the spelling (provider/model)." 'warn'; $bad = $true }
+        }
+        default { Write-Host 'Model not checked against the catalogue (no answer from openrouter.ai): continuing.' }
+    }
+    $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not $Preset -and -not $Yes -and -not $DryRun
+    # The probe spends a little of the quota, so it is asked, never assumed, and never on a dry run.
+    $key = Get-Value 'OPENROUTER_API_KEY'
+    if (-not $bad -and $key -and $interactive) {
+        $go = Read-Host "Send one tiny request to $id to see that it answers? [y/N]"
+        if ($go -match '^[Yy]$') {
+            $answer = Test-ModelAnswer $key $id
+            switch ($answer.Result) {
+                'ok' { Say "$id answered." 'ok' }
+                'invalid-key' { Say 'OpenRouter refused the key for this request.' 'warn'; $bad = $true }
+                'no-credits' { Say "$id needs credits this account does not have." 'warn'; $bad = $true }
+                'unavailable' { Say "$id is not available to this account (404)." 'warn'; $bad = $true }
+                'rate-limited' { Say "$id is rate-limited right now (429): free models often are. It may work a moment later." 'warn'; $bad = $true }
+                default { Say "$id did not answer clearly: not checked further." 'warn' }
+            }
+            if ($answer.Detail) { Write-Host "  OpenRouter says: $($answer.Detail)" }
+        }
+    }
+    if (-not $bad -or -not $interactive) { return $true }
+    $c = Ask 'What now?' 1 @('Choose another model', 'Continue anyway', 'Cancel')
+    if ($c -eq 1) { return $false }
+    if ($c -eq 3) { Write-Host 'Cancelled.'; exit 0 }
+    $true
 }
 
 # -- A demo that is already running -----------------------------------------------
@@ -449,8 +638,19 @@ if ($service) { $shown += $service }
 
 $tokenNames = @()
 if ($verb -eq 'up') {
+    if (Test-ModelInvolved) { Choose-Model }
+    elseif ($Model) { Say "This demo calls no model: -Model $Model is ignored." 'warn' }
     Show-Recap
-    if (Test-ModelInvolved) { Confirm-Key }
+    if (Test-ModelInvolved) {
+        Confirm-Key
+        while (-not (Confirm-Model)) {
+            Choose-Model -Again
+            Show-ModelRecap
+        }
+        # Exported only for a model this run chose: demo.ps1 reads the environment first, so it also
+        # overrides one the environment or .env named when the person took another.
+        if ($script:ModelOrigin -eq '--model' -or $script:ModelOrigin -eq 'chosen') { $env:OPENROUTER_MODEL = $script:ModelId }
+    }
     $tokenNames = Get-TokenNames
     Show-Tokens $false $tokenNames
 }
