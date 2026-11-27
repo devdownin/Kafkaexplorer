@@ -89,6 +89,8 @@ NOT_A_PATH = {
     # the moment the READMEs and the Docker Hub page joined DOCS: all three name it on its
     # own. A comment asserting why an entry is unnecessary is exactly the kind that decays.
     'linux/amd64', 'linux/arm64',
+    # OpenRouter model ids, named by the demo menu's notes: provider/model, not a file.
+    'openrouter/free',
     # An OpenRouter model identifier written as a shape rather than a name, beside the
     # `openai/gpt-4o-mini` example below.
     'vendor/model',

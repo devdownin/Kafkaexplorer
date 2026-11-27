@@ -8,6 +8,7 @@
 #   ./demo-menu.sh --dry-run             # the same, run nothing
 #   ./demo-menu.sh --preset forecast     # skip the questions (--presets lists them)
 #   ./demo-menu.sh --preset forecast --yes   # ...and the confirmation: for scripts
+#   ./demo-menu.sh --preset full --model openai/gpt-4o-mini   # one run on another OpenRouter model
 #
 # Output: colour only on a terminal, never with NO_COLOR set or --no-color, and never alone: every
 # colour is backed by words ("[default]", "valid", "rejected"), and every answer is a number or a
@@ -23,6 +24,12 @@
 # in .forecast-stack/.env, or the dev-only default), masked unless you ask. It writes a secret only
 # when you say so: the OpenRouter key into .env on request, the agent and MCP tokens on "renew".
 # The state file .forecast-stack/last-demo holds the last choice and no secret.
+#
+# The OpenRouter model: asked when a model is involved and nothing already names one, with the last
+# choice first. Precedence is demo.sh's own (the environment, .env, .forecast-stack/.env), and
+# --model beats them for one run. Before the start the menu checks the model against the public
+# catalogue (does it declare tool calling, which the agent needs) and, if you agree, with one tiny
+# request. DEMO_MENU_OPENROUTER_URL points those checks elsewhere (tests); it does not reroute the stack.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -31,7 +38,7 @@ last_file=$state_dir/last-demo
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: ./demo-menu.sh [--dry-run] [--yes] [--no-color] [--preset NAME] | --presets | --help
+Usage: ./demo-menu.sh [--dry-run] [--yes] [--no-color] [--preset NAME] [--model ID] | --presets | --help
 USAGE
   exit "${1:-2}"
 }
@@ -53,12 +60,23 @@ dry_run=false
 assume_yes=false
 no_color=false
 preset=''
+cli_model=''
+# One definition of a model id, shared by the flag, the typed answer and the remembered one: it ends
+# up in a JSON body and a state file, so nothing outside this alphabet gets through.
+valid_model() { [[ ${#1} -le 100 && $1 =~ ^[A-Za-z0-9][A-Za-z0-9._:/+-]*$ ]]; }
+default_model=openrouter/free
+openrouter_base=${DEMO_MENU_OPENROUTER_URL:-https://openrouter.ai/api/v1}
+openrouter_base=${openrouter_base%/}
 while [[ $# -gt 0 ]]; do
   case $1 in
     --dry-run) dry_run=true ;;
     --yes) assume_yes=true ;;
     --no-color) no_color=true ;;
     --preset) shift; preset=${1:-}; [[ -n $preset ]] || usage ;;
+    --model)
+      shift; cli_model=${1:-}
+      valid_model "$cli_model" || { echo "--model expects an OpenRouter model id such as openai/gpt-4o-mini, got '$cli_model'." >&2; exit 2; }
+      ;;
     --presets) presets; exit 0 ;;
     -h | --help) usage 0 ;;
     *) usage ;;
@@ -104,6 +122,8 @@ ask() {
 mode=''
 source_kind=prebuilt
 agent=yes
+model=''         # the OpenRouter model, once model_involved and chosen
+model_origin=''  # --model | environment | .env | generated | chosen | default
 
 preset_apply() {
   source_kind=prebuilt agent=yes
@@ -188,9 +208,22 @@ choose_demo() {
   ask_demo
 }
 
+# The model of the last interactive choice, empty when there is none or it is not a model id.
+saved_model() {
+  local m
+  m=$(read_kv "$last_file" model)
+  if valid_model "$m"; then printf '%s' "$m"; fi
+}
+
+# The model is rewritten only by an interactive choice: a one-off --model or a script's preset must not
+# replace what the person picked last, and the state of a run that named no model keeps the old one.
 remember_demo() {
+  local m
+  m=$(saved_model)
+  [[ $model_origin != chosen ]] || m=$model
   mkdir -p "$state_dir"
   printf 'mode=%s\nsource=%s\nagent=%s\n' "$mode" "$source_kind" "$agent" > "$last_file"
+  if [[ -n $m ]]; then printf 'model=%s\n' "$m" >> "$last_file"; fi
 }
 
 # ── Credentials ──────────────────────────────────────────────────────────────
@@ -307,7 +340,7 @@ renew_tokens() {
 check_key() {
   local code
   code=$(printf 'header = "Authorization: Bearer %s"\n' "$1" |
-    curl -s -o /dev/null -w '%{http_code}' --max-time 8 -K - https://openrouter.ai/api/v1/auth/key 2> /dev/null) || code=000
+    curl -s -o /dev/null -w '%{http_code}' --max-time 8 -K - "$openrouter_base/auth/key" 2> /dev/null) || code=000
   case $code in
     200) echo ok ;;
     401 | 403) echo invalid ;;
@@ -376,6 +409,7 @@ recap() {
   if [[ $agent == yes || $mode != forecast ]]; then
     printf '  %-36s %s\n' 'Kex-anHarness agent' "http://localhost:${KEX_AGENT_PORT:-8081}"
   fi
+  if model_involved; then recap_model; fi
   if [[ $mode == full ]]; then
     printf '  %-36s %s\n' 'SpectraLLM' "UI :${SPECTRA_UI_PORT:-8088}, API :${SPECTRA_API_PORT:-8089} - ~4.8 GB of weights, ~16 GB of RAM for the 7B model"
   fi
@@ -393,6 +427,169 @@ tokens_for_demo() { # fills the global array token_names
   if [[ $agent == yes || $mode != forecast ]]; then token_names+=(KEX_AGENT_API_KEY); fi
   if [[ $mode == full ]]; then token_names+=(SPECTRA_API_KEY); fi
   if model_involved; then token_names+=(OPENROUTER_API_KEY); fi
+}
+
+# ── The model ────────────────────────────────────────────────────────────────
+
+model_label() { # the line a menu entry shows for a model
+  case $1 in
+    "$default_model") echo "$1 (router over the free models: no credits needed)" ;;
+    openai/gpt-4o-mini) echo "$1 (paid: reliable tool calling)" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# Where demo.sh would already read a model from, with the same precedence: environment, .env, then
+# .forecast-stack/.env. Prints "value origin"; nothing when none of them names one.
+named_model() {
+  local v
+  v=${OPENROUTER_MODEL:-}
+  if [[ -n $v ]]; then echo "$v environment"; return; fi
+  v=$(read_kv .env OPENROUTER_MODEL)
+  if [[ -n $v ]]; then echo "$v .env"; return; fi
+  v=$(read_kv "$state_dir/.env" OPENROUTER_MODEL)
+  if [[ -n $v ]]; then echo "$v generated"; fi
+}
+
+# Sets model and model_origin. Asked only when a person is answering and nothing names a model; a
+# preset takes the default, so a script gives the same demo whatever was picked last on this machine.
+# `choose_model again` skips every shortcut: the person refused the model those gave.
+choose_model() {
+  local named last first options=() values=() typed
+  if [[ ${1:-} != again ]]; then
+    if [[ -n $cli_model ]]; then model=$cli_model model_origin=--model; return 0; fi
+    named=$(named_model)
+    if [[ -n $named ]]; then model=${named%% *} model_origin=${named#* }; return 0; fi
+    model=$default_model model_origin=default
+    [[ -z $preset ]] || return 0
+  fi
+  last=$(saved_model)
+  first=${last:-$default_model}
+  values+=("$first")
+  [[ $first == "$default_model" ]] || values+=("$default_model")
+  [[ $first == openai/gpt-4o-mini ]] || values+=(openai/gpt-4o-mini)
+  for typed in "${values[@]}"; do
+    if [[ -n $last && $typed == "$last" ]]; then options+=("$(model_label "$typed"), same as last time")
+    else options+=("$(model_label "$typed")"); fi
+  done
+  options+=('Another model (type its OpenRouter id)')
+  while true; do
+    ask 'Which OpenRouter model?' 1 "${options[@]}"
+    if ((REPLY_INDEX <= ${#values[@]})); then model=${values[REPLY_INDEX - 1]}; break; fi
+    read -r -p 'Model id (provider/model, Enter to go back): ' typed || typed=
+    [[ -n $typed ]] || continue
+    if valid_model "$typed"; then model=$typed; break; fi
+    warn "'$typed' is not an OpenRouter model id (letters, digits and . _ : / + - only)."
+  done
+  model_origin=chosen
+}
+
+# Does the public catalogue say this model takes tool calls? tools | no-tools | missing | unknown.
+# A measure that could not be taken is unknown, never "no": offline, or without python3, nothing is claimed.
+model_tools() {
+  local json
+  command -v python3 > /dev/null || { echo unknown; return; }
+  json=$(curl -fsS --max-time 8 "$openrouter_base/models" 2> /dev/null) || { echo unknown; return; }
+  printf '%s' "$json" | python3 -c '
+import json, sys
+try:
+    rows = json.load(sys.stdin)["data"]
+    row = next((r for r in rows if r.get("id") == sys.argv[1] or r.get("canonical_slug") == sys.argv[1]), None)
+    if row is None:
+        print("missing")
+    else:
+        print("tools" if "tools" in (row.get("supported_parameters") or []) else "no-tools")
+except Exception:
+    print("unknown")
+' "$1" 2> /dev/null || echo unknown
+}
+
+# One tiny completion. ok | invalid-key | no-credits | unavailable | rate-limited | unknown, and the
+# provider's own words, stripped of anything unprintable, on a second line when it gave some.
+probe_model() {
+  local key=$1 body code='' message=''
+  body=$(mktemp)
+  code=$(printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\n' "$key" |
+    curl -s -o "$body" -w '%{http_code}' --max-time 30 -K - \
+      -d "{\"model\":\"$model\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"ok\"}]}" \
+      "$openrouter_base/chat/completions" 2> /dev/null) || code=000
+  if command -v python3 > /dev/null; then
+    message=$(python3 -c '
+import json, sys
+try:
+    m = json.load(open(sys.argv[1]))["error"]["message"]
+    print("".join(c for c in str(m) if c.isprintable())[:160])
+except Exception:
+    pass
+' "$body" 2> /dev/null || true)
+  fi
+  rm -f "$body"
+  case $code in
+    200) echo ok ;;
+    401 | 403) echo invalid-key ;;
+    402) echo no-credits ;;
+    404) echo unavailable ;;
+    429) echo rate-limited ;;
+    *) echo unknown ;;
+  esac
+  [[ -z $message ]] || echo "$message"
+}
+
+# Checks the chosen model before the start. Findings warn; they never block, except that an
+# interactive run is offered the way out. Returns 1 when the person asked to choose another model.
+verify_model() {
+  local tools key result detail verdict='' go
+  tools=$(model_tools "$model")
+  case $tools in
+    tools) ok "Model checked: $model declares tool calling." ;;
+    no-tools) warn "$model does not declare tool calling on OpenRouter: the agent could not use its tools with it."; verdict=bad ;;
+    missing)
+      if [[ $model == openrouter/* ]]; then
+        echo "$model is a router: the model behind it changes, so tool calling is not checked."
+      else
+        warn "$model is not in the OpenRouter catalogue: check the spelling (provider/model)."; verdict=bad
+      fi ;;
+    *) echo 'Model not checked against the catalogue (no answer from openrouter.ai, or no python3): continuing.' ;;
+  esac
+  # The probe spends a little of the quota, so it is asked, never assumed, and never on a dry run.
+  key=$(value_of OPENROUTER_API_KEY)
+  if [[ -z $verdict && -n $key && -t 0 && $assume_yes != true && $dry_run != true && -z $preset ]]; then
+    read -r -p "Send one tiny request to $model to see that it answers? [y/N] " go || go=n
+    if [[ $go =~ ^[Yy]$ ]]; then
+      result=$(probe_model "$key")
+      detail=$(printf '%s\n' "$result" | sed -n 2p)
+      result=$(printf '%s\n' "$result" | sed -n 1p)
+      case $result in
+        ok) ok "$model answered." ;;
+        invalid-key) warn 'OpenRouter refused the key for this request.'; verdict=bad ;;
+        no-credits) warn "$model needs credits this account does not have."; verdict=bad ;;
+        unavailable) warn "$model is not available to this account (404)."; verdict=bad ;;
+        rate-limited) warn "$model is rate-limited right now (429): free models often are. It may work a moment later."; verdict=bad ;;
+        *) warn "$model did not answer clearly: not checked further." ;;
+      esac
+      [[ -z $detail ]] || echo "  OpenRouter says: $detail"
+    fi
+  fi
+  [[ $verdict == bad ]] || return 0
+  [[ -t 0 && -z $preset ]] || return 0
+  ask 'What now?' 1 'Choose another model' 'Continue anyway' 'Cancel'
+  case $REPLY_INDEX in
+    1) return 1 ;;
+    3) echo 'Cancelled.'; exit 0 ;;
+  esac
+}
+
+recap_model() {
+  local where
+  case $model_origin in
+    --model) where='--model, this run only' ;;
+    environment) where='from the environment' ;;
+    .env) where='from .env' ;;
+    generated) where='from .forecast-stack/.env' ;;
+    chosen) where='your choice' ;;
+    *) where='default' ;;
+  esac
+  printf '  %-36s %s\n' 'OpenRouter model' "$model ($where)"
 }
 
 # ── A demo that is already running ───────────────────────────────────────────
@@ -469,8 +666,22 @@ command=(./demo.sh "${flags[@]}")
 [[ -z $service ]] || command+=("$service")
 
 if [[ $verb == up ]]; then
+  if model_involved; then
+    choose_model
+  elif [[ -n $cli_model ]]; then
+    warn "This demo calls no model: --model $cli_model is ignored."
+  fi
   recap
-  if model_involved; then ensure_key; fi
+  if model_involved; then
+    ensure_key
+    while ! verify_model; do
+      choose_model again
+      recap_model
+    done
+    # Exported only for a model this run chose: demo.sh reads the environment first, so it also
+    # overrides one the environment or .env named when the person took another.
+    if [[ $model_origin == --model || $model_origin == chosen ]]; then export OPENROUTER_MODEL=$model; fi
+  fi
   tokens_for_demo
   show_tokens false "${token_names[@]}"
 fi

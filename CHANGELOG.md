@@ -20,6 +20,19 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The demo menu names, checks and remembers the OpenRouter model.** `demo-menu.sh` and `demo-menu.ps1`
+  now show the model in the recap with where it comes from (`--model`, the environment, `.env`,
+  `.forecast-stack/.env`, your choice, or the default `openrouter/free`) and ask for it when a model is
+  involved and nothing already names one, the last choice first. `--model ID` / `-Model ID` sets it for one
+  run, and a preset still takes the default, so a script gives the same demo whatever was picked last.
+  Before the start the menu looks the model up in the public catalogue and warns when it does not declare
+  tool calling (which the agent needs) or is not listed; a router such as `openrouter/free` is neither
+  claimed nor refused, and an unreachable catalogue is "not checked", never "no". If you agree, one tiny
+  request then shows whether the model answers — no credits, 404, rate limit — with the provider's words
+  stripped of control characters; it is never sent on a dry run, with `--yes` or from a preset.
+  `ci/test_demo_menu.py` runs both menus against a fake `demo.sh` and a local stand-in for openrouter.ai,
+  and holds `demo-menu.ps1` to the same switches when `pwsh` is installed.
+
 - **The demo launchers default to `openrouter/free`.** `demo.sh`, `demo.ps1` — and so `demo-menu` — ran an
   OpenRouter key on `openai/gpt-4o-mini`, a paid model: a fresh key with no credits got a refusal on the
   first question. `OPENROUTER_MODEL` still wins when set, and the compose files keep `openai/gpt-4o-mini`
