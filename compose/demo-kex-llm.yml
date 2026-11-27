@@ -25,8 +25,13 @@
 #     system prompt on every turn, and the Explorer's MCP tools alone are a large part of 16 384.
 #     The Explorer's prompt budget stays at llama-cpp.yml's value, which fits either.
 #   * One slot serves both apps, so a Process Mining analysis and a chat turn queue behind each
-#     other. A small model on CPU answers in tens of seconds to minutes: the agent's request and
-#     async timeouts are raised to match (they ship at 120 s and 150 s).
+#     other. A small model on CPU answers in tens of seconds to minutes, so THREE agent limits move,
+#     not two: the exchange (120 s shipped), the async request around it (150 s) and the client's
+#     own cap on ONE call to the model (60 s, Spring AI's default) — which applies to the whole
+#     call, stream included, and is the one that cut a long answer first. The client also retries
+#     3 times by default, replaying the whole prompt on a model that has just shown it is slow:
+#     retries go to 0. All set through Spring's relaxed binding, so they apply to the published
+#     agent image whatever its version (the audit that found this: Kex-anHarness docs/PIEGES.md).
 services:
   llama-cpp:
     build: !reset null
@@ -53,3 +58,5 @@ services:
       # Relaxed binding of kex.agent.request-timeout and spring.mvc.async.request-timeout.
       KEX_AGENT_REQUESTTIMEOUT: 600s
       SPRING_MVC_ASYNC_REQUESTTIMEOUT: 650s
+      SPRING_AI_OPENAI_TIMEOUT: 600s
+      SPRING_AI_OPENAI_MAXRETRIES: "0"

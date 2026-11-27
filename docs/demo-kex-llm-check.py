@@ -39,6 +39,13 @@ assert agent['KEX_AGENT_LLM_PROVIDER'] == 'openai', 'The agent speaks the OpenAI
 assert agent['OPENROUTER_BASE_URL'] == url and agent['OPENROUTER_MODEL'] == alias, 'The agent must reach this server, by alias'
 assert agent.get('OPENROUTER_API_KEY'), 'An empty key stops the agent from starting its provider'
 assert 'llama-cpp' in services['agent'].get('depends_on', {}), 'The agent starts after the server'
-# Shipped: 120 s and 150 s, sized for a hosted model.
+# Shipped: 120 s exchange, 150 s async request, and Spring AI's own 60 s cap on one call, retried 3 times:
+# sized for a hosted model. The call cap applies to the whole call, stream included, so it is the first to cut.
 assert agent['KEX_AGENT_REQUESTTIMEOUT'] and agent['SPRING_MVC_ASYNC_REQUESTTIMEOUT'], 'A model on CPU needs the longer timeouts'
+assert agent['SPRING_AI_OPENAI_TIMEOUT'], "The client's own 60 s cap on one call would cut a slow answer before the exchange does"
+assert agent['SPRING_AI_OPENAI_MAXRETRIES'] == '0', 'The client would replay the whole prompt 3 times on a model that is already slow'
+def seconds(value):
+    return int(str(value).rstrip('s'))
+assert seconds(agent['SPRING_AI_OPENAI_TIMEOUT']) <= seconds(agent['KEX_AGENT_REQUESTTIMEOUT']) < seconds(agent['SPRING_MVC_ASYNC_REQUESTTIMEOUT']), \
+    'One call must fit in the exchange, and the exchange in the async request'
 print('· the Explorer and the agent both answer from the kex-llm image')
