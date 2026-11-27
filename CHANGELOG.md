@@ -20,6 +20,16 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The demo menu selects SpectraLLM's local model.** In the full suite the chat model runs on this
+  machine — the 7B by default (~16 GB of RAM) — and a laptop wants the 3B, which `.env.example` described
+  as four variables to copy by hand. `demo-menu.sh` / `demo-menu.ps1` now ask for it (the last choice
+  first, remembered as `local=` in `.forecast-stack/last-demo`), take `--local-model 7b|3b` /
+  `-LocalModel` for one run, and give a preset the default. The 3B travels as the four variables that
+  have to agree — name, file, URL, no auto-install — all or none. A name already set by the environment
+  or a `.env` is shown and asked about nothing, and `--local-model` is refused over it rather than
+  half-overriding four variables (an empty URL cannot be set on Windows, where it would fall back to the
+  `.env`'s). The recap and the first-run notice of `demo.sh` / `demo.ps1` quote the weights and RAM of the
+  model that will run, not always the 7B's. Covered by `ci/test_demo_menu.py`.
 - **The demo menu names, checks and remembers the OpenRouter model.** `demo-menu.sh` and `demo-menu.ps1`
   now show the model in the recap with where it comes from (`--model`, the environment, `.env`,
   `.forecast-stack/.env`, your choice, or the default `openrouter/free`) and ask for it when a model is

@@ -9,6 +9,7 @@
 #   ./demo-menu.sh --preset forecast     # skip the questions (--presets lists them)
 #   ./demo-menu.sh --preset forecast --yes   # ...and the confirmation: for scripts
 #   ./demo-menu.sh --preset full --model openai/gpt-4o-mini   # one run on another OpenRouter model
+#   ./demo-menu.sh --preset full --local-model 3b             # the 3B SpectraLLM chat model, for a laptop
 #
 # Output: colour only on a terminal, never with NO_COLOR set or --no-color, and never alone: every
 # colour is backed by words ("[default]", "valid", "rejected"), and every answer is a number or a
@@ -30,6 +31,12 @@
 # --model beats them for one run. Before the start the menu checks the model against the public
 # catalogue (does it declare tool calling, which the agent needs) and, if you agree, with one tiny
 # request. DEMO_MENU_OPENROUTER_URL points those checks elsewhere (tests); it does not reroute the stack.
+#
+# The local model: the full suite runs SpectraLLM's chat model on this machine, the 7B by default (~16 GB
+# of RAM) or the 3B a laptop wants. It is asked the same way, the last choice first, and a preset takes
+# the default. The 3B is four variables that have to agree (name, file, URL, no auto-install), so the
+# menu sets all four or none; if LLM_CHAT_MODEL_NAME is already named, by the environment or a .env,
+# the menu shows it and asks nothing, and --local-model is refused rather than half-overriding it.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -38,7 +45,7 @@ last_file=$state_dir/last-demo
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: ./demo-menu.sh [--dry-run] [--yes] [--no-color] [--preset NAME] [--model ID] | --presets | --help
+Usage: ./demo-menu.sh [--dry-run] [--yes] [--no-color] [--preset NAME] [--model ID] [--local-model 7b|3b] | --presets | --help
 USAGE
   exit "${1:-2}"
 }
@@ -61,6 +68,7 @@ assume_yes=false
 no_color=false
 preset=''
 cli_model=''
+cli_local=''
 # One definition of a model id, shared by the flag, the typed answer and the remembered one: it ends
 # up in a JSON body and a state file, so nothing outside this alphabet gets through.
 valid_model() { [[ ${#1} -le 100 && $1 =~ ^[A-Za-z0-9][A-Za-z0-9._:/+-]*$ ]]; }
@@ -73,6 +81,10 @@ while [[ $# -gt 0 ]]; do
     --yes) assume_yes=true ;;
     --no-color) no_color=true ;;
     --preset) shift; preset=${1:-}; [[ -n $preset ]] || usage ;;
+    --local-model)
+      shift; cli_local=${1:-}
+      [[ $cli_local == 7b || $cli_local == 3b ]] || { echo "--local-model expects 7b or 3b, got '$cli_local'." >&2; exit 2; }
+      ;;
     --model)
       shift; cli_model=${1:-}
       valid_model "$cli_model" || { echo "--model expects an OpenRouter model id such as openai/gpt-4o-mini, got '$cli_model'." >&2; exit 2; }
@@ -124,6 +136,8 @@ source_kind=prebuilt
 agent=yes
 model=''         # the OpenRouter model, once model_involved and chosen
 model_origin=''  # --model | environment | .env | generated | chosen | default
+local_model=''   # 7b | 3b | the name something else already set: SpectraLLM's chat model, full suite only
+local_origin=''  # --local-model | environment | .env | generated | chosen | default
 
 preset_apply() {
   source_kind=prebuilt agent=yes
@@ -215,15 +229,25 @@ saved_model() {
   if valid_model "$m"; then printf '%s' "$m"; fi
 }
 
-# The model is rewritten only by an interactive choice: a one-off --model or a script's preset must not
-# replace what the person picked last, and the state of a run that named no model keeps the old one.
-remember_demo() {
+# The local model of the last interactive choice: 7b or 3b, empty when there is none.
+saved_local() {
   local m
+  m=$(read_kv "$last_file" local)
+  if [[ $m == 7b || $m == 3b ]]; then printf '%s' "$m"; fi
+}
+
+# The models are rewritten only by an interactive choice: a one-off flag or a script's preset must not
+# replace what the person picked last, and a run that chose none keeps the old ones.
+remember_demo() {
+  local m l
   m=$(saved_model)
+  l=$(saved_local)
   [[ $model_origin != chosen ]] || m=$model
+  [[ $local_origin != chosen ]] || l=$local_model
   mkdir -p "$state_dir"
   printf 'mode=%s\nsource=%s\nagent=%s\n' "$mode" "$source_kind" "$agent" > "$last_file"
   if [[ -n $m ]]; then printf 'model=%s\n' "$m" >> "$last_file"; fi
+  if [[ -n $l ]]; then printf 'local=%s\n' "$l" >> "$last_file"; fi
 }
 
 # ── Credentials ──────────────────────────────────────────────────────────────
@@ -410,8 +434,9 @@ recap() {
     printf '  %-36s %s\n' 'Kex-anHarness agent' "http://localhost:${KEX_AGENT_PORT:-8081}"
   fi
   if model_involved; then recap_model; fi
+  if [[ $mode == full ]]; then recap_local; fi
   if [[ $mode == full ]]; then
-    printf '  %-36s %s\n' 'SpectraLLM' "UI :${SPECTRA_UI_PORT:-8088}, API :${SPECTRA_API_PORT:-8089} - ~4.8 GB of weights, ~16 GB of RAM for the 7B model"
+    printf '  %-36s %s\n' 'SpectraLLM' "UI :${SPECTRA_UI_PORT:-8088}, API :${SPECTRA_API_PORT:-8089}$(local_weights)"
   fi
   case $source_kind in
     build) echo '  First start: Maven build of the Explorer and the TimesFM checkpoint download.' ;;
@@ -592,6 +617,102 @@ recap_model() {
   printf '  %-36s %s\n' 'OpenRouter model' "$model ($where)"
 }
 
+# ── The local model ──────────────────────────────────────────────────────────
+
+# The two chat models SpectraLLM can serve in this demo. The 3B is the four variables .env.example
+# says have to agree: the name spectra-api records, the file llama-server serves, where the file comes
+# from, and no auto-install (which only knows the 7B and would fetch it alongside).
+local_name() { case $1 in 7b) echo qwen2.5-7b-instruct ;; 3b) echo qwen2.5-3b-instruct ;; esac; }
+local_file() { case $1 in 7b) echo Qwen2.5-7B-Instruct-Q4_K_M.gguf ;; 3b) echo Qwen2.5-3B-Instruct-Q4_K_M.gguf ;; esac; }
+local_url() {
+  case $1 in 3b) echo https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf ;; esac
+}
+local_label() {
+  case $1 in
+    7b) echo 'Qwen2.5 7B (the default: ~4.8 GB of weights, ~16 GB of RAM)' ;;
+    3b) echo 'Qwen2.5 3B (a laptop: ~2 GB of weights, about half the RAM, answers sooner)' ;;
+    *) echo "$1" ;;
+  esac
+}
+# What the SpectraLLM row of the recap says about its weights, for the model that will run.
+local_weights() {
+  case $local_model in
+    7b | '') echo ' - ~4.8 GB of weights, ~16 GB of RAM for the 7B model' ;;
+    3b) echo ' - ~2 GB of weights, about half the RAM of the 7B model' ;;
+  esac
+}
+
+# Where the demo would already read the local model's name from, in demo.sh's precedence. Prints
+# "value origin"; nothing when none names one.
+named_local() {
+  local v
+  v=${LLM_CHAT_MODEL_NAME:-}
+  if [[ -n $v ]]; then echo "$v environment"; return; fi
+  v=$(read_kv .env LLM_CHAT_MODEL_NAME)
+  if [[ -n $v ]]; then echo "$v .env"; return; fi
+  v=$(read_kv "$state_dir/.env" LLM_CHAT_MODEL_NAME)
+  if [[ -n $v ]]; then echo "$v generated"; fi
+}
+
+# Sets local_model and local_origin. Same rules as the OpenRouter model: asked only when a person is
+# answering and nothing names a model, the last choice first; a preset takes the default.
+choose_local_model() {
+  local named last first values=() options=() v
+  named=$(named_local)
+  if [[ -n $named ]]; then
+    if [[ -n $cli_local ]]; then
+      echo "--local-model $cli_local is refused: LLM_CHAT_MODEL_NAME is already set (${named#* }). The 3B is four variables that have to agree, so the menu does not half-override them: unset it, or drop --local-model." >&2
+      exit 2
+    fi
+    case ${named%% *} in
+      "$(local_name 7b)") local_model=7b ;;
+      "$(local_name 3b)") local_model=3b ;;
+      *) local_model=${named%% *} ;;
+    esac
+    local_origin=${named#* }
+    return 0
+  fi
+  if [[ -n $cli_local ]]; then local_model=$cli_local local_origin=--local-model; return 0; fi
+  local_model=7b local_origin=default
+  [[ -z $preset ]] || return 0
+  last=$(saved_local)
+  first=${last:-7b}
+  values=("$first")
+  [[ $first == 7b ]] && values+=(3b) || values+=(7b)
+  for v in "${values[@]}"; do
+    if [[ -n $last && $v == "$last" ]]; then options+=("$(local_label "$v"), same as last time")
+    else options+=("$(local_label "$v")"); fi
+  done
+  ask 'Which local model for SpectraLLM?' 1 "${options[@]}"
+  local_model=${values[REPLY_INDEX - 1]} local_origin=chosen
+}
+
+recap_local() {
+  local where label
+  case $local_origin in
+    --local-model) where='--local-model, this run only' ;;
+    environment) where='from the environment' ;;
+    .env) where='from .env' ;;
+    generated) where='from .forecast-stack/.env' ;;
+    chosen) where='your choice' ;;
+    *) where='default' ;;
+  esac
+  case $local_model in
+    7b | 3b) label="$(local_name "$local_model")" ;;
+    *) label=$local_model ;;
+  esac
+  printf '  %-36s %s\n' 'Local model (SpectraLLM)' "$label ($where)"
+}
+
+# Handed over only for a model this run chose, and only the 3B: the 7B is what every default already
+# says. All four together, or the file and the name disagree.
+export_local_model() {
+  [[ $local_origin == --local-model || $local_origin == chosen ]] || return 0
+  [[ $local_model == 3b ]] || return 0
+  export LLM_CHAT_MODEL_NAME=$(local_name 3b) LLM_CHAT_MODEL_FILE=$(local_file 3b)
+  export SPECTRA_CHAT_MODEL_URL=$(local_url 3b) SPECTRA_AUTO_INSTALL_MODELS=false
+}
+
 # ── A demo that is already running ───────────────────────────────────────────
 
 # Prints the running services, comma separated; nothing when there is no daemon or no demo.
@@ -671,6 +792,11 @@ if [[ $verb == up ]]; then
   elif [[ -n $cli_model ]]; then
     warn "This demo calls no model: --model $cli_model is ignored."
   fi
+  if [[ $mode == full ]]; then
+    choose_local_model
+  elif [[ -n $cli_local ]]; then
+    warn "This demo starts no SpectraLLM: --local-model $cli_local is ignored."
+  fi
   recap
   if model_involved; then
     ensure_key
@@ -682,6 +808,7 @@ if [[ $verb == up ]]; then
     # overrides one the environment or .env named when the person took another.
     if [[ $model_origin == --model || $model_origin == chosen ]]; then export OPENROUTER_MODEL=$model; fi
   fi
+  if [[ $mode == full ]]; then export_local_model; fi
   tokens_for_demo
   show_tokens false "${token_names[@]}"
 fi

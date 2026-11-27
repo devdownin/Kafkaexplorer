@@ -9,6 +9,7 @@
 #   .\demo-menu.cmd -Preset forecast         # skip the questions (-Presets lists them)
 #   .\demo-menu.cmd -Preset forecast -Yes    # ...and the confirmation: for scripts
 #   .\demo-menu.cmd -Preset full -Model openai/gpt-4o-mini   # one run on another OpenRouter model
+#   .\demo-menu.cmd -Preset full -LocalModel 3b              # the 3B SpectraLLM chat model, for a laptop
 #
 # Output: colour only on a terminal, never with NO_COLOR set or -NoColor, and never alone: every
 # colour is backed by words ("[default]", "valid", "rejected"), and every answer is a number or a
@@ -26,6 +27,12 @@
 # (does it declare tool calling, which the agent needs) and, if you agree, with one tiny request.
 # DEMO_MENU_OPENROUTER_URL points those checks elsewhere (tests); it does not reroute the stack.
 #
+# The local model: the full suite runs SpectraLLM's chat model on this machine, the 7B by default (~16 GB
+# of RAM) or the 3B a laptop wants. It is asked the same way, the last choice first, and a preset takes
+# the default. The 3B is four variables that have to agree (name, file, URL, no auto-install), so the
+# menu sets all four or none; if LLM_CHAT_MODEL_NAME is already named, by the environment or a .env,
+# the menu shows it and asks nothing, and -LocalModel is refused rather than half-overriding it.
+#
 # Kept ASCII on purpose: Windows PowerShell 5.1 reads a BOM-less script as the ANSI code page.
 [CmdletBinding()]
 param(
@@ -34,7 +41,8 @@ param(
     [switch] $NoColor,
     [string] $Preset = '',
     [switch] $Presets,
-    [string] $Model = ''
+    [string] $Model = '',
+    [ValidateSet('', '7b', '3b')] [string] $LocalModel = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -57,6 +65,8 @@ if ($Model -and -not (Test-ModelId $Model)) {
 }
 $script:ModelId = ''        # the OpenRouter model, once a model is involved and chosen
 $script:ModelOrigin = ''    # -Model | environment | .env | generated | chosen | default
+$script:LocalId = ''        # 7b | 3b | the name something else already set: SpectraLLM's chat model, full suite only
+$script:LocalOrigin = ''    # -LocalModel | environment | .env | generated | chosen | default
 
 $UseColor = (-not $NoColor) -and (-not $env:NO_COLOR) -and [Environment]::UserInteractive -and (-not [Console]::IsOutputRedirected)
 # Kind: title (bold-ish white), ok (green), warn (yellow); anything else is plain.
@@ -195,12 +205,21 @@ function Get-SavedModel {
 
 # The model is rewritten only by an interactive choice: a one-off -Model or a script's preset must not
 # replace what the person picked last, and the state of a run that named no model keeps the old one.
+# The local model of the last interactive choice: 7b or 3b, empty when there is none.
+function Get-SavedLocal {
+    $m = Read-Kv $LastFile 'local'
+    if ($m -eq '7b' -or $m -eq '3b') { $m } else { '' }
+}
+
 function Save-Demo {
     $m = Get-SavedModel
     if ($script:ModelOrigin -eq 'chosen') { $m = $script:ModelId }
+    $l = Get-SavedLocal
+    if ($script:LocalOrigin -eq 'chosen') { $l = $script:LocalId }
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
     $text = "mode=$($script:Mode)`nsource=$($script:Source)`nagent=$($script:Agent)`n"
     if ($m) { $text += "model=$m`n" }
+    if ($l) { $text += "local=$l`n" }
     [IO.File]::WriteAllText((Join-Path $PWD $LastFile), $text, $Utf8NoBom)
 }
 
@@ -385,10 +404,11 @@ function Show-Recap {
         $rows += , @('Kex-anHarness agent', ('http://localhost:' + (Get-Or 'KEX_AGENT_PORT' '8081')))
     }
     if ($script:Mode -eq 'full') {
-        $rows += , @('SpectraLLM', ('UI :' + (Get-Or 'SPECTRA_UI_PORT' '8088') + ', API :' + (Get-Or 'SPECTRA_API_PORT' '8089') + ' - ~4.8 GB of weights, ~16 GB of RAM for the 7B model'))
+        $rows += , @('SpectraLLM', ('UI :' + (Get-Or 'SPECTRA_UI_PORT' '8088') + ', API :' + (Get-Or 'SPECTRA_API_PORT' '8089') + (Get-LocalWeights)))
     }
     foreach ($row in $rows) { Write-Host ("  {0,-36} {1}" -f $row[0], $row[1]) }
     if (Test-ModelInvolved) { Show-ModelRecap }
+    if ($script:Mode -eq 'full') { Show-LocalRecap }
     switch ($script:Source) {
         'build' { Write-Host '  First start: Maven build of the Explorer and the TimesFM checkpoint download.' }
         'prebuilt' { Write-Host '  Pulls the published images; nothing is built.' }
@@ -562,6 +582,96 @@ function Confirm-Model {
     $true
 }
 
+# -- The local model ----------------------------------------------------------
+
+# The two chat models SpectraLLM can serve in this demo. The 3B is the four variables .env.example
+# says have to agree: the name spectra-api records, the file llama-server serves, where the file comes
+# from, and no auto-install (which only knows the 7B and would fetch it alongside).
+$LocalSpecs = @{
+    '7b' = @{ Name = 'qwen2.5-7b-instruct'; File = 'Qwen2.5-7B-Instruct-Q4_K_M.gguf'
+              Label = 'Qwen2.5 7B (the default: ~4.8 GB of weights, ~16 GB of RAM)' }
+    '3b' = @{ Name = 'qwen2.5-3b-instruct'; File = 'Qwen2.5-3B-Instruct-Q4_K_M.gguf'
+              Url = 'https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf'
+              Label = 'Qwen2.5 3B (a laptop: ~2 GB of weights, about half the RAM, answers sooner)' }
+}
+
+# What the SpectraLLM row of the recap says about its weights, for the model that will run.
+function Get-LocalWeights {
+    switch ($script:LocalId) {
+        '3b' { ' - ~2 GB of weights, about half the RAM of the 7B model' }
+        { $_ -in @('7b', '') } { ' - ~4.8 GB of weights, ~16 GB of RAM for the 7B model' }
+        default { '' }
+    }
+}
+
+# Where the demo would already read the local model's name from, in demo.ps1's precedence. $null when
+# none names one.
+function Get-NamedLocal {
+    $v = Get-EnvValue 'LLM_CHAT_MODEL_NAME'
+    if ($v) { return @{ Value = $v; Origin = 'environment' } }
+    $v = Read-Kv '.env' 'LLM_CHAT_MODEL_NAME'
+    if ($v) { return @{ Value = $v; Origin = '.env' } }
+    $v = Read-Kv $StateEnv 'LLM_CHAT_MODEL_NAME'
+    if ($v) { return @{ Value = $v; Origin = 'generated' } }
+    $null
+}
+
+# Sets LocalId and LocalOrigin. Same rules as the OpenRouter model: asked only when a person is
+# answering and nothing names a model, the last choice first; a preset takes the default.
+function Choose-LocalModel {
+    $named = Get-NamedLocal
+    if ($named) {
+        if ($LocalModel) {
+            [Console]::Error.WriteLine("-LocalModel $LocalModel is refused: LLM_CHAT_MODEL_NAME is already set ($($named.Origin)). The 3B is four variables that have to agree, so the menu does not half-override them: unset it, or drop -LocalModel.")
+            exit 2
+        }
+        $script:LocalId = $named.Value
+        if ($named.Value -eq $LocalSpecs['7b'].Name) { $script:LocalId = '7b' }
+        elseif ($named.Value -eq $LocalSpecs['3b'].Name) { $script:LocalId = '3b' }
+        $script:LocalOrigin = $named.Origin
+        return
+    }
+    if ($LocalModel) { $script:LocalId = $LocalModel; $script:LocalOrigin = '-LocalModel'; return }
+    $script:LocalId = '7b'; $script:LocalOrigin = 'default'
+    if ($Preset) { return }
+    $last = Get-SavedLocal
+    $first = if ($last) { $last } else { '7b' }
+    $values = @($first, $(if ($first -eq '7b') { '3b' } else { '7b' }))
+    $options = @()
+    foreach ($v in $values) {
+        $label = $LocalSpecs[$v].Label
+        if ($last -and $v -eq $last) { $label += ', same as last time' }
+        $options += $label
+    }
+    $c = Ask 'Which local model for SpectraLLM?' 1 $options
+    $script:LocalId = $values[$c - 1]; $script:LocalOrigin = 'chosen'
+}
+
+function Show-LocalRecap {
+    $where = switch ($script:LocalOrigin) {
+        '-LocalModel' { '-LocalModel, this run only' }
+        'environment' { 'from the environment' }
+        '.env' { 'from .env' }
+        'generated' { 'from .forecast-stack\.env' }
+        'chosen' { 'your choice' }
+        default { 'default' }
+    }
+    $label = if ($LocalSpecs.ContainsKey($script:LocalId)) { $LocalSpecs[$script:LocalId].Name } else { $script:LocalId }
+    Write-Host ("  {0,-36} {1}" -f 'Local model (SpectraLLM)', "$label ($where)")
+}
+
+# Handed over only for a model this run chose, and only the 3B: the 7B is what every default already
+# says. All four together, or the file and the name disagree.
+function Export-LocalModel {
+    if ($script:LocalOrigin -ne '-LocalModel' -and $script:LocalOrigin -ne 'chosen') { return }
+    if ($script:LocalId -ne '3b') { return }
+    $spec = $LocalSpecs['3b']
+    $env:LLM_CHAT_MODEL_NAME = $spec.Name
+    $env:LLM_CHAT_MODEL_FILE = $spec.File
+    $env:SPECTRA_CHAT_MODEL_URL = $spec.Url
+    $env:SPECTRA_AUTO_INSTALL_MODELS = 'false'
+}
+
 # -- A demo that is already running -----------------------------------------------
 
 # The running services, comma separated; nothing when there is no daemon or no demo.
@@ -640,6 +750,8 @@ $tokenNames = @()
 if ($verb -eq 'up') {
     if (Test-ModelInvolved) { Choose-Model }
     elseif ($Model) { Say "This demo calls no model: -Model $Model is ignored." 'warn' }
+    if ($script:Mode -eq 'full') { Choose-LocalModel }
+    elseif ($LocalModel) { Say "This demo starts no SpectraLLM: -LocalModel $LocalModel is ignored." 'warn' }
     Show-Recap
     if (Test-ModelInvolved) {
         Confirm-Key
@@ -651,6 +763,7 @@ if ($verb -eq 'up') {
         # overrides one the environment or .env named when the person took another.
         if ($script:ModelOrigin -eq '--model' -or $script:ModelOrigin -eq 'chosen') { $env:OPENROUTER_MODEL = $script:ModelId }
     }
+    if ($script:Mode -eq 'full') { Export-LocalModel }
     $tokenNames = Get-TokenNames
     Show-Tokens $false $tokenNames
 }

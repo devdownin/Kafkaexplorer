@@ -12,6 +12,9 @@ Three things are pinned:
     pwsh is installed: GitHub's Ubuntu runners have it, a laptop may not);
   * the OpenRouter model: where it comes from, what the checks say, and that only an interactive
     choice is remembered;
+  * the local model: 7b or 3b for SpectraLLM, where it comes from, that the 3B travels as the four
+    variables that have to agree (all or none), and that a name already set is shown and never
+    half-overridden;
   * the checks themselves: a model with no tool calling, one the catalogue does not know, one that
     needs credits, and a catalogue that cannot be reached (which is "not checked", never "no").
 """
@@ -98,7 +101,10 @@ class MenuCase(unittest.TestCase):
         # What the menu hands over to: records its switches and the model it would have been given.
         fake = self.work / 'demo.sh'
         fake.write_text('#!/usr/bin/env bash\n'
-                        'printf "ARGS=%s\\nMODEL=%s\\n" "$*" "${OPENROUTER_MODEL-unset}" > handoff.txt\n')
+                        'printf "ARGS=%s\\nMODEL=%s\\n" "$*" "${OPENROUTER_MODEL-unset}" > handoff.txt\n'
+                        'for v in LLM_CHAT_MODEL_NAME LLM_CHAT_MODEL_FILE SPECTRA_CHAT_MODEL_URL SPECTRA_AUTO_INSTALL_MODELS; do\n'
+                        '  printf "%s=%s\\n" "$v" "${!v-unset}" >> handoff.txt\n'
+                        'done\n')
         fake.chmod(0o755)
         (self.work / 'bin').mkdir()
         docker = self.work / 'bin' / 'docker'
@@ -251,6 +257,106 @@ class Model(MenuCase):
         self.assertEqual(recap(), 'openrouter/free (default)')
         self.assertEqual(recap('-Model', 'x/y', OPENROUTER_MODEL='x/env'), 'x/y (-Model, this run only)')
         self.assertEqual(recap(OPENROUTER_MODEL='x/env'), 'x/env (from the environment)')
+
+
+class LocalModel(MenuCase):
+    THREE_B = {'LLM_CHAT_MODEL_NAME': 'qwen2.5-3b-instruct', 'LLM_CHAT_MODEL_FILE': 'Qwen2.5-3B-Instruct-Q4_K_M.gguf',
+               'SPECTRA_CHAT_MODEL_URL': 'https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/'
+                                         'Qwen2.5-3B-Instruct-Q4_K_M.gguf',
+               'SPECTRA_AUTO_INSTALL_MODELS': 'false'}
+    NONE = {k: 'unset' for k in THREE_B}
+
+    def recap(self, out):
+        return re.search(r'Local model \(SpectraLLM\)\s+(.*)', out).group(1)
+
+    def handed(self):
+        got = self.handoff()
+        return {k: got[k] for k in self.THREE_B}
+
+    def test_a_preset_takes_the_7b_and_hands_over_nothing(self):
+        code, out = self.menu('--preset', 'full', '--yes')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.recap(out), 'qwen2.5-7b-instruct (default)')
+        self.assertIn('~4.8 GB of weights, ~16 GB of RAM for the 7B model', out)
+        self.assertEqual(self.handed(), self.NONE)  # every default already says the 7B
+
+    def test_the_3b_is_handed_over_as_the_four_variables_or_none(self):
+        code, out = self.menu('--preset', 'full', '--yes', '--local-model', '3b')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.recap(out), 'qwen2.5-3b-instruct (--local-model, this run only)')
+        self.assertIn('~2 GB of weights, about half the RAM of the 7B model', out)
+        self.assertEqual(self.handed(), self.THREE_B)
+
+    def test_the_flag_takes_7b_or_3b_only(self):
+        for bad in ('9b', '', '3B', '7b;id'):
+            with self.subTest(value=bad):
+                code, out = self.menu('--dry-run', '--preset', 'full', '--local-model', bad)
+                self.assertEqual(code, 2, out)
+                self.assertIn('--local-model expects 7b or 3b', out)
+
+    def test_a_demo_without_spectrallm_says_the_flag_is_ignored(self):
+        for preset in ('full-no-spectra', 'forecast'):
+            with self.subTest(preset=preset):
+                _, out = self.menu('--dry-run', '--preset', preset, '--local-model', '3b')
+                self.assertIn('This demo starts no SpectraLLM: --local-model 3b is ignored.', out)
+                self.assertNotIn('Local model (SpectraLLM)', out)
+
+    def test_a_name_already_set_is_shown_and_asks_nothing(self):
+        _, out = self.menu('--preset', 'full', '--dry-run', LLM_CHAT_MODEL_NAME='qwen2.5-3b-instruct')
+        self.assertEqual(self.recap(out), 'qwen2.5-3b-instruct (from the environment)')
+        (self.work / '.env').write_text('LLM_CHAT_MODEL_NAME=my-own-1b\n')
+        _, out = self.menu('--preset', 'full', '--dry-run')
+        self.assertEqual(self.recap(out), 'my-own-1b (from .env)')
+        self.assertNotIn('weights', out)  # nothing is claimed about a model the menu does not know
+
+    def test_a_name_already_set_is_not_half_overridden(self):
+        code, out = self.menu('--preset', 'full', '--dry-run', '--local-model', '7b', LLM_CHAT_MODEL_NAME='x-1b')
+        self.assertEqual(code, 2, out)
+        self.assertIn('--local-model 7b is refused: LLM_CHAT_MODEL_NAME is already set (environment)', out)
+
+    def test_an_interactive_choice_is_remembered_and_comes_first_next_time(self):
+        # start, full suite, published images, the default OpenRouter model, then the 3B
+        code, out = self.menu('--yes', stdin='1\n1\n1\n1\n2\n')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.recap(out), 'qwen2.5-3b-instruct (your choice)')
+        self.assertEqual(self.handed(), self.THREE_B)
+        self.assertIn('local=3b', self.last_demo())
+        # start, same demo as last time, the model, and the local model offered first
+        code, out = self.menu('--yes', stdin='1\n1\n1\n1\n')
+        self.assertEqual(code, 0, out)
+        self.assertIn('Qwen2.5 3B (a laptop: ~2 GB of weights, about half the RAM, answers sooner), same as last time', out)
+        self.assertEqual(self.handed(), self.THREE_B)
+        # A script's preset gets the 7B and leaves the remembered choice alone.
+        code, out = self.menu('--preset', 'full', '--yes')
+        self.assertEqual(self.recap(out), 'qwen2.5-7b-instruct (default)')
+        self.assertEqual(self.handed(), self.NONE)
+        self.assertIn('local=3b', self.last_demo())
+
+    def test_a_one_off_flag_does_not_replace_the_remembered_choice(self):
+        self.menu('--yes', stdin='1\n1\n1\n1\n2\n')
+        self.menu('--preset', 'full', '--yes', '--local-model', '7b')
+        self.assertIn('local=3b', self.last_demo())
+
+    @unittest.skipUnless(PWSH, 'pwsh is not installed')
+    def test_powershell_resolves_the_local_model_the_same_way(self):
+        def recap(*args, **env):
+            done = subprocess.run([PWSH, '-NoProfile', '-File', str(self.work / 'demo-menu.ps1'), '-DryRun',
+                                   '-Preset', 'full', *args], cwd=self.work, env=self.env(**env),
+                                  capture_output=True, text=True, timeout=120)
+            return done.returncode, done.stdout + done.stderr
+        code, out = recap()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.recap(out), 'qwen2.5-7b-instruct (default)')
+        code, out = recap('-LocalModel', '3b')
+        self.assertEqual(self.recap(out), 'qwen2.5-3b-instruct (-LocalModel, this run only)')
+        self.assertIn('~2 GB of weights, about half the RAM of the 7B model', out)
+        code, out = recap(LLM_CHAT_MODEL_NAME='qwen2.5-3b-instruct')
+        self.assertEqual(self.recap(out), 'qwen2.5-3b-instruct (from the environment)')
+        code, out = recap('-LocalModel', '7b', LLM_CHAT_MODEL_NAME='x-1b')
+        self.assertEqual(code, 2, out)
+        self.assertIn('-LocalModel 7b is refused', out)
+        code, out = recap('-LocalModel', '9b')
+        self.assertNotEqual(code, 0, out)  # outside ValidateSet: PowerShell refuses it itself
 
 
 class Checks(MenuCase):

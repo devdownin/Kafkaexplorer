@@ -99,7 +99,7 @@ Zookeeper anywhere). There is **one base file at the repository root** and every
 docker compose -f docker-compose.yml -f compose/schema-registry.yml up -d  # + Schema Registry
 docker compose -f docker-compose.yml -f compose/mcp.yml up -d               # + the MCP server (off elsewhere)
 docker compose up -d                                                       # base: broker + app + demo topics
-./demo-menu.sh                                                             # asks which demo / images / agent, recaps, checks the key, shows the demo.sh command, runs it (--dry-run, --preset NAME, --yes, --model ID)
+./demo-menu.sh                                                             # asks which demo / images / agent, recaps, checks the key, shows the demo.sh command, runs it (--dry-run, --preset NAME, --yes, --model ID, --local-model 7b|3b)
 OPENROUTER_API_KEY=sk-or-... ./demo.sh                                      # everything: + Avro, MCP, forecasts (live traffic + seeded history), SpectraLLM, agent
 OPENROUTER_API_KEY=sk-or-... ./demo.sh --no-spectra                         # the same without SpectraLLM and its 4.8 GB of weights
 OPENROUTER_API_KEY=sk-or-... ./demo.sh --prebuilt                              # the whole suite from published images: nothing is built (no Maven, no Docker Hub base image)
@@ -131,7 +131,7 @@ $env:OPENROUTER_API_KEY = 'sk-or-...'
 .\demo.cmd -NoSpectra            # as ./demo.sh --no-spectra
 .\demo.cmd -Forecast              # as ./demo.sh --forecast
 .\demo-forecast.cmd              # as ./demo.sh --forecast --prebuilt: + the agent, all on latest, no build; -NoAgent drops it
-.\demo-menu.cmd                 # the guided launcher, as ./demo-menu.sh (-DryRun, -Preset NAME, -Yes, -Model ID)
+.\demo-menu.cmd                 # the guided launcher, as ./demo-menu.sh (-DryRun, -Preset NAME, -Yes, -Model ID, -LocalModel 7b|3b)
 .\demo.cmd logs explorer         # also: ps, probe, down, reset
 ```
 

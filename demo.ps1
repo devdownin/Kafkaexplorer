@@ -391,7 +391,10 @@ function Start-Demo {
         Invoke-Compose up -d --no-build --pull never --remove-orphans
     } else {
         Write-Host "First run: Maven build of the Explorer and the pinned TimesFM checkpoint ($($env:TIMESFM_CPUS) CPUs / $($env:TIMESFM_MEM_LIMIT))."
-        if ($spectraOn) { Write-Host 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.' }
+        if ($spectraOn) {
+            if ($env:LLM_CHAT_MODEL_NAME -like '*3b*') { Write-Host 'SpectraLLM adds ~2 GB of weights; its 3B chat model wants about half the RAM of the 7B.' }
+            else { Write-Host 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.' }
+        }
         Write-Host 'Docker Desktop memory: see the [wsl2] memory= setting in %UserProfile%\.wslconfig. Later runs start in seconds.'
         if ($env:DEMO_PUBLISHED_IMAGE -eq 'true') { Invoke-Compose pull --quiet --ignore-buildable }
         Invoke-Compose up -d --build --remove-orphans

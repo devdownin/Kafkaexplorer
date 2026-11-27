@@ -372,7 +372,13 @@ up() {
     compose up -d --no-build --pull never --remove-orphans
   else
     echo "First run: Maven build of the Explorer and the pinned TimesFM checkpoint (${TIMESFM_CPUS} CPUs / ${TIMESFM_MEM_LIMIT})."
-    [[ $DEMO_SPECTRA != true ]] || echo 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.'
+    if [[ $DEMO_SPECTRA == true ]]; then
+      if [[ $LLM_CHAT_MODEL_NAME == *3b* ]]; then
+        echo 'SpectraLLM adds ~2 GB of weights; its 3B chat model wants about half the RAM of the 7B.'
+      else
+        echo 'SpectraLLM adds ~4.8 GB of weights; its 7B chat model wants ~16 GB of RAM.'
+      fi
+    fi
     echo 'Later runs start in seconds.'
     [[ $DEMO_PUBLISHED_IMAGE != true ]] || compose pull --quiet --ignore-buildable
     # --remove-orphans: switching to --no-spectra stops the SpectraLLM containers a previous run left.
