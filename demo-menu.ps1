@@ -136,7 +136,10 @@ function Get-Switches {
     if ($script:Source -eq 'prebuilt') { $list += 'Prebuilt' }
     if ($script:Source -eq 'offline') { $list += 'Offline' }
     if ($script:Mode -eq 'forecast' -and $script:Source -ne 'offline' -and $script:Agent -ne 'yes') { $list += 'NoAgent' }
-    , $list
+    # Not `, $list`: the comma wraps the array in a one-element array, so the caller's @(...) held ONE
+    # element and every switch after the first printed, and was handed to demo.ps1, without its dash
+    # ("-Forecast Prebuilt"). Left to unroll, @() gets one element per switch, and none for none.
+    $list
 }
 
 function Ask-Demo {

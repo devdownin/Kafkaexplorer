@@ -32,6 +32,9 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stripped of control characters; it is never sent on a dry run, with `--yes` or from a preset.
   `ci/test_demo_menu.py` runs both menus against a fake `demo.sh` and a local stand-in for openrouter.ai,
   and holds `demo-menu.ps1` to the same switches when `pwsh` is installed.
+  That test found a defect already in `demo-menu.ps1`: `Get-Switches` returned `, $list`, so the caller's
+  `@(...)` held one element and every switch after the first was shown and handed to `demo.ps1` without
+  its dash (`-Forecast Prebuilt`).
 
 - **The demo launchers default to `openrouter/free`.** `demo.sh`, `demo.ps1` — and so `demo-menu` — ran an
   OpenRouter key on `openai/gpt-4o-mini`, a paid model: a fresh key with no credits got a refusal on the
