@@ -20,6 +20,12 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The demo on the local model raises the agent's per-call cap and drops its retries.** `compose/demo-kex-llm.yml`
+  raised the agent's exchange and async timeouts but left Spring AI's own cap on **one call** to the model at its
+  60 s default — which covers the whole call, stream included, so it cut a slow local answer first — and its 3
+  retries, each replaying the whole prompt. `SPRING_AI_OPENAI_TIMEOUT=600s` and `SPRING_AI_OPENAI_MAXRETRIES=0` join
+  the two, and `docs/demo-kex-llm-check.py` asserts that one call fits in the exchange and the exchange in the
+  async request. Found by auditing the agent's connection to its model (Kex-anHarness).
 - **The demo can run the Explorer AND the agent on the model of the `kex-llm` image.** `./demo.sh
   --local-llm` (`-LocalLlm`, `DEMO_LLM=local`) layers `compose/llama-cpp.yml`,
   `compose/llama-cpp-offline.yml` and the new `compose/demo-kex-llm.yml` in place of `demo-llm.yml`: one

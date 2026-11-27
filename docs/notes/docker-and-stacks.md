@@ -877,8 +877,13 @@ What `demo-kex-llm.yml` adds to the two existing overlays, and why each line is 
 - **A 32 768-token window** instead of `llama-cpp.yml`'s 16 384, declared once (`LLAMA_CPP_CONTEXT`) for
   the server and for the Explorer's `CLAUDE_CONTEXT_WINDOW_TOKENS`: the agent sends its tools and its
   system prompt on every turn. **One slot serves both apps**, so an analysis and a chat turn queue.
-- **The agent's request and async timeouts at 600 s / 650 s** (shipped: 120 s / 150 s, sized for a hosted
-  model), by Spring's relaxed binding (`KEX_AGENT_REQUESTTIMEOUT`, `SPRING_MVC_ASYNC_REQUESTTIMEOUT`).
+- **Four agent limits, not two.** The exchange (`KEX_AGENT_REQUESTTIMEOUT`, 600 s; shipped 120 s), the async
+  request around it (`SPRING_MVC_ASYNC_REQUESTTIMEOUT`, 650 s; shipped 150 s), **the client's own cap on one
+  call to the model** (`SPRING_AI_OPENAI_TIMEOUT`, 600 s; Spring AI's default is 60 s and it covers the whole
+  call, stream included — the first limit to cut a slow answer) and **its retries** (`SPRING_AI_OPENAI_MAXRETRIES`,
+  0; the default of 3 replays the whole prompt on a model that has just shown it is slow). All by Spring's
+  relaxed binding, so they reach the published agent image whatever its version. An earlier version of this
+  overlay moved only the first two.
 
 `docs/demo-kex-llm-check.py` asserts all of it on the **resolved** model, in `compose-lint` and in
 `ci/test_demo_menu.py`: the overlay resolves cleanly while an app points somewhere else, which is what it
