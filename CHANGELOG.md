@@ -20,6 +20,11 @@ aims at [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- **The demo launchers default to `openrouter/free`.** `demo.sh`, `demo.ps1` — and so `demo-menu` — ran an
+  OpenRouter key on `openai/gpt-4o-mini`, a paid model: a fresh key with no credits got a refusal on the
+  first question. `OPENROUTER_MODEL` still wins when set, and the compose files keep `openai/gpt-4o-mini`
+  for a real install; the difference is declared in `docs/check-demo-defaults.py`.
+
 - **The demo's agent uses the demo's OpenRouter model.** `OPENROUTER_MODEL` (default `openai/gpt-4o-mini`)
   reached the Explorer only: `compose/ecosystem.yml` did not hand it to the agent, which then used its own
   default, a `:free` model, and OpenRouter answered "this model is unavailable for free" — while the

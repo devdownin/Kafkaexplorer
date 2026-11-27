@@ -39,6 +39,7 @@ ROOT = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).reso
 # variable -> (the value the launcher sets, why the compose default is not good enough for the demo)
 OVERRIDES: dict[str, tuple[str, str]] = {
     "KEX_AGENT_LLM_PROVIDER": ("openai", "the demo's model is OpenRouter, which the agent reaches as `openai`; compose defaults to Anthropic"),
+    "OPENROUTER_MODEL": ("openrouter/free", "the demo is tried with an OpenRouter key and no credits: the free-models router answers where a paid model does not; compose keeps `openai/gpt-4o-mini` for a real install"),
     "SCHEMA_REGISTRY_PORT": ("8085", "8081 belongs to the agent in the shared port plan, so Schema Registry moves aside"),
     "EXPLORER_ASSISTANT_ENABLED": ("false", "the forecast demo has no model for the assistant unless --agent brings one; compose defaults it on"),
     "EXPLORER_MCP_AUTH_TOKEN": ("dev-only-mcp-token", "forecasts.yml leaves the bearer empty (503); the demo needs the one the agent presents"),
