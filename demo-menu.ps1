@@ -9,6 +9,7 @@
 #   .\demo-menu.cmd -Preset forecast         # skip the questions (-Presets lists them)
 #   .\demo-menu.cmd -Preset forecast -Yes    # ...and the confirmation: for scripts
 #   .\demo-menu.cmd -Preset full -Model openai/gpt-4o-mini   # one run on another OpenRouter model
+#   .\demo-menu.cmd -Preset full -Llm local                  # the Explorer AND the agent on the kex-llm image's model
 #
 # Output: colour only on a terminal, never with NO_COLOR set or -NoColor, and never alone: every
 # colour is backed by words ("[default]", "valid", "rejected"), and every answer is a number or a
@@ -19,6 +20,12 @@
 # .forecast-stack\.env, or the dev-only default), masked unless you ask. A secret is written only
 # when you say so: the OpenRouter key into .env on request, the agent and MCP tokens on "renew".
 # .forecast-stack\last-demo holds the last choice and no secret.
+#
+# Which model answers for the agent and the Explorer: OpenRouter (hosted, a key, prompts leave the host) or
+# the local one the published kex-llm image carries (Gemma 4 E4B on llama.cpp: no key, nothing leaves, a
+# ~5.5 GB image). Asked when a model is involved and nothing names one, the last choice first; a preset
+# takes OpenRouter; DEMO_LLM in the environment or a .env is shown and not asked about. The local choice
+# skips everything below: there is no key to check and no OpenRouter model to pick.
 #
 # The OpenRouter model: asked when a model is involved and nothing already names one, with the last
 # choice first. Precedence is demo.ps1's own (the environment, .env, .forecast-stack\.env), and -Model
@@ -34,7 +41,8 @@ param(
     [switch] $NoColor,
     [string] $Preset = '',
     [switch] $Presets,
-    [string] $Model = ''
+    [string] $Model = '',
+    [ValidateSet('', 'openrouter', 'local')] [string] $Llm = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,6 +63,8 @@ if ($Model -and -not (Test-ModelId $Model)) {
     [Console]::Error.WriteLine("-Model expects an OpenRouter model id such as openai/gpt-4o-mini, got '$Model'.")
     exit 2
 }
+$script:LlmId = 'openrouter'  # openrouter | local: what answers for the agent and the Explorer, once a model is involved
+$script:LlmOrigin = ''        # -Llm | environment | .env | generated | chosen | last | default
 $script:ModelId = ''        # the OpenRouter model, once a model is involved and chosen
 $script:ModelOrigin = ''    # -Model | environment | .env | generated | chosen | default
 
@@ -136,6 +146,8 @@ function Get-Switches {
     if ($script:Source -eq 'prebuilt') { $list += 'Prebuilt' }
     if ($script:Source -eq 'offline') { $list += 'Offline' }
     if ($script:Mode -eq 'forecast' -and $script:Source -ne 'offline' -and $script:Agent -ne 'yes') { $list += 'NoAgent' }
+    # Only where a model is involved: a demo with no agent and no Explorer LLM half has nothing to point.
+    if ((Test-ModelInvolved) -and $script:LlmId -eq 'local') { $list += 'LocalLlm' }
     # Not `, $list`: the comma wraps the array in a one-element array, so the caller's @(...) held ONE
     # element and every switch after the first printed, and was handed to demo.ps1, without its dash
     # ("-Forecast Prebuilt"). Left to unroll, @() gets one element per switch, and none for none.
@@ -144,8 +156,8 @@ function Get-Switches {
 
 function Ask-Demo {
     $m = Ask 'Which demo?' 1 @(
-        'Full suite: Kafka, Avro, MCP, forecasts, SpectraLLM, agent (needs OPENROUTER_API_KEY, ~4.8 GB of weights)',
-        'Full suite without SpectraLLM (needs OPENROUTER_API_KEY)',
+        'Full suite: Kafka, Avro, MCP, forecasts, SpectraLLM, agent (a model: an OpenRouter key or the local kex-llm; ~4.8 GB of SpectraLLM weights)',
+        'Full suite without SpectraLLM (a model: an OpenRouter key or the local kex-llm)',
         'Forecast demo: live metrics and forecasts, the agent included')
     $script:Agent = 'yes'
     $script:Mode = @('full', 'nospectra', 'forecast')[$m - 1]
@@ -160,7 +172,7 @@ function Ask-Demo {
     if ($script:Mode -ne 'forecast') { return }
     if ($script:Source -eq 'offline') { $script:Agent = 'no'; return }
     $a = Ask 'Start the Kex-anHarness agent?' 1 @(
-        'Yes (it starts degraded without OPENROUTER_API_KEY)',
+        'Yes (a model: an OpenRouter key, or the local kex-llm; degraded with neither)',
         'No')
     $script:Agent = if ($a -eq 1) { 'yes' } else { 'no' }
 }
@@ -195,12 +207,21 @@ function Get-SavedModel {
 
 # The model is rewritten only by an interactive choice: a one-off -Model or a script's preset must not
 # replace what the person picked last, and the state of a run that named no model keeps the old one.
+# The last interactive choice of what answers: openrouter or local, empty when there is none.
+function Get-SavedLlm {
+    $v = Read-Kv $LastFile 'llm'
+    if ($v -eq 'openrouter' -or $v -eq 'local') { $v } else { '' }
+}
+
 function Save-Demo {
     $m = Get-SavedModel
     if ($script:ModelOrigin -eq 'chosen') { $m = $script:ModelId }
+    $l = Get-SavedLlm
+    if ($script:LlmOrigin -eq 'chosen') { $l = $script:LlmId }
     New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
     $text = "mode=$($script:Mode)`nsource=$($script:Source)`nagent=$($script:Agent)`n"
     if ($m) { $text += "model=$m`n" }
+    if ($l) { $text += "llm=$l`n" }
     [IO.File]::WriteAllText((Join-Path $PWD $LastFile), $text, $Utf8NoBom)
 }
 
@@ -388,7 +409,7 @@ function Show-Recap {
         $rows += , @('SpectraLLM', ('UI :' + (Get-Or 'SPECTRA_UI_PORT' '8088') + ', API :' + (Get-Or 'SPECTRA_API_PORT' '8089') + ' - ~4.8 GB of weights, ~16 GB of RAM for the 7B model'))
     }
     foreach ($row in $rows) { Write-Host ("  {0,-36} {1}" -f $row[0], $row[1]) }
-    if (Test-ModelInvolved) { Show-ModelRecap }
+    if (Test-ModelInvolved) { Show-LlmRecap }
     switch ($script:Source) {
         'build' { Write-Host '  First start: Maven build of the Explorer and the TimesFM checkpoint download.' }
         'prebuilt' { Write-Host '  Pulls the published images; nothing is built.' }
@@ -404,8 +425,68 @@ function Get-TokenNames {
     $names = @('EXPLORER_MCP_AUTH_TOKEN')
     if ($script:Agent -eq 'yes' -or $script:Mode -ne 'forecast') { $names += 'KEX_AGENT_API_KEY' }
     if ($script:Mode -eq 'full') { $names += 'SPECTRA_API_KEY' }
-    if (Test-ModelInvolved) { $names += 'OPENROUTER_API_KEY' }
+    if ((Test-ModelInvolved) -and $script:LlmId -ne 'local') { $names += 'OPENROUTER_API_KEY' }
     , $names
+}
+
+# -- What answers: OpenRouter or the local model ---------------------------------
+
+# Where demo.ps1 would already read DEMO_LLM from, in its precedence. $null when none names a valid one.
+function Get-NamedLlm {
+    $v = Get-EnvValue 'DEMO_LLM'
+    if ($v -eq 'openrouter' -or $v -eq 'local') { return @{ Value = $v; Origin = 'environment' } }
+    $v = Read-Kv '.env' 'DEMO_LLM'
+    if ($v -eq 'openrouter' -or $v -eq 'local') { return @{ Value = $v; Origin = '.env' } }
+    $v = Read-Kv $StateEnv 'DEMO_LLM'
+    if ($v -eq 'openrouter' -or $v -eq 'local') { return @{ Value = $v; Origin = 'generated' } }
+    $null
+}
+
+function Get-LlmLabel([string] $Id) {
+    if ($Id -eq 'local') { 'kex-llm: the local Gemma 4 E4B, no key, nothing leaves this machine (a ~5.5 GB image, slower on a CPU)' }
+    else { 'OpenRouter: a hosted model, needs a key, prompts and tool results leave this machine' }
+}
+
+# Sets LlmId and LlmOrigin. Precedence is -Llm, then what the environment or a .env names, then a
+# question to a person (the last choice first), then the default. A preset takes the default, so a
+# script gives the same demo whatever was picked last. A verb that only names the stack (down, ps,
+# logs) is not asked: it takes the last choice, since the files compose layers depend on it.
+function Choose-Llm([string] $Verb) {
+    if ($Llm) { $script:LlmId = $Llm; $script:LlmOrigin = '-Llm'; return }
+    $named = Get-NamedLlm
+    if ($named) { $script:LlmId = $named.Value; $script:LlmOrigin = $named.Origin; return }
+    $last = Get-SavedLlm
+    if ($Verb -ne 'up') {
+        $script:LlmId = if ($last) { $last } else { 'openrouter' }; $script:LlmOrigin = 'last'
+        return
+    }
+    $script:LlmId = 'openrouter'; $script:LlmOrigin = 'default'
+    if ($Preset) { return }
+    $first = if ($last) { $last } else { 'openrouter' }
+    $values = @($first, $(if ($first -eq 'openrouter') { 'local' } else { 'openrouter' }))
+    $options = @()
+    foreach ($v in $values) {
+        $label = Get-LlmLabel $v
+        if ($last -and $v -eq $last) { $label += ', same as last time' }
+        $options += $label
+    }
+    $c = Ask 'Which model answers for the agent and the Explorer?' 1 $options
+    $script:LlmId = $values[$c - 1]; $script:LlmOrigin = 'chosen'
+}
+
+function Show-LlmRecap {
+    if ($script:LlmId -ne 'local') { Show-ModelRecap; return }
+    $where = switch ($script:LlmOrigin) {
+        '-Llm' { '-Llm, this run only' }
+        'environment' { 'DEMO_LLM, from the environment' }
+        '.env' { 'DEMO_LLM, from .env' }
+        'generated' { 'DEMO_LLM, from .forecast-stack\.env' }
+        'chosen' { 'your choice' }
+        'last' { 'the last choice' }
+        default { 'default' }
+    }
+    Write-Host ("  {0,-36} {1}" -f 'LLM (agent and Explorer)', "kex-llm, Gemma 4 E4B on llama.cpp, local ($where)")
+    Write-Host ("  {0,-36} {1}" -f '', 'a ~5.5 GB image, pulled once; no OpenRouter key; one slot serves both apps')
 }
 
 # -- The model -----------------------------------------------------------------
@@ -627,6 +708,10 @@ if ($verb -eq 'logs' -and -not $Preset) { $service = Read-Host 'Service name (em
 # then the command and the service. Splatting into the script would depend on how this host binds
 # parameters, and a stray element lands in demo.ps1's -Services ("Only 'logs' takes service names").
 $childArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'demo.ps1'))
+# What answers is settled before the command is built: it adds -LocalLlm, and the compose files a demo
+# layers (so what down, ps and logs name) depend on it.
+if (Test-ModelInvolved) { Choose-Llm $verb }
+elseif ($verb -eq 'up' -and $Llm) { Say "This demo calls no model: -Llm $Llm is ignored." 'warn' }
 $switchNames = @(Get-Switches)
 foreach ($name in $switchNames) { $childArguments += "-$name" }
 if ($verb -ne 'up') { $childArguments += $verb }
@@ -638,10 +723,16 @@ if ($service) { $shown += $service }
 
 $tokenNames = @()
 if ($verb -eq 'up') {
-    if (Test-ModelInvolved) { Choose-Model }
-    elseif ($Model) { Say "This demo calls no model: -Model $Model is ignored." 'warn' }
+    if ((Test-ModelInvolved) -and $script:LlmId -ne 'local') { Choose-Model }
+    elseif ($Model) {
+        if (Test-ModelInvolved) { Say "This demo runs on the local model, not OpenRouter: -Model $Model is ignored." 'warn' }
+        else { Say "This demo calls no model: -Model $Model is ignored." 'warn' }
+    }
     Show-Recap
-    if (Test-ModelInvolved) {
+    # Exported for a run that chose or named it on the command line: demo.ps1 reads the environment first,
+    # so -Llm openrouter also overrides a DEMO_LLM=local the environment or .env set.
+    if ($script:LlmOrigin -eq '-Llm' -or $script:LlmOrigin -eq 'chosen') { $env:DEMO_LLM = $script:LlmId }
+    if ((Test-ModelInvolved) -and $script:LlmId -ne 'local') {
         Confirm-Key
         while (-not (Confirm-Model)) {
             Choose-Model -Again

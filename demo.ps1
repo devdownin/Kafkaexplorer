@@ -42,6 +42,7 @@ param(
     [switch] $Offline,
     [switch] $Agent,
     [switch] $NoAgent,
+    [switch] $LocalLlm,
     [Parameter(Position = 0)]
     [ValidateSet('up', 'down', 'reset', 'ps', 'logs', 'probe', 'doctor', 'verify', 'scenario')]
     [string] $Command = 'up',
@@ -144,6 +145,7 @@ if ($Prebuilt) { $env:DEMO_PREBUILT = 'true'; $env:DEMO_PUBLISHED_IMAGE = 'true'
 if ($Offline) { $env:DEMO_MODE = 'forecast'; $env:DEMO_PREBUILT = 'true'; $env:DEMO_PUBLISHED_IMAGE = 'true'; $env:DEMO_OFFLINE = 'true' }
 if ($Agent) { $env:DEMO_AGENT = 'true' }
 if ($NoAgent) { $env:DEMO_AGENT = 'false' }
+if ($LocalLlm) { $env:DEMO_LLM = 'local' }
 
 Initialize-ForecastStack
 Import-EnvFile '.env'
@@ -170,6 +172,13 @@ Set-Default DEMO_AGENT $(if ($forecastOnly -and -not $offline) { 'true' } else {
 if ($env:DEMO_AGENT -notin @('true', 'false')) { throw 'DEMO_AGENT must be true or false.' }
 $agentOn = $env:DEMO_AGENT -eq 'true'
 if ($agentOn -and -not $forecastOnly) { throw '-Agent is for the forecast demo (-Forecast); the full suite already runs the agent.' }
+
+# Which model answers for the Explorer and the agent: OpenRouter (hosted, needs a key) or the local one
+# the kex-llm image carries. -LocalLlm sets it for one run.
+Set-Default DEMO_LLM 'openrouter'
+if ($env:DEMO_LLM -notin @('openrouter', 'local')) { throw "DEMO_LLM must be openrouter or local, not '$($env:DEMO_LLM)'." }
+$localLlm = $env:DEMO_LLM -eq 'local'
+$llmFiles = if ($localLlm) { @('-f', 'compose/llama-cpp.yml', '-f', 'compose/llama-cpp-offline.yml', '-f', 'compose/demo-kex-llm.yml') } else { @('-f', 'compose/demo-llm.yml') }
 
 # -- What the demo sets: the same lines as demo.sh ------------------------------------------
 # Two kinds of line live here, and only two: an override of the compose files' own default
@@ -240,7 +249,7 @@ if ($env:DEMO_PUBLISHED_IMAGE -eq 'true') { $script:ComposeFiles += @('-f', 'com
 # The forecast demo stops here unless -Agent: the agent (compose/demo*.yml, ecosystem) and the
 # hosted model (demo-llm.yml) are what want a key, and nothing else it shows uses them.
 if ($agentOn) {
-    $script:ComposeFiles += @('-f', 'compose/demo-no-spectra.yml', '-f', 'compose/demo-agent-no-spectra.yml', '-f', 'compose/demo-llm.yml')
+    $script:ComposeFiles += @('-f', 'compose/demo-no-spectra.yml', '-f', 'compose/demo-agent-no-spectra.yml') + $llmFiles
 } elseif (-not $forecastOnly) {
     if ($spectraOn) {
         $script:ComposeFiles += @('-f', 'compose/demo.yml', '-f', 'compose/spectra-hub.mcp.yml',
@@ -248,7 +257,7 @@ if ($agentOn) {
     } else {
         $script:ComposeFiles += @('-f', 'compose/demo-no-spectra.yml', '-f', 'compose/demo-agent-no-spectra.yml')
     }
-    $script:ComposeFiles += @('-f', 'compose/demo-llm.yml')
+    $script:ComposeFiles += $llmFiles
 }
 
 
@@ -367,6 +376,19 @@ function Set-ForecastScenario([string] $Name) {
 }
 
 function Start-Demo {
+    # What the banners say about the model, from the one place that decides it.
+    if ($localLlm) {
+        $llmPort = if ($env:LLAMA_CPP_PORT) { $env:LLAMA_CPP_PORT } else { '8083' }
+        $modelName = if ($env:LLAMA_CPP_MODEL_NAME) { $env:LLAMA_CPP_MODEL_NAME } else { 'gemma-4-e4b-it' }
+        $llmLine = "kex-llm $modelName on llama.cpp, local (Explorer, agent); http://localhost:$llmPort"
+        $assistantWhere = 'table and column names stay on this machine'
+    } else {
+        $llmLine = "OpenRouter $($env:OPENROUTER_MODEL) (Explorer, agent)"
+        $assistantWhere = 'table and column names go to OpenRouter'
+    }
+    if ($localLlm -and (-not $forecastOnly -or $agentOn)) {
+        Write-Host 'kex-llm adds a ~5.5 GB image (Gemma 4 E4B inside), pulled once: the Explorer and the agent both answer from it.'
+    }
     if ($forecastOnly) {
         # Isolate the writable scenario receipts from the private forecast config.
         New-Item -ItemType Directory -Path (Join-Path $env:FORECAST_CONFIG_DIR 'demo-control') -Force | Out-Null
@@ -375,7 +397,7 @@ function Start-Demo {
     if (-not $forecastOnly -or $agentOn) {
         Write-Host "Kex-anHarness bearer (KEX_AGENT_API_KEY): $($env:KEX_AGENT_API_KEY) -- http://localhost:$($env:KEX_AGENT_PORT)"
     }
-    if ((-not $forecastOnly -or $agentOn) -and -not (Test-EnvSet 'OPENROUTER_API_KEY')) {
+    if ((-not $forecastOnly -or $agentOn) -and -not $localLlm -and -not (Test-EnvSet 'OPENROUTER_API_KEY')) {
         Write-Warning ('OPENROUTER_API_KEY is empty - Process Mining answers without its LLM half and the ' +
             "agent starts DEGRADED. Set it (`$env:OPENROUTER_API_KEY = 'sk-or-...', or in .env) and rerun.")
     }
@@ -398,6 +420,11 @@ function Start-Demo {
     }
 
     $explorerReady = Wait-Http 'Kafka Explorer' "http://127.0.0.1:$($env:EXPLORER_PORT)/actuator/health" 900
+    # The server is healthy once the weights are loaded: until then the first answer of either app would
+    # only queue. Informational, like SpectraLLM's wait below.
+    if ($localLlm -and (-not $forecastOnly -or $agentOn)) {
+        Wait-Http 'kex-llm' "http://127.0.0.1:$llmPort/health" 600 | Out-Null
+    }
     if ($forecastOnly -and -not $explorerReady) { throw 'Kafka Explorer did not become healthy. See: .\demo-forecast.cmd logs explorer timesfm' }
     if ($forecastOnly) {
         Wait-ForecastReady
@@ -406,7 +433,7 @@ function Start-Demo {
             Wait-Http 'Kex-anHarness' "http://127.0.0.1:$($env:KEX_AGENT_PORT)/api/agent/mcp/servers" 300 `
                 @{ Authorization = "Bearer $($env:KEX_AGENT_API_KEY)" } | Out-Null
             $agentLine = "Kex-anHarness ......... http://localhost:$($env:KEX_AGENT_PORT)     (Bearer $($env:KEX_AGENT_API_KEY))`n" +
-                "LLM ................... OpenRouter $($env:OPENROUTER_MODEL) (Explorer, agent); SpectraLLM not started"
+                "LLM ................... $llmLine; SpectraLLM not started"
         }
         Write-Host @"
 
@@ -448,8 +475,8 @@ Kex-anHarness ......... http://localhost:$($env:KEX_AGENT_PORT)     (Bearer $($e
 $spectra
 Schema Registry ....... http://localhost:$($env:SCHEMA_REGISTRY_PORT)
 Kafka ................. localhost:$($env:KAFKA_PORT)
-LLM ................... OpenRouter $($env:OPENROUTER_MODEL) (Explorer, agent)
-SQL assistant ......... $($env:EXPLORER_ASSISTANT_ENABLED) (editor ask bar, Suggest a fix, Metrics: Describe the metric; table and column names go to OpenRouter)
+LLM ................... $llmLine
+SQL assistant ......... $($env:EXPLORER_ASSISTANT_ENABLED) (editor ask bar, Suggest a fix, Metrics: Describe the metric; $assistantWhere)
 
 Demo topics (JSON + Avro) are seeded in the background: .\demo.cmd logs demo-setup
 Forecast: Metrics -> the five demo.live.* metrics have 9 h of seeded history (live traffic keeps them moving):

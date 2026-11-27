@@ -994,6 +994,21 @@ jobs:
           docker compose $LLM_OFFLINE config --format json | python3 docs/llm-offline-check.py
           named="$named compose/llama-cpp-offline.yml"
 
+          # The demo on the local model, in the two shapes ./demo.sh --local-llm layers it. The overlay
+          # resolves cleanly while pointing an app elsewhere — an agent left on OpenRouter, a lost MCP
+          # bearer, an image built rather than pulled — so the contract is checked on the resolved model.
+          # Dummy secrets: `config` only needs the variables the files require to be set.
+          DEMO_BASE="-f docker-compose.yml -f compose/schema-registry.yml -f compose/mcp.yml -f compose/forecasts.yml -f compose/demo-forecast.yml"
+          DEMO_LOCAL="-f compose/llama-cpp.yml -f compose/llama-cpp-offline.yml -f compose/demo-kex-llm.yml"
+          export EXPLORER_MCP_AUTH_TOKEN=ci FORECAST_POSTGRES_PASSWORD=ci TIMESFM_TOKEN=ci KEX_AGENT_API_KEY=ci SPECTRA_API_KEY=ci
+          for demo in "$DEMO_BASE -f compose/demo-no-spectra.yml -f compose/demo-agent-no-spectra.yml $DEMO_LOCAL" \
+                      "$DEMO_BASE -f compose/demo.yml -f compose/spectra-hub.mcp.yml -f compose/spectra-hub.ingest.yml -f compose/ecosystem.yml $DEMO_LOCAL"; do
+            echo "· $demo"
+            # shellcheck disable=SC2086 - the combination is a deliberate word list.
+            docker compose $demo config --format json | python3 docs/demo-kex-llm-check.py
+          done
+          named="$named compose/demo-kex-llm.yml"
+
           # Every compose file in the tree is named above, as a base or as somebody's overlay.
           # A new one added without a line there would be checked by nothing, which is the
           # situation this job exists to end — so the omission fails rather than passing

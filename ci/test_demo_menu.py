@@ -10,6 +10,9 @@ local stand-in for openrouter.ai, so no stack starts and nothing leaves the mach
 Three things are pinned:
   * every preset prints the same `demo.sh` switches, and `demo-menu.ps1` prints the same ones (when
     pwsh is installed: GitHub's Ubuntu runners have it, a laptop may not);
+  * what answers for the agent and the Explorer: OpenRouter or the local model of the kex-llm image, where
+    that choice comes from, that the local one drops everything OpenRouter (key, model, catalogue) and
+    adds `--local-llm`, and that the resolved demo really points both apps at the image;
   * the OpenRouter model: where it comes from, what the checks say, and that only an interactive
     choice is remembered;
   * the checks themselves: a model with no tool calling, one the catalogue does not know, one that
@@ -98,7 +101,7 @@ class MenuCase(unittest.TestCase):
         # What the menu hands over to: records its switches and the model it would have been given.
         fake = self.work / 'demo.sh'
         fake.write_text('#!/usr/bin/env bash\n'
-                        'printf "ARGS=%s\\nMODEL=%s\\n" "$*" "${OPENROUTER_MODEL-unset}" > handoff.txt\n')
+                        'printf "ARGS=%s\\nMODEL=%s\\nLLM=%s\\n" "$*" "${OPENROUTER_MODEL-unset}" "${DEMO_LLM-unset}" > handoff.txt\n')
         fake.chmod(0o755)
         (self.work / 'bin').mkdir()
         docker = self.work / 'bin' / 'docker'
@@ -209,14 +212,14 @@ class Model(MenuCase):
         self.assertNotIn('OpenRouter model', out)
 
     def test_an_interactive_choice_is_remembered_and_comes_first_next_time(self):
-        # start, forecast, published images, with the agent, "another model", its id
-        code, out = self.menu('--yes', stdin='1\n3\n1\n1\n3\nvendor/plain\n')
+        # start, forecast, published images, with the agent, OpenRouter, "another model", its id
+        code, out = self.menu('--yes', stdin='1\n3\n1\n1\n1\n3\nvendor/plain\n')
         self.assertEqual(code, 0, out)
         self.assertEqual(self.recap(out), 'vendor/plain (your choice)')
         self.assertEqual(self.handoff()['MODEL'], 'vendor/plain')
         self.assertIn('model=vendor/plain', self.last_demo())
         # start, same demo as last time, the first model offered
-        code, out = self.menu('--yes', stdin='1\n1\n1\n')
+        code, out = self.menu('--yes', stdin='1\n1\n1\n1\n')
         self.assertEqual(code, 0, out)
         self.assertIn('vendor/plain, same as last time', out)
         self.assertEqual(self.recap(out), 'vendor/plain (your choice)')
@@ -227,7 +230,7 @@ class Model(MenuCase):
         self.assertIn('model=vendor/plain', self.last_demo())
 
     def test_a_one_off_flag_does_not_replace_the_remembered_choice(self):
-        self.menu('--yes', stdin='1\n3\n1\n1\n3\nvendor/plain\n')
+        self.menu('--yes', stdin='1\n3\n1\n1\n1\n3\nvendor/plain\n')
         self.menu('--preset', 'forecast', '--yes', '--model', 'openai/gpt-4o-mini')
         self.assertIn('model=vendor/plain', self.last_demo())
 
@@ -235,7 +238,7 @@ class Model(MenuCase):
         state = self.work / '.forecast-stack'
         state.mkdir()
         (state / 'last-demo').write_text('mode=forecast\nsource=prebuilt\nagent=yes\nmodel=$(touch pwned)\n')
-        _, out = self.menu('--yes', stdin='1\n1\n1\n')
+        _, out = self.menu('--yes', stdin='1\n1\n1\n1\n')
         self.assertNotIn('same as last time, same as last time', out)
         self.assertNotIn('$(touch', out.split('Which OpenRouter model?')[-1])
         self.assertFalse((self.work / 'pwned').exists())
@@ -251,6 +254,151 @@ class Model(MenuCase):
         self.assertEqual(recap(), 'openrouter/free (default)')
         self.assertEqual(recap('-Model', 'x/y', OPENROUTER_MODEL='x/env'), 'x/y (-Model, this run only)')
         self.assertEqual(recap(OPENROUTER_MODEL='x/env'), 'x/env (from the environment)')
+
+
+class Llm(MenuCase):
+    def recap(self, out):
+        return re.search(r'LLM \(agent and Explorer\)\s+(.*)', out).group(1)
+
+    def test_a_preset_stays_on_openrouter(self):
+        code, out = self.menu('--preset', 'full', '--yes')
+        self.assertEqual(code, 0, out)
+        self.assertIn('OpenRouter model', out)
+        self.assertNotIn('LLM (agent and Explorer)', out)
+        self.assertNotIn('--local-llm', out)
+        self.assertEqual(self.handoff()['LLM'], 'unset')
+
+    def test_the_local_model_replaces_everything_openrouter(self):
+        code, out = self.menu('--preset', 'full', '--yes', '--llm', 'local', OPENROUTER_API_KEY='sk-or-good',
+                              DEMO_MENU_OPENROUTER_URL=self.url)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.recap(out), 'kex-llm, Gemma 4 E4B on llama.cpp, local (--llm, this run only)')
+        self.assertIn('Command: ./demo.sh --prebuilt --local-llm', out)
+        self.assertNotIn('OpenRouter model', out)
+        self.assertNotIn('OPENROUTER_API_KEY', out)          # no credential line
+        self.assertNotIn('key checked', out)                  # no key check
+        self.assertNotIn('catalogue', out)                    # no catalogue check
+        self.assertEqual(self.handoff()['LLM'], 'local')
+        self.assertEqual(self.handoff()['MODEL'], 'unset')
+
+    def test_the_flag_reaches_every_demo_that_has_a_model(self):
+        for preset, switches in (('full', '--prebuilt'), ('full-no-spectra-build', '--no-spectra'),
+                                 ('forecast', '--forecast --prebuilt'), ('forecast-build', '--forecast')):
+            with self.subTest(preset=preset):
+                _, out = self.menu('--dry-run', '--preset', preset, '--llm', 'local')
+                self.assertIn(f'Command: ./demo.sh {switches} --local-llm\n', out)
+
+    def test_a_demo_with_no_model_says_the_flag_is_ignored(self):
+        for preset in ('forecast-no-agent', 'forecast-offline'):
+            with self.subTest(preset=preset):
+                _, out = self.menu('--dry-run', '--preset', preset, '--llm', 'local')
+                self.assertIn('This demo calls no model: --llm local is ignored.', out)
+                self.assertNotIn('--local-llm', out)
+
+    def test_the_flag_takes_openrouter_or_local_only(self):
+        for bad in ('Local', 'both', ''):
+            with self.subTest(value=bad):
+                code, out = self.menu('--dry-run', '--preset', 'full', '--llm', bad)
+                self.assertEqual(code, 2, out)
+                self.assertIn('--llm expects openrouter or local', out)
+
+    def test_demo_llm_in_the_environment_or_dotenv_is_shown_and_the_flag_beats_it(self):
+        _, out = self.menu('--preset', 'full', '--dry-run', DEMO_LLM='local')
+        self.assertEqual(self.recap(out), 'kex-llm, Gemma 4 E4B on llama.cpp, local (DEMO_LLM, from the environment)')
+        (self.work / '.env').write_text('DEMO_LLM=local\n')
+        _, out = self.menu('--preset', 'full', '--dry-run')
+        self.assertEqual(self.recap(out), 'kex-llm, Gemma 4 E4B on llama.cpp, local (DEMO_LLM, from .env)')
+        # --llm openrouter must win over both: demo.sh reads the environment first, so it is exported.
+        code, out = self.menu('--preset', 'full', '--yes', '--llm', 'openrouter', DEMO_LLM='local')
+        self.assertEqual(code, 0, out)
+        self.assertNotIn('--local-llm', out)
+        self.assertEqual(self.handoff()['LLM'], 'openrouter')
+
+    def test_an_interactive_choice_is_remembered_and_comes_first_next_time(self):
+        # start, full suite without SpectraLLM, published images, then the local model
+        code, out = self.menu('--yes', stdin='1\n2\n1\n2\n')
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.recap(out), 'kex-llm, Gemma 4 E4B on llama.cpp, local (your choice)')
+        self.assertEqual(self.handoff()['ARGS'], '--no-spectra --prebuilt --local-llm')
+        self.assertEqual(self.handoff()['LLM'], 'local')
+        self.assertIn('llm=local', self.last_demo())
+        self.assertNotIn('model=', self.last_demo())  # no OpenRouter model was asked, so none is remembered
+        # start, same demo, and the local model is offered first
+        code, out = self.menu('--yes', stdin='1\n1\n1\n')
+        self.assertIn('slower on a CPU), same as last time', out)
+        self.assertEqual(self.handoff()['ARGS'], '--no-spectra --prebuilt --local-llm')
+        # A script's preset goes back to OpenRouter and leaves the remembered choice alone.
+        self.menu('--preset', 'full-no-spectra', '--yes')
+        self.assertEqual(self.handoff()['ARGS'], '--no-spectra --prebuilt')
+        self.assertIn('llm=local', self.last_demo())
+
+    def test_a_verb_that_names_the_stack_follows_the_last_choice(self):
+        self.menu('--yes', stdin='1\n2\n1\n2\n')
+        # stop it, same demo as last time: down must name the files the demo was started with
+        _, out = self.menu('--dry-run', stdin='2\n1\n')
+        self.assertIn('Command: ./demo.sh --no-spectra --prebuilt --local-llm down', out)
+
+    def test_a_one_off_flag_does_not_replace_the_remembered_choice(self):
+        self.menu('--yes', stdin='1\n2\n1\n2\n')
+        self.menu('--preset', 'full-no-spectra', '--yes', '--llm', 'openrouter')
+        self.assertIn('llm=local', self.last_demo())
+
+    def test_the_openrouter_model_flag_is_ignored_on_the_local_model(self):
+        _, out = self.menu('--dry-run', '--preset', 'full', '--llm', 'local', '--model', 'x/y')
+        self.assertIn('This demo runs on the local model, not OpenRouter: --model x/y is ignored.', out)
+
+    @unittest.skipUnless(PWSH, 'pwsh is not installed')
+    def test_powershell_resolves_it_the_same_way(self):
+        def run(*args, **env):
+            done = subprocess.run([PWSH, '-NoProfile', '-File', str(self.work / 'demo-menu.ps1'), '-DryRun',
+                                   '-Preset', 'full', *args], cwd=self.work, env=self.env(**env),
+                                  capture_output=True, text=True, timeout=120)
+            return done.returncode, (done.stdout + done.stderr).replace('\r', '')
+        code, out = run()
+        self.assertEqual(code, 0, out)
+        self.assertIn('Command: .\\demo.ps1 -Prebuilt\n', out)
+        code, out = run('-Llm', 'local')
+        self.assertEqual(code, 0, out)
+        self.assertIn('Command: .\\demo.ps1 -Prebuilt -LocalLlm', out)
+        self.assertEqual(self.recap(out), 'kex-llm, Gemma 4 E4B on llama.cpp, local (-Llm, this run only)')
+        self.assertNotIn('OPENROUTER_API_KEY', out)
+        code, out = run(DEMO_LLM='local')
+        self.assertIn('-LocalLlm', out)
+        self.assertEqual(self.recap(out), 'kex-llm, Gemma 4 E4B on llama.cpp, local (DEMO_LLM, from the environment)')
+        code, out = run('-Llm', 'bad')
+        self.assertNotEqual(code, 0, out)  # outside ValidateSet: PowerShell refuses it itself
+
+
+@unittest.skipUnless(shutil.which('docker'), 'docker is not installed')
+class ResolvedDemo(unittest.TestCase):
+    """The overlay resolves cleanly while pointing an app elsewhere; `config` needs no daemon."""
+    BASE = ['-f', 'docker-compose.yml', '-f', 'compose/schema-registry.yml', '-f', 'compose/mcp.yml',
+            '-f', 'compose/forecasts.yml', '-f', 'compose/demo-forecast.yml']
+    LOCAL = ['-f', 'compose/llama-cpp.yml', '-f', 'compose/llama-cpp-offline.yml', '-f', 'compose/demo-kex-llm.yml']
+
+    def resolve(self, *files):
+        env = dict(os.environ, EXPLORER_MCP_AUTH_TOKEN='t', FORECAST_POSTGRES_PASSWORD='t', TIMESFM_TOKEN='t',
+                   KEX_AGENT_API_KEY='t', SPECTRA_API_KEY='t')
+        config = subprocess.run(['docker', 'compose', *self.BASE, *files, 'config', '--format', 'json'], cwd=ROOT,
+                                env=env, capture_output=True, text=True, timeout=120)
+        if config.returncode:
+            self.skipTest(f'docker compose cannot resolve here: {config.stderr[:200]}')
+        return subprocess.run(['python3', str(ROOT / 'docs' / 'demo-kex-llm-check.py')], input=config.stdout,
+                              capture_output=True, text=True)
+
+    def test_both_apps_answer_from_the_image_in_both_demo_shapes(self):
+        shapes = {'agent without SpectraLLM': ['-f', 'compose/demo-no-spectra.yml', '-f', 'compose/demo-agent-no-spectra.yml'],
+                  'full suite': ['-f', 'compose/demo.yml', '-f', 'compose/spectra-hub.mcp.yml',
+                                 '-f', 'compose/spectra-hub.ingest.yml', '-f', 'compose/ecosystem.yml']}
+        for name, files in shapes.items():
+            with self.subTest(shape=name):
+                done = self.resolve(*files, *self.LOCAL)
+                self.assertEqual(done.returncode, 0, done.stderr)
+
+    def test_the_check_fails_when_the_overlay_is_missing(self):
+        done = self.resolve('-f', 'compose/demo-no-spectra.yml', '-f', 'compose/demo-agent-no-spectra.yml',
+                            '-f', 'compose/llama-cpp.yml', '-f', 'compose/llama-cpp-offline.yml')
+        self.assertNotEqual(done.returncode, 0)
 
 
 class Checks(MenuCase):
@@ -279,13 +427,13 @@ class Checks(MenuCase):
         self.assertNotIn('does not declare', out)
 
     def test_a_dry_run_never_spends_quota_on_the_probe(self):
-        _, out = self.menu_on_a_terminal(['--dry-run'], ['1', '3', '1', '1', '3', 'vendor/broke'],
+        _, out = self.menu_on_a_terminal(['--dry-run'], ['1', '3', '1', '1', '1', '3', 'vendor/broke'],
                                          DEMO_MENU_OPENROUTER_URL=self.url, OPENROUTER_API_KEY='sk-or-good')
         self.assertNotIn('tiny request', out)
 
     def test_the_probe_reports_credits_and_strips_the_providers_escape_codes(self):
         # start, forecast, published images, agent, another model, its id, probe: yes, what now: cancel
-        code, out = self.menu_on_a_terminal([], ['1', '3', '1', '1', '3', 'vendor/broke', 'y', '3'],
+        code, out = self.menu_on_a_terminal([], ['1', '3', '1', '1', '1', '3', 'vendor/broke', 'y', '3'],
                                             DEMO_MENU_OPENROUTER_URL=self.url, OPENROUTER_API_KEY='sk-or-good')
         self.assertEqual(code, 0, out)
         self.assertIn('vendor/broke needs credits this account does not have.', out)
@@ -296,7 +444,7 @@ class Checks(MenuCase):
 
     def test_choosing_another_model_after_a_refusal_asks_again(self):
         # ... probe: yes, what now: choose another, the paid model, probe: no, run it: no
-        code, out = self.menu_on_a_terminal([], ['1', '3', '1', '1', '3', 'vendor/broke', 'y', '1', '2', 'n', 'n'],
+        code, out = self.menu_on_a_terminal([], ['1', '3', '1', '1', '1', '3', 'vendor/broke', 'y', '1', '2', 'n', 'n'],
                                             DEMO_MENU_OPENROUTER_URL=self.url, OPENROUTER_API_KEY='sk-or-good')
         self.assertEqual(code, 0, out)
         self.assertEqual(out.count('Which OpenRouter model?'), 2)
